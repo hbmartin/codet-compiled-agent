@@ -24,7 +24,7 @@ test: host
 	ctest --test-dir build/host --output-on-failure
 MODERN_ANALYSIS_BUILD ?= build/modern-checks
 MODERN_CC ?= clang
-MODERN_CXX ?= clang++
+MODERN_CXX ?= $(or $(CODET_CLANGXX),clang++)
 MODERN_ANALYSIS_JOBS ?= 4
 MODERN_ANALYSIS_TIMEOUT ?= 300
 MODERN_ANALYSIS = python3 scripts/analyze-modern.py --build-dir $(MODERN_ANALYSIS_BUILD) \

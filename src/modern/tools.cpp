@@ -2,13 +2,28 @@
 #include <algorithm>
 #include <fnmatch.h>
 #include <openssl/sha.h>
-#include <regex>
 #include <set>
 #include <sstream>
 #include <sys/stat.h>
 
 namespace codet {
 namespace {
+bool literal_shell_command(const std::string &command) {
+  if (command.empty())
+    return false;
+  if (command.find_first_of(";&|`$()<>\\\"'*?[]{}~#") != std::string::npos)
+    return false;
+  for (unsigned char ch : command)
+    if (ch < 32 || ch == 127)
+      return false;
+  std::istringstream words(command);
+  std::string first;
+  words >> first;
+  static const std::set<std::string> reserved{
+      "!",  "if",   "then", "else", "elif", "fi",       "for",  "while",  "until",
+      "do", "done", "case", "esac", "in",   "function", "time", "select", "coproc"};
+  return !first.empty() && !reserved.count(first) && first.find('=') == std::string::npos;
+}
 bool rule_matches(const std::string &rule, const PermissionRequest &r) {
   const auto pos = rule.find('(');
   if (pos == std::string::npos)
@@ -120,7 +135,9 @@ Decision Permissions::decide(const PermissionRequest &r) const {
       return Decision::deny;
   }
   for (const auto &rule : config_.allow)
-    if (rule_matches(rule, r))
+    if (rule_matches(rule, r) &&
+        (rule.find('(') == std::string::npos || (r.tool != "Bash" && r.tool != "TaskCreate") ||
+         literal_shell_command(r.target)))
       return Decision::allow;
   if (!r.mutation)
     return Decision::allow;
@@ -203,11 +220,6 @@ Json Tools::schemas() const {
   add("Glob",
       "Find workspace files with a glob pattern; skips generated and version-control directories.",
       {{"pattern", property("string")}}, Json::array({"pattern"}));
-  add("Grep", "Search text files with an ECMAScript regular expression.",
-      {{"pattern", property("string")},
-       {"path", property("string")},
-       {"ignore_case", property("boolean")}},
-      Json::array({"pattern"}));
   add("WebFetch", "Fetch an HTTP(S) URL and return bounded readable text.",
       {{"url", property("string")}}, Json::array({"url"}));
   add("WebSearch",
@@ -253,7 +265,9 @@ Json Tools::schemas() const {
       Json::array({"seconds"}));
   return out;
 }
-Json Tools::run_hooks(const std::string &event, const Json &input, const Cancellation &cancel) {
+Json Tools::run_hooks(const std::string &event, const Json &input, const Cancellation &cancel,
+                      int budget_ms) {
+  const auto began = std::chrono::steady_clock::now();
   Json combined = Json::object();
   if (!config_.hooks.contains(event))
     return combined;
@@ -277,6 +291,14 @@ Json Tools::run_hooks(const std::string &event, const Json &input, const Cancell
       spec.timeout_ms = h.value("timeout_ms", 10000);
       if (spec.timeout_ms < 1 || spec.timeout_ms > 120000)
         throw Error("Hook timeout must be 1..120000 ms");
+      if (budget_ms > 0) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - began)
+                                 .count();
+        if (elapsed >= budget_ms)
+          throw Error("Hook cleanup budget exhausted");
+        spec.timeout_ms = std::min(spec.timeout_ms, static_cast<int>(budget_ms - elapsed));
+      }
       result = processes_.run(spec, cancel);
       files_.remove(file);
     } catch (...) {
@@ -322,6 +344,8 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
   active_cancel_ = &cancel;
   try {
     cancel.check();
+    if (call.name == "Grep")
+      throw Error("Grep is retired; use Bash to run system grep, subject to shell permissions");
     if (!call.arguments.is_object())
       throw Error("Tool arguments must be an object");
     bool known = false;
@@ -434,7 +458,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
       std::optional<std::string> before;
       if (fs::exists(p))
         before = files_.read(p);
-      if (after && after->size() > size_t{16} * 1024 * 1024)
+      if (after && after->size() > size_t{16} * size_t{1024} * 1024)
         throw Error("Write exceeds 16 MiB limit");
       if (std::any_of(changes.begin(), changes.end(), [&](const Change &x) { return x.path == p; }))
         throw Error("Duplicate file in batch/patch");
@@ -649,16 +673,12 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     }
     return {jobs.dump(), false, Json::object()};
   }
-  if (name == "Glob" || name == "Grep") {
+  if (name == "Glob") {
     const auto start = a.contains("path") ? path(a["path"].get<std::string>()) : config_.cwd;
     authorize({name, start.string(), start, false});
     const auto pattern = a.at("pattern").get<std::string>();
     if (pattern.size() > 4096)
       throw Error("Pattern too large");
-    std::optional<std::regex> re;
-    if (name == "Grep")
-      re.emplace(pattern, a.value("ignore_case", false) ? std::regex::ECMAScript | std::regex::icase
-                                                        : std::regex::ECMAScript);
     std::vector<fs::path> candidates;
     if (fs::is_regular_file(start))
       candidates.push_back(start);
@@ -689,30 +709,10 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     for (const auto &p : candidates) {
       cancel.check();
       const auto relative = fs::relative(p, config_.cwd).string();
-      if (name == "Glob") {
-        if (fnmatch(pattern.c_str(), relative.c_str(), 0) == 0 ||
-            (pattern.rfind("**/", 0) == 0 &&
-             fnmatch(pattern.substr(3).c_str(), relative.c_str(), 0) == 0))
-          out += relative + "\n";
-      } else if (fs::file_size(p) <= size_t{1024} * 1024) {
-        const auto content = files_.read(p, size_t{1024} * 1024);
-        if (content.find('\0') != std::string::npos)
-          continue;
-        size_t n = 0;
-        for (const auto &l : lines(content)) {
-          ++n;
-          if (re.has_value() && std::regex_search(l, re.value())) {
-            out += relative;
-            out += ':';
-            out += std::to_string(n);
-            out += ':';
-            out += l;
-            out += '\n';
-          }
-          if (out.size() > config_.tool_output_limit * 2)
-            break;
-        }
-      }
+      if (fnmatch(pattern.c_str(), relative.c_str(), 0) == 0 ||
+          (pattern.rfind("**/", 0) == 0 &&
+           fnmatch(pattern.substr(3).c_str(), relative.c_str(), 0) == 0))
+        out += relative + "\n";
       if (out.size() > config_.tool_output_limit * 2)
         break;
     }
@@ -722,7 +722,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     HttpRequest r;
     r.method = "GET";
     r.timeout_seconds = 20;
-    r.max_bytes = size_t{2} * 1024 * 1024;
+    r.max_bytes = size_t{2} * size_t{1024} * 1024;
     std::string backend = "html";
     if (name == "WebFetch")
       r.url = a.at("url");

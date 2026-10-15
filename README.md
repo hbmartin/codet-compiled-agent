@@ -13,6 +13,7 @@ make fetch-deps       # Explicit network step; locked sources and SHA-256 checks
 make test-foundation  # GoogleTest 1.17.0 + GoogleMock, existing text-helper tests
 make test             # Host unit, integration, CLI and terminal tests
 make test-sanitize    # ASan + UBSan
+make analyze-modern  # Separate Clang configuration; GCC host cache is preserved
 ./build/host/codet --help
 ```
 
@@ -45,7 +46,7 @@ codet exec resume --last 'continue'
 codet memory consolidate
 ```
 
-State lives under `CODET_HOME` or `~/.codet`. No existing Codex or Claurst files are imported implicitly. Native sign-in is deferred; API-key providers are the explicit fallback if subscription transport cannot be validated. Application permission rules do not provide an OS shell sandbox.
+State lives under `CODET_HOME` or `~/.codet`. No existing Codex or Claurst files are imported implicitly. Native sign-in is deferred; API-key providers are the explicit fallback if subscription transport cannot be validated. Application permission rules do not provide an OS shell sandbox. Content search uses system `grep` through Bash. Select `--permission-mode bypass` for auto/no-approval operation, or change modes live with `/permissions MODE`. Explicit deny rules retain precedence.
 
 ## Documentation
 

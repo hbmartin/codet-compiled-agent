@@ -47,6 +47,7 @@ Native sign-in, multiagent, goals, MCP, ACP, LSP, plugins and media are deferred
 )";
 struct Options {
   bool exec = false, last = false, json = false, ephemeral = false, key = false;
+  bool help = false, version = false;
   std::string command, action, session, profile, provider, model, format = "text", ui, mode,
                                                                   approval, color = "auto";
   fs::path cwd = fs::current_path(), schema, output, import;
@@ -82,7 +83,7 @@ Options parse(const std::vector<std::string> &args) {
   bool literal = false;
   for (size_t i = 0; i < args.size(); ++i) {
     std::string a = args[i];
-    if (a == "--") {
+    if (!literal && a == "--") {
       literal = true;
       continue;
     }
@@ -100,7 +101,11 @@ Options parse(const std::vector<std::string> &args) {
           throw Error("Missing value for " + a, 2);
         return args[i];
       };
-      if (a == "--json") {
+      if (a == "--help" || a == "-h")
+        o.help = true;
+      else if (a == "--version")
+        o.version = true;
+      else if (a == "--json") {
         o.format = "jsonl";
         o.json = true;
       } else if (a == "--last")
@@ -153,12 +158,13 @@ Options parse(const std::vector<std::string> &args) {
         throw Error("Unknown option: " + a, 2);
       continue;
     }
-    if (!literal && o.command.empty() && (a == "exec" || a == "e")) {
+    if (!literal && o.positionals.empty() && o.command.empty() && (a == "exec" || a == "e")) {
       o.exec = true;
       o.command = "exec";
       continue;
     }
-    if (!literal && (o.command.empty() || o.command == "exec") &&
+    if (!literal && o.positionals.empty() &&
+        (o.command.empty() || (o.command == "exec" && (a == "resume" || a == "fork"))) &&
         (a == "resume" || a == "fork" || a == "login" || a == "sessions" || a == "export" ||
          a == "doctor" || a == "memory")) {
       o.command = a;
@@ -192,7 +198,8 @@ class Terminal {
   History *history_ = nullptr;
   HistEvent history_event_{};
   std::vector<std::string> transcript_;
-  std::string input_, status_ = "Application permissions; no OS shell sandbox";
+  std::string input_, status_, progress_;
+  std::string prompt_;
   std::map<std::string, int> bindings_{{"submit", 10}, {"quit", 4}, {"backspace", 127}};
   struct termios original_ {};
   bool restore_ = false;
@@ -240,7 +247,8 @@ class Terminal {
       refresh();
       return;
     }
-    mvaddnstr(0, 0, status_.c_str(), cols - 1);
+    const auto heading = status_ + (progress_.empty() ? "" : " | " + progress_);
+    mvaddnstr(0, 0, heading.c_str(), cols - 1);
     int y = rows - 3;
     for (auto it = transcript_.rbegin(); it != transcript_.rend() && y > 0; ++it, --y)
       mvaddnstr(y, 0, it->c_str(), cols - 1);
@@ -276,7 +284,12 @@ public:
       edit_ = el_init("codet", stdin, stdout, stderr);
       if (!edit_)
         throw Error("Cannot initialize line editor");
-      el_set(edit_, EL_PROMPT, +[](EditLine *) -> const char * { return "codet> "; });
+      el_set(
+          edit_, EL_PROMPT, +[](EditLine *edit) -> const char * {
+            void *data = nullptr;
+            el_get(edit, EL_CLIENTDATA, &data);
+            return static_cast<Terminal *>(data)->prompt_.c_str();
+          });
       el_set(edit_, EL_EDITOR, "emacs");
       el_set(edit_, EL_SIGNAL, 0);
       el_set(edit_, EL_CLIENTDATA, this);
@@ -286,6 +299,7 @@ public:
         history(history_, &history_event_, H_SETSIZE, 500);
         el_set(edit_, EL_HIST, history, history_);
       }
+      set_mode(c.permission_mode);
       std::cerr << status_ << '\n';
     }
   }
@@ -298,6 +312,12 @@ public:
       history_end(history_);
     if (restore_)
       (void)tcsetattr(STDIN_FILENO, TCSANOW, &original_);
+  }
+  void set_mode(const std::string &mode) {
+    status_ = "Permissions: " + mode + "; no OS shell sandbox";
+    prompt_ = "codet> [" + mode + "] ";
+    if (curses_)
+      render();
   }
   void say(const std::string &text) {
     if (curses_) {
@@ -408,26 +428,22 @@ public:
         event["item"].contains("tool"))
       say("[" + event["item"]["tool"].get<std::string>() + "]");
     if (curses_ && event.value("type", "") == "item.updated") {
-      status_ = "Responding: " + event["item"].value("text_delta", "");
+      progress_ = "Responding: " + event["item"].value("text_delta", "");
       render();
     }
   }
 };
 } // namespace
 int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
-  for (const auto &arg : args) {
-    if (arg == "--")
-      break;
-    if (arg == "--help" || arg == "-h") {
-      std::cout << help;
-      return 0;
-    }
-    if (arg == "--version") {
-      std::cout << "codet " CODET_VERSION "\n";
-      return 0;
-    }
-  }
   const auto o = parse(args);
+  if (o.help) {
+    std::cout << help;
+    return 0;
+  }
+  if (o.version) {
+    std::cout << "codet " CODET_VERSION "\n";
+    return 0;
+  }
   NativeFileSystem files;
   SystemClock clock;
   CurlTransport http;
@@ -553,17 +569,27 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     }
   } else
     session = state.create();
-  if (o.model.empty() && o.profile.empty() && o.overrides.empty() && !session.model.empty())
-    config.model = session.model;
-  if (o.provider.empty() && o.profile.empty() && o.overrides.empty() && !session.provider.empty())
-    config.provider = session.provider;
+  if (o.command == "resume" || o.command == "fork") {
+    const auto provider_before = session.provider.empty() ? config.provider : session.provider;
+    config.provider = config.selected_provider.value_or(provider_before);
+    if (config.selected_model)
+      config.model = config.selected_model->empty() ? default_model(config, config.provider)
+                                                    : *config.selected_model;
+    else if (config.provider == provider_before && !session.model.empty())
+      config.model = session.model;
+    else if (config.provider != provider_before ||
+             (session.model.empty() && !session.provider.empty()))
+      config.model = default_model(config, config.provider);
+  }
   session.model = config.model;
   session.provider = config.provider;
   state.save(session);
   const bool interactive = !o.exec && isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
   std::unique_ptr<Terminal> terminal;
-  if (interactive)
+  if (interactive) {
     terminal = std::make_unique<Terminal>(config, o.color);
+    terminal->set_mode(config.permission_mode);
+  }
   Approver approver;
   Questioner questioner;
   if (terminal)
@@ -593,6 +619,20 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       std::cerr << "[" << event["item"]["tool"].get<std::string>() << "]\n";
   };
   Agent agent(config, provider, tools, state, events);
+  struct SessionEnd {
+    std::function<void()> end;
+    ~SessionEnd() {
+      try {
+        end();
+      } catch (...) {
+        std::cerr << "SessionEnd hook cleanup failed\n";
+      }
+    }
+  } session_end{[&] {
+    Cancellation cleanup_cancel;
+    tools.run_hooks("SessionEnd", {{"hook_event_name", "SessionEnd"}, {"session_id", session.id}},
+                    cleanup_cancel, 10000);
+  }};
   tools.run_hooks("SessionStart",
                   {{"hook_event_name", "SessionStart"},
                    {"session_id", session.id},
@@ -668,8 +708,22 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     if (*input == "/quit" || *input == "/exit")
       break;
     if (*input == "/help") {
-      terminal->say("/help /quit /sessions /new /name TEXT /export /memory consolidate; custom "
+      terminal->say("/help /quit /permissions [MODE] /sessions /new /name TEXT /export /memory "
+                    "consolidate; custom "
                     "commands from commands/*.md");
+      continue;
+    }
+    if (*input == "/permissions" || input->rfind("/permissions ", 0) == 0) {
+      if (*input != "/permissions") {
+        const auto mode = input->substr(13);
+        if (mode != "default" && mode != "plan" && mode != "accept-edits" && mode != "bypass") {
+          terminal->say("Use /permissions default|plan|accept-edits|bypass");
+          continue;
+        }
+        config.permission_mode = mode;
+        terminal->set_mode(mode);
+      }
+      terminal->say("Permissions: " + config.permission_mode);
       continue;
     }
     if (*input == "/sessions") {
@@ -694,8 +748,6 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       *input = "Explicitly consolidate durable memory using the Memory tool; report changes.";
     run(*input);
   }
-  tools.run_hooks("SessionEnd", {{"hook_event_name", "SessionEnd"}, {"session_id", session.id}},
-                  cancel);
   return cancel.requested ? 130 : 0;
 }
 } // namespace codet

@@ -27,14 +27,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         with contextlib.suppress(ConnectionResetError,BrokenPipeError):super().handle()
     def do_POST(self):
         body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        self.server.requests.append({'path':self.path,'body':body})
+        if self.path == '/api/chat':
+            data=(json.dumps({'message':{'role':'assistant','content':'fixture done'},'done':True})+'\n').encode()
+            self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
         messages=body['messages']
-        prompt=' '.join(m.get('content','') or '' for m in messages if m['role']=='user')
+        prompt=next((m.get('content','') or '' for m in reversed(messages) if m['role']=='user'),'')
         if 'fixture-error' in prompt:
             data=b'{"error":{"message":"do-not-leak-fake-credential"}}'
             self.send_response(401);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
         if 'fixture-wait' in prompt:time.sleep(2)
-        completed=[m for m in messages if m['role']=='tool']
-        if 'fixture-edit' in prompt and len(completed)<2:
+        last_user=max((i for i,m in enumerate(messages) if m['role']=='user'),default=0)
+        completed=[m for m in messages[last_user:] if m['role']=='tool']
+        if 'fixture-command' in messages[last_user].get('content','') and not completed:
+            delta={'tool_calls':[{'index':0,'id':'shell-'+str(last_user),'function':{'name':'Bash','arguments':json.dumps({'command':'printf approved'})}}]};reason='tool_calls'
+        elif 'fixture-edit' in prompt and len(completed)<2:
             name='Read' if not completed else 'Edit'
             args={'file_path':'sample.txt'} if not completed else {'file_path':'sample.txt','old_string':'before','new_string':'after'}
             delta={'tool_calls':[{'index':0,'id':'call-'+str(len(completed)),'function':{'name':name,'arguments':json.dumps(args)}}]}
@@ -62,6 +69,7 @@ class CliTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler)
+        cls.server.requests=[]
         threading.Thread(target=cls.server.serve_forever,daemon=True).start()
     @classmethod
     def tearDownClass(cls):cls.server.shutdown();cls.server.server_close()
@@ -69,9 +77,138 @@ class CliTests(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory(prefix='codet-cli-');self.root=pathlib.Path(self.tmp.name);self.home=self.root/'home';self.home.mkdir();self.workspace=self.root/'workspace';self.workspace.mkdir()
         (self.home/'config.toml').write_text(f"provider='openai'\nmodel='fixture'\n[providers.openai]\napi_key='fake-key'\nbase_url='http://127.0.0.1:{self.server.server_port}/v1'\n")
         self.env=dict(os.environ,CODET_HOME=str(self.home));self.env.pop('SEARXNG_URL',None)
+        self.server.requests=[]
     def tearDown(self):self.tmp.cleanup()
     def run_cli(self,*args,input=''):
         return subprocess.run([BIN,'-C',str(self.workspace),*args],input=input,text=True,capture_output=True,env=self.env,timeout=15)
+    def test_prompt_subcommand_words_and_literal_flags(self):
+        cases=[('exec','doctor'),('exec','memory'),('exec','login'),('exec','sessions'),
+               ('exec','export'),('exec','fix','resume','handling'),('fix','doctor','handling'),
+               ('exec','--','resume'),('exec','--','--help'),('exec','--','--version'),
+               ('exec','--','--')]
+        for args in cases:
+            with self.subTest(args=args):
+                r=self.run_cli(*args);self.assertEqual(r.returncode,0,r.stderr)
+                self.assertEqual(r.stdout,'fixture done\n')
+                words=list(args)
+                if words[0]=='exec':words.pop(0)
+                if words[0]=='--':words.pop(0)
+                self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],' '.join(words))
+        r=self.run_cli('exec','--model','--help','simple')
+        self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual(self.server.requests[-1]['body']['model'],'--help')
+
+    def test_resume_selection_is_field_specific(self):
+        base=f"[providers.openai]\napi_key='fake'\nbase_url='http://127.0.0.1:{self.server.server_port}/v1'\nmodel='openai-default'\n[providers.ollama]\nbase_url='http://127.0.0.1:{self.server.server_port}'\nmodel='ollama-default'\n"
+        cases=[(['--max-turns','10'],'','openai','saved'),
+               (['-c','max_turns=10'],'','openai','saved'),
+               (['--profile','selected'],'max_turns=10\n','openai','saved'),
+               (['--model','explicit'],'','openai','explicit'),
+               (['-c',"model='explicit'"],'','openai','explicit'),
+               (['--provider','ollama'],'','ollama','ollama-default'),
+               (['-c',"model_provider='ollama'"],'','ollama','ollama-default'),
+               (['--provider','openai'],'','openai','saved'),
+               (['--profile','selected'],"provider='ollama'\n",'ollama','ollama-default'),
+               (['--profile','selected'],"model='profile-model'\n",'openai','profile-model'),
+               (['--profile','selected','-m','cli-model'],"model='profile-model'\n",'openai','cli-model'),
+               (['--provider','ollama','-m','explicit'],'','ollama','explicit')]
+        for flags,profile,provider,model in cases:
+            with self.subTest(flags=flags,profile=profile):
+                (self.home/'config.toml').write_text("provider='openai'\nmodel='global'\n"+base)
+                r=self.run_cli('exec','-m','saved','--json','simple');self.assertEqual(r.returncode,0,r.stderr)
+                session=json.loads(r.stdout.splitlines()[0])['thread_id']
+                (self.home/'config.toml').write_text("provider='ollama'\nmodel='changed-global'\n"+base)
+                (self.home/'selected.config.toml').write_text(profile)
+                r=self.run_cli('exec','resume',session,*flags,'continue');self.assertEqual(r.returncode,0,r.stderr)
+                request=self.server.requests[-1]
+                self.assertEqual(request['path'],'/api/chat' if provider=='ollama' else '/v1/chat/completions')
+                self.assertEqual(request['body']['model'],model)
+                import sqlite3
+                with contextlib.closing(sqlite3.connect(self.home/'state.sqlite3')) as db:
+                    selected=db.execute('SELECT provider,model FROM sessions WHERE id=?',(session,)).fetchone()
+                self.assertEqual(selected,(provider,model))
+
+    def configure_hooks(self,start='cat',end='cat'):
+        marker=self.root/'hooks.jsonl'
+        content=(self.home/'config.toml').read_text()
+        content+='\n[hooks]\n'
+        for event,command in [('SessionStart',start),('SessionEnd',end)]:
+            content+=f'{event}=[{{command={json.dumps(command+" >> "+str(marker))}}}]\n'
+        (self.home/'config.toml').write_text(content)
+        return marker
+
+    def test_end_hooks_cover_success_failure_and_empty_fork(self):
+        marker=self.configure_hooks()
+        for prompt,code in [('simple',0),('fixture-error',1)]:
+            marker.unlink(missing_ok=True)
+            r=self.run_cli('exec',prompt);self.assertEqual(r.returncode,code,r.stderr)
+            events=[json.loads(x) for x in marker.read_text().splitlines()]
+            self.assertEqual([x['hook_event_name'] for x in events],['SessionStart','SessionEnd'])
+            self.assertEqual(events[0]['session_id'],events[1]['session_id'])
+        marker.unlink()
+        r=self.run_cli('exec','fork','--last');self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual([json.loads(x)['hook_event_name'] for x in marker.read_text().splitlines()],['SessionStart','SessionEnd'])
+
+    def test_end_hook_failures_preserve_success_error_and_start_failure(self):
+        self.configure_hooks(end='exit 1')
+        for prompt,code in [('simple',0),('fixture-error',1)]:
+            r=self.run_cli('exec','--output-format=json',prompt)
+            self.assertEqual(r.returncode,code);self.assertIn('SessionEnd hook cleanup failed',r.stderr)
+            self.assertEqual(json.loads(r.stdout)['status'],'success' if code==0 else 'error')
+        (self.home/'config.toml').write_text((self.home/'config.toml').read_text().split('[hooks]')[0])
+        marker=self.configure_hooks(start='exit 1')
+        marker.unlink(missing_ok=True)
+        r=self.run_cli('exec','simple');self.assertEqual(r.returncode,1)
+        self.assertEqual([json.loads(x)['hook_event_name'] for x in marker.read_text().splitlines()],['SessionEnd'])
+
+    def test_end_hook_runs_after_interruption(self):
+        marker=self.configure_hooks()
+        p=subprocess.Popen([BIN,'-C',str(self.workspace),'exec','--json','fixture-wait'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=self.env)
+        time.sleep(.3);p.send_signal(signal.SIGINT);out,err=p.communicate(timeout=8)
+        self.assertEqual(p.returncode,130,err)
+        self.assertEqual([json.loads(x)['hook_event_name'] for x in marker.read_text().splitlines()],['SessionStart','SessionEnd'])
+
+    def test_compaction_requests_omit_empty_tools_through_real_adapter(self):
+        config=self.home/'config.toml';config.write_text('context_tokens=512\n'+config.read_text())
+        r=self.run_cli('exec','--json','x'*4000);self.assertEqual(r.returncode,0,r.stderr)
+        session=json.loads(r.stdout.splitlines()[0])['thread_id'];self.server.requests=[]
+        r=self.run_cli('exec','resume',session,'continue');self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual(len(self.server.requests),2)
+        self.assertNotIn('tools',self.server.requests[0]['body'])
+        self.assertTrue(self.server.requests[1]['body']['tools'])
+
+    def test_live_permission_modes_in_both_terminals(self):
+        import pty,select
+        for mode in ['line','curses']:
+            master,slave=pty.openpty()
+            p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+            received=b''
+            def wait_for(text):
+                nonlocal received
+                deadline=time.monotonic()+5
+                while text not in received and time.monotonic()<deadline:
+                    if select.select([master],[],[],.05)[0]:received+=os.read(master,65536)
+                self.assertIn(text,received)
+                received=b''
+            try:
+                wait_for(b'codet>')
+                os.write(master,b'/permissions bypass\n');wait_for(b'Permissions: bypass')
+                os.write(master,b'fixture-command\n');wait_for(b'fixture done')
+                self.assertIn('approved',json.dumps(self.server.requests[-1]['body']))
+                os.write(master,b'/permissions invalid\n');wait_for(b'Use /permissions')
+                os.write(master,b'/permissions\n');wait_for(b'Permissions: bypass')
+                os.write(master,b'/permissions plan\n');wait_for(b'Permissions: plan')
+                os.write(master,b'fixture-command\n');wait_for(b'fixture done')
+                self.assertIn('Permission denied',json.dumps(self.server.requests[-1]['body']))
+                os.write(master,b'/permissions default\n');wait_for(b'Permissions: default')
+                os.write(master,b'/quit\n');deadline=time.monotonic()+5
+                while p.poll() is None and time.monotonic()<deadline:
+                    if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+                self.assertEqual(p.poll(),0,repr(received))
+            finally:
+                if p.poll() is None:p.kill();p.wait()
+                os.close(master);os.close(slave)
+
     def test_jsonl_real_tool_roundtrip_and_state(self):
         (self.workspace/'sample.txt').write_text('before\n')
         r=self.run_cli('exec','--json','--permission-mode','accept-edits','fixture-edit')

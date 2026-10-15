@@ -32,7 +32,7 @@ void SseDecoder::line(std::string l) {
 }
 void SseDecoder::feed(const std::string &bytes) {
   pending_ += bytes;
-  if (pending_.size() > size_t{16} * 1024 * 1024)
+  if (pending_.size() > size_t{16} * size_t{1024} * 1024)
     throw Error("SSE frame exceeds limit");
   size_t pos;
   while ((pos = pending_.find('\n')) != std::string::npos) {
@@ -332,8 +332,9 @@ eof_line: "*** End of File" LF
                               {"parameters", t["input_schema"]}});
     body = {{"systemInstruction", {{"parts", Json::array({{{"text", system}}})}}},
             {"contents", contents},
-            {"tools", Json::array({{{"functionDeclarations", declarations}}})},
             {"generationConfig", {{"maxOutputTokens", c.max_output_tokens}}}};
+    if (!declarations.empty())
+      body["tools"] = Json::array({{{"functionDeclarations", declarations}}});
     if (!c.effort.empty())
       throw Error("Google reasoning effort override is not supported by this compatibility subset; "
                   "remove model_reasoning_effort");
@@ -349,8 +350,9 @@ eof_line: "*** End of File" LF
       r.headers["Authorization"] = "Bearer " + key;
     body = {{"model", c.model},
             {"messages", chat_messages(system, messages, ollama)},
-            {"tools", functions(tools)},
             {"stream", true}};
+    if (!tools.empty())
+      body["tools"] = functions(tools);
     if (ollama) {
       body["options"] = {{"num_predict", c.max_output_tokens}};
       r.headers["Accept"] = "application/x-ndjson";
