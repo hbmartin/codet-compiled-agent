@@ -1,61 +1,58 @@
-# Codet: a compiled agent targeting Tiger and PowerPC
+# Codet: a C++17 coding agent for PowerPC Tiger
 
-This is a compiled agent that links with **GCC 14.2.0 for 32-bit big-endian PowerPC / Mac OS X 10.4 Tiger**. The default build produces `build/ppccode.ppc` from the application entry point, all 32 application subsystem files, restored global storage, and two compatibility helpers for bounded text operations.
+Codet is a single-agent terminal coding assistant targeting **Mac OS X 10.4 / PPC32**, with acceptance testing on a **G4 with 512 MB RAM**. It provides a minimal ncurses interface, an editable line REPL, and a Codex-shaped headless CLI.
 
-Status: The build passes with `-Wall -Wextra -Wformat=2 -Werror` and zero warnings; runtime correctness has not been established. **The application has not been executed.** See [BUILD-NOTES.md](docs/BUILD-NOTES.md) for changes, library differences, and remaining limitations.
+The modern application retains Anthropic, OpenAI, Google, and Ollama providers and adds imported ChatGPT/Codex subscription credentials with refresh. It includes file editing and patches, PTY/background shell jobs, permission rules, sessions and branching, context compaction, instructions/skills, explicit durable memory, hooks/custom commands, web tools, and text/JSON exports.
 
-## Build
+**Verification boundary:** host fixtures and cross-build/static checks are separate from target execution. Tiger runtime and live provider acceptance must be established using the owner-run test bundle. No build or packaging target executes PPC code.
 
-Install Make and Docker and start Docker. From this directory:
-
-```sh
-make pull    # Fetch the pinned GCC 14.2 / Tiger SDK image once, if needed.
-make         # Compile, link, and statically verify the full application.
-```
-
-No application execution or installation target is provided. The linked binary is deliberately left non-executable (`0644`).
-
-The pinned container supplies GCC 14.2.0, cctools, the Tiger CRT, and the Mac OS X 10.4u SDK. Flags select PowerPC G3/750 instructions, 32-bit pointers, big-endian data, and a 10.4 deployment target. These dependencies come from the image specified in `toolchain.mk`; they are not vendored into the source tree.
-
-Compilation disables container networking and mounts only this directory. Source is read-only; `build/` is writable. Copying this directory is sufficient: the build never reads the original binary, a parent recovery directory, or an analysis export. No Python, jq, Ghidra, Rizin, or radare2 is required.
-
-A matching cross toolchain can also use the inner Makefile directly:
+## Develop and test
 
 ```sh
-make -f build.mk verify PPC_PREFIX=/path/to/powerpc-apple-darwin8- TIGER_SDK=/path/to/MacOSX10.4u.sdk
+make fetch-deps       # Explicit network step; locked sources and SHA-256 checks
+make test-foundation  # GoogleTest 1.17.0 + GoogleMock, existing text-helper tests
+make test             # Host unit, integration, CLI and terminal tests
+make test-sanitize    # ASan + UBSan
+./build/host/codet --help
 ```
 
-Verification intentionally requires GCC 14.2.0. Use `make -f build.mk app` when experimenting with another compatible compiler version.
+Host dependencies: CMake 3.20+, C++17 compiler, Python 3.12+, curl 7.85+, OpenSSL, SQLite 3.24+, ncurses and libedit development packages. See [build and interface documentation](docs/MODERN-AGENT.md).
 
-## Targets and outputs
+## Cross-build for Tiger
 
-- `make` / `make app` / `make verify`: build the full application and check its architecture, deployment settings, SDK layouts, all 365 expected application symbols, and system library dependencies.
-- `make check-sources`: syntax-check all 34 application translation units and save diagnostics in `build/diagnostics/`.
-- `make analysis-image`: build the separate analysis image with GCC 14.2, Python, and Cppcheck; downloads packages during image construction.
-- `make analyze`: run GCC's analyzer and Cppcheck on exactly `APP_SOURCES`. Findings are report-only; tool failures or reported analysis limits return nonzero. Both tools run even when the first reports incomplete coverage.
-- `make analyze-gcc` / `make analyze-cppcheck`: run either analyzer separately; `make analyze-selftest` verifies detection using temporary defective fixtures that are never executed.
-- `make analysis-extra-image` / `make analyze-extra`: build the separate free-tool layer and evaluate Clang Static Analyzer, Clang-Tidy, Flawfinder, Frama-C and Splint. Optional incompatibilities return nonzero with logs. Select a rerun with `ANALYSIS_EXTRA_TOOL=clang-analyzer`, `clang-tidy`, `flawfinder`, or `compatibility` (Frama-C/Splint).
-- `make subset`: retain the separate 19-function static-library experiment and dummy-main toolchain probe. Neither is linked into the full app.
-- `make check-text-host`: compile and run isolated tests of the two new text helpers against host libc. This links no application code and executes no PPC code. The default build does not run these tests.
-- `make clean`: remove generated files under `build/`.
+```sh
+make fetch-tiger-deps # Fetch locked runtime sources and TigerPorts patches
+make toolchain-image # Pinned GCC 14.2 / Tiger SDK + build utilities
+make tiger-sysroot   # Offline dependency build
+make                 # Default: modern PPC application and test executable
+make verify-tiger    # Mach-O, architecture and dependency-path verification
+make tiger-package   # build/dist/codet-tiger-ppc.tar.gz
+```
 
-Static inspection records include `build/app-symbols-detailed.txt`, `build/app-imports.txt`, `build/dependencies.txt`, `build/load-commands.txt`, `build/macho-header.txt`, and `build/target-macros.txt`. `build/missing-functions.txt` must be empty for verification to pass.
+The modern build statically links compiler support and dynamically links TigerPorts C libraries under `/opt/tigr` by default. Set `TIGERPORTS_PREFIX` consistently to target another installation. Runtime libraries and certificates must be installed on the target.
 
-Analyzer versions, commands, source hashes, the compiler-derived PPC32 platform configuration, preprocessed inputs, raw diagnostics, and coverage summaries are under `build/analysis/` (ignored by Git). Runs use a read-only source mount and no container network. Analysis objects are separate from production objects. The default per-command timeout is 300 seconds; override with `ANALYSIS_TIMEOUT=600` if needed. See [ANALYSIS.md](docs/ANALYSIS.md) for reviewed findings and coverage limitations. The analyzer image adds optional development dependencies; the normal build still needs only Make and Docker.
+## Use
 
-## Source organization
+```sh
+codet login --import /explicit/path/to/token-file.json
+codet --ui line
+codet exec --provider openai --model YOUR_MODEL --json 'explain this repository'
+codet exec resume --last 'continue'
+codet memory consolidate
+```
 
-- `src/subsystems/`: application C grouped by subsystem, with original function addresses and recovery annotations.
-- `src/storage.c`: initialized data, zero-filled storage, and native pointer relocation assignments.
-- `src/text_compat.c`, `include/text_compat.h`: explicit truncation and padding contracts, preserving the recovered byte limits and libc return values.
-- `include/app.h`, `app-functions.h`, `app-globals.h`: SDK integration, current cross-file declarations, and global storage views.
-- `include/recovered-types.h`: inferred structures with compile-time size and offset assertions.
-- `checks/layout.c`: compare recovered structures with the Tiger SDK.
-- `checks/app-symbols.txt`: complete expected application function set for link verification.
-- `src/subset.c`, `checks/link.c`: optional earlier subset experiment.
+State lives under `CODET_HOME` or `~/.codet`. No existing Codex or Claurst files are imported implicitly. Native sign-in is deferred; API-key providers are the explicit fallback if subscription transport cannot be validated. Application permission rules do not provide an OS shell sandbox.
 
-The four files `abi-semantics.c`, `recovered-storage.c`, `runtime_startup.c`, and `stdio_abi_stubs.c` remain as historical source annotations and are excluded from application compilation. `src/storage.c` replaces fixed-address storage; GCC and the Tiger SDK provide startup, loader support, and stdio entry points. Historical headers and assembly references in comments are not build dependencies.
+## Documentation
+
+- [Modern build, configuration, CLI and tools](docs/MODERN-AGENT.md)
+- [Feature/reference/test ledger](docs/FEATURE-PORT.md)
+- [Tiger acceptance and resource measurements](docs/TIGER-ACCEPTANCE.md)
+- [Recovered C build notes](docs/BUILD-NOTES.md)
+- [Recovered C static-analysis evidence](docs/ANALYSIS.md)
+
+The reconstructed C application remains available with `make legacy` / `make app`, including its original static verification. The modern production source list excludes its RAG, SQL tools, small-model routing, subagents and MCP paths. Historical source annotations remain intact. Existing recovered-C runtime limitations in the build/analysis notes still apply to that legacy target.
 
 ## License
 
-[GPL v3](LICENSE.md)
+[GPL v3](LICENSE.md). Dependency versions, source locations, hashes and patch provenance are recorded in the lock files; release bundles include notices for statically linked C++ dependencies.

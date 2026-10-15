@@ -1,0 +1,4 @@
+FROM codet-tiger-build:gcc14
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcurl4-openssl-dev libssl-dev libsqlite3-dev libncurses-dev libedit-dev clang-format-18 && \
+    rm -rf /var/lib/apt/lists/*

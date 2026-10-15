@@ -1,0 +1,29 @@
+{
+  "format": 1,
+  "dependencies": [
+    {
+      "name": "googletest",
+      "version": "1.17.0",
+      "url": "https://codeload.github.com/google/googletest/tar.gz/refs/tags/v1.17.0",
+      "sha256": "65fab701d9829d38cb77c14acdc431d2108bfdbf8979e40eb8ae567edf10b27c"
+    },
+    {
+      "name": "json",
+      "version": "3.12.0",
+      "url": "https://codeload.github.com/nlohmann/json/tar.gz/refs/tags/v3.12.0",
+      "sha256": "4b92eb0c06d10683f7447ce9406cb97cd4b453be18d7279320f7b2f025c10187"
+    },
+    {
+      "name": "tomlplusplus",
+      "version": "3.4.0",
+      "url": "https://codeload.github.com/marzer/tomlplusplus/tar.gz/refs/tags/v3.4.0",
+      "sha256": "8517f65938a4faae9ccf8ebb36631a38c1cadfb5efa85d9a72e15b9e97d25155"
+    },
+    {
+      "name": "json-schema-validator",
+      "version": "2.4.1",
+      "url": "https://codeload.github.com/pboettch/json-schema-validator/tar.gz/refs/tags/2.4.1",
+      "sha256": "0c8bf7ba59bd50e312d82da4bab1d49cf3e2211cfbd659472f9c90505d2a4e4c"
+    }
+  ]
+}

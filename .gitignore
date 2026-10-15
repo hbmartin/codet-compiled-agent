@@ -1,2 +1,5 @@
 /build/
+/.deps/
+/build-*/
+__pycache__/
 .DS_Store

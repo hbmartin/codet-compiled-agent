@@ -1,0 +1,700 @@
+#include "codet/core.hpp"
+#include <algorithm>
+#include <curses.h>
+#include <cwchar>
+#include <histedit.h>
+#include <iostream>
+#include <poll.h>
+#include <sstream>
+#include <sys/stat.h>
+#include <termios.h>
+#include <unistd.h>
+
+namespace codet {
+namespace {
+const char *help = R"(codet — a C++17 terminal coding agent
+Usage: codet [OPTIONS] [PROMPT]
+       codet exec [OPTIONS] [PROMPT|-]
+       codet [exec] resume [SESSION] [--last] [PROMPT]
+       codet [exec] fork [SESSION] [--last] [PROMPT]
+       codet login --import FILE | --with-api-key | status
+       codet sessions | export SESSION | doctor
+       codet memory consolidate
+
+  -m, --model MODEL             Select model
+      --provider NAME           codex, openai, anthropic, google, ollama
+  -C, --cd DIR                  Working directory
+  -p, --profile NAME            Overlay NAME.config.toml
+  -c, --config KEY=VALUE        Repeatable TOML override
+      --json                    JSONL thread/turn/item events
+      --output-format FORMAT    text, json, jsonl
+      --output-schema FILE      Draft 7 schema for final structured answer
+  -o, --output-last-message FILE Save final answer independently
+      --permission-mode MODE    default, plan, accept-edits, bypass
+  -a, --ask-for-approval POLICY  on-request, never
+      --allow RULE / --deny RULE Tool or Tool(target-glob) rule (repeatable)
+      --add-dir DIR             Additional authorized root
+      --ui MODE                 auto, curses, line
+      --max-turns N             Model request limit
+      --ephemeral               Do not retain the session database
+      --last                    Select most recent session
+      --color auto|always|never  Terminal color policy
+      --version / --help
+
+State: CODET_HOME or ~/.codet. Fresh state; no implicit Codex/Claurst imports.
+Application permission rules are active; OS shell sandboxing is unavailable.
+Native sign-in, multiagent, goals, MCP, ACP, LSP, plugins and media are deferred.
+)";
+struct Options {
+  bool exec = false, last = false, json = false, ephemeral = false, key = false;
+  std::string command, action, session, profile, provider, model, format = "text", ui, mode,
+                                                                  approval, color = "auto";
+  fs::path cwd = fs::current_path(), schema, output, import;
+  std::vector<std::string> overrides, allow, deny;
+  std::vector<fs::path> roots;
+  std::vector<std::string> positionals;
+};
+std::string stdin_text() {
+  std::ostringstream out;
+  char buffer[8192];
+  size_t n = 0;
+  while (std::cin) {
+    std::cin.read(buffer, sizeof buffer);
+    const auto count = std::cin.gcount();
+    n += static_cast<size_t>(count);
+    if (n > 1024 * 1024)
+      throw Error("stdin exceeds 1 MiB", 2);
+    out.write(buffer, count);
+  }
+  return out.str();
+}
+std::string combined(const std::vector<std::string> &words) {
+  std::string s;
+  for (const auto &word : words) {
+    if (!s.empty())
+      s += ' ';
+    s += word;
+  }
+  return s;
+}
+Options parse(const std::vector<std::string> &args) {
+  Options o;
+  bool literal = false;
+  for (size_t i = 0; i < args.size(); ++i) {
+    std::string a = args[i];
+    if (a == "--") {
+      literal = true;
+      continue;
+    }
+    if (!literal && a.size() > 1 && a[0] == '-') {
+      const auto eq = a.find('=');
+      std::optional<std::string> attached;
+      if (eq != std::string::npos) {
+        attached = a.substr(eq + 1);
+        a.resize(eq);
+      }
+      auto value = [&]() {
+        if (attached)
+          return *attached;
+        if (++i >= args.size())
+          throw Error("Missing value for " + a, 2);
+        return args[i];
+      };
+      if (a == "--json") {
+        o.format = "jsonl";
+        o.json = true;
+      } else if (a == "--last")
+        o.last = true;
+      else if (a == "--ephemeral")
+        o.ephemeral = true;
+      else if (a == "--with-api-key")
+        o.key = true;
+      else if (a == "--model" || a == "-m")
+        o.model = value();
+      else if (a == "--provider")
+        o.provider = value();
+      else if (a == "--cd" || a == "-C")
+        o.cwd = fs::absolute(value());
+      else if (a == "--profile" || a == "-p")
+        o.profile = value();
+      else if (a == "--config" || a == "-c")
+        o.overrides.push_back(value());
+      else if (a == "--allow")
+        o.allow.push_back(value());
+      else if (a == "--deny")
+        o.deny.push_back(value());
+      else if (a == "--add-dir")
+        o.roots.push_back(value());
+      else if (a == "--output-format")
+        o.format = value();
+      else if (a == "--output-schema")
+        o.schema = value();
+      else if (a == "--output-last-message" || a == "-o")
+        o.output = value();
+      else if (a == "--import")
+        o.import = value();
+      else if (a == "--ui")
+        o.ui = value();
+      else if (a == "--permission-mode")
+        o.mode = value();
+      else if (a == "--ask-for-approval" || a == "-a")
+        o.approval = value();
+      else if (a == "--color")
+        o.color = value();
+      else if (a == "--max-turns")
+        o.overrides.push_back("max_turns=" + value());
+      else if (a == "--skip-git-repo-check") {
+      } // Codet does not require a Git checkout.
+      else if (a == "--sandbox" || a == "-s")
+        throw Error("OS-enforced sandbox modes are unavailable; use documented application "
+                    "permission rules",
+                    2);
+      else
+        throw Error("Unknown option: " + a, 2);
+      continue;
+    }
+    if (!literal && o.command.empty() && (a == "exec" || a == "e")) {
+      o.exec = true;
+      o.command = "exec";
+      continue;
+    }
+    if (!literal && (o.command.empty() || o.command == "exec") &&
+        (a == "resume" || a == "fork" || a == "login" || a == "sessions" || a == "export" ||
+         a == "doctor" || a == "memory")) {
+      o.command = a;
+      continue;
+    }
+    o.positionals.push_back(a);
+  }
+  if (o.format != "text" && o.format != "json" && o.format != "jsonl")
+    throw Error("Invalid output format", 2);
+  if (o.json && o.format != "jsonl")
+    throw Error("--json conflicts with --output-format", 2);
+  if (o.color != "auto" && o.color != "always" && o.color != "never")
+    throw Error("Invalid color policy", 2);
+  if (o.command == "resume" || o.command == "fork" || o.command == "export") {
+    if (!o.last && !o.positionals.empty()) {
+      o.session = o.positionals.front();
+      o.positionals.erase(o.positionals.begin());
+    }
+  }
+  if (o.command == "login" || o.command == "memory") {
+    if (!o.positionals.empty()) {
+      o.action = o.positionals.front();
+      o.positionals.erase(o.positionals.begin());
+    }
+  }
+  return o;
+}
+class Terminal {
+  bool curses_ = false;
+  EditLine *edit_ = nullptr;
+  History *history_ = nullptr;
+  HistEvent history_event_{};
+  std::vector<std::string> transcript_;
+  std::string input_, status_ = "Application permissions; no OS shell sandbox";
+  std::map<std::string, int> bindings_{{"submit", 10}, {"quit", 4}, {"backspace", 127}};
+  struct termios original_ {};
+  bool restore_ = false;
+  const Cancellation *read_cancel_ = nullptr;
+  static int read_character(EditLine *edit, wchar_t *character) {
+    void *data = nullptr;
+    el_get(edit, EL_CLIENTDATA, &data);
+    auto *terminal = static_cast<Terminal *>(data);
+    std::mbstate_t state{};
+    for (;;) {
+      if (terminal && terminal->read_cancel_ && terminal->read_cancel_->requested)
+        return 0;
+      struct pollfd descriptor {
+        STDIN_FILENO, POLLIN, 0
+      };
+      const int ready = ::poll(&descriptor, 1, 100);
+      if (ready < 0) {
+        if (errno == EINTR)
+          continue;
+        return -1;
+      }
+      if (ready == 0)
+        continue;
+      char byte = 0;
+      const auto n = ::read(STDIN_FILENO, &byte, 1);
+      if (n < 0 && errno == EINTR)
+        continue;
+      if (n <= 0)
+        return static_cast<int>(n);
+      const auto converted = std::mbrtowc(character, &byte, 1, &state);
+      if (converted == static_cast<size_t>(-2))
+        continue;
+      if (converted == static_cast<size_t>(-1))
+        *character = L'\ufffd';
+      return 1;
+    }
+  }
+  void render() {
+    if (!curses_)
+      return;
+    erase();
+    int rows = 0, cols = 0;
+    getmaxyx(stdscr, rows, cols);
+    if (rows < 4 || cols < 8) {
+      refresh();
+      return;
+    }
+    mvaddnstr(0, 0, status_.c_str(), cols - 1);
+    int y = rows - 3;
+    for (auto it = transcript_.rbegin(); it != transcript_.rend() && y > 0; ++it, --y)
+      mvaddnstr(y, 0, it->c_str(), cols - 1);
+    mvaddnstr(rows - 1, 0, ("codet> " + input_).c_str(), cols - 1);
+    refresh();
+  }
+
+public:
+  Terminal(const Config &c, const std::string &color) {
+    restore_ = tcgetattr(STDIN_FILENO, &original_) == 0;
+    curses_ =
+        (c.ui == "curses" || (c.ui == "auto" && env("TERM") != "dumb" && !env("TERM").empty()));
+    for (auto it = c.keybindings.begin(); it != c.keybindings.end(); ++it) {
+      if (!bindings_.count(it.key()) || !it.value().is_number_integer())
+        throw Error("keybindings support integer submit/quit/backspace codes", 2);
+      bindings_[it.key()] = it.value();
+    }
+    if (curses_) {
+      if (!initscr())
+        throw Error("Cannot initialize terminal");
+      cbreak();
+      noecho();
+      keypad(stdscr, TRUE);
+      timeout(100);
+      if (has_colors() && color != "never") {
+        start_color();
+        use_default_colors();
+        init_pair(1, c.theme == "light" ? COLOR_BLUE : COLOR_CYAN, -1);
+        attron(COLOR_PAIR(1));
+      }
+      render();
+    } else {
+      edit_ = el_init("codet", stdin, stdout, stderr);
+      if (!edit_)
+        throw Error("Cannot initialize line editor");
+      el_set(edit_, EL_PROMPT, +[](EditLine *) -> const char * { return "codet> "; });
+      el_set(edit_, EL_EDITOR, "emacs");
+      el_set(edit_, EL_SIGNAL, 0);
+      el_set(edit_, EL_CLIENTDATA, this);
+      el_set(edit_, EL_GETCFN, &Terminal::read_character);
+      history_ = history_init();
+      if (history_) {
+        history(history_, &history_event_, H_SETSIZE, 500);
+        el_set(edit_, EL_HIST, history, history_);
+      }
+      std::cerr << status_ << '\n';
+    }
+  }
+  ~Terminal() {
+    if (curses_)
+      endwin();
+    if (edit_)
+      el_end(edit_);
+    if (history_)
+      history_end(history_);
+    if (restore_)
+      (void)tcsetattr(STDIN_FILENO, TCSANOW, &original_);
+  }
+  void say(const std::string &text) {
+    if (curses_) {
+      for (const auto &l : split(text))
+        transcript_.push_back(l);
+      if (transcript_.size() > 1000)
+        transcript_.erase(transcript_.begin(),
+                          transcript_.begin() + static_cast<long>(transcript_.size() - 1000));
+      render();
+    } else
+      std::cout << text << '\n';
+  }
+  static std::vector<std::string> split(const std::string &text) {
+    std::vector<std::string> ls;
+    std::istringstream in(text);
+    std::string line;
+    while (std::getline(in, line))
+      ls.push_back(line);
+    return ls;
+  }
+  std::optional<std::string> read(Cancellation &cancel) {
+    if (!curses_) {
+      read_cancel_ = &cancel;
+      el_set(edit_, EL_PREP_TERM, 1);
+      int count = 0;
+      const char *text = el_gets(edit_, &count);
+      if (!text || count <= 0)
+        return std::nullopt;
+      std::string line(text, static_cast<size_t>(count));
+      while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
+        line.pop_back();
+      if (history_)
+        history(history_, &history_event_, H_ENTER, line.c_str());
+      return line;
+    }
+    input_.clear();
+    render();
+    for (;;) {
+      if (cancel.requested)
+        return std::nullopt;
+      const int ch = getch();
+      if (ch == ERR)
+        continue;
+      if (ch == KEY_RESIZE) {
+        render();
+        continue;
+      }
+      if (ch == bindings_["quit"])
+        return std::nullopt;
+      if (ch == bindings_["submit"] || ch == KEY_ENTER) {
+        auto out = input_;
+        say("you> " + out);
+        input_.clear();
+        return out;
+      }
+      if (ch == bindings_["backspace"] || ch == KEY_BACKSPACE || ch == 8) {
+        if (!input_.empty()) {
+          do {
+            const unsigned char b = input_.back();
+            input_.pop_back();
+            if ((b & 0xc0) != 0x80)
+              break;
+          } while (!input_.empty());
+        }
+        render();
+      } else if (ch >= 32 && ch <= 255 && input_.size() < 65536) {
+        input_ += static_cast<char>(ch);
+        render();
+      }
+    }
+  }
+  bool approve(const PermissionRequest &r, Cancellation &cancel) {
+    say(r.tool + ": " + r.target + " [y/N]");
+    if (!curses_) {
+      auto line = read(cancel);
+      return line && (*line == "y" || *line == "yes");
+    }
+    for (;;) {
+      cancel.check();
+      int ch = getch();
+      if (ch == 'y' || ch == 'Y')
+        return true;
+      if (ch == 'n' || ch == 'N' || ch == '\n' || ch == '\r')
+        return false;
+      if (ch == KEY_RESIZE)
+        render();
+    }
+  }
+  std::string ask(const std::string &question, const std::vector<std::string> &options,
+                  Cancellation &cancel) {
+    say(question);
+    for (size_t i = 0; i < options.size(); ++i)
+      say(std::to_string(i + 1) + ". " + options[i]);
+    if (!options.empty())
+      say("Enter a choice number or a text answer.");
+    auto answer = read(cancel);
+    cancel.check();
+    if (!answer)
+      throw Error("User dismissed the question");
+    for (size_t i = 0; i < options.size(); ++i)
+      if (*answer == std::to_string(i + 1))
+        return options[i];
+    return *answer;
+  }
+  void progress(const Json &event) {
+    if (event.value("type", "") == "item.started" && event.contains("item") &&
+        event["item"].contains("tool"))
+      say("[" + event["item"]["tool"].get<std::string>() + "]");
+    if (curses_ && event.value("type", "") == "item.updated") {
+      status_ = "Responding: " + event["item"].value("text_delta", "");
+      render();
+    }
+  }
+};
+} // namespace
+int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
+  for (const auto &arg : args) {
+    if (arg == "--")
+      break;
+    if (arg == "--help" || arg == "-h") {
+      std::cout << help;
+      return 0;
+    }
+    if (arg == "--version") {
+      std::cout << "codet " CODET_VERSION "\n";
+      return 0;
+    }
+  }
+  const auto o = parse(args);
+  NativeFileSystem files;
+  SystemClock clock;
+  CurlTransport http;
+  NativeProcesses processes;
+  std::string home = env("CODET_HOME");
+  if (home.empty()) {
+    const auto h = env("HOME");
+    if (h.empty())
+      throw Error("Set CODET_HOME or HOME", 2);
+    home = (fs::path(h) / ".codet").string();
+  }
+  if (!fs::is_directory(o.cwd))
+    throw Error("Working directory does not exist", 2);
+  if (o.ephemeral && (o.command == "resume" || o.command == "fork" || o.command == "export"))
+    throw Error("--ephemeral cannot select a saved session", 2);
+  auto overrides = o.overrides;
+  auto setting = [&](const std::string &key, const std::string &value) {
+    if (!value.empty())
+      overrides.push_back(key + "=" + Json(value).dump());
+  };
+  setting("provider", o.provider);
+  setting("model", o.model);
+  setting("ui", o.ui);
+  setting("permission_mode", o.mode);
+  setting("approval_policy", o.approval);
+  Config config = load_config(home, o.cwd, o.profile, overrides, files);
+  config.allow.insert(config.allow.end(), o.allow.begin(), o.allow.end());
+  config.deny.insert(config.deny.end(), o.deny.begin(), o.deny.end());
+  for (const auto &root : o.roots)
+    config.roots.push_back(files.canonical(config.cwd / root));
+  if (config.ui != "auto" && config.ui != "line" && config.ui != "curses")
+    throw Error("Invalid UI mode", 2);
+  CredentialStore credentials(config.home, files, clock);
+  if (o.command == "login") {
+    if (o.action == "status") {
+      const auto auth = credentials.load();
+      const bool present = auth.contains("codex") || auth.contains("api_keys");
+      std::cout << Json({{"credentials_present", present},
+                         {"subscription_imported", auth.contains("codex")}})
+                       .dump()
+                << '\n';
+      return present ? 0 : 1;
+    }
+    if (!o.import.empty() && o.key)
+      throw Error("Choose one credential input", 2);
+    if (!o.import.empty())
+      credentials.import(o.import);
+    else if (o.key) {
+      auto key = stdin_text();
+      while (!key.empty() && (key.back() == '\n' || key.back() == '\r'))
+        key.pop_back();
+      credentials.save_key(config.provider == "codex" ? "openai" : config.provider, key);
+    } else
+      throw Error("Native sign-in is deferred. Use login --import FILE or --with-api-key", 2);
+    std::cerr << "Credentials stored privately in Codet state\n";
+    return 0;
+  }
+  if (o.command == "doctor") {
+    std::cout << Json({{"version", CODET_VERSION},
+                       {"pointer_bits", sizeof(void *) * 8},
+                       {"provider", config.provider},
+                       {"cwd", config.cwd.string()},
+                       {"state", config.home.string()},
+                       {"os_sandbox", false},
+                       {"application_permissions", true},
+                       {"target_runtime_verified", false}})
+                     .dump(2)
+              << '\n';
+    return 0;
+  }
+  fs::path state_home = config.home;
+  struct Cleanup {
+    fs::path p;
+    ~Cleanup() {
+      if (!p.empty()) {
+        std::error_code e;
+        fs::remove_all(p, e);
+      }
+    }
+  } cleanup;
+  if (o.ephemeral) {
+    std::string pattern = (fs::temp_directory_path() / "codet-ephemeral-XXXXXX").string();
+    std::vector<char> buf(pattern.begin(), pattern.end());
+    buf.push_back(0);
+    char *p = mkdtemp(buf.data());
+    if (!p)
+      throw Error("Cannot create ephemeral state");
+    state_home = p;
+    cleanup.p = p;
+  }
+  StateStore state(state_home);
+  if (o.command == "sessions") {
+    std::cout << state.list().dump(2) << '\n';
+    return 0;
+  }
+  Session session;
+  if (o.command == "resume" || o.command == "fork" || o.command == "export") {
+    if (o.last)
+      session = state.last();
+    else if (!o.session.empty())
+      session = state.load(o.session);
+    else {
+      if (o.exec || !isatty(STDIN_FILENO))
+        throw Error("Select a session id or --last", 2);
+      std::cerr << state.list().dump(2) << "\nSession id: ";
+      std::string id;
+      std::getline(std::cin, id);
+      session = state.load(id);
+    }
+    if (o.command == "fork")
+      session = state.fork(session);
+    if (o.command == "export") {
+      if (o.format == "text") {
+        for (const auto &m : session.messages)
+          std::cout << m.role << ": " << m.text << "\n\n";
+      } else
+        std::cout << Json({{"id", session.id},
+                           {"name", session.name},
+                           {"messages", session.messages}})
+                         .dump(2)
+                  << '\n';
+      return 0;
+    }
+  } else
+    session = state.create();
+  if (o.model.empty() && o.profile.empty() && o.overrides.empty() && !session.model.empty())
+    config.model = session.model;
+  if (o.provider.empty() && o.profile.empty() && o.overrides.empty() && !session.provider.empty())
+    config.provider = session.provider;
+  session.model = config.model;
+  session.provider = config.provider;
+  state.save(session);
+  const bool interactive = !o.exec && isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
+  std::unique_ptr<Terminal> terminal;
+  if (interactive)
+    terminal = std::make_unique<Terminal>(config, o.color);
+  Approver approver;
+  Questioner questioner;
+  if (terminal)
+    approver = [&](const PermissionRequest &request) { return terminal->approve(request, cancel); };
+  if (terminal)
+    questioner = [&](const std::string &question, const std::vector<std::string> &options) {
+      return terminal->ask(question, options, cancel);
+    };
+  Tools tools(config, files, processes, http, clock, approver, questioner);
+  ApiProvider provider(http, credentials, clock);
+  Json schema;
+  if (!o.schema.empty()) {
+    try {
+      schema = Json::parse(files.read(fs::absolute(o.schema), 1024 * 1024), nullptr, false);
+    } catch (const Error &e) {
+      throw Error(e.what(), 2);
+    }
+    if (!schema.is_object())
+      throw Error("Invalid output schema JSON", 2);
+  }
+  auto events = [&](const Json &event) {
+    if (terminal)
+      terminal->progress(event);
+    else if (o.format == "jsonl")
+      std::cout << event.dump(-1, ' ', false, Json::error_handler_t::replace) << '\n' << std::flush;
+    else if (event.value("type", "") == "item.started" && event["item"].contains("tool"))
+      std::cerr << "[" << event["item"]["tool"].get<std::string>() << "]\n";
+  };
+  Agent agent(config, provider, tools, state, events);
+  tools.run_hooks("SessionStart",
+                  {{"hook_event_name", "SessionStart"},
+                   {"session_id", session.id},
+                   {"cwd", config.cwd.string()}},
+                  cancel);
+  auto run = [&](const std::string &text) {
+    try {
+      auto result = agent.run(session, text, cancel, schema);
+      const auto answer = result.structured.is_null() ? result.text : result.structured.dump();
+      if (!o.output.empty())
+        files.atomic_write(fs::absolute(o.output), answer + "\n", true);
+      if (terminal)
+        terminal->say(answer);
+      else if (o.format == "text")
+        std::cout << answer << '\n';
+      else if (o.format == "json")
+        std::cout << Json({{"session_id", session.id},
+                           {"status", "success"},
+                           {"result", result.text},
+                           {"structured_output", result.structured},
+                           {"usage",
+                            {{"input_tokens", result.usage.input},
+                             {"output_tokens", result.usage.output},
+                             {"cached_input_tokens", result.usage.cached}}}})
+                         .dump()
+                  << '\n';
+      return 0;
+    } catch (const Error &e) {
+      if (terminal) {
+        terminal->say(std::string("Error: ") + e.what());
+        cancel.requested = false;
+        return e.code;
+      }
+      if (o.format == "json")
+        std::cout
+            << Json({{"session_id", session.id}, {"status", "error"}, {"error", e.what()}}).dump()
+            << '\n';
+      throw;
+    }
+  };
+  std::string prompt = combined(o.positionals);
+  if (o.command == "memory") {
+    if (o.action != "consolidate")
+      throw Error("Use memory consolidate", 2);
+    prompt = "Explicit memory consolidation: read durable memory with Memory, consolidate accurate "
+             "useful project facts and feedback, remove contradictions by updating files, preserve "
+             "provenance, and report what changed. Do not perform unrelated work.";
+  }
+  if (!interactive) {
+    if (!isatty(STDIN_FILENO)) {
+      auto input = stdin_text();
+      if (prompt.empty() || prompt == "-")
+        prompt = input;
+      else if (!input.empty())
+        prompt += "\n\nAdditional stdin context:\n" + input;
+    }
+    if (prompt.empty() && o.command == "fork") {
+      std::cout << Json({{"type", "thread.started"}, {"thread_id", session.id}}).dump() << '\n';
+      return 0;
+    }
+    if (prompt.empty())
+      throw Error("Headless mode requires a prompt or stdin", 2);
+    return run(prompt);
+  }
+  if (!prompt.empty())
+    run(prompt);
+  while (!cancel.requested) {
+    auto input = terminal->read(cancel);
+    if (!input)
+      break;
+    if (input->empty())
+      continue;
+    if (*input == "/quit" || *input == "/exit")
+      break;
+    if (*input == "/help") {
+      terminal->say("/help /quit /sessions /new /name TEXT /export /memory consolidate; custom "
+                    "commands from commands/*.md");
+      continue;
+    }
+    if (*input == "/sessions") {
+      terminal->say(state.list().dump(2));
+      continue;
+    }
+    if (*input == "/new") {
+      session = state.create();
+      terminal->say("Started " + session.id);
+      continue;
+    }
+    if (input->rfind("/name ", 0) == 0) {
+      session.name = input->substr(6);
+      state.save(session);
+      continue;
+    }
+    if (*input == "/export") {
+      terminal->say(Json(session.messages).dump(2));
+      continue;
+    }
+    if (*input == "/memory consolidate")
+      *input = "Explicitly consolidate durable memory using the Memory tool; report changes.";
+    run(*input);
+  }
+  tools.run_hooks("SessionEnd", {{"hook_event_name", "SessionEnd"}, {"session_id", session.id}},
+                  cancel);
+  return cancel.requested ? 130 : 0;
+}
+} // namespace codet

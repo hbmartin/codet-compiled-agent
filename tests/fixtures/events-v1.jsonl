@@ -1,0 +1,14 @@
+{"thread_id":"<thread>","type":"thread.started"}
+{"type":"turn.started"}
+{"item":{"id":"message-0","text":"","type":"agent_message"},"type":"item.started"}
+{"item":{"id":"message-0","text":"","type":"agent_message"},"type":"item.completed"}
+{"item":{"id":"call-0","status":"in_progress","tool":"Read","type":"codet.tool"},"type":"item.started"}
+{"item":{"id":"call-0","metadata":{"total_lines":1,"version":"9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb"},"output":"1\tbefore\n","status":"completed","tool":"Read","type":"codet.tool"},"type":"item.completed"}
+{"item":{"id":"message-1","text":"","type":"agent_message"},"type":"item.started"}
+{"item":{"id":"message-1","text":"","type":"agent_message"},"type":"item.completed"}
+{"item":{"id":"call-1","status":"in_progress","tool":"Edit","type":"file_change"},"type":"item.started"}
+{"item":{"id":"call-1","metadata":{"paths":["<workspace>/sample.txt"]},"output":"Applied 1 file change(s)","status":"completed","tool":"Edit","type":"file_change"},"type":"item.completed"}
+{"item":{"id":"message-2","text":"","type":"agent_message"},"type":"item.started"}
+{"item":{"id":"message-2","text_delta":"fixture done","type":"agent_message"},"type":"item.updated"}
+{"item":{"id":"message-2","text":"fixture done","type":"agent_message"},"type":"item.completed"}
+{"type":"turn.completed","usage":{"cached_input_tokens":0,"input_tokens":30,"output_tokens":6,"reasoning_output_tokens":0}}
