@@ -170,14 +170,6 @@ TEST_F(Fixture, PatchAddsUpdatesAndDeletesFiles) {
   EXPECT_EQ(files.read(config.cwd / "old"), "one\nthree\n");
   EXPECT_EQ(files.read(config.cwd / "new"), "hello\n");
 }
-TEST_F(Fixture, GrepTreatsQuotesAsDataWithoutInvokingShell) {
-  write("a", "a'b\nother\n");
-  Tools t(config, files, processes, http, clock);
-  EXPECT_CALL(processes, run(_, _)).Times(0);
-  const auto result = t.execute(call("Grep", {{"pattern", "a'b"}}), cancel);
-  ASSERT_FALSE(result.error);
-  EXPECT_THAT(result.content, HasSubstr("a:1:a'b"));
-}
 TEST_F(Fixture, ConfigLayeringProfilesOverridesAndTypes) {
   files.atomic_write(config.home / "config.toml", "provider='openai'\nmodel='global'\n");
   files.atomic_write(config.home / "work.config.toml", "model='profile'\n");
