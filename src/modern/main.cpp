@@ -26,10 +26,10 @@ int main(int argc, char **argv) {
   try {
     return codet::cli_main(args, c);
   } catch (const codet::Error &e) {
-    std::cerr << "codet: " << e.what() << '\n';
+    std::cerr << "codet: " << codet::safe_text(e.what()) << '\n';
     return e.code;
   } catch (const std::exception &e) {
-    std::cerr << "codet: " << e.what() << '\n';
+    std::cerr << "codet: " << codet::safe_text(e.what()) << '\n';
     return 1;
   }
 }

@@ -157,7 +157,7 @@ TEST_F(ReviewFixture, EndHookCleanupHonorsTotalBudget) {
   config.hooks = {{"SessionEnd", Json::array({{{"command", "sleep 2"}, {"timeout_ms", 120000}}})}};
   Tools tools(config, files, processes, http, clock);
   const auto began = std::chrono::steady_clock::now();
-  EXPECT_THROW(tools.run_hooks("SessionEnd", Json::object(), cancel, 40), Error);
+  EXPECT_FALSE(tools.run_hooks("SessionEnd", Json::object(), cancel, 40).diagnostics.empty());
   EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
                                                                   began)
                 .count(),

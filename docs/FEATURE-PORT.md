@@ -1,6 +1,6 @@
 # Feature port ledger
 
-The source reference is the supplied Claurst Rust tree (`claurst-main/src-rust`), not the npm launcher. "Implemented" means present in the modern source and covered by the listed host checks. Live provider and Tiger behavior remain pending target acceptance. Retired paths remain as historical C evidence and are excluded from `codet_core`.
+The source reference is the supplied Claurst Rust tree (`claurst-main/src-rust`), not the npm launcher. Codex hook, bounded-context and patch behavior additionally use the supplied `codex-main/codex-rs` reference. "Implemented" means present in the modern source and covered by the listed host checks. Live provider and Tiger behavior remain pending target acceptance. Retired paths remain as historical C evidence and are excluded from `codet_core`.
 
 | Feature | Rust reference | C++ implementation | Verification |
 |---|---|---|---|
@@ -42,3 +42,24 @@ The source reference is the supplied Claurst Rust tree (`claurst-main/src-rust`)
 - OS shell confinement is unavailable. No application rule or allowlist is represented as a kernel sandbox.
 
 See `MODERN-AGENT.md` for exact interfaces and `TIGER-ACCEPTANCE.md` for the outstanding target checks.
+
+## Remaining PR review fixes
+
+`tests/remaining_test.cpp` and the CLI integration suite cover the following changes. Original findings already fixed by the preceding PR #2 commit retain their regression coverage.
+
+| Finding | Implementation and acceptance |
+|---|---|
+| Interrupted transcripts / misplaced recovery | Shared transactional reconciliation; adjacent outcomes; completed/uncertain/not-started fixtures; live cancellation and no replay; read-only live export/fork snapshots and exclusive run ownership |
+| Path aliases / Glob filtering | Canonical and lexical matching; checks before/after hooks; candidates filtered per tool |
+| Google parameterless tools | Omitted parameters; nonempty and structured-output schemas retained |
+| Whole-transfer streaming timeout | Separate connect/idle/explicit-total limits; healthy/stalled/total-capped loopback streams |
+| Hook output / errors | Typed event outcomes, separate stderr, nonblocking diagnostics, explicit denials and persisted context |
+| Completed-job exhaustion | Active limit separate from bounded completed history; descriptor cleanup and expiration |
+| UTF-8 / REPL failure | Common safe serialization, bounded diagnostics, unexpected exceptions contained per turn |
+| Oversized instructions / memory | Bounded reads and UTF-8-safe previews; explicit budgets; unchanged source files |
+| ApplyPatch compatibility | Forward cursor, anchors, addition-only updates, optional header, EOF, line endings and Unicode fixtures |
+| SessionEnd after /new | Captured start ID and line/curses lifecycle regression |
+| Startup timeout classification | Injected readiness/clock tests before and after watcher registration; no execution after expiry |
+| False-positive bypass test | Assert latest tool outcome and exact command output in both terminal modes |
+
+Shell deny rules intentionally retain their documented lexical contract. No broad command-policy, sandbox, plugin, or background-memory-agent port is added. See `MODERN-AGENT.md` for exact bounds and hook decisions.

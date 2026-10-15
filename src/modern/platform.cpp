@@ -1,5 +1,6 @@
 #include "codet/core.hpp"
 #include "codet/process_control.hpp"
+#include <algorithm>
 #include <cerrno>
 #include <csignal>
 #include <cstring>
@@ -40,6 +41,8 @@ struct CurlContext {
   const Cancellation &cancel;
   const ChunkSink &sink;
   size_t max;
+  int idle_seconds;
+  std::chrono::steady_clock::time_point activity = std::chrono::steady_clock::now();
 };
 size_t curl_write(char *p, size_t s, size_t n, void *data) {
   auto &c = *static_cast<CurlContext *>(data);
@@ -51,6 +54,8 @@ size_t curl_write(char *p, size_t s, size_t n, void *data) {
     return 0;
   }
   try {
+    if (bytes)
+      c.activity = std::chrono::steady_clock::now();
     c.body.append(p, bytes);
     if (c.sink)
       c.sink(std::string(p, bytes));
@@ -64,9 +69,43 @@ size_t curl_write(char *p, size_t s, size_t n, void *data) {
   return bytes;
 }
 int curl_progress(void *data, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
-  return static_cast<const Cancellation *>(data)->requested.load() ? 1 : 0;
+  auto &context = *static_cast<CurlContext *>(data);
+  if (context.cancel.requested)
+    return 1;
+  if (context.idle_seconds > 0 && std::chrono::steady_clock::now() - context.activity >=
+                                      std::chrono::seconds(context.idle_seconds)) {
+    context.error = "HTTP stream idle timeout";
+    return 1;
+  }
+  return 0;
 }
 } // namespace
+std::string safe_text(const std::string &text) {
+  return Json::parse(Json(text).dump(-1, ' ', false, Json::error_handler_t::replace))
+      .get<std::string>();
+}
+Json safe_json(const Json &value) {
+  return Json::parse(value.dump(-1, ' ', false, Json::error_handler_t::replace));
+}
+std::string bounded_text(const std::string &text, size_t limit) {
+  auto clean = safe_text(text);
+  if (clean.size() > limit) {
+    size_t end = limit;
+    while (end > 0 && (static_cast<unsigned char>(clean[end]) & 0xc0) == 0x80)
+      --end;
+    clean.resize(end);
+  }
+  return clean;
+}
+int ProcessControl::wait_ready(int fd, int timeout_ms) {
+  struct pollfd ready {
+    fd, POLLIN, 0
+  };
+  const int result = ::poll(&ready, 1, timeout_ms);
+  if (result < 0 && errno != EINTR)
+    throw Error(system_error("wait for child setup"));
+  return result;
+}
 int64_t SystemClock::seconds() const {
   return std::chrono::duration_cast<std::chrono::seconds>(
              std::chrono::system_clock::now().time_since_epoch())
@@ -156,21 +195,21 @@ HttpResponse CurlTransport::perform(const HttpRequest &r, const Cancellation &ca
   }
   std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> header_guard(headers,
                                                                            curl_slist_free_all);
-  CurlContext c{{}, {}, cancel, sink, r.max_bytes};
+  CurlContext c{{}, {}, cancel, sink, r.max_bytes, r.idle_timeout_seconds};
   char error[CURL_ERROR_SIZE] = {0};
   curl_easy_setopt(raw, CURLOPT_URL, r.url.c_str());
   curl_easy_setopt(raw, CURLOPT_PROTOCOLS_STR, "http,https");
   curl_easy_setopt(raw, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
   curl_easy_setopt(raw, CURLOPT_HTTPHEADER, headers);
   curl_easy_setopt(raw, CURLOPT_NOSIGNAL, 1L);
-  curl_easy_setopt(raw, CURLOPT_CONNECTTIMEOUT, 20L);
+  curl_easy_setopt(raw, CURLOPT_CONNECTTIMEOUT, static_cast<long>(r.connect_timeout_seconds));
   curl_easy_setopt(raw, CURLOPT_TIMEOUT, static_cast<long>(r.timeout_seconds));
   curl_easy_setopt(raw, CURLOPT_ERRORBUFFER, error);
   curl_easy_setopt(raw, CURLOPT_WRITEFUNCTION, curl_write);
   curl_easy_setopt(raw, CURLOPT_WRITEDATA, &c);
   curl_easy_setopt(raw, CURLOPT_NOPROGRESS, 0L);
   curl_easy_setopt(raw, CURLOPT_XFERINFOFUNCTION, curl_progress);
-  curl_easy_setopt(raw, CURLOPT_XFERINFODATA, &cancel);
+  curl_easy_setopt(raw, CURLOPT_XFERINFODATA, &c);
   curl_easy_setopt(raw, CURLOPT_ACCEPT_ENCODING, "");
   curl_easy_setopt(raw, CURLOPT_USERAGENT, "codet/" CODET_VERSION);
   if (r.method == "GET") {
@@ -215,6 +254,29 @@ std::string NativeFileSystem::read(const fs::path &p, size_t limit) const {
     result.append(buf, static_cast<size_t>(n));
   }
   return result;
+}
+std::string NativeFileSystem::read_prefix(const fs::path &p, size_t limit, bool &truncated) const {
+  Fd fd(::open(p.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK));
+  if (fd.n < 0)
+    throw Error(system_error("Read " + p.string()));
+  struct stat st {};
+  if (fstat(fd.n, &st) != 0 || !S_ISREG(st.st_mode))
+    throw Error("Expected regular file: " + p.string());
+  std::string text;
+  char buffer[8192];
+  while (text.size() <= limit) {
+    const auto n = ::read(fd.n, buffer, std::min(sizeof buffer, limit + 1 - text.size()));
+    if (n < 0 && errno == EINTR)
+      continue;
+    if (n < 0)
+      throw Error(system_error("Read " + p.string()));
+    if (!n)
+      break;
+    text.append(buffer, static_cast<size_t>(n));
+  }
+  const auto clean = safe_text(text);
+  truncated = text.size() > limit || clean.size() > limit;
+  return bounded_text(clean, limit);
 }
 void NativeFileSystem::atomic_write(const fs::path &p, const std::string &text, bool private_file) {
   if (!fs::exists(p.parent_path()))
@@ -339,14 +401,17 @@ std::shared_ptr<ProcessControl> native_process_control() {
 }
 struct NativeProcesses::Job {
   pid_t pid = -1;
-  int fd = -1, observer = -1;
+  int fd = -1, stderr_fd = -1, observer = -1;
+  uint64_t completed_order = 0;
   ProcessSpec spec;
   ProcessResult result;
   std::chrono::steady_clock::time_point began = std::chrono::steady_clock::now();
-  bool done = false;
+  bool done = false, retain = true;
   ~Job() {
     if (fd >= 0)
       ::close(fd);
+    if (stderr_fd >= 0)
+      ::close(stderr_fd);
     if (observer >= 0)
       ::close(observer);
   }
@@ -363,8 +428,18 @@ NativeProcesses::~NativeProcesses() {
   }
 }
 std::string NativeProcesses::start(const ProcessSpec &spec) {
-  const auto began = std::chrono::steady_clock::now();
-  if (jobs_.size() >= 64)
+  Cancellation cancel;
+  return start(spec, cancel);
+}
+std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &cancel) {
+  const auto began = control_->now();
+  const auto deadline = began + std::chrono::milliseconds(spec.timeout_ms);
+  const auto setup_deadline = std::min(deadline, began + std::chrono::seconds(5));
+  cancel.check();
+  refresh();
+  const auto active =
+      std::count_if(jobs_.begin(), jobs_.end(), [](const auto &j) { return !j.second->done; });
+  if (active >= 64)
     throw Error("Process job limit reached");
   if (spec.argv.empty())
     throw Error("Empty process command");
@@ -396,6 +471,19 @@ std::string NativeProcesses::start(const ProcessSpec &spec) {
     slave = output_pipe[1];
   }
   Fd parent_output(master), child_output(slave);
+  Fd stderr_read(-1), stderr_write(-1);
+  if (spec.separate_stderr) {
+    if (spec.pty)
+      throw Error("Separate stderr is unavailable for PTYs");
+    int errors[2];
+    if (::pipe(errors) < 0)
+      throw Error(system_error("stderr pipe"));
+    stderr_read.n = errors[0];
+    stderr_write.n = errors[1];
+  }
+  cancel.check();
+  if (control_->now() >= deadline)
+    throw ProcessTimeout();
   const pid_t pid = ::fork();
   if (pid < 0)
     throw Error(system_error("fork"));
@@ -435,7 +523,7 @@ std::string NativeProcesses::start(const ProcessSpec &spec) {
         ::close(nullfd);
     }
     (void)::dup2(slave, 1);
-    (void)::dup2(slave, 2);
+    (void)::dup2(spec.separate_stderr ? stderr_write.n : slave, 2);
     for (int fd = 3; fd < 1024; ++fd)
       ::close(fd);
     if (!spec.cwd.empty() && ::chdir(spec.cwd.c_str()) != 0)
@@ -451,15 +539,25 @@ std::string NativeProcesses::start(const ProcessSpec &spec) {
   release_read.n = -1;
   ::close(child_output.n);
   child_output.n = -1;
+  if (stderr_write.n >= 0) {
+    ::close(stderr_write.n);
+    stderr_write.n = -1;
+  }
   bool group_ready = false;
   try {
-    struct pollfd ready {
-      ready_read.n, POLLIN, 0
-    };
-    int result;
-    do {
-      result = ::poll(&ready, 1, std::max(1, std::min(spec.timeout_ms, 5000)));
-    } while (result < 0 && errno == EINTR);
+    int result = 0;
+    while (result <= 0) {
+      cancel.check();
+      const auto now = control_->now();
+      if (now >= deadline)
+        throw ProcessTimeout();
+      if (now >= setup_deadline)
+        throw Error("Child process setup timed out");
+      const auto remaining =
+          std::chrono::duration_cast<std::chrono::milliseconds>(setup_deadline - now).count();
+      result = control_->wait_ready(
+          ready_read.n, static_cast<int>(std::max<int64_t>(1, std::min<int64_t>(50, remaining))));
+    }
     int setup_error = 0;
     if (result <= 0 ||
         ::read(ready_read.n, &setup_error, sizeof setup_error) !=
@@ -473,6 +571,9 @@ std::string NativeProcesses::start(const ProcessSpec &spec) {
     job->began = began;
     // The child cannot exit through exec before this watcher has been installed.
     job->observer = control_->watch(pid);
+    cancel.check();
+    if (control_->now() >= deadline)
+      throw ProcessTimeout();
     const char token = 1;
 #ifdef __APPLE__
     const int send_flags = 0;
@@ -483,6 +584,12 @@ std::string NativeProcesses::start(const ProcessSpec &spec) {
       throw Error("Cannot release child process");
     job->fd = parent_output.n;
     parent_output.n = -1;
+    job->stderr_fd = stderr_read.n;
+    stderr_read.n = -1;
+    if (job->stderr_fd >= 0) {
+      (void)::fcntl(job->stderr_fd, F_SETFL, O_NONBLOCK);
+      (void)::fcntl(job->stderr_fd, F_SETFD, FD_CLOEXEC);
+    }
     (void)::fcntl(job->fd, F_SETFL, O_NONBLOCK);
     (void)::fcntl(job->fd, F_SETFD, FD_CLOEXEC);
     const std::string id = "job-" + std::to_string(++next_);
@@ -502,24 +609,66 @@ std::string NativeProcesses::start(const ProcessSpec &spec) {
   }
 }
 void NativeProcesses::collect(Job &job) {
-  char buf[8192];
-  size_t drained = 0;
-  while (drained < size_t{1024} * 1024) {
-    ssize_t n = ::read(job.fd, buf, sizeof buf);
-    if (n < 0 && errno == EINTR)
-      continue;
-    if (n <= 0)
-      break;
-    drained += static_cast<size_t>(n);
-    size_t keep =
-        std::min(static_cast<size_t>(n), job.spec.output_limit - job.result.output.size());
-    job.result.output.append(buf, keep);
-    if (keep < static_cast<size_t>(n))
-      job.result.truncated = true;
-  }
+  const auto drain = [&](int fd, std::string &output) {
+    char buffer[8192];
+    size_t drained = 0;
+    while (fd >= 0 && drained < size_t{1024} * 1024) {
+      const auto n = ::read(fd, buffer, sizeof buffer);
+      if (n < 0 && errno == EINTR)
+        continue;
+      if (n <= 0)
+        break;
+      drained += static_cast<size_t>(n);
+      const auto used = job.result.output.size() + job.result.stderr_output.size();
+      const auto keep = std::min(static_cast<size_t>(n), job.spec.output_limit - used);
+      output.append(buffer, keep);
+      if (keep < static_cast<size_t>(n))
+        job.result.truncated = true;
+    }
+  };
+  drain(job.fd, job.result.output);
+  drain(job.stderr_fd, job.result.stderr_output);
   if (!job.done && control_->exited(job.pid, job.observer))
     finish(job);
   job.result.running = !job.done;
+}
+void NativeProcesses::prune() {
+  size_t count = 0, bytes = 0;
+  for (const auto &entry : jobs_)
+    if (entry.second->done && entry.second->retain) {
+      ++count;
+      bytes += entry.second->result.output.size() + entry.second->result.stderr_output.size();
+    }
+  while (count > 64 || bytes > size_t{4} * size_t{1024} * 1024) {
+    auto oldest = jobs_.end();
+    for (auto it = jobs_.begin(); it != jobs_.end(); ++it)
+      if (it->second->done && it->second->retain &&
+          (oldest == jobs_.end() || it->second->completed_order < oldest->second->completed_order))
+        oldest = it;
+    if (oldest == jobs_.end())
+      break;
+    bytes -= oldest->second->result.output.size() + oldest->second->result.stderr_output.size();
+    --count;
+    jobs_.erase(oldest);
+  }
+}
+void NativeProcesses::refresh() {
+  std::vector<std::string> ids;
+  ids.reserve(jobs_.size());
+  for (const auto &job : jobs_)
+    if (!job.second->done)
+      ids.push_back(job.first);
+  for (const auto &id : ids)
+    (void)poll(id);
+  prune();
+}
+std::vector<ProcessStatus> NativeProcesses::list() {
+  refresh();
+  std::vector<ProcessStatus> out;
+  out.reserve(jobs_.size());
+  for (const auto &job : jobs_)
+    out.push_back({job.first, !job.second->done, job.second->result.exit_code});
+  return out;
 }
 void NativeProcesses::finish(Job &job) {
   if (job.done)
@@ -529,6 +678,7 @@ void NativeProcesses::finish(Job &job) {
   const int status = control_->reap(job.pid);
   job.pid = -1;
   job.done = true;
+  job.completed_order = ++completed_;
   if (job.observer >= 0) {
     ::close(job.observer);
     job.observer = -1;
@@ -536,30 +686,46 @@ void NativeProcesses::finish(Job &job) {
   job.result.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
   job.result.running = false;
   collect(job);
+  if (job.fd >= 0) {
+    ::close(job.fd);
+    job.fd = -1;
+  }
+  if (job.stderr_fd >= 0) {
+    ::close(job.stderr_fd);
+    job.stderr_fd = -1;
+  }
 }
 ProcessResult NativeProcesses::poll(const std::string &id) {
   auto it = jobs_.find(id);
   if (it == jobs_.end())
-    throw Error("Unknown job: " + id);
+    throw Error("Unknown or expired job: " + id);
   auto &job = *it->second;
   collect(job);
-  if (!job.done && std::chrono::duration_cast<std::chrono::milliseconds>(
-                       std::chrono::steady_clock::now() - job.began)
-                           .count() > job.spec.timeout_ms) {
-    stop(id);
+  if (!job.done &&
+      std::chrono::duration_cast<std::chrono::milliseconds>(control_->now() - job.began).count() >
+          job.spec.timeout_ms) {
+    finish(job);
     job.result.exit_code = 124;
   }
-  return job.result;
+  const auto result = job.result;
+  prune();
+  return result;
 }
 void NativeProcesses::stop(const std::string &id) {
   auto it = jobs_.find(id);
   if (it == jobs_.end())
-    throw Error("Unknown job: " + id);
+    throw Error("Unknown or expired job: " + id);
   Job &job = *it->second;
   if (job.done)
     return;
+  if (control_->now() >= job.began + std::chrono::milliseconds(job.spec.timeout_ms)) {
+    finish(job);
+    return;
+  }
   control_->signal(-job.pid, SIGTERM);
-  for (int i = 0; i < 10 && !job.done; ++i) {
+  for (int i = 0; i < 10 && !job.done &&
+                  control_->now() < job.began + std::chrono::milliseconds(job.spec.timeout_ms);
+       ++i) {
     collect(job);
     if (!job.done)
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -587,7 +753,13 @@ void NativeProcesses::write(const std::string &id, const std::string &input) {
   }
 }
 ProcessResult NativeProcesses::run(const ProcessSpec &spec, const Cancellation &cancel) {
-  const auto id = start(spec);
+  std::string id;
+  try {
+    id = start(spec, cancel);
+  } catch (const ProcessTimeout &) {
+    return {124, "Command timed out during startup"};
+  }
+  jobs_.at(id)->retain = false;
   try {
     ProcessResult result;
     do {
@@ -596,13 +768,17 @@ ProcessResult NativeProcesses::run(const ProcessSpec &spec, const Cancellation &
       if (result.running)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     } while (result.running);
-    stop(id);
     jobs_.erase(id);
     return result;
   } catch (...) {
-    stop(id);
+    const auto failure = std::current_exception();
+    try {
+      if (jobs_.count(id))
+        stop(id);
+    } catch (...) { // NOLINT(bugprone-empty-catch): Preserve the original run failure.
+    }
     jobs_.erase(id);
-    throw;
+    std::rethrow_exception(failure);
   }
 }
 void to_json(Json &j, const ToolCall &t) {

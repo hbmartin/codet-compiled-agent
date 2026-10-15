@@ -16,6 +16,7 @@ uname -a > "$report_dir/system.txt"
 sw_vers >> "$report_dir/system.txt" 2>/dev/null || true
 sysctl hw.memsize hw.cpufrequency >> "$report_dir/system.txt" 2>/dev/null || true
 otool -L "$bundle_dir/codet" > "$report_dir/dependencies.txt"
+"$bundle_dir/codet_tests" --gtest_list_tests > "$report_dir/test-inventory.txt"
 "$bundle_dir/codet" doctor -C "$test_root/workspace" > "$report_dir/doctor.json"
 /usr/bin/time -l "$bundle_dir/codet" --version > "$report_dir/startup.txt" 2> "$report_dir/startup-resource.txt"
 /usr/bin/time -l "$bundle_dir/codet_tests" --gtest_output="xml:$report_dir/tests.xml" > "$report_dir/tests.txt" 2> "$report_dir/test-resource.txt"

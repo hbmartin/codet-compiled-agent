@@ -151,6 +151,10 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
     c.context_tokens = data.value("context_tokens", c.context_tokens);
     c.tool_output_limit = data.value("tool_output_limit", c.tool_output_limit);
     c.request_timeout = data.value("request_timeout_seconds", c.request_timeout);
+    c.connect_timeout = data.value("connect_timeout_seconds", c.connect_timeout);
+    c.stream_idle_timeout = data.value("stream_idle_timeout_seconds", c.stream_idle_timeout);
+    c.project_doc_max_bytes = data.value("project_doc_max_bytes", c.project_doc_max_bytes);
+    c.memory_context_max_bytes = data.value("memory_context_max_bytes", c.memory_context_max_bytes);
     c.allow = data.value("allow", c.allow);
     c.deny = data.value("deny", c.deny);
     c.hooks = data.value("hooks", Json::object());
@@ -171,7 +175,9 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
   if (c.max_turns == 0 || c.max_turns > 1000 || c.max_output_tokens == 0 ||
       c.max_output_tokens > 1000000 || c.context_tokens < 512 || c.context_tokens > 2000000 ||
       c.tool_output_limit < 256 || c.tool_output_limit > size_t{16} * size_t{1024} * 1024 ||
-      c.request_timeout < 1 || c.request_timeout > 3600)
+      c.request_timeout < 0 || c.request_timeout > 3600 || c.connect_timeout < 1 ||
+      c.connect_timeout > 3600 || c.stream_idle_timeout < 1 || c.stream_idle_timeout > 3600 ||
+      c.project_doc_max_bytes > size_t{1024} * 1024 || c.memory_context_max_bytes > size_t{1024} * 1024)
     throw Error("Configuration limit outside supported range", 2);
   if (c.permission_mode != "default" && c.permission_mode != "plan" &&
       c.permission_mode != "accept-edits" && c.permission_mode != "bypass")
