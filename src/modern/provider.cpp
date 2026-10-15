@@ -151,6 +151,8 @@ HttpRequest ApiProvider::request(const Config &c, const std::string &system,
                                  const Json &auth) const {
   HttpRequest r;
   r.timeout_seconds = c.request_timeout;
+  r.connect_timeout_seconds = c.connect_timeout;
+  r.idle_timeout_seconds = c.stream_idle_timeout;
   r.headers = {{"Content-Type", "application/json"}, {"Accept", "text/event-stream"}};
   const auto it = c.providers.find(c.provider);
   ProviderConfig p = it == c.providers.end() ? ProviderConfig{} : it->second;
@@ -326,10 +328,18 @@ eof_line: "*** End of File" LF
       }
     }
     Json declarations = Json::array();
-    for (const auto &t : tools)
-      declarations.push_back({{"name", t["name"]},
-                              {"description", t["description"]},
-                              {"parameters", t["input_schema"]}});
+    for (const auto &t : tools) {
+      Json declaration = {{"name", t["name"]}, {"description", t["description"]}};
+      const auto &schema = t["input_schema"];
+      const bool no_arguments =
+          t["name"] != "StructuredOutput" && schema.value("type", "") == "object" &&
+          schema.contains("properties") && schema["properties"].empty() &&
+          schema.value("required", Json::array()).empty() &&
+          !schema.contains("additionalProperties") && !schema.contains("patternProperties");
+      if (!no_arguments)
+        declaration["parameters"] = schema;
+      declarations.push_back(declaration);
+    }
     body = {{"systemInstruction", {{"parts", Json::array({{{"text", system}}})}}},
             {"contents", contents},
             {"generationConfig", {{"maxOutputTokens", c.max_output_tokens}}}};

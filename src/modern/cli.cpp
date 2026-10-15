@@ -447,6 +447,8 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   NativeFileSystem files;
   SystemClock clock;
   CurlTransport http;
+  // Keep session ownership until background-process destruction has finished.
+  std::shared_ptr<void> lifecycle_owner, current_owner;
   NativeProcesses processes;
   std::string home = env("CODET_HOME");
   if (home.empty()) {
@@ -569,6 +571,10 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     }
   } else
     session = state.create();
+  lifecycle_owner = state.acquire(session.id);
+  current_owner = lifecycle_owner;
+  session = state.load(session.id, false);
+  state.reconcile(session);
   if (o.command == "resume" || o.command == "fork") {
     const auto provider_before = session.provider.empty() ? config.provider : session.provider;
     config.provider = config.selected_provider.value_or(provider_before);
@@ -628,16 +634,25 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
         std::cerr << "SessionEnd hook cleanup failed\n";
       }
     }
-  } session_end{[&] {
+  } session_end{[&, started_id = session.id] {
     Cancellation cleanup_cancel;
-    tools.run_hooks("SessionEnd", {{"hook_event_name", "SessionEnd"}, {"session_id", session.id}},
+    tools.run_hooks("SessionEnd", {{"hook_event_name", "SessionEnd"}, {"session_id", started_id}},
                     cleanup_cancel, 10000);
   }};
-  tools.run_hooks("SessionStart",
-                  {{"hook_event_name", "SessionStart"},
-                   {"session_id", session.id},
-                   {"cwd", config.cwd.string()}},
-                  cancel);
+  const auto started = tools.run_hooks("SessionStart",
+                                       {{"hook_event_name", "SessionStart"},
+                                        {"session_id", session.id},
+                                        {"cwd", config.cwd.string()}},
+                                       cancel);
+  if (started.blocked || started.stopped)
+    throw Error("Session stopped by hook: " + started.reason);
+  if (!started.additional_context.empty()) {
+    Message context;
+    context.role = "system";
+    context.text = "SessionStart hook context:\n" + started.additional_context;
+    session.messages.push_back(context);
+    state.save(session);
+  }
   auto run = [&](const std::string &text) {
     try {
       auto result = agent.run(session, text, cancel, schema);
@@ -662,7 +677,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       return 0;
     } catch (const Error &e) {
       if (terminal) {
-        terminal->say(std::string("Error: ") + e.what());
+        terminal->say(std::string("Error: ") + safe_text(e.what()));
         cancel.requested = false;
         return e.code;
       }
@@ -671,6 +686,12 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
             << Json({{"session_id", session.id}, {"status", "error"}, {"error", e.what()}}).dump()
             << '\n';
       throw;
+    } catch (const std::exception &e) {
+      if (terminal) {
+        terminal->say("Error: " + safe_text(e.what()));
+        return 1;
+      }
+      throw Error(safe_text(e.what()));
     }
   };
   std::string prompt = combined(o.positionals);
@@ -731,7 +752,10 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       continue;
     }
     if (*input == "/new") {
-      session = state.create();
+      auto fresh = state.create();
+      auto fresh_owner = state.acquire(fresh.id);
+      session = std::move(fresh);
+      current_owner = std::move(fresh_owner);
       terminal->say("Started " + session.id);
       continue;
     }

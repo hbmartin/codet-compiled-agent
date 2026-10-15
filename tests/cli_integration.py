@@ -39,7 +39,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if 'fixture-wait' in prompt:time.sleep(2)
         last_user=max((i for i,m in enumerate(messages) if m['role']=='user'),default=0)
         completed=[m for m in messages[last_user:] if m['role']=='tool']
-        if 'fixture-command' in messages[last_user].get('content','') and not completed:
+        if 'fixture-long-batch' in prompt and not completed:
+            commands=['printf begun > begun; while test ! -f release; do sleep .02; done','printf completed > completed']
+            delta={'tool_calls':[{'index':i,'id':'batch-'+str(i),'function':{'name':'Bash','arguments':json.dumps({'command':command})}} for i,command in enumerate(commands)]};reason='tool_calls'
+        elif 'fixture-command' in messages[last_user].get('content','') and not completed:
             delta={'tool_calls':[{'index':0,'id':'shell-'+str(last_user),'function':{'name':'Bash','arguments':json.dumps({'command':'printf approved'})}}]};reason='tool_calls'
         elif 'fixture-edit' in prompt and len(completed)<2:
             name='Read' if not completed else 'Edit'
@@ -61,6 +64,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         else:delta={'content':'fixture done'};reason='stop'
         frame={'choices':[{'delta':delta,'finish_reason':reason}],'usage':{'prompt_tokens':10,'completion_tokens':2}}
         data=('data: '+json.dumps(frame)+'\n\ndata: [DONE]\n\n').encode()
+        if 'fixture-active-stream' in prompt or 'fixture-idle-stream' in prompt:
+            partial=('data: '+json.dumps({'choices':[{'delta':{'content':'.'},'finish_reason':None}]})+'\n\n').encode()
+            frames=[partial]*5+[data]
+            self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Content-Length',str(sum(map(len,frames))));self.end_headers()
+            with contextlib.suppress(BrokenPipeError,ConnectionResetError):
+                for chunk in frames:
+                    self.wfile.write(chunk);self.wfile.flush()
+                    time.sleep(2 if 'fixture-idle-stream' in prompt else .3)
+            return
         self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Content-Length',str(len(data)));self.end_headers()
         with contextlib.suppress(BrokenPipeError,ConnectionResetError):
             for at in range(0,len(data),7):self.wfile.write(data[at:at+7]);self.wfile.flush()
@@ -158,7 +170,8 @@ class CliTests(unittest.TestCase):
         (self.home/'config.toml').write_text((self.home/'config.toml').read_text().split('[hooks]')[0])
         marker=self.configure_hooks(start='exit 1')
         marker.unlink(missing_ok=True)
-        r=self.run_cli('exec','simple');self.assertEqual(r.returncode,1)
+        r=self.run_cli('exec','simple');self.assertEqual(r.returncode,0)
+        self.assertIn('SessionStart exited with code 1',r.stderr)
         self.assertEqual([json.loads(x)['hook_event_name'] for x in marker.read_text().splitlines()],['SessionEnd'])
 
     def test_end_hook_runs_after_interruption(self):
@@ -194,7 +207,10 @@ class CliTests(unittest.TestCase):
                 wait_for(b'codet>')
                 os.write(master,b'/permissions bypass\n');wait_for(b'Permissions: bypass')
                 os.write(master,b'fixture-command\n');wait_for(b'fixture done')
-                self.assertIn('approved',json.dumps(self.server.requests[-1]['body']))
+                tool=[m for m in self.server.requests[-1]['body']['messages'] if m['role']=='tool'][-1]
+                outcome=json.loads(tool['content'])
+                self.assertFalse(outcome['is_error'],outcome)
+                self.assertEqual(outcome['content'],'approved')
                 os.write(master,b'/permissions invalid\n');wait_for(b'Use /permissions')
                 os.write(master,b'/permissions\n');wait_for(b'Permissions: bypass')
                 os.write(master,b'/permissions plan\n');wait_for(b'Permissions: plan')
@@ -205,6 +221,92 @@ class CliTests(unittest.TestCase):
                 while p.poll() is None and time.monotonic()<deadline:
                     if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
                 self.assertEqual(p.poll(),0,repr(received))
+            finally:
+                if p.poll() is None:p.kill();p.wait()
+                os.close(master);os.close(slave)
+
+    def test_export_fork_and_resume_of_a_live_session(self):
+        p=subprocess.Popen([BIN,'-C',str(self.workspace),'exec','--json','--permission-mode','bypass','fixture-long-batch'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=self.env)
+        try:
+            session=json.loads(p.stdout.readline())['thread_id']
+            deadline=time.monotonic()+5
+            while not (self.workspace/'begun').exists() and time.monotonic()<deadline:time.sleep(.01)
+            self.assertTrue((self.workspace/'begun').exists())
+            exported=self.run_cli('export',session);self.assertEqual(exported.returncode,0,exported.stderr)
+            forked=self.run_cli('exec','fork',session);self.assertEqual(forked.returncode,0,forked.stderr)
+            branch=json.loads(forked.stdout)['thread_id']
+            self.assertNotEqual(branch,session)
+            import sqlite3
+            with contextlib.closing(sqlite3.connect(self.home/'state.sqlite3')) as db:
+                messages=json.loads(db.execute('SELECT messages FROM sessions WHERE id=?',(branch,)).fetchone()[0])
+            recovery=[json.loads(m['text'])['metadata']['recovery'] for m in messages if m['role']=='tool']
+            self.assertEqual(recovery,['uncertain','not_started'])
+            resumed=self.run_cli('exec','resume',session,'continue');self.assertEqual(resumed.returncode,1,resumed.stderr)
+            self.assertIn('in use by another process',resumed.stderr)
+            (self.workspace/'release').touch()
+            out,err=p.communicate(timeout=10);self.assertEqual(p.returncode,0,err)
+            self.assertTrue((self.workspace/'completed').exists())
+        finally:
+            (self.workspace/'release').touch()
+            if p.poll() is None:
+                p.send_signal(signal.SIGINT);p.communicate(timeout=10)
+
+    def test_stream_idle_and_explicit_total_timeouts(self):
+        config=self.home/'config.toml'
+        base=config.read_text()
+        config.write_text('stream_idle_timeout_seconds=1\n'+base)
+        r=self.run_cli('exec','fixture-active-stream');self.assertEqual(r.returncode,0,r.stderr)
+        self.assertIn('fixture done',r.stdout)
+        config.write_text('stream_idle_timeout_seconds=1\nrequest_timeout_seconds=1\n'+base)
+        self.server.requests=[]
+        r=self.run_cli('exec','fixture-active-stream');self.assertEqual(r.returncode,1,r.stderr)
+        self.assertEqual(len(self.server.requests),1)
+        config.write_text('stream_idle_timeout_seconds=1\n'+base)
+        self.server.requests=[]
+        r=self.run_cli('exec','fixture-idle-stream');self.assertEqual(r.returncode,1,r.stderr)
+        self.assertIn('idle timeout',r.stderr);self.assertEqual(len(self.server.requests),1)
+
+    def test_start_and_prompt_plaintext_context_is_persisted(self):
+        config=self.home/'config.toml'
+        config.write_text(config.read_text()+'\n[hooks]\nSessionStart=[{command="printf startup-context"}]\nUserPromptSubmit=[{command="printf prompt-context"}]\n')
+        r=self.run_cli('exec','simple');self.assertEqual(r.returncode,0,r.stderr)
+        messages=self.server.requests[-1]['body']['messages']
+        self.assertTrue(any('startup-context' in m.get('content','') for m in messages))
+        self.assertTrue(any('prompt-context' in m.get('content','') for m in messages))
+
+    def test_new_session_lifecycle_and_invalid_hook_bytes_in_both_terminals(self):
+        import pty,select
+        marker=self.root/'lifecycle.jsonl'
+        config=self.home/'config.toml';base=config.read_text()
+        for mode in ['line','curses']:
+            marker.unlink(missing_ok=True)
+            record='cat >> '+str(marker)
+            bad="printf '\\377' >&2; exit 2"
+            config.write_text(base+'\n[hooks]\nSessionStart=[{command='+json.dumps(record)+'}]\nSessionEnd=[{command='+json.dumps(record)+'}]\nPreToolUse=[{matcher="Bash",command='+json.dumps(bad)+'}]\n')
+            master,slave=pty.openpty()
+            p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode,'--permission-mode','bypass'],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+            received=b''
+            def wait_for(text):
+                nonlocal received
+                deadline=time.monotonic()+6
+                while text not in received and time.monotonic()<deadline:
+                    if select.select([master],[],[],.05)[0]:received+=os.read(master,65536)
+                self.assertIn(text,received)
+            try:
+                wait_for(b'codet>');received=b''
+                os.write(master,b'/new\n');wait_for(b'Started ')
+                if mode=='line':wait_for(b'codet>')
+                received=b'';os.write(master,b'fixture-command\n');wait_for(b'fixture done')
+                tool=[m for m in self.server.requests[-1]['body']['messages'] if m['role']=='tool'][-1]
+                outcome=json.loads(tool['content']);self.assertTrue(outcome['is_error']);self.assertIn('\ufffd',outcome['content'])
+                received=b'';os.write(master,b'simple\n');wait_for(b'fixture done')
+                os.write(master,b'/quit\n');deadline=time.monotonic()+6
+                while p.poll() is None and time.monotonic()<deadline:
+                    if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+                self.assertEqual(p.poll(),0,repr(received))
+                events=[json.loads(x) for x in marker.read_text().splitlines()]
+                self.assertEqual([x['hook_event_name'] for x in events],['SessionStart','SessionEnd'])
+                self.assertEqual(events[0]['session_id'],events[1]['session_id'])
             finally:
                 if p.poll() is None:p.kill();p.wait()
                 os.close(master);os.close(slave)

@@ -7,6 +7,7 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -14,10 +15,17 @@
 namespace codet {
 using Json = nlohmann::json;
 namespace fs = std::filesystem;
+std::string safe_text(const std::string &);
 struct Error : std::runtime_error {
   int code;
-  explicit Error(const std::string &message, int c = 1) : std::runtime_error(message), code(c) {}
+  explicit Error(const std::string &message, int c = 1)
+      : std::runtime_error(safe_text(message)), code(c) {}
 };
+struct ProcessTimeout : Error {
+  ProcessTimeout() : Error("Command timed out during startup") {}
+};
+Json safe_json(const Json &);
+std::string bounded_text(const std::string &, size_t);
 struct Cancellation {
   std::atomic<bool> requested{false};
   void check() const {
@@ -37,7 +45,7 @@ struct SystemClock final : Clock {
 struct HttpRequest {
   std::string method = "POST", url, body;
   std::map<std::string, std::string> headers;
-  int timeout_seconds = 120;
+  int timeout_seconds = 120, connect_timeout_seconds = 20, idle_timeout_seconds = 0;
   size_t max_bytes = size_t{16} * size_t{1024} * 1024;
 };
 struct HttpResponse {
@@ -56,12 +64,18 @@ struct CurlTransport final : HttpTransport {
 struct FileSystem {
   virtual ~FileSystem() = default;
   virtual std::string read(const fs::path &, size_t limit = size_t{16} * size_t{1024} * 1024) const = 0;
+  virtual std::string read_prefix(const fs::path &p, size_t limit, bool &truncated) const {
+    auto text = read(p, limit);
+    truncated = false;
+    return text;
+  }
   virtual void atomic_write(const fs::path &, const std::string &, bool private_file = false) = 0;
   virtual void remove(const fs::path &) = 0;
   virtual fs::path canonical(const fs::path &) const = 0;
 };
 struct NativeFileSystem final : FileSystem {
   std::string read(const fs::path &, size_t = size_t{16} * size_t{1024} * 1024) const override;
+  std::string read_prefix(const fs::path &, size_t, bool &) const override;
   void atomic_write(const fs::path &, const std::string &, bool = false) override;
   void remove(const fs::path &) override;
   fs::path canonical(const fs::path &) const override;
@@ -72,17 +86,35 @@ struct ProcessSpec {
   std::map<std::string, std::string> env;
   int timeout_ms = 120000;
   size_t output_limit = 65536;
-  bool pty = false;
+  bool pty = false, separate_stderr = false;
 };
 struct ProcessResult {
   int exit_code = 0;
   std::string output;
   bool truncated = false, running = false;
+  std::string stderr_output;
+  ProcessResult() = default;
+  ProcessResult(int code, std::string text, bool cut = false, bool active = false,
+                std::string errors = {})
+      : exit_code(code), output(std::move(text)), truncated(cut), running(active),
+        stderr_output(std::move(errors)) {}
+};
+struct ProcessStatus {
+  std::string id;
+  bool running;
+  int exit_code;
 };
 struct Processes {
   virtual ~Processes() = default;
   virtual ProcessResult run(const ProcessSpec &, const Cancellation &) = 0;
   virtual std::string start(const ProcessSpec &) = 0;
+  virtual std::string start(const ProcessSpec &s, const Cancellation &c) {
+    c.check();
+    return start(s);
+  }
+  virtual std::vector<ProcessStatus> list() {
+    return {};
+  }
   virtual ProcessResult poll(const std::string &) = 0;
   virtual void stop(const std::string &) = 0;
   virtual void write(const std::string &, const std::string &) {
@@ -95,8 +127,11 @@ class NativeProcesses final : public Processes {
   std::map<std::string, std::unique_ptr<Job>> jobs_;
   std::shared_ptr<ProcessControl> control_;
   unsigned next_ = 0;
+  uint64_t completed_ = 0;
   void collect(Job &);
   void finish(Job &);
+  void refresh();
+  void prune();
 
 public:
   NativeProcesses();
@@ -104,6 +139,8 @@ public:
   ~NativeProcesses() override;
   ProcessResult run(const ProcessSpec &, const Cancellation &) override;
   std::string start(const ProcessSpec &) override;
+  std::string start(const ProcessSpec &, const Cancellation &) override;
+  std::vector<ProcessStatus> list() override;
   ProcessResult poll(const std::string &) override;
   void stop(const std::string &) override;
   void write(const std::string &, const std::string &) override;
@@ -139,7 +176,8 @@ struct Config {
   std::string ui = "auto", theme = "default", effort;
   size_t max_turns = 100, max_output_tokens = 8192, context_tokens = 32768;
   size_t tool_output_limit = 65536;
-  int request_timeout = 120;
+  int request_timeout = 0, connect_timeout = 20, stream_idle_timeout = 120;
+  size_t project_doc_max_bytes = 32768, memory_context_max_bytes = 8900;
   std::map<std::string, ProviderConfig> providers;
   std::vector<std::string> allow, deny;
   std::vector<fs::path> roots;
@@ -212,7 +250,10 @@ public:
   explicit StateStore(const fs::path &);
   ~StateStore();
   Session create(const std::string &name = "");
-  Session load(const std::string &id_or_name);
+  // Default loads are repaired snapshots, never persistent recovery writes.
+  Session load(const std::string &id_or_name, bool repair = true);
+  std::shared_ptr<void> acquire(const std::string &id);
+  void reconcile(Session &, bool persist = true);
   Session last();
   Session fork(const Session &);
   void save(const Session &);
@@ -245,6 +286,13 @@ struct ToolResult {
   bool error = false;
   Json metadata = Json::object();
 };
+struct HookOutcome {
+  bool blocked = false, stopped = false;
+  std::string reason, additional_context;
+  std::optional<Json> updated_input;
+  std::optional<Decision> permission;
+  std::vector<std::string> diagnostics;
+};
 class Tools {
   const Config &config_;
   FileSystem &files_;
@@ -258,7 +306,7 @@ class Tools {
   Json todos_ = Json::array();
   bool plan_ = false;
   std::string session_id_;
-  std::vector<std::string> task_ids_;
+  mutable std::set<std::string> warnings_;
   const Cancellation *active_cancel_ = nullptr;
   fs::path path(const std::string &) const;
   void authorize(const PermissionRequest &);
@@ -274,7 +322,7 @@ public:
   ToolResult execute(const ToolCall &, const Cancellation &);
   std::string instructions() const;
   std::string expand_command(const std::string &) const;
-  Json run_hooks(const std::string &, const Json &, const Cancellation &, int budget_ms = 0);
+  HookOutcome run_hooks(const std::string &, const Json &, const Cancellation &, int budget_ms = 0);
 };
 using EventSink = std::function<void(const Json &)>;
 struct RunResult {

@@ -1,0 +1,6 @@
+OpenAI Codex
+Copyright 2025 OpenAI
+
+The C++ patch matcher adapts the supplied Codex apply-patch parser, file_update,
+seek_sequence and text_file behavior. C++ translation and integration changes
+are part of Codet. No Ratatui code is included in this port.

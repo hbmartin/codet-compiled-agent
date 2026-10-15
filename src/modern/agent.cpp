@@ -1,4 +1,5 @@
 #include "codet/core.hpp"
+#include <iostream>
 #include <nlohmann/json-schema.hpp>
 #include <set>
 #include <sstream>
@@ -6,11 +7,14 @@
 namespace codet {
 RunResult Agent::run(Session &session, const std::string &prompt, const Cancellation &cancel,
                      const Json &schema) {
+  auto owner = state_.acquire(session.id);
+  session = state_.load(session.id, false);
   RunResult out;
   Json structured;
   session.provider = config_.provider;
   session.model = config_.model;
   tools_.use_session(session.id);
+  state_.reconcile(session);
   std::unique_ptr<nlohmann::json_schema::json_validator> validator;
   if (!schema.is_null()) {
     if (!schema.is_object() || schema.value("type", "") != "object")
@@ -31,21 +35,41 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
   }
   const auto emit = [&](const Json &event) {
     if (events_)
-      events_(event);
+      events_(safe_json(event));
   };
   emit({{"type", "thread.started"}, {"thread_id", session.id}});
   emit({{"type", "turn.started"}});
   state_.begin_turn(session.id);
+  const auto recover = [&](const std::string &status) {
+    try {
+      state_.reconcile(session);
+    } catch (const std::exception &e) {
+      std::cerr << "Transcript recovery failed: " << safe_text(e.what()) << '\n';
+    }
+    try {
+      state_.finish_turn(session.id, status);
+    } catch (const std::exception &e) {
+      std::cerr << "Turn status update failed: " << safe_text(e.what()) << '\n';
+    }
+  };
   try {
-    tools_.run_hooks("UserPromptSubmit",
-                     {{"hook_event_name", "UserPromptSubmit"},
-                      {"prompt", prompt},
-                      {"cwd", config_.cwd.string()},
-                      {"session_id", session.id}},
-                     cancel);
+    const auto submitted = tools_.run_hooks("UserPromptSubmit",
+                                            {{"hook_event_name", "UserPromptSubmit"},
+                                             {"prompt", prompt},
+                                             {"cwd", config_.cwd.string()},
+                                             {"session_id", session.id}},
+                                            cancel);
+    if (submitted.blocked || submitted.stopped)
+      throw Error("Prompt blocked by hook: " + submitted.reason);
+    if (!submitted.additional_context.empty()) {
+      Message context;
+      context.role = "system";
+      context.text = "UserPromptSubmit hook context:\n" + submitted.additional_context;
+      session.messages.push_back(context);
+    }
     Message user;
     user.role = "user";
-    user.text = tools_.expand_command(prompt);
+    user.text = safe_text(tools_.expand_command(prompt));
     session.messages.push_back(user);
     state_.save(session);
     const std::string system =
@@ -53,7 +77,9 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         "using tools. Read existing files before editing. Respect permission denials; do not retry "
         "without a policy change. Shell commands run under application authorization, not an OS "
         "sandbox. Search file contents by running system grep through Bash. Choose appropriate "
-        "grep flags, quote pattern/path arguments correctly, and respect shell permissions. "
+        "grep flags. Prefer unquoted literal patterns and paths only when no quoting is needed, "
+        "so scoped allow rules can match simple commands. Otherwise quote arguments correctly; "
+        "never remove necessary quoting to evade permissions. Respect shell permissions. "
         "Glob finds file names; there is no dedicated Grep tool. Never claim tests ran unless "
         "you ran them. Use Memory for durable project facts. "
         "No subagents, goals, scheduling, MCP, or editor protocols are available. Working "
@@ -76,10 +102,12 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
       auto transcript = Json(session.messages).dump();
       if (transcript.size() + system.size() > config_.context_tokens * 3 &&
           session.messages.size() > 2 && requests + 1 < config_.max_turns) {
-        tools_.run_hooks(
+        const auto compact_hook = tools_.run_hooks(
             "PreCompact",
             {{"hook_event_name", "PreCompact"}, {"session_id", session.id}, {"trigger", "auto"}},
             cancel);
+        if (compact_hook.stopped)
+          throw Error(compact_hook.reason);
         std::string bounded = transcript;
         const auto limit = std::max(size_t{512}, config_.context_tokens * 2);
         if (bounded.size() > limit)
@@ -119,6 +147,9 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
       out.usage.cached += response.usage.cached;
       out.usage.reasoning += response.usage.reasoning;
       std::set<std::string> ids;
+      for (const auto &message : session.messages)
+        for (const auto &call : message.calls)
+          ids.insert(call.id);
       for (const auto &call : response.message.calls)
         if (call.id.empty() || !ids.insert(call.id).second)
           throw Error("Provider returned duplicate or empty tool call ids");
@@ -133,12 +164,16 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         out.text = response.message.text;
         out.structured = structured;
         try {
-          tools_.run_hooks("Stop",
-                           {{"hook_event_name", "Stop"},
-                            {"session_id", session.id},
-                            {"last_assistant_message", out.text},
-                            {"stop_hook_active", stop_blocks > 0}},
-                           cancel);
+          const auto stop = tools_.run_hooks("Stop",
+                                             {{"hook_event_name", "Stop"},
+                                              {"session_id", session.id},
+                                              {"last_assistant_message", out.text},
+                                              {"stop_hook_active", stop_blocks > 0}},
+                                             cancel);
+          if (stop.stopped)
+            std::cerr << "Stop hook stopped execution: " << safe_text(stop.reason) << '\n';
+          else if (stop.blocked)
+            throw Error(stop.reason);
         } catch (const Error &e) {
           if (e.code == 130 || ++stop_blocks > 3)
             throw;
@@ -190,7 +225,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         tool.text = Json({{"content", result.content},
                           {"is_error", result.error},
                           {"metadata", result.metadata}})
-                        .dump();
+                        .dump(-1, ' ', false, Json::error_handler_t::replace);
         state_.tool_finished(session.id, call, Json(tool));
         session.messages.push_back(tool);
         state_.save(session);
@@ -198,17 +233,20 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         item["output"] = result.content;
         item["metadata"] = result.metadata;
         emit({{"type", "item.completed"}, {"item", item}});
+        if (result.metadata.contains("hook_stop"))
+          throw Error("Stopped by PostToolUse hook: " +
+                      result.metadata.at("hook_stop").get<std::string>());
       }
     }
     throw Error("Maximum model turns reached");
   } catch (const Error &e) {
-    state_.finish_turn(session.id, e.code == 130 ? "interrupted" : "failed");
+    recover(e.code == 130 ? "interrupted" : "failed");
     emit({{"type", "turn.failed"}, {"error", {{"message", e.what()}}}});
     throw;
   } catch (const std::exception &e) {
-    state_.finish_turn(session.id, "failed");
+    recover("failed");
     emit({{"type", "turn.failed"}, {"error", {{"message", e.what()}}}});
-    throw;
+    throw Error(safe_text(e.what()));
   }
 }
 } // namespace codet

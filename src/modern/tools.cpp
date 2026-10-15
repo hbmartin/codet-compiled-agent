@@ -1,6 +1,8 @@
 #include "codet/core.hpp"
+#include "codet/patch.hpp"
 #include <algorithm>
 #include <fnmatch.h>
+#include <iostream>
 #include <openssl/sha.h>
 #include <set>
 #include <sstream>
@@ -24,14 +26,34 @@ bool literal_shell_command(const std::string &command) {
       "do", "done", "case", "esac", "in",   "function", "time", "select", "coproc"};
   return !first.empty() && !reserved.count(first) && first.find('=') == std::string::npos;
 }
-bool rule_matches(const std::string &rule, const PermissionRequest &r) {
+bool rule_matches(const std::string &rule, const PermissionRequest &r, const Config &config,
+                  const FileSystem &files) {
   const auto pos = rule.find('(');
   if (pos == std::string::npos)
     return fnmatch(rule.c_str(), r.tool.c_str(), 0) == 0;
-  if (rule.empty() || rule.back() != ')')
+  if (rule.back() != ')' || fnmatch(rule.substr(0, pos).c_str(), r.tool.c_str(), 0))
     return false;
-  return fnmatch(rule.substr(0, pos).c_str(), r.tool.c_str(), 0) == 0 &&
-         fnmatch(rule.substr(pos + 1, rule.size() - pos - 2).c_str(), r.target.c_str(), 0) == 0;
+  const auto pattern = rule.substr(pos + 1, rule.size() - pos - 2);
+  if (!r.path)
+    return fnmatch(pattern.c_str(), r.target.c_str(), 0) == 0;
+  const auto cwd = files.canonical(config.cwd);
+  const auto requested = (cwd / *r.path).lexically_normal();
+  const auto canonical = files.canonical(requested);
+  auto absolute_pattern = (cwd / fs::path(pattern)).lexically_normal();
+  const auto wildcard = absolute_pattern.string().find_first_of("*?[\\");
+  fs::path canonical_pattern;
+  if (wildcard == std::string::npos)
+    canonical_pattern = files.canonical(absolute_pattern);
+  else {
+    const auto slash = absolute_pattern.string().rfind('/', wildcard);
+    const auto prefix = absolute_pattern.string().substr(0, slash + 1);
+    canonical_pattern = files.canonical(prefix) / absolute_pattern.string().substr(slash + 1);
+  }
+  for (const auto &target : {requested, canonical})
+    for (const auto &candidate : {absolute_pattern, canonical_pattern})
+      if (!fnmatch(candidate.c_str(), target.c_str(), 0))
+        return true;
+  return false;
 }
 std::string digest(const std::string &value) {
   unsigned char sum[SHA256_DIGEST_LENGTH];
@@ -50,14 +72,6 @@ std::vector<std::string> lines(const std::string &s) {
   std::string l;
   while (std::getline(in, l))
     out.push_back(l);
-  return out;
-}
-std::string join_lines(const std::vector<std::string> &ls) {
-  std::string out;
-  for (const auto &l : ls) {
-    out += l;
-    out += '\n';
-  }
   return out;
 }
 std::string html_text(const std::string &s) {
@@ -116,7 +130,7 @@ struct Change {
 } // namespace
 Decision Permissions::decide(const PermissionRequest &r) const {
   for (const auto &rule : config_.deny)
-    if (rule_matches(rule, r))
+    if (rule_matches(rule, r, config_, files_))
       return Decision::deny;
   if (config_.permission_mode == "plan" && r.mutation)
     return Decision::deny;
@@ -135,7 +149,7 @@ Decision Permissions::decide(const PermissionRequest &r) const {
       return Decision::deny;
   }
   for (const auto &rule : config_.allow)
-    if (rule_matches(rule, r) &&
+    if (rule_matches(rule, r, config_, files_) &&
         (rule.find('(') == std::string::npos || (r.tool != "Bash" && r.tool != "TaskCreate") ||
          literal_shell_command(r.target)))
       return Decision::allow;
@@ -165,7 +179,9 @@ void Tools::authorize(const PermissionRequest &r) {
                                  {"target", r.target},
                                  {"cwd", config_.cwd.string()}},
                                 *active_cancel_);
-    if (hook.value("permissionDecision", "") == "allow")
+    if (hook.blocked || hook.stopped || hook.permission == Decision::deny)
+      throw Error("Permission denied by hook: " + hook.reason);
+    if (hook.permission == Decision::allow)
       return;
   }
   if (d == Decision::ask && (config_.approval == "never" || !approve_ || !approve_(r)))
@@ -265,74 +281,6 @@ Json Tools::schemas() const {
       Json::array({"seconds"}));
   return out;
 }
-Json Tools::run_hooks(const std::string &event, const Json &input, const Cancellation &cancel,
-                      int budget_ms) {
-  const auto began = std::chrono::steady_clock::now();
-  Json combined = Json::object();
-  if (!config_.hooks.contains(event))
-    return combined;
-  const auto &hooks = config_.hooks[event];
-  if (!hooks.is_array())
-    throw Error("Hook event must be an array");
-  for (const auto &h : hooks) {
-    const auto matcher = h.value("matcher", "*");
-    if (fnmatch(matcher.c_str(), input.value("tool_name", "").c_str(), 0) != 0)
-      continue;
-    const auto command = h.at("command").get<std::string>();
-    fs::create_directories(config_.home / "hook-input");
-    const auto file = config_.home / "hook-input" / (unique_id() + ".json");
-    files_.atomic_write(file, input.dump() + "\n", true);
-    ProcessResult result;
-    try {
-      ProcessSpec spec;
-      spec.cwd = config_.cwd;
-      spec.argv = {"/bin/sh",    "-c",    "exec /bin/sh -c \"$1\" < \"$2\"",
-                   "codet-hook", command, file.string()};
-      spec.timeout_ms = h.value("timeout_ms", 10000);
-      if (spec.timeout_ms < 1 || spec.timeout_ms > 120000)
-        throw Error("Hook timeout must be 1..120000 ms");
-      if (budget_ms > 0) {
-        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                 std::chrono::steady_clock::now() - began)
-                                 .count();
-        if (elapsed >= budget_ms)
-          throw Error("Hook cleanup budget exhausted");
-        spec.timeout_ms = std::min(spec.timeout_ms, static_cast<int>(budget_ms - elapsed));
-      }
-      result = processes_.run(spec, cancel);
-      files_.remove(file);
-    } catch (...) {
-      try {
-        files_.remove(file);
-      } catch (...) { // NOLINT(bugprone-empty-catch): Preserve the original hook failure if cleanup fails.
-      }
-      throw;
-    }
-    if (result.exit_code == 2)
-      throw Error("Hook blocked " + event + ": " + result.output);
-    if (result.exit_code != 0)
-      throw Error("Hook failed for " + event + " (exit " + std::to_string(result.exit_code) + ")");
-    if (!result.output.empty()) {
-      const auto output = Json::parse(result.output, nullptr, false);
-      if (!output.is_object())
-        throw Error("Hook output must be a JSON object");
-      if (!output.value("continue", true) || output.value("decision", "") == "block")
-        throw Error("Hook blocked " + event);
-      if (output.contains("hookSpecificOutput")) {
-        const auto &specific = output["hookSpecificOutput"];
-        if (specific.value("permissionDecision", "") == "deny")
-          throw Error("Hook denied tool execution");
-        if (specific.contains("permissionDecision"))
-          combined["permissionDecision"] = specific["permissionDecision"];
-        if (specific.contains("updatedInput"))
-          combined["updatedInput"] = specific["updatedInput"];
-        if (specific.contains("additionalContext"))
-          combined["additionalContext"] = specific["additionalContext"];
-      }
-    }
-  }
-  return combined;
-}
 ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
   struct Active {
     const Cancellation *&slot;
@@ -354,10 +302,35 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
         known = true;
     if (!known)
       throw Error("Unknown tool: " + call.name);
-    const auto target = call.arguments.value(
-        "command", call.arguments.value("file_path", call.arguments.value("name", "")));
-    if (permissions_.decide({call.name, target, std::nullopt, false}) == Decision::deny)
-      throw Error("Permission denied for " + call.name);
+    const auto preflight = [&](const ToolCall &candidate) {
+      const bool mutation = candidate.name == "Write" || candidate.name == "Edit" ||
+                            candidate.name == "BatchEdit" || candidate.name == "ApplyPatch";
+      const auto check = [&](const std::string &value) {
+        const auto requested = (config_.cwd / fs::path(value)).lexically_normal();
+        if (permissions_.decide({candidate.name, value, requested, mutation}) == Decision::deny)
+          throw Error("Permission denied for " + candidate.name + ": " + value);
+      };
+      if (candidate.arguments.contains("file_path"))
+        check(candidate.arguments.at("file_path"));
+      else if (candidate.name == "Glob")
+        check(candidate.arguments.value("path", "."));
+      else if (candidate.name == "BatchEdit" && candidate.arguments.contains("edits")) {
+        for (const auto &edit : candidate.arguments.at("edits"))
+          check(edit.at("file_path"));
+      } else if (candidate.name == "ApplyPatch" && candidate.arguments.contains("patch")) {
+        for (const auto &line : lines(candidate.arguments.at("patch")))
+          for (const auto &prefix :
+               {"*** Update File: ", "*** Add File: ", "*** Delete File: ", "*** Move to: "})
+            if (line.rfind(prefix, 0) == 0)
+              check(line.substr(std::string(prefix).size()));
+      } else {
+        const auto target =
+            candidate.arguments.value("command", candidate.arguments.value("name", ""));
+        if (permissions_.decide({candidate.name, target, std::nullopt, false}) == Decision::deny)
+          throw Error("Permission denied for " + candidate.name);
+      }
+    };
+    preflight(call);
     ToolCall effective = call;
     const auto hook = run_hooks("PreToolUse",
                                 {{"hook_event_name", "PreToolUse"},
@@ -365,38 +338,54 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
                                  {"tool_input", call.arguments},
                                  {"cwd", config_.cwd.string()}},
                                 cancel);
-    if (hook.contains("updatedInput"))
-      effective.arguments = hook["updatedInput"];
+    if (hook.blocked || hook.stopped)
+      throw Error("Hook blocked PreToolUse: " + hook.reason);
+    if (hook.updated_input)
+      effective.arguments = *hook.updated_input;
+    preflight(effective);
     auto result = execute_inner(effective, cancel);
-    if (hook.contains("additionalContext"))
-      result.content += "\nHook context: " + hook["additionalContext"].get<std::string>();
+    if (!hook.additional_context.empty())
+      result.content += "\nHook context: " + hook.additional_context;
     try {
-      run_hooks("PostToolUse",
-                {{"hook_event_name", "PostToolUse"},
-                 {"tool_name", call.name},
-                 {"tool_input", effective.arguments},
-                 {"tool_response", result.content},
-                 {"cwd", config_.cwd.string()}},
-                cancel);
+      const auto post = run_hooks("PostToolUse",
+                                  {{"hook_event_name", "PostToolUse"},
+                                   {"tool_name", call.name},
+                                   {"tool_input", effective.arguments},
+                                   {"tool_response", result.content},
+                                   {"cwd", config_.cwd.string()}},
+                                  cancel);
+      if (!post.additional_context.empty())
+        result.content += "\nHook context: " + post.additional_context;
+      if (post.stopped) {
+        result.error = true;
+        result.metadata["action_completed"] = true;
+        result.metadata["hook_stop"] = post.reason;
+        result.content =
+            "Tool completed; hook requested stop: " + post.reason + "\n" + result.content;
+      } else if (post.blocked)
+        throw Error(post.reason);
     } catch (const Error &e) {
       if (e.code == 130)
         throw;
-      result.content = "Tool completed; PostToolUse hook failed: " + std::string(e.what()) + "\n" +
-                       result.content;
+      result.content =
+          "Tool completed; PostToolUse feedback: " + std::string(e.what()) + "\n" + result.content;
       result.error = true;
       result.metadata["action_completed"] = true;
     }
+    result.content = safe_text(result.content);
+    result.metadata = safe_json(result.metadata);
     if (result.content.size() > config_.tool_output_limit) {
       fs::create_directories(config_.home / "tool-output");
       const auto spill = config_.home / "tool-output" / (unique_id() + ".txt");
       files_.atomic_write(spill, result.content, true);
-      result.content.resize(config_.tool_output_limit);
-      result.content += "\n[Output truncated; saved to " + spill.string() + "]";
-      result.metadata["spill_path"] = spill.string();
+      auto notice = safe_text("\n[Output truncated; saved to " + spill.string() + "]");
+      if (notice.size() > config_.tool_output_limit)
+        notice = "\n[Output truncated; see metadata.spill_path]";
+      result.content =
+          bounded_text(result.content, config_.tool_output_limit - notice.size()) + notice;
+      result.metadata["spill_path"] = safe_text(spill.string());
     }
-    result.content =
-        Json::parse(Json(result.content).dump(-1, ' ', false, Json::error_handler_t::replace))
-            .get<std::string>();
+    result.content = bounded_text(result.content, config_.tool_output_limit);
     return result;
   } catch (const Error &e) {
     if (e.code == 130)
@@ -412,9 +401,14 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
       if (hook_error.code == 130)
         throw;
     }
-    return {e.what(), true, Json::object()};
+    Json metadata = Json::object();
+    if (dynamic_cast<const ProcessTimeout *>(&e))
+      metadata["exit_code"] = 124;
+    return {bounded_text(e.what(), config_.tool_output_limit), true, metadata};
+
   } catch (const std::exception &e) {
-    return {std::string("Tool failed: ") + e.what(), true, Json::object()};
+    return {bounded_text(std::string("Tool failed: ") + e.what(), config_.tool_output_limit), true,
+            Json::object()};
   }
 }
 ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel) {
@@ -507,7 +501,21 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
         edit(e);
     } else {
       const auto patch = a.at("patch").get<std::string>();
-      const auto ls = lines(patch);
+      auto ls = lines(patch);
+      const auto trim = [](const std::string &line) {
+        const auto first = line.find_first_not_of(" \t\r");
+        return first == std::string::npos
+                   ? std::string{}
+                   : line.substr(first, line.find_last_not_of(" \t\r") - first + 1);
+      };
+      while (!ls.empty() && trim(ls.front()).empty())
+        ls.erase(ls.begin());
+      while (!ls.empty() && trim(ls.back()).empty())
+        ls.pop_back();
+      if (!ls.empty()) {
+        ls.front() = trim(ls.front());
+        ls.back() = trim(ls.back());
+      }
       if (ls.empty() || ls.front() != "*** Begin Patch" || ls.back() != "*** End Patch")
         throw Error("Expected complete *** Begin Patch envelope");
       for (size_t i = 1; i + 1 < ls.size();) {
@@ -544,36 +552,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
           if (fs::exists(destination))
             throw Error("Move destination exists");
         }
-        while (i + 1 < ls.size() && ls[i].rfind("*** ", 0) != 0) {
-          if (ls[i].rfind("@@", 0) != 0)
-            throw Error("Expected @@ patch hunk");
-          ++i;
-          std::vector<std::string> before, after;
-          while (i + 1 < ls.size() && ls[i].rfind("@@", 0) != 0 && ls[i].rfind("*** ", 0) != 0) {
-            const auto &l = ls[i++];
-            if (l.empty())
-              throw Error("Patch lines require a prefix");
-            if (l[0] == ' ' || l[0] == '-')
-              before.push_back(l.substr(1));
-            if (l[0] == ' ' || l[0] == '+')
-              after.push_back(l.substr(1));
-            if (l[0] != ' ' && l[0] != '-' && l[0] != '+')
-              throw Error("Invalid patch line");
-          }
-          if (i < ls.size() && ls[i] == "*** End of File")
-            ++i;
-          const auto old = join_lines(before), replacement = join_lines(after);
-          if (old.empty())
-            throw Error("Update hunk needs context");
-          auto at = text.find(old);
-          if (at == std::string::npos && !text.empty() && text.back() != '\n') {
-            text += '\n';
-            at = text.find(old);
-          }
-          if (at == std::string::npos || text.find(old, at + old.size()) != std::string::npos)
-            throw Error("Patch context missing or ambiguous");
-          text.replace(at, old.size(), replacement);
-        }
+        text = patch_update(text, ls, i, cancel);
         if (destination != p) {
           add(p, std::nullopt, true);
           const auto original_mode = changes.back().mode;
@@ -642,8 +621,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     if (spec.timeout_ms < 1 || spec.timeout_ms > 3600000)
       throw Error("Timeout must be 1..3600000 ms");
     if (name == "TaskCreate" || a.value("run_in_background", false)) {
-      const auto id = processes_.start(spec);
-      task_ids_.push_back(id);
+      const auto id = processes_.start(spec, cancel);
       return {id, false, {{"lifetime", "current codet process"}}};
     }
     const auto r = processes_.run(spec, cancel);
@@ -667,10 +645,8 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
   }
   if (name == "TaskList") {
     Json jobs = Json::array();
-    for (const auto &id : task_ids_) {
-      const auto r = processes_.poll(id);
-      jobs.push_back({{"id", id}, {"running", r.running}, {"exit_code", r.exit_code}});
-    }
+    for (const auto &job : processes_.list())
+      jobs.push_back({{"id", job.id}, {"running", job.running}, {"exit_code", job.exit_code}});
     return {jobs.dump(), false, Json::object()};
   }
   if (name == "Glob") {
@@ -679,6 +655,15 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     const auto pattern = a.at("pattern").get<std::string>();
     if (pattern.size() > 4096)
       throw Error("Pattern too large");
+    const bool scoped_denials =
+        std::any_of(config_.deny.begin(), config_.deny.end(), [&](const auto &rule) {
+          const auto open = rule.find('(');
+          return open != std::string::npos && rule.back() == ')' &&
+                 fnmatch(rule.substr(0, open).c_str(), name.c_str(), 0) == 0;
+        });
+    const auto denied = [&](const fs::path &p) {
+      return scoped_denials && permissions_.decide({name, p.string(), p, false}) == Decision::deny;
+    };
     std::vector<fs::path> candidates;
     if (fs::is_regular_file(start))
       candidates.push_back(start);
@@ -690,6 +675,11 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
            it != end && visited++ < 10000; ++it) {
         cancel.check();
         const auto base = it->path().filename().string();
+        if (denied(it->path())) {
+          if (it->is_directory())
+            it.disable_recursion_pending();
+          continue;
+        }
         if (it->is_directory() &&
             (base == ".git" || base == ".deps" || base == "build" || base == "node_modules")) {
           it.disable_recursion_pending();
@@ -708,6 +698,8 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     std::string out;
     for (const auto &p : candidates) {
       cancel.check();
+      if (denied(p))
+        continue;
       const auto relative = fs::relative(p, config_.cwd).string();
       if (fnmatch(pattern.c_str(), relative.c_str(), 0) == 0 ||
           (pattern.rfind("**/", 0) == 0 &&
@@ -895,26 +887,60 @@ std::string Tools::instructions() const {
   }
   directories.push_back(home);
   std::string out;
+  const auto warn = [&](const std::string &message) {
+    if (warnings_.insert(message).second)
+      std::cerr << safe_text(message) << '\n';
+  };
   std::set<fs::path> seen;
+  const auto append = [&](const std::string &text, size_t cap) {
+    if (out.size() >= cap)
+      return false;
+    const auto clean = safe_text(text);
+    const auto portion = bounded_text(clean, cap - out.size());
+    out += portion;
+    return portion.size() == clean.size();
+  };
   std::function<void(const fs::path &, int)> include = [&](const fs::path &input, int depth) {
     const auto p = files_.canonical(input);
-    if (depth > 16 || seen.count(p) || !fs::exists(p) || out.size() >= 65536)
+    if (seen.count(p) || !fs::exists(p) || (!within(p, root) && !within(p, home)))
       return;
-    if (!within(p, root) && !within(p, home))
+    if (depth > 16) {
+      warn("Instruction include depth exceeded: " + p.string());
       return;
-    seen.insert(p);
-    const auto text = files_.read(p, 65536);
-    out += "\n# Instructions: " + p.string() + "\n";
-    for (const auto &l : lines(text)) {
-      if (l.rfind("@include ", 0) == 0)
-        include(p.parent_path() / l.substr(9), depth + 1);
-      else if (!l.empty() && l[0] == '@' && l.find(' ') == std::string::npos)
-        include(p.parent_path() / l.substr(1), depth + 1);
-      else
-        out += l + "\n";
-      if (out.size() >= 65536)
-        break;
     }
+    seen.insert(p);
+    if (!config_.project_doc_max_bytes)
+      return;
+    if (out.size() >= config_.project_doc_max_bytes) {
+      warn("Instruction budget exhausted; omitted: " + p.string());
+      return;
+    }
+    bool truncated = false;
+    std::string text;
+    try {
+      text = files_.read_prefix(p, config_.project_doc_max_bytes - out.size(), truncated);
+    } catch (const std::exception &e) {
+      warn("Instruction read failed: " + std::string(e.what()));
+      return;
+    }
+    append("\n# Instructions: " + p.string() + "\n", config_.project_doc_max_bytes);
+    const auto parts = lines(text);
+    for (size_t i = 0; i < parts.size(); ++i) {
+      const auto &line = parts[i];
+      const bool complete_line =
+          !truncated || i + 1 < parts.size() || (!text.empty() && text.back() == '\n');
+      if (complete_line && line.rfind("@include ", 0) == 0)
+        include(p.parent_path() / line.substr(9), depth + 1);
+      else if (complete_line && !line.empty() && line[0] == '@' &&
+               line.find(' ') == std::string::npos)
+        include(p.parent_path() / line.substr(1), depth + 1);
+      else if (!append(line + "\n", config_.project_doc_max_bytes)) {
+        truncated = true;
+        break;
+      }
+    }
+    if (truncated)
+      warn("Instruction content truncated to project_doc_max_bytes: " + p.string());
   };
   for (auto it = directories.rbegin(); it != directories.rend(); ++it) {
     include(*it / "AGENTS.md", 0);
@@ -922,14 +948,38 @@ std::string Tools::instructions() const {
   }
   const auto memory = config_.home / "memory";
   size_t count = 0;
-  if (fs::exists(memory))
+  if (config_.memory_context_max_bytes && fs::exists(memory)) {
+    std::set<fs::path> paths;
+    bool omitted = false;
     for (const auto &entry : fs::directory_iterator(memory))
-      if (!entry.is_symlink() && entry.is_regular_file() && entry.path().extension() == ".md" &&
-          ++count <= 200 && out.size() < 98304) {
-        auto text = files_.read(entry.path(), 65536);
-        out += "\n# Memory: " + entry.path().filename().string() + "\n" +
-               text.substr(0, 98304 - out.size());
+      if (!entry.is_symlink() && entry.is_regular_file() && entry.path().extension() == ".md") {
+        paths.insert(entry.path());
+        if (paths.size() > 200) {
+          paths.erase(std::prev(paths.end()));
+          omitted = true;
+        }
       }
+    if (omitted)
+      warn("Memory file count exceeds 200; omitted later paths");
+    const auto cap = out.size() + config_.memory_context_max_bytes;
+    for (const auto &p : paths) {
+      if (++count > 200 || out.size() >= cap) {
+        warn("Memory context budget exhausted; use Memory to read additional files");
+        break;
+      }
+      if (!append("\n# Memory: " + p.string() + " (use Memory to read more)\n", cap))
+        break;
+      bool truncated = false;
+      try {
+        const auto text = files_.read_prefix(p, cap - out.size(), truncated);
+        append(text, cap);
+        if (truncated)
+          warn("Memory context truncated: " + p.string());
+      } catch (const std::exception &e) {
+        warn("Memory read failed: " + std::string(e.what()));
+      }
+    }
+  }
   out += "\n# Available skills (load with Skill)\n";
   count = 0;
   for (const auto &dir :

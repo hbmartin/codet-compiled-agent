@@ -369,7 +369,7 @@ TEST_F(Fixture, CrashRecoveryRestoresResultsAndNeverReplaysUnknownEffects) {
   state.tool_finished(s.id, done, Json(result));
   state.tool_started(s.id, uncertain);
   auto recovered = state.load(s.id);
-  ASSERT_EQ(recovered.messages.size(), 4u);
+  ASSERT_EQ(recovered.messages.size(), 3u);
   EXPECT_EQ(recovered.messages[1].text, "recorded result");
   EXPECT_THAT(recovered.messages[2].text, HasSubstr("not replayed"));
   EXPECT_EQ(recovered.messages[2].tool_call_id, "uncertain");
@@ -421,7 +421,7 @@ TEST_F(Fixture, ControlledInterruptionAlsoRepairsPendingToolResults) {
   state.save(s);
   state.finish_turn(s.id, "interrupted");
   const auto resumed = state.load(s.id);
-  ASSERT_EQ(resumed.messages.size(), 3u);
+  ASSERT_EQ(resumed.messages.size(), 2u);
   EXPECT_EQ(resumed.messages[1].role, "tool");
   EXPECT_EQ(resumed.messages[1].tool_call_id, "pending");
   EXPECT_THAT(resumed.messages[1].text, HasSubstr("not replayed"));
@@ -645,7 +645,7 @@ TEST_F(Fixture, HookInputIsJsonAndDenialPreventsMutation) {
       .WillOnce(Invoke([&](const ProcessSpec &spec, const Cancellation &) {
         auto input = Json::parse(files.read(spec.argv.back()));
         EXPECT_EQ(input["tool_name"], "Write");
-        return ProcessResult{2, "blocked", false, false};
+        return ProcessResult{2, "", false, false, "blocked"};
       }));
   Tools tools(config, files, processes, http, clock);
   EXPECT_TRUE(tools.execute(call("Write", {{"file_path", "a"}, {"content", "x"}}), cancel).error);
