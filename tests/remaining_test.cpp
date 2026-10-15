@@ -336,6 +336,33 @@ TEST_F(Remaining, PathDenialsCoverAliasesCanonicalTargetsAndWildcardPrefixes) {
       EXPECT_TRUE(execute("Read", {{"file_path", path}}).error) << rule << " " << path;
   }
 }
+TEST_F(Remaining, WildcardPathDenialsCoverAdditionalRootsAndBypass) {
+  const auto extra = root / "extra";
+  fs::create_directories(extra);
+  files.atomic_write(extra / "secret.txt", "secret");
+  files.atomic_write(extra / ".env", "original");
+  files.atomic_write(extra / "public", "public");
+  config.roots.push_back(extra);
+  config.deny = {"Read(*secret*)", "Write(*.env)", "Glob(*secret*)"};
+  for (const auto &mode : {"default", "bypass"}) {
+    config.permission_mode = mode;
+    for (const auto &path : {(extra / "secret.txt").string(), std::string("../extra/secret.txt")}) {
+      const auto result = execute("Read", {{"file_path", path}});
+      EXPECT_TRUE(result.error) << mode << " " << path;
+      EXPECT_THAT(result.content, HasSubstr("Permission denied for Read"));
+    }
+    const auto write =
+        execute("Write", {{"file_path", (extra / ".env").string()}, {"content", "replacement"}});
+    EXPECT_TRUE(write.error) << mode;
+    EXPECT_THAT(write.content, HasSubstr("Permission denied for Write"));
+    EXPECT_EQ(files.read(extra / ".env"), "original");
+    const auto glob = execute("Glob", {{"path", extra.string()}, {"pattern", "*"}});
+    EXPECT_FALSE(glob.error) << glob.content;
+    EXPECT_THAT(glob.content, HasSubstr("public"));
+    EXPECT_THAT(glob.content, Not(HasSubstr("secret.txt")));
+    EXPECT_FALSE(execute("Read", {{"file_path", (extra / "public").string()}}).error);
+  }
+}
 TEST_F(Remaining, DeniedPathsPreventHooksAndRewrittenInputsAreRechecked) {
   files.atomic_write(config.cwd / "public", "public");
   files.atomic_write(config.cwd / "secret", "secret");

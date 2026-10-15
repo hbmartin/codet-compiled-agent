@@ -34,8 +34,11 @@ bool rule_matches(const std::string &rule, const PermissionRequest &r, const Con
   if (rule.back() != ')' || fnmatch(rule.substr(0, pos).c_str(), r.tool.c_str(), 0))
     return false;
   const auto pattern = rule.substr(pos + 1, rule.size() - pos - 2);
+  // Preserve raw glob scope, including leading wildcards that cover additional roots.
+  if (fnmatch(pattern.c_str(), r.target.c_str(), 0) == 0)
+    return true;
   if (!r.path)
-    return fnmatch(pattern.c_str(), r.target.c_str(), 0) == 0;
+    return false;
   const auto cwd = files.canonical(config.cwd);
   const auto requested = (cwd / *r.path).lexically_normal();
   const auto canonical = files.canonical(requested);
@@ -50,7 +53,7 @@ bool rule_matches(const std::string &rule, const PermissionRequest &r, const Con
     canonical_pattern = files.canonical(prefix) / absolute_pattern.string().substr(slash + 1);
   }
   for (const auto &target : {requested, canonical})
-    for (const auto &candidate : {absolute_pattern, canonical_pattern})
+    for (const auto &candidate : {fs::path(pattern), absolute_pattern, canonical_pattern})
       if (!fnmatch(candidate.c_str(), target.c_str(), 0))
         return true;
   return false;
