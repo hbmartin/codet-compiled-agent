@@ -19,6 +19,10 @@ make analyze-modern  # Separate Clang configuration; GCC host cache is preserved
 
 Host dependencies: CMake 3.20+, C++17 compiler, Python 3.12+, curl 7.85+, OpenSSL, SQLite 3.24+, ncurses and libedit development packages. See [build and interface documentation](docs/MODERN-AGENT.md).
 
+`make analyze-modern` runs Clang-Tidy, Cppcheck and Clang Static Analyzer against the modern
+application and shared C text helpers in a separate Clang build. Ubuntu GitHub Actions runs the
+same checks and host tests. See [analysis setup, reports and enforcement](docs/MODERN-ANALYSIS.md).
+
 ## Cross-build for Tiger
 
 ```sh
@@ -47,6 +51,7 @@ State lives under `CODET_HOME` or `~/.codet`. No existing Codex or Claurst files
 ## Documentation
 
 - [Modern build, configuration, CLI and tools](docs/MODERN-AGENT.md)
+- [Modern static analysis and Ubuntu CI](docs/MODERN-ANALYSIS.md)
 - [Feature/reference/test ledger](docs/FEATURE-PORT.md)
 - [Tiger acceptance and resource measurements](docs/TIGER-ACCEPTANCE.md)
 - [Recovered C build notes](docs/BUILD-NOTES.md)

@@ -63,7 +63,7 @@ std::string stdin_text() {
     std::cin.read(buffer, sizeof buffer);
     const auto count = std::cin.gcount();
     n += static_cast<size_t>(count);
-    if (n > 1024 * 1024)
+    if (n > size_t{1024} * 1024)
       throw Error("stdin exceeds 1 MiB", 2);
     out.write(buffer, count);
   }
@@ -415,12 +415,13 @@ public:
       say("Enter a choice number or a text answer.");
     auto answer = read(cancel);
     cancel.check();
-    if (!answer)
+    if (!answer.has_value())
       throw Error("User dismissed the question");
+    const auto &text = answer.value();
     for (size_t i = 0; i < options.size(); ++i)
-      if (*answer == std::to_string(i + 1))
+      if (text == std::to_string(i + 1))
         return options[i];
-    return *answer;
+    return text;
   }
   void progress(const Json &event) {
     if (event.value("type", "") == "item.started" && event.contains("item") &&
@@ -576,9 +577,8 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
                                                     : *config.selected_model;
     else if (config.provider == provider_before && !session.model.empty())
       config.model = session.model;
-    else if (config.provider != provider_before)
-      config.model = default_model(config, config.provider);
-    else if (session.model.empty() && !session.provider.empty())
+    else if (config.provider != provider_before ||
+             (session.model.empty() && !session.provider.empty()))
       config.model = default_model(config, config.provider);
   }
   session.model = config.model;
@@ -603,7 +603,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   Json schema;
   if (!o.schema.empty()) {
     try {
-      schema = Json::parse(files.read(fs::absolute(o.schema), 1024 * 1024), nullptr, false);
+      schema = Json::parse(files.read(fs::absolute(o.schema), size_t{1024} * 1024), nullptr, false);
     } catch (const Error &e) {
       throw Error(e.what(), 2);
     }

@@ -22,9 +22,33 @@ host:
 	cmake --build build/host -j4
 test: host
 	ctest --test-dir build/host --output-on-failure
-.PHONY: analyze-modern
-analyze-modern:
-	python3 scripts/analyze-modern.py
+MODERN_ANALYSIS_BUILD ?= build/modern-checks
+MODERN_CC ?= clang
+MODERN_CXX ?= $(or $(CODET_CLANGXX),clang++)
+MODERN_ANALYSIS_JOBS ?= 4
+MODERN_ANALYSIS_TIMEOUT ?= 300
+MODERN_ANALYSIS = python3 scripts/analyze-modern.py --build-dir $(MODERN_ANALYSIS_BUILD) \
+	--jobs $(MODERN_ANALYSIS_JOBS) --timeout $(MODERN_ANALYSIS_TIMEOUT)
+
+.PHONY: modern-analysis-host analyze-modern analyze-modern-clang-tidy analyze-modern-cppcheck \
+	analyze-modern-clang-analyzer analyze-modern-selftest test-modern-analysis-runner
+modern-analysis-host:
+	cmake -S . -B $(MODERN_ANALYSIS_BUILD) -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+	  -DCMAKE_C_COMPILER=$(MODERN_CC) -DCMAKE_CXX_COMPILER=$(MODERN_CXX) \
+	  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+	cmake --build $(MODERN_ANALYSIS_BUILD) -j$(MODERN_ANALYSIS_JOBS)
+analyze-modern: modern-analysis-host
+	$(MODERN_ANALYSIS) --tool all
+analyze-modern-clang-tidy: modern-analysis-host
+	$(MODERN_ANALYSIS) --tool clang-tidy
+analyze-modern-cppcheck: modern-analysis-host
+	$(MODERN_ANALYSIS) --tool cppcheck
+analyze-modern-clang-analyzer: modern-analysis-host
+	$(MODERN_ANALYSIS) --tool clang-analyzer
+analyze-modern-selftest: modern-analysis-host
+	$(MODERN_ANALYSIS) --selftest
+test-modern-analysis-runner:
+	python3 -m unittest discover -s tests -p test_analyze_modern.py -v
 test-foundation:
 	cmake -S . -B build/foundation -DCODET_FOUNDATION_ONLY=ON
 	cmake --build build/foundation -j4
@@ -81,7 +105,9 @@ help:
 	@printf '%s\n' 'make [modern]     Cross-build the modern C++ application and GoogleTest executable.' \
 	  'make host / test   Build the modern host application / run hermetic tests.' \
 	  'make test-sanitize Run host tests with ASan and UBSan.' \
-	  'make analyze-modern Run Clang analysis using a separate Clang configuration.' \
+	  'make analyze-modern Run Clang-Tidy, Cppcheck and Clang Static Analyzer in a separate Clang host build.' \
+	  'make analyze-modern-{clang-tidy,cppcheck,clang-analyzer} Run one modern analyzer.' \
+	  'make analyze-modern-selftest / test-modern-analysis-runner Verify detection and runner failure handling.' \
 	  'make fetch-tiger-deps / toolchain-image Fetch pinned sources / prepare build utilities (network).' \
 	  'make tiger-sysroot Build pinned target dependencies offline.' \
 	  'make verify-tiger / tiger-package Statically verify / package the modern PPC artifacts.' \

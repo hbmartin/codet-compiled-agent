@@ -29,7 +29,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
       throw Error(std::string("Invalid output schema: ") + e.what(), 2);
     }
   }
-  const auto emit = [&](Json event) {
+  const auto emit = [&](const Json &event) {
     if (events_)
       events_(event);
   };

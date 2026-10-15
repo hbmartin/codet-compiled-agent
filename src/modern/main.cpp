@@ -11,7 +11,8 @@ void interrupt(int) {
 } // namespace
 int main(int argc, char **argv) {
   std::setlocale(LC_ALL, "");
-  codet::Cancellation c;
+  // Signal handlers remain installed through process teardown.
+  static codet::Cancellation c;
   cancellation = &c;
   struct sigaction action {};
   action.sa_handler = interrupt;

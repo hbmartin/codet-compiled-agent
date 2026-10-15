@@ -91,13 +91,13 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
   Json selection = Json::object();
   const auto config_file = c.home / "config.toml";
   if (fs::exists(config_file))
-    data = layer(parse_toml(files.read(config_file, 1024 * 1024)));
+    data = layer(parse_toml(files.read(config_file, size_t{1024} * 1024)));
   if (!profile.empty()) {
     if (profile.find_first_not_of(
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") !=
         std::string::npos)
       throw Error("Invalid profile name", 2);
-    selection = layer(parse_toml(files.read(c.home / (profile + ".config.toml"), 1024 * 1024)));
+    selection = layer(parse_toml(files.read(c.home / (profile + ".config.toml"), size_t{1024} * 1024)));
     merge(data, selection);
   }
   fs::path trusted_root;
@@ -118,7 +118,7 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
     }
     for (auto it = parents.rbegin(); it != parents.rend(); ++it)
       if (fs::exists(*it / ".codet/config.toml"))
-        merge(data, layer(parse_toml(files.read(*it / ".codet/config.toml", 1024 * 1024))));
+        merge(data, layer(parse_toml(files.read(*it / ".codet/config.toml", size_t{1024} * 1024))));
   }
   for (const auto &s : overrides) {
     const auto eq = s.find('=');
@@ -170,7 +170,7 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
   }
   if (c.max_turns == 0 || c.max_turns > 1000 || c.max_output_tokens == 0 ||
       c.max_output_tokens > 1000000 || c.context_tokens < 512 || c.context_tokens > 2000000 ||
-      c.tool_output_limit < 256 || c.tool_output_limit > 16 * 1024 * 1024 ||
+      c.tool_output_limit < 256 || c.tool_output_limit > size_t{16} * size_t{1024} * 1024 ||
       c.request_timeout < 1 || c.request_timeout > 3600)
     throw Error("Configuration limit outside supported range", 2);
   if (c.permission_mode != "default" && c.permission_mode != "plan" &&
@@ -199,13 +199,13 @@ std::string default_model(const Config &c, const std::string &provider) {
 Json CredentialStore::load() const {
   if (!fs::exists(home_ / "auth.json"))
     return Json::object();
-  const Json j = Json::parse(files_.read(home_ / "auth.json", 1024 * 1024), nullptr, false);
+  const Json j = Json::parse(files_.read(home_ / "auth.json", size_t{1024} * 1024), nullptr, false);
   if (!j.is_object())
     throw Error("Invalid Codet credential store");
   return j;
 }
 void CredentialStore::import(const fs::path &source) {
-  const Json input = Json::parse(files_.read(source, 1024 * 1024), nullptr, false);
+  const Json input = Json::parse(files_.read(source, size_t{1024} * 1024), nullptr, false);
   if (!input.is_object())
     throw Error("Credential import requires a JSON object", 2);
   Json tokens = input.contains("tokens") ? input["tokens"] : input;
