@@ -9,7 +9,7 @@ struct Line {
   std::string text, ending;
 };
 struct Replacement {
-  size_t start, length;
+  size_t start = 0, length = 0;
   std::vector<std::string> lines;
 };
 struct Character {

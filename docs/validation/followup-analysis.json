@@ -1,0 +1,298 @@
+{
+  "date": "2026-10-15",
+  "base": "1d6c0e3bfe0ca247b421bdc54e72a13fbc254e2d",
+  "prior_cppcheck_2_13_coverage_valid": false,
+  "sources": [
+    {
+      "path": "src/modern/agent.cpp",
+      "sha256": "a1c4c212f5dd3a6848551103a828cdc82606020e1634577e0572a2711d24f6fd"
+    },
+    {
+      "path": "src/modern/cli.cpp",
+      "sha256": "1325adc0b24dec88fe21c4219308a108302628eabc1996afab2c8c2ae37c5ba1"
+    },
+    {
+      "path": "src/modern/config.cpp",
+      "sha256": "9a90142535d7fe51b7855a6d3bc7bd948918b3c6b5468fe4638e2811afef8ad1"
+    },
+    {
+      "path": "src/modern/hooks.cpp",
+      "sha256": "51aa13bd3b2afe87053b6477d6a70429ba39e72e15335011db23687bc1f70b9a"
+    },
+    {
+      "path": "src/modern/main.cpp",
+      "sha256": "2e2b9ae909db159f535d1a0f9dbee31d16fb52e001a3c9d1d06b33e0cbdb9ad1"
+    },
+    {
+      "path": "src/modern/output.cpp",
+      "sha256": "f1d6c64c6a6e589356d9445225e2d7605fd5979dd80417538495ca7cd9e650cb"
+    },
+    {
+      "path": "src/modern/patch.cpp",
+      "sha256": "3cacb9437d7fe972bab84bef1dd4769a0ec74e573e1749bd3d1f7b06d4d986e8"
+    },
+    {
+      "path": "src/modern/platform.cpp",
+      "sha256": "e48eaa308bdab9e89f817f593751e01beefe75985c6c64017e43c4a646500e8f"
+    },
+    {
+      "path": "src/modern/provider.cpp",
+      "sha256": "92f1ad37004efd5908acce61647ed5e7eb4b1efc4932b711e3c2d6f3683bf720"
+    },
+    {
+      "path": "src/modern/state.cpp",
+      "sha256": "0c6677e934d2c0e13ce053b073206fd9f8d3a209825ce181b08b394d7a66b7b2"
+    },
+    {
+      "path": "src/modern/tools.cpp",
+      "sha256": "8d0ad8d201212fc0a91dc776efc120896055df939aba40c93059039ff701c3e7"
+    },
+    {
+      "path": "src/text_compat.c",
+      "sha256": "00213a0ad26fd98c9bd9a0a45fb84f9b853fcac8df7fed05c79e4d6444fb2205"
+    },
+    {
+      "path": "include/app-functions.h",
+      "sha256": "8e363fc9efb6f09bed6e406c8cda95f46e18f7ca0412ee16654c9a40f26d9340"
+    },
+    {
+      "path": "include/app-globals.h",
+      "sha256": "58b79e8bc8e47df7317aa276e7b63cd06b88f72a304e9d1ed9b7f1161b694d6c"
+    },
+    {
+      "path": "include/app.h",
+      "sha256": "7b4aff9d8012d627b4ce9220436240b64d9a16bf9bc0b81653bf63ed753170a3"
+    },
+    {
+      "path": "include/callback-contracts.h",
+      "sha256": "c9bd4045bd5fbb7ba1e43cbfe582281349dc1e54c7dddfcabf41b29734c3c3e8"
+    },
+    {
+      "path": "include/codet/core.hpp",
+      "sha256": "f6b6eac1e43f420f56f41c65aa76d1dc4d415927e30db80292fcf70680502f3d"
+    },
+    {
+      "path": "include/codet/output.hpp",
+      "sha256": "8ba3f0145a19226d8eb5234a7c788a0ff705628d44a8f09064439c5cd5158c57"
+    },
+    {
+      "path": "include/codet/patch.hpp",
+      "sha256": "9a98a34c8848a505e2966dc73351960bbaf32a21f994ca14e63f2fe81e0d6302"
+    },
+    {
+      "path": "include/codet/process_control.hpp",
+      "sha256": "70863248682234da53a4e2910f41d18bd85ddb6fcf3422b9044ce5ca4b8efa14"
+    },
+    {
+      "path": "include/embedded-strings.h",
+      "sha256": "6ffac0e9967e511dd10556aed94a2ef0201c926bd01d699208e4e26834ec2e86"
+    },
+    {
+      "path": "include/imported-interfaces.h",
+      "sha256": "f28bc5576423cc04e2138d46b5accbdc64c3e294dcce7a080fcb4da6e16f2c8b"
+    },
+    {
+      "path": "include/observed-abi.h",
+      "sha256": "a6526dee44e4e156cdc8f2cd8a9f5ea28cd1a25c8ea3a1deb31d0e28055f2d64"
+    },
+    {
+      "path": "include/recovered-declarations.h",
+      "sha256": "328a2d82bcdb6bab00b171749643475b7e55f40ae7508fb305782a606ffa02a9"
+    },
+    {
+      "path": "include/recovered-layouts.h",
+      "sha256": "68c1c0b0313d38632390b8919ddc297d6240bed0c2d1de307fce3f0cb431f195"
+    },
+    {
+      "path": "include/recovered-storage.h",
+      "sha256": "a655bf2e2172d9293a2920b3f5ffb6ed6e7164e03b16d1c3400547d00648ce09"
+    },
+    {
+      "path": "include/recovered-types.h",
+      "sha256": "22d85c337901a5b84de45b08c20409256586c6cc9e5ca4a13ec783788ca76caa"
+    },
+    {
+      "path": "include/text_compat.h",
+      "sha256": "6ff5d6fe7251e3b156983ec5d1e4c2dea5bf08cdf40ac68734e1546850dd0da7"
+    }
+  ],
+  "pipeline_inputs": [
+    {
+      "path": "scripts/analyze-modern.py",
+      "sha256": "7264ff6ab98f91af008f5ae738c19c79157a487ea18e03ae4aa216f0675317c5"
+    },
+    {
+      "path": ".clang-tidy",
+      "sha256": "6f1c295e33a074232a79f234b9efc121030909758e1d9b0cb93d04c637aab1f5"
+    },
+    {
+      "path": "analysis-tools.lock.json",
+      "sha256": "3fb73266fc02ecf960f6d3e98b781be710dad38086dd7a3ebc9234d9e80694f0"
+    },
+    {
+      "path": "scripts/analysis-tools.py",
+      "sha256": "2c3a43c60394dba479a73c2ab524158c0dfb6e19a9a3d83380356592059bf57f"
+    }
+  ],
+  "reports": {
+    "macos": {
+      "passed": true,
+      "raw_manifest": "build/modern-checks/analysis/manifest.json",
+      "raw_manifest_sha256": "5c17e610b985d7ceb97b62008c194952351e281c499e2a45ba64d7ff6c0b5824",
+      "tools": [
+        {
+          "tool": "cppcheck",
+          "passed": true,
+          "completed": 12,
+          "findings": 0,
+          "versions": [
+            "Cppcheck 2.22.0"
+          ],
+          "canaries": [
+            {
+              "expected_failure": false,
+              "passed": true
+            },
+            {
+              "expected_failure": false,
+              "passed": true
+            },
+            {
+              "expected_failure": true,
+              "passed": true
+            }
+          ],
+          "active_semantic_checkers": [
+            125,
+            125,
+            125,
+            125,
+            125,
+            125,
+            125,
+            125,
+            125,
+            125,
+            125,
+            81
+          ],
+          "compatibility": {
+            "passed": true,
+            "headers": [
+              {
+                "original_sha256": "d2bb48aae1dd6e562c9db242519207a17e3e6ab902e23bc529cb95f030810ba0",
+                "adapted_sha256": "b2c6f02e6af7d415d2cd801f7b8daa8e91d92c930ed8ba60357ce356d72a2c01",
+                "replacements": 13,
+                "preprocessing_comparisons": 13,
+                "all_equivalent": true
+              }
+            ]
+          },
+          "ungated_raw_diagnostics": 2596
+        },
+        {
+          "tool": "clang-analyzer",
+          "passed": true,
+          "completed": 12,
+          "findings": 0,
+          "versions": [
+            "Apple clang version 17.0.0 (clang-1700.6.4.2)",
+            "Apple clang version 17.0.0 (clang-1700.6.4.2)"
+          ],
+          "canaries": [],
+          "ungated_raw_diagnostics": 0
+        }
+      ]
+    },
+    "linux": {
+      "passed": true,
+      "raw_manifest": "build/followup-linux/modern-checks/analysis/manifest.json",
+      "raw_manifest_sha256": "d56c7f16a1e29efaed49520e2fb8d7c745a4a119bd41625a3d1c16b8371a6ded",
+      "tools": [
+        {
+          "tool": "clang-tidy",
+          "passed": true,
+          "completed": 12,
+          "findings": 0,
+          "versions": [
+            "Ubuntu LLVM version 18.1.3"
+          ],
+          "canaries": [],
+          "ungated_raw_diagnostics": 36
+        },
+        {
+          "tool": "cppcheck",
+          "passed": true,
+          "completed": 12,
+          "findings": 0,
+          "versions": [
+            "Cppcheck 2.22.0"
+          ],
+          "canaries": [
+            {
+              "expected_failure": false,
+              "passed": true
+            },
+            {
+              "expected_failure": false,
+              "passed": true
+            },
+            {
+              "expected_failure": true,
+              "passed": true
+            }
+          ],
+          "active_semantic_checkers": [
+            125,
+            125,
+            125,
+            125,
+            125,
+            125,
+            125,
+            125,
+            125,
+            125,
+            125,
+            81
+          ],
+          "compatibility": {
+            "passed": true,
+            "headers": [
+              {
+                "original_sha256": "d2bb48aae1dd6e562c9db242519207a17e3e6ab902e23bc529cb95f030810ba0",
+                "adapted_sha256": "b2c6f02e6af7d415d2cd801f7b8daa8e91d92c930ed8ba60357ce356d72a2c01",
+                "replacements": 13,
+                "preprocessing_comparisons": 13,
+                "all_equivalent": true
+              }
+            ]
+          },
+          "ungated_raw_diagnostics": 2594
+        },
+        {
+          "tool": "clang-analyzer",
+          "passed": true,
+          "completed": 12,
+          "findings": 0,
+          "versions": [
+            "Ubuntu clang version 18.1.3 (1ubuntu1)",
+            "Ubuntu clang version 18.1.3 (1ubuntu1)"
+          ],
+          "canaries": [],
+          "ungated_raw_diagnostics": 0
+        }
+      ]
+    }
+  },
+  "target_runtime_verified": false,
+  "developer_image": {
+    "fresh_checkout": true,
+    "offline_smoke_passed": true,
+    "analysis_targets_build_executables": false,
+    "image_config_id": "sha256:0d27b09f69720174c62ffb3f829cc16a120cc076ed537747af3d52106b92fcdf",
+    "provisioning": "Explicit image build; Cppcheck build stage and smoke analysis use no network",
+    "smoke_log": "build/followup-fresh-smoke.log",
+    "smoke_log_sha256": "3e63bec0ab2c274c255f94298e6c5370c14a313cd8bf6478b991dd69140042e3"
+  }
+}

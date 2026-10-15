@@ -19,6 +19,8 @@ struct Statement {
     sqlite3_finalize(p);
   }
   void text(int n, const std::string &v) {
+    // SQLite requires this destructor sentinel to copy temporary string bytes.
+    // NOLINTNEXTLINE(performance-no-int-to-ptr): SQLITE_TRANSIENT is the documented C API sentinel.
     if (sqlite3_bind_text(p, n, v.c_str(), static_cast<int>(v.size()), SQLITE_TRANSIENT) !=
         SQLITE_OK)
       throw Error("SQLite bind failed");

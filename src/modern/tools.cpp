@@ -1,4 +1,5 @@
 #include "codet/core.hpp"
+#include "codet/output.hpp"
 #include "codet/patch.hpp"
 #include <algorithm>
 #include <fnmatch.h>
@@ -377,7 +378,30 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
     }
     result.content = safe_text(result.content);
     result.metadata = safe_json(result.metadata);
-    if (result.content.size() > config_.tool_output_limit) {
+    if (result.metadata.contains("total_output_bytes") &&
+        (result.metadata.value("truncated", false) || result.metadata.contains("capture_error") ||
+         result.metadata.value("spill_truncated", false) ||
+         result.content.size() > config_.tool_output_limit)) {
+      result.metadata["truncated"] = true;
+      std::string notice;
+      if (result.metadata.contains("spill_path")) {
+        notice = "\n[Output saved to " + result.metadata["spill_path"].get<std::string>();
+        if (result.metadata.value("spill_truncated", false))
+          notice += "; capture incomplete";
+        notice += "]";
+      } else
+        notice = "\n[Output truncated; disk capture unavailable]";
+      if (result.metadata.contains("capture_error"))
+        notice +=
+            "\n[Capture warning: " + result.metadata["capture_error"].get<std::string>() + "]";
+      if (notice.size() > config_.tool_output_limit / 2)
+        notice = "\n[Output truncated; see capture metadata]";
+      const auto budget = config_.tool_output_limit - notice.size();
+      result.content = head_tail_text(result.content.substr(0, result.content.size() / 2),
+                                      result.content.substr(result.content.size() / 2),
+                                      result.content.size(), budget) +
+                       notice;
+    } else if (result.content.size() > config_.tool_output_limit) {
       fs::create_directories(config_.home / "tool-output");
       const auto spill = config_.home / "tool-output" / (unique_id() + ".txt");
       files_.atomic_write(spill, result.content, true);
@@ -621,6 +645,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     spec.timeout_ms = a.value("timeout_ms", 120000);
     spec.pty = a.value("pty", false);
     spec.output_limit = config_.tool_output_limit;
+    spec.spool_directory = config_.home / "tool-output";
     if (spec.timeout_ms < 1 || spec.timeout_ms > 3600000)
       throw Error("Timeout must be 1..3600000 ms");
     if (name == "TaskCreate" || a.value("run_in_background", false)) {
@@ -628,7 +653,17 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
       return {id, false, {{"lifetime", "current codet process"}}};
     }
     const auto r = processes_.run(spec, cancel);
-    return {r.output, r.exit_code != 0, {{"exit_code", r.exit_code}, {"truncated", r.truncated}}};
+    Json metadata = {{"exit_code", r.exit_code},
+                     {"truncated", r.truncated},
+                     {"total_output_bytes", r.total_output_bytes}};
+    if (!r.spill_path.empty()) {
+      metadata["spill_path"] = r.spill_path;
+      metadata["spill_bytes"] = r.spill_bytes;
+      metadata["spill_truncated"] = r.spill_truncated;
+    }
+    if (!r.capture_error.empty())
+      metadata["capture_error"] = r.capture_error;
+    return {r.output, r.exit_code != 0, metadata};
   }
   if (name == "TaskInput") {
     const auto id = a.at("task_id").get<std::string>();
@@ -642,9 +677,18 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     if (name == "TaskStop")
       processes_.stop(id);
     const auto r = processes_.poll(id);
-    return {r.output,
-            r.exit_code != 0 && !r.running,
-            {{"running", r.running}, {"exit_code", r.exit_code}, {"truncated", r.truncated}}};
+    Json metadata = {{"running", r.running},
+                     {"exit_code", r.exit_code},
+                     {"truncated", r.truncated},
+                     {"total_output_bytes", r.total_output_bytes}};
+    if (!r.spill_path.empty()) {
+      metadata["spill_path"] = r.spill_path;
+      metadata["spill_bytes"] = r.spill_bytes;
+      metadata["spill_truncated"] = r.spill_truncated;
+    }
+    if (!r.capture_error.empty())
+      metadata["capture_error"] = r.capture_error;
+    return {r.output, r.exit_code != 0 && !r.running, metadata};
   }
   if (name == "TaskList") {
     Json jobs = Json::array();

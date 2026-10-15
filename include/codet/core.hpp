@@ -63,7 +63,8 @@ struct CurlTransport final : HttpTransport {
 };
 struct FileSystem {
   virtual ~FileSystem() = default;
-  virtual std::string read(const fs::path &, size_t limit = size_t{16} * size_t{1024} * 1024) const = 0;
+  virtual std::string read(const fs::path &,
+                           size_t limit = size_t{16} * size_t{1024} * 1024) const = 0;
   virtual std::string read_prefix(const fs::path &p, size_t limit, bool &truncated) const {
     auto text = read(p, limit);
     truncated = false;
@@ -87,12 +88,19 @@ struct ProcessSpec {
   int timeout_ms = 120000;
   size_t output_limit = 65536;
   bool pty = false, separate_stderr = false;
+  fs::path spool_directory;
+  size_t spool_limit = size_t{8} * 1024 * 1024, spool_quota = size_t{64} * 1024 * 1024;
+  size_t spool_records = 64;
 };
 struct ProcessResult {
   int exit_code = 0;
   std::string output;
   bool truncated = false, running = false;
   std::string stderr_output;
+  std::string spill_path, capture_error;
+  uint64_t total_output_bytes = 0;
+  size_t spill_bytes = 0;
+  bool spill_truncated = false;
   ProcessResult() = default;
   ProcessResult(int code, std::string text, bool cut = false, bool active = false,
                 std::string errors = {})
@@ -101,8 +109,8 @@ struct ProcessResult {
 };
 struct ProcessStatus {
   std::string id;
-  bool running;
-  int exit_code;
+  bool running = false;
+  int exit_code = 0;
 };
 struct Processes {
   virtual ~Processes() = default;
@@ -129,7 +137,7 @@ class NativeProcesses final : public Processes {
   unsigned next_ = 0;
   uint64_t completed_ = 0;
   void collect(Job &);
-  void finish(Job &);
+  void finish(Job &, bool ownership_lost = false);
   void refresh();
   void prune();
 
@@ -170,6 +178,9 @@ struct ProviderResult {
 struct ProviderConfig {
   std::string api_key, base_url, model;
 };
+struct Selection {
+  std::string provider, model;
+};
 struct Config {
   fs::path home, cwd;
   std::string provider = "codex", model, permission_mode = "default", approval = "on-request";
@@ -185,10 +196,12 @@ struct Config {
   bool trust_project = false;
   // Invocation selection only: explicit profile/CLI fields, independent of base defaults.
   std::optional<std::string> selected_provider, selected_model;
+  Selection configured{"codex", ""};
 };
 Config load_config(const fs::path &home, const fs::path &cwd, const std::string &profile,
                    const std::vector<std::string> &overrides, FileSystem &);
 std::string default_model(const Config &, const std::string &provider);
+Selection resolve_selection(const Config &, const std::optional<Selection> &saved = std::nullopt);
 std::string env(const char *);
 std::string unique_id();
 bool within(const fs::path &, const fs::path &);
@@ -268,8 +281,9 @@ struct PermissionRequest {
   std::optional<fs::path> path;
   bool mutation = false;
 };
-// NOLINTNEXTLINE(performance-enum-size): Preserve the public permission decision's existing int ABI.
-enum class Decision : int { allow, ask, deny };
+// NOLINTNEXTLINE(performance-enum-size): Preserve the public permission decision's existing int
+// ABI.
+enum class Decision : uint8_t { allow, ask, deny };
 class Permissions {
   const Config &config_;
   const FileSystem &files_;

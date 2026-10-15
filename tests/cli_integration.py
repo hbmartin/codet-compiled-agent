@@ -31,6 +31,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == '/api/chat':
             data=(json.dumps({'message':{'role':'assistant','content':'fixture done'},'done':True})+'\n').encode()
             self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+        if 'fixture-progress-failure' in str(body):
+            frames='data: '+json.dumps({'choices':[{'delta':{'content':'partial-progress'},'finish_reason':None}]})+'\n\ndata: {broken\n\n'
+            data=frames.encode();self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
         messages=body['messages']
         prompt=next((m.get('content','') or '' for m in reversed(messages) if m['role']=='user'),'')
         if 'fixture-error' in prompt:
@@ -110,6 +113,27 @@ class CliTests(unittest.TestCase):
         self.assertEqual(r.returncode,0,r.stderr)
         self.assertEqual(self.server.requests[-1]['body']['model'],'--help')
 
+    def test_help_version_precede_errors_but_respect_values_and_literals(self):
+        for flags in [('--bogus','--help'),('--help','--bogus'),('--output-format=bad','--help'),('--version','--bogus'),('--bogus','--version'),('--version','--help')]:
+            r=self.run_cli(*flags)
+            self.assertEqual(r.returncode,0,r.stderr)
+            self.assertTrue(r.stdout.startswith('Codet') or r.stdout.startswith('codet'),r.stdout)
+        self.assertEqual(self.run_cli('--bogus').returncode,2)
+
+    def test_new_and_saved_selection_use_configured_pairs(self):
+        base=f"[providers.openai]\napi_key='fake'\nbase_url='http://127.0.0.1:{self.server.server_port}/v1'\n[providers.ollama]\nbase_url='http://127.0.0.1:{self.server.server_port}'\nmodel='ollama-configured'\n"
+        (self.home/'config.toml').write_text("provider='openai'\nmodel='configured-openai'\n"+base)
+        r=self.run_cli('exec','--provider','ollama','--json','simple')
+        self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual(self.server.requests[-1]['body']['model'],'ollama-configured')
+        session=json.loads(r.stdout.splitlines()[0])['thread_id']
+        for action in ('resume','fork'):
+            r=self.run_cli('exec',action,session,'--provider','openai','simple')
+            self.assertEqual(r.returncode,0,r.stderr)
+            self.assertEqual(self.server.requests[-1]['body']['model'],'configured-openai')
+        (self.home/'config.toml').write_text("provider='openai'\nmodel_provider=42\nmodel='configured-openai'\n"+base)
+        self.assertEqual(self.run_cli('doctor').returncode,0)
+
     def test_resume_selection_is_field_specific(self):
         base=f"[providers.openai]\napi_key='fake'\nbase_url='http://127.0.0.1:{self.server.server_port}/v1'\nmodel='openai-default'\n[providers.ollama]\nbase_url='http://127.0.0.1:{self.server.server_port}'\nmodel='ollama-default'\n"
         cases=[(['--max-turns','10'],'','openai','saved'),
@@ -117,10 +141,10 @@ class CliTests(unittest.TestCase):
                (['--profile','selected'],'max_turns=10\n','openai','saved'),
                (['--model','explicit'],'','openai','explicit'),
                (['-c',"model='explicit'"],'','openai','explicit'),
-               (['--provider','ollama'],'','ollama','ollama-default'),
-               (['-c',"model_provider='ollama'"],'','ollama','ollama-default'),
+               (['--provider','ollama'],'','ollama','changed-global'),
+               (['-c',"model_provider='ollama'"],'','ollama','changed-global'),
                (['--provider','openai'],'','openai','saved'),
-               (['--profile','selected'],"provider='ollama'\n",'ollama','ollama-default'),
+               (['--profile','selected'],"provider='ollama'\n",'ollama','changed-global'),
                (['--profile','selected'],"model='profile-model'\n",'openai','profile-model'),
                (['--profile','selected','-m','cli-model'],"model='profile-model'\n",'openai','cli-model'),
                (['--provider','ollama','-m','explicit'],'','ollama','explicit')]
@@ -224,6 +248,69 @@ class CliTests(unittest.TestCase):
             finally:
                 if p.poll() is None:p.kill();p.wait()
                 os.close(master);os.close(slave)
+
+    def test_curses_progress_clears_after_success_failure_and_cancellation(self):
+        import fcntl,pty,select,struct,termios
+        config=self.home/'config.toml'
+        config.write_text('stream_idle_timeout_seconds=5\n'+config.read_text())
+        master,slave=pty.openpty()
+        fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,120,0,0))
+        p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','curses'],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+        received=b''
+        def wait_for(text):
+            nonlocal received
+            deadline=time.monotonic()+7
+            while text not in received and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+            self.assertIn(text,received)
+        try:
+            wait_for(b'codet>')
+            for index,(prompt,finish) in enumerate([('fixture-active-stream',b'fixture done'),('fixture-progress-failure',b'Error:'),('fixture-idle-stream',b'Error:')]):
+                received=b'';os.write(master,prompt.encode()+b'\n')
+                wait_for(b'Responding:')
+                if index==2:p.send_signal(signal.SIGINT)
+                wait_for(finish)
+                # A resize forces curses to repaint the current screen from its state.
+                time.sleep(.1);received=b''
+                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',25+index,121+index,0,0))
+                p.send_signal(signal.SIGWINCH)
+                wait_for(b'Permissions: default')
+                self.assertNotIn(b'Responding:',received)
+            os.write(master,b'/quit\n');deadline=time.monotonic()+5
+            while p.poll() is None and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+            self.assertEqual(p.poll(),0,repr(received))
+        finally:
+            if p.poll() is None:p.kill();p.wait()
+            os.close(master);os.close(slave)
+
+    def test_cleanup_diagnostics_follow_curses_restoration(self):
+        import pty,select,termios
+        config=self.home/'config.toml'
+        config.write_text(config.read_text()+'\n[hooks]\nSessionEnd=[{command="printf cleanup-detail >&2; exit 3"}]\n')
+        master,slave=pty.openpty();original=termios.tcgetattr(slave)
+        p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','curses'],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+        received=b''
+        try:
+            deadline=time.monotonic()+5
+            while b'codet>' not in received and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+            self.assertIn(b'codet>',received)
+            os.write(master,b'/quit\n')
+            while p.poll() is None or select.select([master],[],[],.1)[0]:
+                if select.select([master],[],[],.05)[0]:received+=os.read(master,65536)
+                if time.monotonic()>deadline+5:self.fail('terminal did not exit')
+            self.assertEqual(p.wait(timeout=1),0)
+            self.assertIn(b'cleanup-detail',received)
+            self.assertIn(b'SessionEnd hook cleanup failed',received)
+            self.assertGreater(received.index(b'cleanup-detail'),received.index(b'\x1b[?1049l'))
+            restored=termios.tcgetattr(slave)
+            # PENDIN is a kernel-maintained pending-input flag on Darwin.
+            restored[3]&=~getattr(termios,'PENDIN',0);original[3]&=~getattr(termios,'PENDIN',0)
+            self.assertEqual(restored,original)
+        finally:
+            if p.poll() is None:p.kill();p.wait()
+            os.close(master);os.close(slave)
 
     def test_export_fork_and_resume_of_a_live_session(self):
         p=subprocess.Popen([BIN,'-C',str(self.workspace),'exec','--json','--permission-mode','bypass','fixture-long-batch'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=self.env)

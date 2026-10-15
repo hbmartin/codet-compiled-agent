@@ -5,4 +5,4 @@ __pycache__/
 .DS_Store
 triage_decisions.db
 reviews_triage/
-analysis/
+# Generated analyzer reports live under the already ignored /build/.

@@ -1,9 +1,13 @@
 #pragma once
 #include <chrono>
 #include <memory>
+#include <stdexcept>
 #include <sys/types.h>
 
 namespace codet {
+struct ProcessOwnershipLost : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
 // Internal syscall seam. Only the owning NativeProcesses instance may reap its children.
 class ProcessControl {
 public:
@@ -17,6 +21,8 @@ public:
   }
   // Return readiness, timeout, or EINTR without resetting the caller's deadline.
   virtual int wait_ready(int fd, int timeout_ms);
+  virtual int read_setup(int fd, int &setup_error);
+  virtual int release(int fd);
 };
 std::shared_ptr<ProcessControl> native_process_control();
 } // namespace codet

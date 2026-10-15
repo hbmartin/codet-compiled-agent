@@ -20,6 +20,8 @@ otool -L "$bundle_dir/codet" > "$report_dir/dependencies.txt"
 "$bundle_dir/codet" doctor -C "$test_root/workspace" > "$report_dir/doctor.json"
 /usr/bin/time -l "$bundle_dir/codet" --version > "$report_dir/startup.txt" 2> "$report_dir/startup-resource.txt"
 /usr/bin/time -l "$bundle_dir/codet_tests" --gtest_output="xml:$report_dir/tests.xml" > "$report_dir/tests.txt" 2> "$report_dir/test-resource.txt"
+printf '%s\n' 'Followup.* covers exit observation/ownership, inherited signals, startup interruption, output captures/quotas/paging and provider selection.' > "$report_dir/followup-cases.txt"
+printf '%s\n' 'Manual: both UIs, progress clear on success/error/Ctrl-C, SessionEnd diagnostics after terminal restore, portable search exclusions, capture paging.' >> "$report_dir/followup-cases.txt"
 case "${1:-}" in
   --tls)
     export CODET_TEST_TLS_URL=${CODET_TEST_TLS_URL:-https://auth.openai.com/.well-known/openid-configuration}

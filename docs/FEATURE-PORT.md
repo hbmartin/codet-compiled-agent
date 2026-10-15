@@ -7,7 +7,7 @@ The source reference is the supplied Claurst Rust tree (`claurst-main/src-rust`)
 | GoogleTest/GoogleMock foundation | Provider fixture patterns and core tests | CMake/CTest; pinned 1.17.0 | `foundation_test.cpp`, offline fetch hashes |
 | Typed service boundaries | core types; api provider; tool context | `core.hpp`: HTTP, clock, filesystem, processes, provider | MockHttp, FakeClock, MockFiles, MockProcesses, MockProvider |
 | Codex-shaped CLI/headless | cli/main, cli/headless | cli.cpp | CLI contract checks; loopback integration tests |
-| TOML configuration/profiles/trust | core config/import_config | config.cpp | Layering, override, invalid limit tests |
+| TOML configuration/profiles/trust | core config/import_config | config.cpp | Layering, shared fresh/resume/fork selection resolver, override/provenance matrices, invalid limit tests |
 | Credential import/refresh | core oauth_config/accounts; api/providers/codex | config.cpp | Source preservation, 0600 storage, expired credentials, refresh rotation/failure fixtures |
 | Codex Responses/custom patches/reasoning | api/providers/codex | provider.cpp | Request/replay and completion fixtures; live subscription pending |
 | Anthropic | api/providers/anthropic | provider.cpp | Tool-input/thinking-signature fixtures; live API pending |
@@ -18,14 +18,14 @@ The source reference is the supplied Claurst Rust tree (`claurst-main/src-rust`)
 | File read/write/edit | tools file_read/file_write/file_edit | tools.cpp | Atomic mode preservation, read-before-write, stale/ambiguous edits, Unicode/binary/large files |
 | Batch edits and Codex patches | tools batch_edit/apply_patch | tools.cpp | Prevalidation, same-file batches, injected disk failure rollback, patch changes |
 | File-name/content search | tools glob_tool/grep_tool; Codex shell search reference | Glob + Bash/system grep | Retired Grep schema; shell quoting, long lines, bounds, exit statuses, cancellation |
-| PTY shell and background jobs | tools pty_bash/tasks | platform.cpp, tools.cpp | Native PTY input, bounded flood output, timeout, cancellation, signal-before-reap ordering, immediate exits, descendant cleanup |
+| PTY shell and background jobs | tools pty_bash/tasks | platform.cpp, tools.cpp | Native PTY input, head/tail previews, bounded 8 MiB disk captures, cross-process quotas/eviction, timeout, cancellation, signal-before-reap ordering, immediate exits, descendant cleanup |
 | Plans/todos/questions | tools todo_write/plan/ask_user | tools.cpp | Durable plans, read-only modes, noninteractive rejection; free-form/choice answers in both terminal modes |
 | Permission rules/roots | core permissions/bash_classifier | tools.cpp | Deny precedence, sibling/symlink escapes, project trust, hook outcomes, utility-tool denials, scoped shell guards, live permission-mode changes |
 | Sessions/resume/fork/recovery | core session_storage/session_journal | state.cpp | Fork isolation, completed/uncertain tool recovery, migration, truncated messages, future schema rejection; CLI resume/fork |
-| Context compaction | query runner/compaction | agent.cpp | Same-provider summary, retained objective, request cap |
+| Context compaction | query runner/compaction | agent.cpp | Same-provider summary, retained objective, request cap; actual-adapter compaction with omitted empty tools |
 | Instructions/includes/skills | core claudemd/skill_discovery | tools.cpp | Includes/cycles, skill loading, bounded prompt assembly |
 | Durable memory/consolidation | core memdir; query session_memory/auto_dream | tools.cpp, cli.cpp | Explicit consolidation through CLI with a loopback provider; fresh-session recall; no background calls |
-| Hooks/custom commands | core hooks; commands named_commands | tools.cpp | JSON stdin, block-before-write; headless end hooks on success/failure/interruption/fork, cleanup budget; manual target hook acceptance |
+| Hooks/custom commands | core hooks; commands named_commands | hooks.cpp, tools.cpp, cli.cpp | JSON stdin, block-before-write; headless end hooks on success/failure/interruption/fork, cleanup budget; manual target hook acceptance |
 | Web fetch/search | tools web_fetch/web_search | tools.cpp | Text preservation and result URL fixtures; live search pending |
 | Minimal ncurses + line REPL | tui app/input/render | cli.cpp | PTY startup/exit, resize, terminal restoration; Tiger terminal acceptance pending |
 | Export/diagnostics/usage | commands export/diagnostics/usage | cli.cpp, agent.cpp | JSON/text output, doctor, usage/event fixtures |
@@ -63,3 +63,5 @@ See `MODERN-AGENT.md` for exact interfaces and `TIGER-ACCEPTANCE.md` for the out
 | False-positive bypass test | Assert latest tool outcome and exact command output in both terminal modes |
 
 Shell deny rules intentionally retain their documented lexical contract. No broad command-policy, sandbox, plugin, or background-memory-agent port is added. See `MODERN-AGENT.md` for exact bounds and hook decisions.
+
+Follow-up application/analysis review dispositions and validation are tracked in [REVIEW-FOLLOWUP.md](REVIEW-FOLLOWUP.md). Earlier Cppcheck coverage evidence is invalid; use the corrected source-hashed pipeline described in [MODERN-ANALYSIS.md](MODERN-ANALYSIS.md).

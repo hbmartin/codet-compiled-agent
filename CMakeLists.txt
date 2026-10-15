@@ -50,7 +50,7 @@ add_library(codet_text STATIC src/text_compat.c)
 target_include_directories(codet_text PUBLIC include)
 add_library(codet_core STATIC
   src/modern/platform.cpp src/modern/config.cpp src/modern/provider.cpp
-  src/modern/state.cpp src/modern/hooks.cpp src/modern/patch.cpp src/modern/tools.cpp src/modern/agent.cpp src/modern/cli.cpp)
+  src/modern/state.cpp src/modern/output.cpp src/modern/hooks.cpp src/modern/patch.cpp src/modern/tools.cpp src/modern/agent.cpp src/modern/cli.cpp)
 target_include_directories(codet_core PUBLIC include PRIVATE ${CURSES_INCLUDE_DIRS} ${EDIT_INCLUDE_DIR})
 target_link_libraries(codet_core PUBLIC nlohmann_json::nlohmann_json tomlplusplus::tomlplusplus
   nlohmann_json_schema_validator::validator CURL::libcurl OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB ${CODET_SQLITE_TARGET} Threads::Threads
@@ -79,7 +79,7 @@ if(CODET_BUILD_TESTS)
   set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
   set(BUILD_GMOCK ON CACHE BOOL "" FORCE)
   add_subdirectory("${CODET_DEPENDENCY_ROOT}/googletest" "deps/gtest" EXCLUDE_FROM_ALL)
-  add_executable(codet_tests tests/foundation_test.cpp tests/core_test.cpp tests/review_test.cpp tests/remaining_test.cpp)
+  add_executable(codet_tests tests/foundation_test.cpp tests/core_test.cpp tests/review_test.cpp tests/remaining_test.cpp tests/followup_test.cpp)
   target_link_libraries(codet_tests PRIVATE codet_core codet_text GTest::gmock_main)
   # No discovery-time execution: the same build must work for PPC cross builds.
   if(NOT CMAKE_CROSSCOMPILING)

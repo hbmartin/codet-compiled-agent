@@ -29,6 +29,7 @@ void merge(Json &into, const Json &from) {
 Json layer(Json value) {
   if (value.contains("model_provider") && !value.contains("provider"))
     value["provider"] = value["model_provider"];
+  value.erase("model_provider");
   return value;
 }
 std::string expand_env(std::string text) {
@@ -92,12 +93,14 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
   const auto config_file = c.home / "config.toml";
   if (fs::exists(config_file))
     data = layer(parse_toml(files.read(config_file, size_t{1024} * 1024)));
+  Json defaults = data;
   if (!profile.empty()) {
     if (profile.find_first_not_of(
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") !=
         std::string::npos)
       throw Error("Invalid profile name", 2);
-    selection = layer(parse_toml(files.read(c.home / (profile + ".config.toml"), size_t{1024} * 1024)));
+    selection =
+        layer(parse_toml(files.read(c.home / (profile + ".config.toml"), size_t{1024} * 1024)));
     merge(data, selection);
   }
   fs::path trusted_root;
@@ -117,8 +120,12 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
         break;
     }
     for (auto it = parents.rbegin(); it != parents.rend(); ++it)
-      if (fs::exists(*it / ".codet/config.toml"))
-        merge(data, layer(parse_toml(files.read(*it / ".codet/config.toml", size_t{1024} * 1024))));
+      if (fs::exists(*it / ".codet/config.toml")) {
+        const auto project =
+            layer(parse_toml(files.read(*it / ".codet/config.toml", size_t{1024} * 1024)));
+        merge(data, project);
+        merge(defaults, project);
+      }
   }
   for (const auto &s : overrides) {
     const auto eq = s.find('=');
@@ -139,8 +146,8 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
       c.selected_provider = selection["provider"].get<std::string>();
     if (selection.contains("model"))
       c.selected_model = selection["model"].get<std::string>();
-    c.provider = data.value("provider", data.value("model_provider", c.provider));
-    c.model = data.value("model", "");
+    c.configured = {defaults.value("provider", c.provider), defaults.value("model", "")};
+    c.provider = c.configured.provider;
     c.permission_mode = data.value("permission_mode", c.permission_mode);
     c.approval = data.value("approval_policy", c.approval);
     c.ui = data.value("ui", c.ui);
@@ -177,7 +184,8 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
       c.tool_output_limit < 256 || c.tool_output_limit > size_t{16} * size_t{1024} * 1024 ||
       c.request_timeout < 0 || c.request_timeout > 3600 || c.connect_timeout < 1 ||
       c.connect_timeout > 3600 || c.stream_idle_timeout < 1 || c.stream_idle_timeout > 3600 ||
-      c.project_doc_max_bytes > size_t{1024} * 1024 || c.memory_context_max_bytes > size_t{1024} * 1024)
+      c.project_doc_max_bytes > size_t{1024} * 1024 ||
+      c.memory_context_max_bytes > size_t{1024} * 1024)
     throw Error("Configuration limit outside supported range", 2);
   if (c.permission_mode != "default" && c.permission_mode != "plan" &&
       c.permission_mode != "accept-edits" && c.permission_mode != "bypass")
@@ -188,11 +196,14 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
     if (provider != "codex" && provider != "openai" && provider != "anthropic" &&
         provider != "google" && provider != "ollama")
       throw Error("Unsupported provider: " + provider, 2);
-  if (c.model.empty())
-    c.model = default_model(c, c.provider);
+  const auto resolved = resolve_selection(c);
+  c.provider = resolved.provider;
+  c.model = resolved.model;
   return c;
 }
 std::string default_model(const Config &c, const std::string &provider) {
+  if (c.configured.provider == provider && !c.configured.model.empty())
+    return c.configured.model;
   const auto found = c.providers.find(provider);
   if (found != c.providers.end() && !found->second.model.empty())
     return found->second.model;
@@ -201,6 +212,19 @@ std::string default_model(const Config &c, const std::string &provider) {
          : provider == "ollama"  ? "qwen3-coder"
          : provider == "codex"   ? "gpt-5.5"
                                  : "gpt-4o-mini";
+}
+Selection resolve_selection(const Config &c, const std::optional<Selection> &saved) {
+  const auto previous = saved && !saved->provider.empty() ? saved->provider : c.configured.provider;
+  Selection resolved;
+  resolved.provider = c.selected_provider.value_or(previous);
+  if (c.selected_model)
+    resolved.model =
+        c.selected_model->empty() ? default_model(c, resolved.provider) : *c.selected_model;
+  else if (saved && resolved.provider == previous && !saved->model.empty())
+    resolved.model = saved->model;
+  else
+    resolved.model = default_model(c, resolved.provider);
+  return resolved;
 }
 Json CredentialStore::load() const {
   if (!fs::exists(home_ / "auth.json"))

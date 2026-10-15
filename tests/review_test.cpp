@@ -1,5 +1,6 @@
 #include "codet/core.hpp"
 #include "codet/process_control.hpp"
+#include "temp.hpp"
 #include <csignal>
 #include <fstream>
 #include <gmock/gmock.h>
@@ -12,6 +13,7 @@ using namespace codet;
 using namespace testing;
 namespace {
 struct ReviewFixture : Test {
+  TempDirectory temp;
   fs::path root;
   NativeFileSystem files;
   SystemClock clock;
@@ -20,10 +22,7 @@ struct ReviewFixture : Test {
   NativeProcesses processes;
   Config config;
   void SetUp() override {
-    std::string pattern = (fs::temp_directory_path() / "codet-review-XXXXXX").string();
-    std::vector<char> buffer(pattern.begin(), pattern.end());
-    buffer.push_back(0);
-    root = mkdtemp(buffer.data());
+    root = temp.root;
     config.home = root / "state";
     config.cwd = root / "workspace";
     fs::create_directories(config.home);
@@ -33,9 +32,7 @@ struct ReviewFixture : Test {
     config.model = "fixture";
     config.providers["openai"].api_key = "fake";
   }
-  void TearDown() override {
-    fs::remove_all(root);
-  }
+
   ToolResult shell(const std::string &command, int timeout = 5000) {
     Tools tools(config, files, processes, http, clock);
     return tools.execute({"shell", "Bash", {{"command", command}, {"timeout_ms", timeout}}},
