@@ -1,4 +1,5 @@
 #include "codet/core.hpp"
+#include "temp.hpp"
 #include <fstream>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -10,22 +11,7 @@
 using namespace codet;
 using namespace testing;
 namespace {
-struct Temp {
-  fs::path root;
-  Temp() {
-    std::string pattern = (fs::temp_directory_path() / "codet-test-XXXXXX").string();
-    std::vector<char> b(pattern.begin(), pattern.end());
-    b.push_back(0);
-    auto *p = mkdtemp(b.data());
-    if (!p)
-      throw std::runtime_error("mkdtemp");
-    root = p;
-  }
-  ~Temp() {
-    std::error_code e;
-    fs::remove_all(root, e);
-  }
-};
+using Temp = TempDirectory;
 struct FakeClock : Clock {
   int64_t now = 10000;
   int slept = 0;
@@ -883,10 +869,20 @@ TEST(ProcessIntegration, InteractivePtyInputAndBoundedFloodOutput) {
   processes.stop(id);
   spec.pty = false;
   spec.argv = {"/bin/sh", "-c", "while :; do printf flood; done"};
-  spec.timeout_ms = 30;
+  // Output bounds must not depend on completing startup inside a 30 ms budget.
+  // Deadline classification is covered separately by deterministic startup tests.
+  spec.timeout_ms = 5000;
   spec.output_limit = 256;
-  result = processes.run(spec, cancel);
-  EXPECT_EQ(result.exit_code, 124);
+  const auto flood = processes.start(spec, cancel);
+  for (int i = 0; i < 500; ++i) {
+    result = processes.poll(flood);
+    if (result.truncated || !result.running)
+      break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  processes.stop(flood);
+  result = processes.poll(flood);
+  EXPECT_FALSE(result.running);
   EXPECT_TRUE(result.truncated);
   EXPECT_LE(result.output.size(), 256u);
 }

@@ -80,6 +80,12 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         "grep flags. Prefer unquoted literal patterns and paths only when no quoting is needed, "
         "so scoped allow rules can match simple commands. Otherwise quote arguments correctly; "
         "never remove necessary quoting to evade permissions. Respect shell permissions. "
+        "Use grep -I to skip binary files, -e for leading-hyphen patterns, -F for literals or -E "
+        "for extended patterns. Use find with directory pruning to skip .git, build and "
+        "node_modules; shell grep has no automatic exclusions. Command output is a bounded "
+        "head/tail preview. Check spill_path, spill_bytes, total_output_bytes and spill_truncated "
+        "metadata before assuming the capture is complete. Page retained text with Read offset/limit "
+        "line ranges, or authorized Bash dd for byte ranges/long lines; files may expire. "
         "Glob finds file names; there is no dedicated Grep tool. Never claim tests ran unless "
         "you ran them. Use Memory for durable project facts. "
         "No subagents, goals, scheduling, MCP, or editor protocols are available. Working "
@@ -110,9 +116,12 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
           throw Error(compact_hook.reason);
         std::string bounded = transcript;
         const auto limit = std::max(size_t{512}, config_.context_tokens * 2);
-        if (bounded.size() > limit)
-          bounded = bounded.substr(0, limit / 2) + "\n[older transcript omitted]\n" +
-                    bounded.substr(bounded.size() - limit / 2);
+        if (bounded.size() > limit) {
+          const auto tail = bounded.substr(bounded.size() - limit / 2);
+          bounded.resize(limit / 2);
+          bounded += "\n[older transcript omitted]\n";
+          bounded += tail;
+        }
         Message request;
         request.role = "user";
         request.text = "Summarize this completed conversation for continuation. Preserve the "

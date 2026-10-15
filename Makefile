@@ -27,28 +27,34 @@ MODERN_CC ?= clang
 MODERN_CXX ?= $(or $(CODET_CLANGXX),clang++)
 MODERN_ANALYSIS_JOBS ?= 4
 MODERN_ANALYSIS_TIMEOUT ?= 300
-MODERN_ANALYSIS = python3 scripts/analyze-modern.py --build-dir $(MODERN_ANALYSIS_BUILD) \
+ANALYSIS_PYTHON ?= python3
+MODERN_ANALYSIS = $(ANALYSIS_PYTHON) scripts/analyze-modern.py --build-dir $(MODERN_ANALYSIS_BUILD) \
 	--jobs $(MODERN_ANALYSIS_JOBS) --timeout $(MODERN_ANALYSIS_TIMEOUT)
 
-.PHONY: modern-analysis-host analyze-modern analyze-modern-clang-tidy analyze-modern-cppcheck \
+.PHONY: modern-analysis-configure modern-analysis-host fetch-analysis-tools build-analysis-tools analyze-modern analyze-modern-clang-tidy analyze-modern-cppcheck \
 	analyze-modern-clang-analyzer analyze-modern-selftest test-modern-analysis-runner
-modern-analysis-host:
+modern-analysis-host: modern-analysis-configure
+	cmake --build $(MODERN_ANALYSIS_BUILD) -j$(MODERN_ANALYSIS_JOBS)
+modern-analysis-configure:
 	cmake -S . -B $(MODERN_ANALYSIS_BUILD) -G Ninja -DCMAKE_BUILD_TYPE=Debug \
 	  -DCMAKE_C_COMPILER=$(MODERN_CC) -DCMAKE_CXX_COMPILER=$(MODERN_CXX) \
 	  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-	cmake --build $(MODERN_ANALYSIS_BUILD) -j$(MODERN_ANALYSIS_JOBS)
-analyze-modern: modern-analysis-host
+analyze-modern: modern-analysis-configure
 	$(MODERN_ANALYSIS) --tool all
-analyze-modern-clang-tidy: modern-analysis-host
+analyze-modern-clang-tidy: modern-analysis-configure
 	$(MODERN_ANALYSIS) --tool clang-tidy
-analyze-modern-cppcheck: modern-analysis-host
+analyze-modern-cppcheck: modern-analysis-configure
 	$(MODERN_ANALYSIS) --tool cppcheck
-analyze-modern-clang-analyzer: modern-analysis-host
+analyze-modern-clang-analyzer: modern-analysis-configure
 	$(MODERN_ANALYSIS) --tool clang-analyzer
-analyze-modern-selftest: modern-analysis-host
+analyze-modern-selftest: modern-analysis-configure
 	$(MODERN_ANALYSIS) --selftest
+fetch-analysis-tools:
+	$(ANALYSIS_PYTHON) scripts/analysis-tools.py fetch
+build-analysis-tools:
+	$(ANALYSIS_PYTHON) scripts/analysis-tools.py build --jobs $(MODERN_ANALYSIS_JOBS)
 test-modern-analysis-runner:
-	python3 -m unittest discover -s tests -p test_analyze_modern.py -v
+	$(ANALYSIS_PYTHON) -m unittest discover -s tests -p test_analyze_modern.py -v
 test-foundation:
 	cmake -S . -B build/foundation -DCODET_FOUNDATION_ONLY=ON
 	cmake --build build/foundation -j4
@@ -105,7 +111,8 @@ help:
 	@printf '%s\n' 'make [modern]     Cross-build the modern C++ application and GoogleTest executable.' \
 	  'make host / test   Build the modern host application / run hermetic tests.' \
 	  'make test-sanitize Run host tests with ASan and UBSan.' \
-	  'make analyze-modern Run Clang-Tidy, Cppcheck and Clang Static Analyzer in a separate Clang host build.' \
+	  'make fetch-analysis-tools / build-analysis-tools Provision checksum-pinned Cppcheck 2.22.0.' \
+	  'make analyze-modern Configure a dedicated Clang database and run all three analyzers without building.' \
 	  'make analyze-modern-{clang-tidy,cppcheck,clang-analyzer} Run one modern analyzer.' \
 	  'make analyze-modern-selftest / test-modern-analysis-runner Verify detection and runner failure handling.' \
 	  'make fetch-tiger-deps / toolchain-image Fetch pinned sources / prepare build utilities (network).' \

@@ -1,4 +1,5 @@
 #include "codet/core.hpp"
+#include "codet/output.hpp"
 #include "codet/process_control.hpp"
 #include <algorithm>
 #include <cerrno>
@@ -42,6 +43,8 @@ struct CurlContext {
   const ChunkSink &sink;
   size_t max;
   int idle_seconds;
+  CurlContext(const Cancellation &c, const ChunkSink &s, size_t maximum, int idle)
+      : cancel(c), sink(s), max(maximum), idle_seconds(idle) {}
   std::chrono::steady_clock::time_point activity = std::chrono::steady_clock::now();
 };
 size_t curl_write(char *p, size_t s, size_t n, void *data) {
@@ -105,6 +108,18 @@ int ProcessControl::wait_ready(int fd, int timeout_ms) {
   if (result < 0 && errno != EINTR)
     throw Error(system_error("wait for child setup"));
   return result;
+}
+int ProcessControl::read_setup(int fd, int &error) {
+  return static_cast<int>(::read(fd, &error, sizeof error));
+}
+int ProcessControl::release(int fd) {
+  const char token = 1;
+#ifdef __APPLE__
+  const int flags = 0;
+#else
+  const int flags = MSG_NOSIGNAL;
+#endif
+  return static_cast<int>(::send(fd, &token, 1, flags));
 }
 int64_t SystemClock::seconds() const {
   return std::chrono::duration_cast<std::chrono::seconds>(
@@ -195,7 +210,7 @@ HttpResponse CurlTransport::perform(const HttpRequest &r, const Cancellation &ca
   }
   std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> header_guard(headers,
                                                                            curl_slist_free_all);
-  CurlContext c{{}, {}, cancel, sink, r.max_bytes, r.idle_timeout_seconds};
+  CurlContext c(cancel, sink, r.max_bytes, r.idle_timeout_seconds);
   char error[CURL_ERROR_SIZE] = {0};
   curl_easy_setopt(raw, CURLOPT_URL, r.url.c_str());
   curl_easy_setopt(raw, CURLOPT_PROTOCOLS_STR, "http,https");
@@ -369,6 +384,8 @@ public:
     if (::waitid(P_PID, static_cast<id_t>(pid), &info, WEXITED | WNOHANG | WNOWAIT) < 0) {
       if (errno == EINTR)
         return false;
+      if (errno == ECHILD)
+        throw ProcessOwnershipLost(system_error("observe child"));
       throw Error(system_error("observe child"));
     }
     return info.si_pid == pid;
@@ -390,6 +407,8 @@ public:
     do {
       result = ::waitpid(pid, &status, 0);
     } while (result < 0 && errno == EINTR);
+    if (result < 0 && errno == ECHILD)
+      throw ProcessOwnershipLost("Owned child is no longer available for reaping");
     if (result != pid)
       throw Error(system_error("reap child"));
     return status;
@@ -405,8 +424,10 @@ struct NativeProcesses::Job {
   uint64_t completed_order = 0;
   ProcessSpec spec;
   ProcessResult result;
+  std::string head, tail;
+  std::unique_ptr<OutputSpool> spool;
   std::chrono::steady_clock::time_point began = std::chrono::steady_clock::now();
-  bool done = false, retain = true;
+  bool done = false, retain = true, exit_observed = false;
   ~Job() {
     if (fd >= 0)
       ::close(fd);
@@ -443,6 +464,9 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
     throw Error("Process job limit reached");
   if (spec.argv.empty())
     throw Error("Empty process command");
+  if (spec.spool_limit > size_t{8} * 1024 * 1024 || spec.spool_quota > size_t{64} * 1024 * 1024 ||
+      spec.spool_records > 64)
+    throw Error("Output capture exceeds supported storage limits");
   std::vector<char *> argv;
   argv.reserve(spec.argv.size() + 1);
   for (const auto &a : spec.argv)
@@ -490,9 +514,12 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
   if (pid == 0) {
     ::close(ready_read.n);
     ::close(release_write.n);
-    ::signal(SIGPIPE, SIG_DFL);
-    ::signal(SIGINT, SIG_DFL);
-    ::signal(SIGTERM, SIG_DFL);
+    struct sigaction disposition {};
+    disposition.sa_handler = SIG_DFL;
+    sigemptyset(&disposition.sa_mask);
+    for (int sig = 1; sig < NSIG; ++sig)
+      if (sig != SIGKILL && sig != SIGSTOP)
+        (void)::sigaction(sig, &disposition, nullptr);
     sigset_t empty;
     sigemptyset(&empty);
     (void)::sigprocmask(SIG_SETMASK, &empty, nullptr);
@@ -558,11 +585,22 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
       result = control_->wait_ready(
           ready_read.n, static_cast<int>(std::max<int64_t>(1, std::min<int64_t>(50, remaining))));
     }
+    const auto check_startup = [&] {
+      cancel.check();
+      const auto now = control_->now();
+      if (now >= deadline)
+        throw ProcessTimeout();
+      if (now >= setup_deadline)
+        throw Error("Child process setup timed out");
+    };
     int setup_error = 0;
-    if (result <= 0 ||
-        ::read(ready_read.n, &setup_error, sizeof setup_error) !=
-            static_cast<ssize_t>(sizeof setup_error) ||
-        setup_error)
+    int received;
+    do {
+      check_startup();
+      received = control_->read_setup(ready_read.n, setup_error);
+    } while (received < 0 && errno == EINTR);
+    check_startup();
+    if (received != static_cast<int>(sizeof setup_error) || setup_error)
       throw Error("Child process setup failed");
     group_ready = true;
     auto job = std::make_unique<Job>();
@@ -570,18 +608,21 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
     job->spec = spec;
     job->began = began;
     // The child cannot exit through exec before this watcher has been installed.
-    job->observer = control_->watch(pid);
-    cancel.check();
-    if (control_->now() >= deadline)
-      throw ProcessTimeout();
-    const char token = 1;
-#ifdef __APPLE__
-    const int send_flags = 0;
-#else
-    const int send_flags = MSG_NOSIGNAL;
-#endif
-    if (::send(release_write.n, &token, 1, send_flags) != 1)
+    try {
+      job->observer = control_->watch(pid);
+    } catch (...) {
+      check_startup();
+      throw;
+    }
+    int released;
+    do {
+      check_startup();
+      released = control_->release(release_write.n);
+    } while (released < 0 && errno == EINTR);
+    if (released != 1) {
+      check_startup();
       throw Error("Cannot release child process");
+    }
     job->fd = parent_output.n;
     parent_output.n = -1;
     job->stderr_fd = stderr_read.n;
@@ -596,7 +637,6 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
     jobs_.emplace(id, std::move(job));
     return id;
   } catch (...) {
-    const auto failure = std::current_exception();
     try {
       control_->signal(group_ready ? -pid : pid, SIGKILL);
     } catch (...) { // NOLINT(bugprone-empty-catch): Attempt reaping even if signaling fails.
@@ -605,7 +645,7 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
       (void)control_->reap(pid);
     } catch (...) { // NOLINT(bugprone-empty-catch): Preserve the original child-start failure.
     }
-    std::rethrow_exception(failure);
+    throw;
   }
 }
 void NativeProcesses::collect(Job &job) {
@@ -618,18 +658,65 @@ void NativeProcesses::collect(Job &job) {
         continue;
       if (n <= 0)
         break;
-      drained += static_cast<size_t>(n);
-      const auto used = job.result.output.size() + job.result.stderr_output.size();
-      const auto keep = std::min(static_cast<size_t>(n), job.spec.output_limit - used);
-      output.append(buffer, keep);
-      if (keep < static_cast<size_t>(n))
-        job.result.truncated = true;
+      const auto count = static_cast<size_t>(n);
+      drained += count;
+      job.result.total_output_bytes += count;
+      if (job.spec.separate_stderr) {
+        const auto used = job.result.output.size() + job.result.stderr_output.size();
+        const auto keep = std::min(count, job.spec.output_limit - used);
+        output.append(buffer, keep);
+        job.result.truncated = job.result.truncated || keep < count;
+      } else {
+        if (!job.spec.spool_directory.empty()) {
+          if (!job.spool) {
+            job.spool =
+                std::make_unique<OutputSpool>(job.spec.spool_directory, job.spec.spool_limit,
+                                              job.spec.spool_quota, job.spec.spool_records);
+            job.spool->append(job.head + job.tail);
+          }
+          if (job.spool)
+            job.spool->append(std::string(buffer, count));
+        }
+        const auto head_limit = job.spec.output_limit / 2;
+        const auto tail_limit = job.spec.output_limit - head_limit;
+        const auto head_bytes = std::min(count, head_limit - job.head.size());
+        job.head.append(buffer, head_bytes);
+        const auto remaining = count - head_bytes;
+        if (remaining >= tail_limit)
+          job.tail.assign(buffer + count - tail_limit, tail_limit);
+        else {
+          const auto discard = job.tail.size() + remaining > tail_limit
+                                   ? job.tail.size() + remaining - tail_limit
+                                   : 0;
+          job.tail.erase(0, discard);
+          job.tail.append(buffer + head_bytes, remaining);
+        }
+        job.result.truncated = job.result.total_output_bytes > job.spec.output_limit;
+      }
     }
   };
   drain(job.fd, job.result.output);
   drain(job.stderr_fd, job.result.stderr_output);
-  if (!job.done && control_->exited(job.pid, job.observer))
-    finish(job);
+  if (!job.spec.separate_stderr)
+    job.result.output =
+        head_tail_text(job.head, job.tail, job.result.total_output_bytes, job.spec.output_limit);
+  if (job.spool) {
+    job.result.spill_path = job.spool->path().string();
+    job.result.spill_bytes = job.spool->bytes();
+    job.result.spill_truncated = job.spool->truncated();
+    if (!job.spool->error().empty())
+      job.result.capture_error = job.spool->error();
+  }
+  if (!job.done) {
+    try {
+      job.exit_observed = job.exit_observed || control_->exited(job.pid, job.observer);
+    } catch (const ProcessOwnershipLost &error) {
+      job.result.capture_error = error.what();
+      finish(job, true);
+    }
+    if (job.exit_observed && !job.done)
+      finish(job);
+  }
   job.result.running = !job.done;
 }
 void NativeProcesses::prune() {
@@ -670,12 +757,20 @@ std::vector<ProcessStatus> NativeProcesses::list() {
     out.push_back({job.first, !job.second->done, job.second->result.exit_code});
   return out;
 }
-void NativeProcesses::finish(Job &job) {
+void NativeProcesses::finish(Job &job, bool ownership_lost) {
   if (job.done)
     return;
   // Keep the leader unreaped until every signal to this group has been issued.
-  control_->signal(-job.pid, SIGKILL);
-  const int status = control_->reap(job.pid);
+  int status = 0;
+  if (!ownership_lost) {
+    control_->signal(-job.pid, SIGKILL);
+    try {
+      status = control_->reap(job.pid);
+    } catch (const ProcessOwnershipLost &error) {
+      ownership_lost = true;
+      job.result.capture_error = error.what();
+    }
+  }
   job.pid = -1;
   job.done = true;
   job.completed_order = ++completed_;
@@ -683,9 +778,16 @@ void NativeProcesses::finish(Job &job) {
     ::close(job.observer);
     job.observer = -1;
   }
-  job.result.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+  job.result.exit_code =
+      ownership_lost ? 1 : (WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status));
   job.result.running = false;
   collect(job);
+  if (job.spool) {
+    job.spool->close();
+    if (!job.spool->error().empty())
+      job.result.capture_error = job.spool->error();
+    job.result.spill_truncated = job.spool->truncated();
+  }
   if (job.fd >= 0) {
     ::close(job.fd);
     job.fd = -1;
@@ -771,14 +873,13 @@ ProcessResult NativeProcesses::run(const ProcessSpec &spec, const Cancellation &
     jobs_.erase(id);
     return result;
   } catch (...) {
-    const auto failure = std::current_exception();
     try {
       if (jobs_.count(id))
         stop(id);
     } catch (...) { // NOLINT(bugprone-empty-catch): Preserve the original run failure.
     }
     jobs_.erase(id);
-    std::rethrow_exception(failure);
+    throw;
   }
 }
 void to_json(Json &j, const ToolCall &t) {

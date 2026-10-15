@@ -1,4 +1,12 @@
 FROM codet-tiger-build:gcc14
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libcurl4-openssl-dev libssl-dev libsqlite3-dev libncurses-dev libedit-dev clang-format-18 clang-18 && \
+    libcurl4-openssl-dev libssl-dev libsqlite3-dev libncurses-dev libedit-dev \
+    clang-format-18 clang-18 clang-tidy-18 ninja-build python3-yaml && \
     rm -rf /var/lib/apt/lists/*
+COPY analysis-tools.lock.json /opt/codet-analysis/analysis-tools.lock.json
+COPY scripts/analysis-tools.py /opt/codet-analysis/scripts/analysis-tools.py
+RUN python3 /opt/codet-analysis/scripts/analysis-tools.py fetch
+RUN --network=none python3 /opt/codet-analysis/scripts/analysis-tools.py build && \
+    cp -a /opt/codet-analysis/build/analysis-tools/cppcheck/bin /opt/codet-cppcheck && \
+    rm -rf /opt/codet-analysis
+ENV PATH="/opt/codet-cppcheck:${PATH}"

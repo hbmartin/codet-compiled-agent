@@ -1,5 +1,6 @@
 #include "codet/core.hpp"
 #include "codet/process_control.hpp"
+#include "temp.hpp"
 #include <fstream>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -11,6 +12,7 @@ using namespace codet;
 using namespace testing;
 namespace {
 struct Remaining : Test {
+  TempDirectory temp;
   fs::path root;
   Config config;
   NativeFileSystem files;
@@ -19,10 +21,7 @@ struct Remaining : Test {
   SystemClock clock;
   Cancellation cancel;
   void SetUp() override {
-    auto pattern = (fs::temp_directory_path() / "codet-remaining-XXXXXX").string();
-    std::vector<char> name(pattern.begin(), pattern.end());
-    name.push_back(0);
-    root = mkdtemp(name.data());
+    root = temp.root;
     config.home = root / "state";
     config.cwd = root / "workspace";
     fs::create_directories(config.home);
@@ -33,9 +32,7 @@ struct Remaining : Test {
     config.model = "fixture";
     config.providers["openai"].api_key = "fake";
   }
-  void TearDown() override {
-    fs::remove_all(root);
-  }
+
   ToolCall call(const std::string &name, const Json &args) {
     return {unique_id(), name, args};
   }

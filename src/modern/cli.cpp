@@ -81,97 +81,107 @@ std::string combined(const std::vector<std::string> &words) {
 Options parse(const std::vector<std::string> &args) {
   Options o;
   bool literal = false;
+  std::exception_ptr argument_error;
   for (size_t i = 0; i < args.size(); ++i) {
-    std::string a = args[i];
-    if (!literal && a == "--") {
-      literal = true;
-      continue;
-    }
-    if (!literal && a.size() > 1 && a[0] == '-') {
-      const auto eq = a.find('=');
-      std::optional<std::string> attached;
-      if (eq != std::string::npos) {
-        attached = a.substr(eq + 1);
-        a.resize(eq);
+    try {
+      std::string a = args[i];
+      if (!literal && a == "--") {
+        literal = true;
+        continue;
       }
-      auto value = [&]() {
-        if (attached)
-          return *attached;
-        if (++i >= args.size())
-          throw Error("Missing value for " + a, 2);
-        return args[i];
-      };
-      if (a == "--help" || a == "-h")
-        o.help = true;
-      else if (a == "--version")
-        o.version = true;
-      else if (a == "--json") {
-        o.format = "jsonl";
-        o.json = true;
-      } else if (a == "--last")
-        o.last = true;
-      else if (a == "--ephemeral")
-        o.ephemeral = true;
-      else if (a == "--with-api-key")
-        o.key = true;
-      else if (a == "--model" || a == "-m")
-        o.model = value();
-      else if (a == "--provider")
-        o.provider = value();
-      else if (a == "--cd" || a == "-C")
-        o.cwd = fs::absolute(value());
-      else if (a == "--profile" || a == "-p")
-        o.profile = value();
-      else if (a == "--config" || a == "-c")
-        o.overrides.push_back(value());
-      else if (a == "--allow")
-        o.allow.push_back(value());
-      else if (a == "--deny")
-        o.deny.push_back(value());
-      else if (a == "--add-dir")
-        o.roots.push_back(value());
-      else if (a == "--output-format")
-        o.format = value();
-      else if (a == "--output-schema")
-        o.schema = value();
-      else if (a == "--output-last-message" || a == "-o")
-        o.output = value();
-      else if (a == "--import")
-        o.import = value();
-      else if (a == "--ui")
-        o.ui = value();
-      else if (a == "--permission-mode")
-        o.mode = value();
-      else if (a == "--ask-for-approval" || a == "-a")
-        o.approval = value();
-      else if (a == "--color")
-        o.color = value();
-      else if (a == "--max-turns")
-        o.overrides.push_back("max_turns=" + value());
-      else if (a == "--skip-git-repo-check") {
-      } // Codet does not require a Git checkout.
-      else if (a == "--sandbox" || a == "-s")
-        throw Error("OS-enforced sandbox modes are unavailable; use documented application "
-                    "permission rules",
-                    2);
-      else
-        throw Error("Unknown option: " + a, 2);
-      continue;
+      if (!literal && a.size() > 1 && a[0] == '-') {
+        const auto eq = a.find('=');
+        std::optional<std::string> attached;
+        if (eq != std::string::npos) {
+          attached = a.substr(eq + 1);
+          a.resize(eq);
+        }
+        auto value = [&]() {
+          if (attached)
+            return *attached;
+          if (++i >= args.size())
+            throw Error("Missing value for " + a, 2);
+          return args[i];
+        };
+        if (a == "--help" || a == "-h")
+          o.help = true;
+        else if (a == "--version")
+          o.version = true;
+        else if (a == "--json") {
+          o.format = "jsonl";
+          o.json = true;
+        } else if (a == "--last")
+          o.last = true;
+        else if (a == "--ephemeral")
+          o.ephemeral = true;
+        else if (a == "--with-api-key")
+          o.key = true;
+        else if (a == "--model" || a == "-m")
+          o.model = value();
+        else if (a == "--provider")
+          o.provider = value();
+        else if (a == "--cd" || a == "-C")
+          o.cwd = fs::absolute(value());
+        else if (a == "--profile" || a == "-p")
+          o.profile = value();
+        else if (a == "--config" || a == "-c")
+          o.overrides.push_back(value());
+        else if (a == "--allow")
+          o.allow.push_back(value());
+        else if (a == "--deny")
+          o.deny.push_back(value());
+        else if (a == "--add-dir")
+          o.roots.push_back(value());
+        else if (a == "--output-format")
+          o.format = value();
+        else if (a == "--output-schema")
+          o.schema = value();
+        else if (a == "--output-last-message" || a == "-o")
+          o.output = value();
+        else if (a == "--import")
+          o.import = value();
+        else if (a == "--ui")
+          o.ui = value();
+        else if (a == "--permission-mode")
+          o.mode = value();
+        else if (a == "--ask-for-approval" || a == "-a")
+          o.approval = value();
+        else if (a == "--color")
+          o.color = value();
+        else if (a == "--max-turns")
+          o.overrides.push_back("max_turns=" + value());
+        else if (a == "--skip-git-repo-check") {
+        } // Codet does not require a Git checkout.
+        else if (a == "--sandbox" || a == "-s")
+          throw Error("OS-enforced sandbox modes are unavailable; use documented application "
+                      "permission rules",
+                      2);
+        else
+          throw Error("Unknown option: " + a, 2);
+        continue;
+      }
+      if (!literal && o.positionals.empty() && o.command.empty() && (a == "exec" || a == "e")) {
+        o.exec = true;
+        o.command = "exec";
+        continue;
+      }
+      if (!literal && o.positionals.empty() &&
+          (o.command.empty() || (o.command == "exec" && (a == "resume" || a == "fork"))) &&
+          (a == "resume" || a == "fork" || a == "login" || a == "sessions" || a == "export" ||
+           a == "doctor" || a == "memory")) {
+        o.command = a;
+        continue;
+      }
+      o.positionals.push_back(a);
+    } catch (const std::exception &) {
+      if (!argument_error)
+        argument_error = std::current_exception();
     }
-    if (!literal && o.positionals.empty() && o.command.empty() && (a == "exec" || a == "e")) {
-      o.exec = true;
-      o.command = "exec";
-      continue;
-    }
-    if (!literal && o.positionals.empty() &&
-        (o.command.empty() || (o.command == "exec" && (a == "resume" || a == "fork"))) &&
-        (a == "resume" || a == "fork" || a == "login" || a == "sessions" || a == "export" ||
-         a == "doctor" || a == "memory")) {
-      o.command = a;
-      continue;
-    }
-    o.positionals.push_back(a);
   }
+  if (o.help || o.version)
+    return o;
+  if (argument_error)
+    std::rethrow_exception(argument_error);
   if (o.format != "text" && o.format != "json" && o.format != "jsonl")
     throw Error("Invalid output format", 2);
   if (o.json && o.format != "jsonl")
@@ -427,7 +437,12 @@ public:
     if (event.value("type", "") == "item.started" && event.contains("item") &&
         event["item"].contains("tool"))
       say("[" + event["item"]["tool"].get<std::string>() + "]");
-    if (curses_ && event.value("type", "") == "item.updated") {
+    const auto type = event.value("type", "");
+    if (type == "turn.completed" || type == "turn.failed") {
+      progress_.clear();
+      render();
+    }
+    if (curses_ && type == "item.updated") {
       progress_ = "Responding: " + event["item"].value("text_delta", "");
       render();
     }
@@ -575,18 +590,12 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   current_owner = lifecycle_owner;
   session = state.load(session.id, false);
   state.reconcile(session);
-  if (o.command == "resume" || o.command == "fork") {
-    const auto provider_before = session.provider.empty() ? config.provider : session.provider;
-    config.provider = config.selected_provider.value_or(provider_before);
-    if (config.selected_model)
-      config.model = config.selected_model->empty() ? default_model(config, config.provider)
-                                                    : *config.selected_model;
-    else if (config.provider == provider_before && !session.model.empty())
-      config.model = session.model;
-    else if (config.provider != provider_before ||
-             (session.model.empty() && !session.provider.empty()))
-      config.model = default_model(config, config.provider);
-  }
+  const auto resolved =
+      resolve_selection(config, o.command == "resume" || o.command == "fork"
+                                    ? std::optional<Selection>{{session.provider, session.model}}
+                                    : std::nullopt);
+  config.provider = resolved.provider;
+  config.model = resolved.model;
   session.model = config.model;
   session.provider = config.provider;
   state.save(session);
@@ -630,14 +639,34 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     ~SessionEnd() {
       try {
         end();
+      } catch (const std::exception &error) {
+        std::cerr << "SessionEnd hook cleanup failed: " << safe_text(error.what()) << '\n';
       } catch (...) {
-        std::cerr << "SessionEnd hook cleanup failed\n";
+        std::cerr << "SessionEnd hook cleanup failed: unknown exception\n";
       }
     }
   } session_end{[&, started_id = session.id] {
-    Cancellation cleanup_cancel;
-    tools.run_hooks("SessionEnd", {{"hook_event_name", "SessionEnd"}, {"session_id", started_id}},
-                    cleanup_cancel, 10000);
+    std::ostringstream diagnostics;
+    {
+      struct RestoreOutput {
+        std::streambuf *previous;
+        ~RestoreOutput() {
+          std::cerr.rdbuf(previous);
+        }
+      } restore{std::cerr.rdbuf(diagnostics.rdbuf())};
+      try {
+        Cancellation cleanup_cancel;
+        tools.run_hooks("SessionEnd",
+                        {{"hook_event_name", "SessionEnd"}, {"session_id", started_id}},
+                        cleanup_cancel, 10000);
+      } catch (const std::exception &error) {
+        std::cerr << "SessionEnd hook cleanup failed: " << safe_text(error.what()) << '\n';
+      } catch (...) {
+        std::cerr << "SessionEnd hook cleanup failed: unknown exception\n";
+      }
+    }
+    terminal.reset();
+    std::cerr << bounded_text(diagnostics.str(), config.tool_output_limit);
   }};
   const auto started = tools.run_hooks("SessionStart",
                                        {{"hook_event_name", "SessionStart"},

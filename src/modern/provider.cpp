@@ -239,11 +239,12 @@ eof_line: "*** End of File" LF
     }
     body = {{"model", c.model},
             {"input", input},
-            {"tools", ft},
             {"store", false},
             {"stream", true},
             {"parallel_tool_calls", false},
             {"include", Json::array({"reasoning.encrypted_content"})}};
+    if (!ft.empty())
+      body["tools"] = ft;
     if (!c.effort.empty())
       body["reasoning"] = {{"effort", c.effort}, {"summary", "auto"}};
   } else if (c.provider == "anthropic") {
@@ -287,9 +288,10 @@ eof_line: "*** End of File" LF
                                      {"text", system},
                                      {"cache_control", {{"type", "ephemeral"}}}}})},
             {"messages", ms},
-            {"tools", tools},
             {"max_tokens", c.max_output_tokens},
             {"stream", true}};
+    if (!tools.empty())
+      body["tools"] = tools;
     if (!c.effort.empty()) {
       body["thinking"] = {{"type", "adaptive"}};
       body["output_config"] = {{"effort", c.effort}};

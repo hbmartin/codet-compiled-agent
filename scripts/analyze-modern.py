@@ -13,7 +13,9 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
+import threading
 import time
 import xml.etree.ElementTree as ET
 
@@ -26,25 +28,90 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2) + "\n")
 
 
+CANCEL = threading.Event()
+
+
 def capture(command, cwd, timeout):
-    """Bound the entire process group, including compiler children."""
+    """Each worker owns its child through bounded signal, drain and reap cleanup."""
     started = time.monotonic()
     result = dict(command=command, directory=str(cwd), exit_code=None,
                   stdout="", stderr="", failure=None)
-    try:
-        child = subprocess.Popen(command, cwd=cwd, text=True, encoding="utf-8", errors="replace", stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE, start_new_session=True)
+    child = None
+    def partial(exc):
+        for field, value in (("stdout", exc.output), ("stderr", exc.stderr)):
+            if value is not None:
+                result[field] = value.decode("utf-8", "replace") if isinstance(value, bytes) else value
+    def signal_group(sig):
+        if child.returncode is None:
+            try:
+                os.killpg(child.pid, sig)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                # Darwin returns EPERM for an owned group containing only its zombie leader.
+                if sys.platform != "darwin":
+                    raise
+    def cleanup():
+        deadline = time.monotonic() + 2
+        signal_group(signal.SIGTERM)
         try:
-            result["stdout"], result["stderr"] = child.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            os.killpg(child.pid, signal.SIGKILL)
-            result["stdout"], result["stderr"] = child.communicate()
-            result["failure"] = "timeout"
+            result["stdout"], result["stderr"] = child.communicate(timeout=.25)
+            return
+        except subprocess.TimeoutExpired as exc:
+            partial(exc)
+        signal_group(signal.SIGKILL)
+        try:
+            result["stdout"], result["stderr"] = child.communicate(timeout=max(0, deadline-time.monotonic()))
+        except subprocess.TimeoutExpired as exc:
+            partial(exc)
+            for pipe in (child.stdout, child.stderr):
+                if pipe is not None:
+                    pipe.close()
+            try:
+                child.wait(timeout=max(0, deadline-time.monotonic()))
+            except subprocess.TimeoutExpired:
+                result["cleanup_failure"] = "Owned analyzer did not reap within cleanup budget"
+    try:
+        if CANCEL.is_set():
+            result["failure"] = "interrupted"
+            return result
+        child = subprocess.Popen(command, cwd=cwd, text=True, encoding="utf-8", errors="replace",
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        deadline = started + timeout
+        while True:
+            if CANCEL.is_set() or time.monotonic() >= deadline:
+                result["failure"] = "interrupted" if CANCEL.is_set() else "timeout"
+                cleanup()
+                break
+            try:
+                result["stdout"], result["stderr"] = child.communicate(timeout=min(.1, max(0, deadline-time.monotonic())))
+                break
+            except subprocess.TimeoutExpired as exc:
+                partial(exc)
         result["exit_code"] = child.returncode
+    except KeyboardInterrupt:
+        CANCEL.set()
+        if child is not None:
+            cleanup()
+        raise
     except OSError as exc:
         result["failure"] = str(exc)
-    result["seconds"] = round(time.monotonic() - started, 3)
+        if child is not None:
+            cleanup()
+    finally:
+        result["seconds"] = round(time.monotonic() - started, 3)
     return result
+
+
+def parallel_map(function, entries, jobs):
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=jobs)
+    try:
+        return list(pool.map(function, entries))
+    except KeyboardInterrupt:
+        CANCEL.set()
+        raise
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 def select_entries(database, root=ROOT):
@@ -102,7 +169,7 @@ def first_party(filename, root):
     path = Path(filename)
     if not path.is_absolute():
         path = root / path
-    return any(path.resolve().is_relative_to(root / folder) for folder in ("src", "include"))
+    return any(path.resolve().is_relative_to(root.resolve() / folder) for folder in ("src", "include"))
 
 
 def report_result(run, findings, failure=None):
@@ -126,19 +193,34 @@ def cppcheck_entries(entries):
     return imported
 
 
-def cppcheck_compatibility(entries, folder, timeout):
-    """Work around SimpleCpp's nested token-paste bug without changing C++ tokens."""
-    include_roots = set()
-    for entry in entries:
-        arguments = entry["arguments"]
-        for i, arg in enumerate(arguments[:-1]):
-            if arg in ("-I", "-isystem"):
-                include_roots.add((Path(entry["directory"]) / arguments[i + 1]).resolve())
-            elif arg.startswith("-I"):
-                include_roots.add((Path(entry["directory"]) / arg[2:]).resolve())
-    rewritten = entries
+def include_arguments(entry):
+    """Return argv spans and canonical paths without losing include search order."""
+    args = entry["arguments"]
+    result = []
+    i = 1
+    while i < len(args):
+        arg = args[i]
+        flag = next((f for f in ("-isystem", "-iquote", "-idirafter", "-I") if arg.startswith(f)), None)
+        if flag:
+            if arg == flag:
+                if i + 1 >= len(args):
+                    raise ValueError("Missing include path")
+                value, width = args[i + 1], 2
+            else:
+                value, width = arg[len(flag):], 1
+            result.append((i, width, flag, (Path(entry["directory"]) / value).resolve()))
+            i += width
+        else:
+            i += 1
+    return result
+
+
+def cppcheck_compatibility(entries, folder, timeout, require_adapter=False):
+    """A generated, token-equivalent overlay; originals remain untouched."""
+    roots = sorted({item[3] for e in entries for item in include_arguments(e)})
+    rewritten = [dict(e, arguments=list(e["arguments"])) for e in entries]
     audits = []
-    for original in sorted(include_roots):
+    for original in roots:
         relative = Path("toml++/impl/preprocessor.hpp")
         header = original / relative
         if not header.exists():
@@ -147,22 +229,23 @@ def cppcheck_compatibility(entries, folder, timeout):
         before = "operator TOML_CONCAT(op, =)"
         if content.count(before) != 1:
             raise ValueError("Unrecognized toml++ token-paste macro; compatibility review required")
-        overlay = folder / "headers" / str(len(audits))
+        overlay = (folder / "headers" / str(len(audits))).resolve()
         shutil.copytree(original, overlay, dirs_exist_ok=True)
         adapted = content.replace(before, "operator op##=")
         (overlay / relative).write_text(adapted)
-        changed_entries = []
-        comparisons = []
+        changed_entries, comparisons = [], []
+        replacements = 0
         for entry in rewritten:
-            if str(original) not in entry["arguments"]:
+            spans = [x for x in include_arguments(entry) if x[3] == original]
+            if not spans:
                 changed_entries.append(entry)
                 continue
-            arguments = [str(overlay) if a == str(original) else a for a in entry["arguments"]]
-            arguments.append(f"-fmacro-prefix-map={overlay}={original}")
-            changed = dict(entry, arguments=arguments)
-            # -P removes line markers; prefix mapping preserves __FILE__ values.
-            # Exact equality includes string literals and whitespace, with no
-            # normalization that could hide a token or behavioral difference.
+            args = list(entry["arguments"])
+            for start, width, flag, _ in reversed(spans):
+                args[start:start+width] = [flag, str(overlay)]
+                replacements += 1
+            args.append(f"-fmacro-prefix-map={overlay}={original}")
+            changed = dict(entry, arguments=args)
             runs = [capture(compiler_arguments(e) + ["-E", "-P"], e["directory"], timeout)
                     for e in (entry, changed)]
             same = all(r["exit_code"] == 0 and not r["failure"] for r in runs) and runs[0]["stdout"] == runs[1]["stdout"]
@@ -175,15 +258,21 @@ def cppcheck_compatibility(entries, folder, timeout):
                 write_json(folder / "compatibility.json", dict(comparisons=comparisons, passed=False))
                 raise ValueError("toml++ compatibility preprocessing differs or failed for " + entry["file"])
             changed_entries.append(changed)
+        if not replacements or not comparisons:
+            raise ValueError("Compatibility overlay was not applied or verified")
         rewritten = changed_entries
         audits.append(dict(header=str(header), original_sha256=hashlib.sha256(content.encode()).hexdigest(),
-                           adapted_sha256=hashlib.sha256(adapted.encode()).hexdigest(), comparisons=comparisons))
-    write_json(folder / "compatibility.json", dict(passed=True, headers=audits))
+                           adapted_sha256=hashlib.sha256(adapted.encode()).hexdigest(),
+                           replacements=replacements, comparisons=comparisons))
+    if require_adapter and not audits:
+        raise ValueError("Required compatibility audit is empty")
+    write_json(folder / "compatibility.json", dict(passed=True, applied=bool(audits), headers=audits))
     return rewritten
 
 
 def clang_one(tool, entry, binary, folder, database, timeout, root):
-    source = Path(entry["file"])
+    source = Path(entry["file"]).resolve()
+    root = root.resolve()
     name = "__".join(source.relative_to(root).parts)
     report = folder / (name + (".plist" if tool == "clang-analyzer" else ".yaml"))
     report.unlink(missing_ok=True)
@@ -193,39 +282,67 @@ def clang_one(tool, entry, binary, folder, database, timeout, root):
     else:
         command = [binary, "-p", str(database.parent), "--config-file=" + str(ROOT / ".clang-tidy"),
                    "--warnings-as-errors=*", "--use-color=false", "--export-fixes=" + str(report),
-                   "--header-filter=^" + re.escape(str(root)) + "/(src|include)/", str(source)]
+                   "--header-filter=^" + re.escape(str(root)) + "/(src|include|\\.deps)/",
+                   "--system-headers", str(source)]
     run = capture(command, entry["directory"], timeout)
     run["source"] = str(source)
+    if CANCEL.is_set():
+        return report_result(run, [], "interrupted")
     (folder / (name + ".log")).write_text(run["stdout"] + run["stderr"])
     try:
         if tool == "clang-analyzer":
             data = plistlib.loads(report.read_bytes())
             if not isinstance(data.get("diagnostics"), list):
                 raise ValueError("Missing diagnostics array")
-            findings = data["diagnostics"]
+            diagnostics = data["diagnostics"]
+            files = data.get("files", [])
+            def locations(value):
+                if isinstance(value, dict):
+                    if "file" in value and isinstance(value["file"], int):
+                        index = value["file"]
+                        if index < 0 or index >= len(files):
+                            raise ValueError("Invalid diagnostic file index")
+                        yield files[index]
+                    for item in value.values():
+                        yield from locations(item)
+                elif isinstance(value, list):
+                    for item in value:
+                        yield from locations(item)
+            findings = [d for d in diagnostics if not files or not list(locations(d)) or
+                        any(first_party(f, root) for f in locations(d))]
         else:
             # Clang-Tidy does not create an export file when there are no diagnostics.
             import yaml
-            data = yaml.safe_load(report.read_text()) if report.exists() else {"Diagnostics": []}
+            data = yaml.load(report.read_text(), Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader)) if report.exists() else {"Diagnostics": []}
             if not isinstance(data, dict) or not isinstance(data.get("Diagnostics"), list):
                 raise ValueError("Missing Diagnostics array")
-            findings = data["Diagnostics"]
+            diagnostics = data["Diagnostics"]
+            findings = [d for d in diagnostics if first_party(d.get("DiagnosticMessage", {}).get("FilePath"), root)
+                        or any(first_party(n.get("FilePath"), root) for n in d.get("Notes", []))]
+        run["all_diagnostics"] = diagnostics
         failure = None
-        if run["exit_code"] not in ((0, 1) if tool == "clang-tidy" and findings else (0,)):
+        if run["exit_code"] not in ((0, 1) if tool == "clang-tidy" and diagnostics else (0,)):
             failure = "Tool exited unsuccessfully"
-        if any(d.get("DiagnosticName") == "clang-diagnostic-error" for d in findings):
+        if any(d.get("DiagnosticName") == "clang-diagnostic-error" for d in diagnostics):
             failure = "Compilation failed during analysis"
         return report_result(run, findings, failure)
     except Exception as exc:
         return report_result(run, [], "Invalid or missing report: " + str(exc))
 
 
+FATAL_IDS = {"syntaxError", "internalError", "internalAstError", "instantiationError",
+             "cppcheckError", "unknownMacro", "preprocessorErrorDirective", "cppcheckLimit",
+             "missingInclude", "checkLevelNormal", "normalCheckLevelMaxBranches", "toomanyconfigs"}
+
+
 def cppcheck(entries, binary, folder, database, timeout, root, jobs):
+    checkers = folder / "checkers.txt"
+    checkers.unlink(missing_ok=True)
     command = [binary, "--project=" + str(database), "--std=c11", "--std=c++17",
-               "--enable=warning,performance,portability", "--check-level=normal",
-               "--inline-suppr", "--error-exitcode=1", "--xml", "--xml-version=2",
-               "--cppcheck-build-dir=" + str(folder / "cache"), "-j", str(jobs)]
-    # Always validate a fresh scan, including after configuration/header changes.
+               "--enable=warning,performance,portability,information,missingInclude",
+               "--check-level=exhaustive", "--safety", "--inline-suppr", "--error-exitcode=1",
+               "--xml", "--xml-version=2", "--checkers-report=" + str(checkers),
+               "--cppcheck-build-dir=" + str(folder / "cache"), "-j", "1"]
     shutil.rmtree(folder / "cache", ignore_errors=True)
     (folder / "cache").mkdir()
     run = capture(command, root, timeout)
@@ -238,54 +355,116 @@ def cppcheck(entries, binary, folder, database, timeout, root, jobs):
             raise ValueError("Missing results/errors")
         diagnostics = [dict(e.attrib, locations=[dict(loc.attrib) for loc in e.findall("location")])
                        for e in errors]
-        findings = [d for d in diagnostics if not d["locations"] or
-                    any(first_party(loc.get("file"), root) for loc in d["locations"])]
-        completed = [e["file"] for e in entries if any(
-            line.startswith("Checking " + e["file"]) for line in run["stdout"].splitlines())]
-        run["completed_sources"] = completed
+        findings = [d for d in diagnostics if d.get("severity", "warning") != "information" and
+                    d.get("id") != "checkersReport" and (not d["locations"] or
+                    any(first_party(loc.get("file"), root) for loc in d["locations"]))]
         run["all_diagnostics"] = diagnostics
         failure = None
-        if len(completed) != len(entries):
-            failure = "Incomplete source coverage"
         if run["exit_code"] not in (0, 1) or (run["exit_code"] == 1 and not diagnostics):
             failure = "Tool exited unsuccessfully"
-        if any(d.get("id") in ("syntaxError", "internalError", "cppcheckError", "unknownMacro",
-                                "preprocessorErrorDirective") for d in diagnostics):
+        critical = any(d.get("id") in FATAL_IDS or d.get("id", "").startswith("internal") or
+                       re.search(r"bailing out|analysis (?:is )?incomplete|limiting (?:valueflow )?analysis",
+                                 d.get("msg", ""), re.I) or
+                       (d.get("id") == "checkersReport" and
+                        re.search(r"there (?:was|were) critical errors", d.get("msg", ""), re.I))
+                       for d in diagnostics)
+        if critical:
             failure = "Parser or analysis failure"
+        proof = checkers.read_text() if checkers.exists() else ""
+        active = re.findall(r"^Yes\s+(\S+)", proof, re.M)
+        if ("No critical errors encountered." not in proof or
+            not any(x.startswith("CheckBufferOverrun::") for x in active) or
+            not any(x.startswith("CheckUninitVar::") for x in active)):
+            failure = failure or "Missing semantic analysis completion evidence"
+        cache_files = list((folder / "cache").glob("*.a1"))
+        if not cache_files or not any(ET.fromstring(f.read_bytes()).find("hash") is not None or
+                                     ET.fromstring(f.read_bytes()).find("FileInfo") is not None for f in cache_files):
+            failure = failure or "Missing per-translation-unit analysis artifact"
+        run["completion_proof"] = dict(active_checkers=active, critical_error=bool(critical),
+             report_sha256=hashlib.sha256(proof.encode()).hexdigest(), artifacts=[str(p) for p in cache_files])
+        run["completed_sources"] = [e["file"] for e in entries] if not (run["failure"] or failure) else []
         return report_result(run, findings, failure)
     except (ET.ParseError, ValueError, KeyError, TypeError) as exc:
         return report_result(run, [], "Invalid XML report: " + str(exc))
 
 
+def select_binary(tool):
+    variable = "CLANG_TIDY" if tool == "clang-tidy" else "CPPCHECK"
+    if variable in os.environ:
+        return shutil.which(os.environ[variable]) or os.environ[variable]
+    if tool == "cppcheck":
+        pinned = ROOT / "build/analysis-tools/cppcheck/bin/cppcheck"
+        return str(pinned) if pinned.is_file() else shutil.which("cppcheck") or "cppcheck"
+    return shutil.which("clang-tidy-18") or shutil.which("clang-tidy") or "clang-tidy-18"
+
+
+def actual_header_canaries(entries, folder, root):
+    if not (root / "include/codet/core.hpp").is_file():
+        return []
+    result = []
+    for suffix, header in ((".c", '"text_compat.h"'), (".cpp", '"codet/core.hpp"\n#include <toml++/toml.hpp>')):
+        source_entry = next(e for e in entries if Path(e["file"]).suffix == suffix)
+        source = (folder / ("actual-headers" + suffix)).resolve()
+        source.write_text("#include " + header + "\nint codet_analysis_canary(void) { int a[1] = {0}; return a[2]; }\n")
+        arguments = []
+        for arg in source_entry["arguments"]:
+            candidate = Path(source_entry["directory"]) / arg
+            arguments.append(str(source) if not arg.startswith("-") and
+                             candidate.resolve() == Path(source_entry["file"]).resolve() else arg)
+        result.append(dict(source_entry, file=str(source), arguments=arguments))
+    fatal = (folder / "suppressed-fatal.cpp").resolve()
+    fatal.write_text("#include \"codet/core.hpp\"\n// cppcheck-suppress syntaxError\nint invalid( {\n")
+    template = result[-1]
+    result.append(dict(template, file=str(fatal), arguments=[str(fatal) if a == template["file"] else a
+                                                          for a in template["arguments"]], expected_failure=True))
+    return result
+
+
 def run_tool(tool, entries, folder, jobs, timeout, root=ROOT):
+    root = root.resolve()
+    folder = folder.resolve()
     folder.mkdir(parents=True, exist_ok=True)
     database = folder / "compile_commands.json"
     write_json(database, entries)
-    if tool == "clang-analyzer":
-        binaries = sorted({entry["arguments"][0] for entry in entries})
-    else:
-        candidates = ([os.environ.get("CLANG_TIDY", "clang-tidy-18"), "clang-tidy"]
-                      if tool == "clang-tidy" else [os.environ.get("CPPCHECK", "cppcheck")])
-        binaries = [next((shutil.which(b) for b in candidates if shutil.which(b)), candidates[0])]
+    binaries = sorted({e["arguments"][0] for e in entries}) if tool == "clang-analyzer" else [select_binary(tool)]
     versions = [capture([binary, "--version"], root, min(timeout, 10)) for binary in binaries]
     failed = any(v["failure"] or v["exit_code"] != 0 for v in versions)
     if tool == "clang-analyzer" and any("clang" not in v["stdout"].lower() for v in versions):
         failed = True
+    if tool == "cppcheck" and any(not re.search(r"Cppcheck 2\.22\.0(?:\s|$)", v["stdout"]) for v in versions):
+        failed = True
+    canaries = []
     if failed:
-        results = [report_result(dict(failure="Missing/incompatible tool; configure with Clang",
+        results = [report_result(dict(failure="Missing/incompatible requested tool; use Clang and pinned Cppcheck 2.22.0",
                                      exit_code=None), [])]
     elif tool == "cppcheck":
-        write_json(database, cppcheck_entries(cppcheck_compatibility(entries, folder, timeout)))
-        results = [cppcheck(entries, binaries[0], folder, database, timeout, root, jobs)]
+        probes = actual_header_canaries(entries, folder, root)
+        normalized = cppcheck_compatibility(entries + probes, folder, timeout,
+            require_adapter=(root / ".deps/tomlplusplus/include/toml++/impl/preprocessor.hpp").is_file())
+        def one(pair):
+            index, entry = pair
+            dest = folder / ("unit-" + str(index))
+            dest.mkdir(exist_ok=True)
+            db = dest / "compile_commands.json"
+            write_json(db, cppcheck_entries([entry]))
+            return cppcheck([entry], binaries[0], dest, db, timeout, root, 1)
+        all_results = parallel_map(one, list(enumerate(normalized)), jobs)
+        results = all_results[:len(entries)]
+        for probe, run in zip(probes, all_results[len(entries):]):
+            if probe.get("expected_failure"):
+                passed = bool(run["failure"]) and run["exit_code"] != 0 and run.get("completion_proof", {}).get("critical_error", False)
+            else:
+                passed = not run["failure"] and any(d.get("id") == "arrayIndexOutOfBounds" for d in run.get("all_diagnostics", []))
+            canaries.append(dict(source=probe["file"], expected_failure=probe.get("expected_failure", False), passed=passed, result=run))
     else:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-            results = list(pool.map(lambda entry: clang_one(tool, entry, binaries[0], folder,
-                                                           database, timeout, root), entries))
+        results = parallel_map(lambda entry: clang_one(tool, entry, binaries[0], folder,
+                                                       database, timeout, root), entries, jobs)
     completed = ([source for run in results for source in run.get("completed_sources", [])]
                  if tool == "cppcheck" else [r["source"] for r in results if not r["failure"]])
     summary = dict(tool=tool, versions=versions, expected_sources=[e["file"] for e in entries],
-                   completed_sources=completed, results=results,
-                   passed=bool(results) and all(r["status"] == "passed" for r in results),
+                   completed_sources=completed, results=results, canaries=canaries,
+                   passed=bool(results) and len(completed) == len(entries) and
+                          all(r["status"] == "passed" for r in results) and all(c["passed"] for c in canaries),
                    findings=sum(len(r["findings"]) for r in results))
     write_json(folder / "manifest.json", summary)
     return summary
@@ -294,6 +473,8 @@ def run_tool(tool, entries, folder, jobs, timeout, root=ROOT):
 def run_all(entries, folder, selected, jobs, timeout, root=ROOT):
     sources = [dict(source=e["file"], sha256=hashlib.sha256(Path(e["file"]).read_bytes()).hexdigest())
                for e in entries]
+    inputs = [dict(source=str(p), sha256=hashlib.sha256(p.read_bytes()).hexdigest())
+              for p in sorted((root / "include").rglob("*")) if p.is_file()]
     summaries = []
     for tool in selected:
         try:
@@ -305,8 +486,11 @@ def run_all(entries, folder, selected, jobs, timeout, root=ROOT):
         summaries.append(summary)
         print(f"{tool}: {'PASS' if summary['passed'] else 'FAIL'}; {summary['findings']} findings", flush=True)
     changed = [s["source"] for s in sources if hashlib.sha256(Path(s["source"]).read_bytes()).hexdigest() != s["sha256"]]
-    manifest = dict(sources=sources, tools=summaries, changed_sources=changed,
-                    passed=bool(summaries) and not changed and all(s["passed"] for s in summaries))
+    changed_inputs = [s["source"] for s in inputs if not Path(s["source"]).exists() or
+                      hashlib.sha256(Path(s["source"]).read_bytes()).hexdigest() != s["sha256"]]
+    manifest = dict(sources=sources, inputs=inputs, tools=summaries, changed_sources=changed,
+                    changed_inputs=changed_inputs,
+                    passed=bool(summaries) and not changed and not changed_inputs and all(s["passed"] for s in summaries))
     write_json(folder / "manifest.json", manifest)
     return manifest
 
@@ -364,7 +548,8 @@ def positive(value):
 
 
 def main():
-    parser = argparse.ArgumentParser(__doc__)
+    CANCEL.clear()
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tool", choices=("all", *TOOLS), default="all")
     parser.add_argument("--build-dir", type=Path, default=ROOT / "build/modern-checks")
     parser.add_argument("--jobs", type=positive, default=4)
@@ -386,4 +571,9 @@ def main():
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        CANCEL.set()
+        raise SystemExit(130)

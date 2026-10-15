@@ -2,6 +2,7 @@ name: Modern checks
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -27,10 +28,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build python3 python3-yaml ca-certificates \
-            clang-18 clang-tidy-18 cppcheck libcurl4-openssl-dev libssl-dev \
+            clang-18 clang-tidy-18 libcurl4-openssl-dev libssl-dev \
             zlib1g-dev libsqlite3-dev libncurses-dev libedit-dev
       - name: Fetch verified dependencies
         run: make fetch-deps
+      - name: Fetch pinned analyzer sources
+        run: make fetch-analysis-tools
+      - name: Build pinned analyzer offline
+        run: make build-analysis-tools
       - name: Configure and build with Clang
         id: build
         run: make modern-analysis-host

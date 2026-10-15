@@ -1,0 +1,6 @@
+**
+!cmake/
+!cmake/Dockerfile.host-tests
+!analysis-tools.lock.json
+!scripts/
+!scripts/analysis-tools.py
