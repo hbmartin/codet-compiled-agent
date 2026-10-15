@@ -89,14 +89,18 @@ struct Processes {
     throw Error("Process input is unavailable");
   }
 };
+class ProcessControl;
 class NativeProcesses final : public Processes {
   struct Job;
   std::map<std::string, std::unique_ptr<Job>> jobs_;
+  std::shared_ptr<ProcessControl> control_;
   unsigned next_ = 0;
   void collect(Job &);
+  void finish(Job &);
 
 public:
   NativeProcesses();
+  explicit NativeProcesses(std::shared_ptr<ProcessControl>);
   ~NativeProcesses() override;
   ProcessResult run(const ProcessSpec &, const Cancellation &) override;
   std::string start(const ProcessSpec &) override;
@@ -141,9 +145,12 @@ struct Config {
   std::vector<fs::path> roots;
   Json hooks = Json::object(), keybindings = Json::object();
   bool trust_project = false;
+  // Invocation selection only: explicit profile/CLI fields, independent of base defaults.
+  std::optional<std::string> selected_provider, selected_model;
 };
 Config load_config(const fs::path &home, const fs::path &cwd, const std::string &profile,
                    const std::vector<std::string> &overrides, FileSystem &);
+std::string default_model(const Config &, const std::string &provider);
 std::string env(const char *);
 std::string unique_id();
 bool within(const fs::path &, const fs::path &);
@@ -266,7 +273,7 @@ public:
   ToolResult execute(const ToolCall &, const Cancellation &);
   std::string instructions() const;
   std::string expand_command(const std::string &) const;
-  Json run_hooks(const std::string &, const Json &, const Cancellation &);
+  Json run_hooks(const std::string &, const Json &, const Cancellation &, int budget_ms = 0);
 };
 using EventSink = std::function<void(const Json &)>;
 struct RunResult {

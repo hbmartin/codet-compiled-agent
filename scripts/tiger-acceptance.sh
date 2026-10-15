@@ -9,6 +9,9 @@ test_root=$(mktemp -d "${TMPDIR:-/tmp}/codet-acceptance.XXXXXX")
 trap 'rm -rf -- "$test_root"' EXIT HUP INT TERM
 export CODET_HOME="$test_root/state"
 mkdir -p "$test_root/workspace"
+if [ ! -x /usr/bin/grep ]; then printf '%s\n' 'Missing /usr/bin/grep' >&2; exit 1; fi
+printf '%s\n' 'needle' > "$test_root/workspace/grep-fixture"
+/usr/bin/grep -n -E -e 'needle' -- "$test_root/workspace/grep-fixture" > "$report_dir/system-grep.txt"
 uname -a > "$report_dir/system.txt"
 sw_vers >> "$report_dir/system.txt" 2>/dev/null || true
 sysctl hw.memsize hw.cpufrequency >> "$report_dir/system.txt" 2>/dev/null || true

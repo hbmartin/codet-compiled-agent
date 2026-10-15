@@ -1,4 +1,5 @@
 #include "codet/core.hpp"
+#include "codet/process_control.hpp"
 #include <cerrno>
 #include <csignal>
 #include <cstring>
@@ -7,10 +8,12 @@
 #include <poll.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #ifdef __APPLE__
+#include <sys/event.h>
 #include <util.h>
 #else
 #include <pty.h>
@@ -265,9 +268,78 @@ void NativeFileSystem::remove(const fs::path &p) {
 fs::path NativeFileSystem::canonical(const fs::path &p) const {
   return fs::weakly_canonical(fs::absolute(p));
 }
+namespace {
+class NativeProcessControl final : public ProcessControl {
+public:
+  int watch(pid_t pid) override {
+#ifdef __APPLE__
+    const int fd = ::kqueue();
+    if (fd < 0)
+      throw Error(system_error("kqueue"));
+    struct kevent event;
+    EV_SET(&event, pid, EVFILT_PROC, EV_ADD | EV_ENABLE | EV_ONESHOT, NOTE_EXIT, 0, nullptr);
+    if (::kevent(fd, &event, 1, nullptr, 0, nullptr) < 0) {
+      const auto message = system_error("register process exit");
+      ::close(fd);
+      throw Error(message);
+    }
+    (void)::fcntl(fd, F_SETFD, FD_CLOEXEC);
+    return fd;
+#else
+    (void)pid;
+    return -1;
+#endif
+  }
+  bool exited(pid_t pid, int observer) override {
+#ifdef __APPLE__
+    (void)pid;
+    struct kevent event;
+    struct timespec immediate {};
+    const int count = ::kevent(observer, nullptr, 0, &event, 1, &immediate);
+    if (count < 0 && errno == EINTR)
+      return false;
+    if (count < 0 || (count && (event.flags & EV_ERROR)))
+      throw Error("Cannot observe owned process exit");
+    return count > 0 && (event.fflags & NOTE_EXIT);
+#else
+    (void)observer;
+    siginfo_t info{};
+    if (::waitid(P_PID, static_cast<id_t>(pid), &info, WEXITED | WNOHANG | WNOWAIT) < 0) {
+      if (errno == EINTR)
+        return false;
+      throw Error(system_error("observe child"));
+    }
+    return info.si_pid == pid;
+#endif
+  }
+  void signal(pid_t target, int sig) override {
+    if (::kill(target, sig) < 0 && errno != ESRCH) {
+#ifdef __APPLE__
+      // Darwin returns EPERM when an owned group contains only its zombie leader.
+      if (target < 0 && errno == EPERM)
+        return;
+#endif
+      throw Error(system_error("signal owned process"));
+    }
+  }
+  int reap(pid_t pid) override {
+    int status = 0;
+    pid_t result;
+    do {
+      result = ::waitpid(pid, &status, 0);
+    } while (result < 0 && errno == EINTR);
+    if (result != pid)
+      throw Error(system_error("reap child"));
+    return status;
+  }
+};
+} // namespace
+std::shared_ptr<ProcessControl> native_process_control() {
+  return std::make_shared<NativeProcessControl>();
+}
 struct NativeProcesses::Job {
   pid_t pid = -1;
-  int fd = -1;
+  int fd = -1, observer = -1;
   ProcessSpec spec;
   ProcessResult result;
   std::chrono::steady_clock::time_point began = std::chrono::steady_clock::now();
@@ -275,9 +347,13 @@ struct NativeProcesses::Job {
   ~Job() {
     if (fd >= 0)
       ::close(fd);
+    if (observer >= 0)
+      ::close(observer);
   }
 };
-NativeProcesses::NativeProcesses() = default;
+NativeProcesses::NativeProcesses() : NativeProcesses(native_process_control()) {}
+NativeProcesses::NativeProcesses(std::shared_ptr<ProcessControl> control)
+    : control_(std::move(control)) {}
 NativeProcesses::~NativeProcesses() {
   for (auto &j : jobs_) {
     try {
@@ -287,6 +363,7 @@ NativeProcesses::~NativeProcesses() {
   }
 }
 std::string NativeProcesses::start(const ProcessSpec &spec) {
+  const auto began = std::chrono::steady_clock::now();
   if (jobs_.size() >= 64)
     throw Error("Process job limit reached");
   if (spec.argv.empty())
@@ -295,45 +372,69 @@ std::string NativeProcesses::start(const ProcessSpec &spec) {
   for (const auto &a : spec.argv)
     argv.push_back(const_cast<char *>(a.c_str()));
   argv.push_back(nullptr);
-  int pipes[2] = {-1, -1}, master = -1, slave = -1;
+  int ready_pipe[2], release_pipe[2], output_pipe[2];
+  if (::pipe(ready_pipe) < 0)
+    throw Error(system_error("startup pipe"));
+  Fd ready_read(ready_pipe[0]), ready_write(ready_pipe[1]);
+  if (::socketpair(AF_UNIX, SOCK_STREAM, 0, release_pipe) < 0)
+    throw Error(system_error("startup gate"));
+  Fd release_read(release_pipe[0]), release_write(release_pipe[1]);
+#ifdef __APPLE__
+  const int no_sigpipe = 1;
+  if (::setsockopt(release_write.n, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof no_sigpipe) < 0)
+    throw Error(system_error("startup gate SIGPIPE protection"));
+#endif
+  int master = -1, slave = -1;
   if (spec.pty) {
-    if (openpty(&master, &slave, nullptr, nullptr, nullptr) < 0)
+    if (::openpty(&master, &slave, nullptr, nullptr, nullptr) < 0)
       throw Error(system_error("openpty"));
-  } else if (pipe(pipes) < 0)
-    throw Error(system_error("pipe"));
-  const pid_t pid = fork();
-  if (pid < 0) {
-    if (master >= 0) {
-      ::close(master);
-      ::close(slave);
-    } else {
-      ::close(pipes[0]);
-      ::close(pipes[1]);
-    }
-    throw Error(system_error("fork"));
+  } else {
+    if (::pipe(output_pipe) < 0)
+      throw Error(system_error("pipe"));
+    master = output_pipe[0];
+    slave = output_pipe[1];
   }
+  Fd parent_output(master), child_output(slave);
+  const pid_t pid = ::fork();
+  if (pid < 0)
+    throw Error(system_error("fork"));
   if (pid == 0) {
-    (void)::setsid();
+    ::close(ready_read.n);
+    ::close(release_write.n);
+    ::signal(SIGPIPE, SIG_DFL);
+    ::signal(SIGINT, SIG_DFL);
+    ::signal(SIGTERM, SIG_DFL);
+    sigset_t empty;
+    sigemptyset(&empty);
+    (void)::sigprocmask(SIG_SETMASK, &empty, nullptr);
+    const int setup_error = ::setsid() < 0 ? errno : 0;
+    ssize_t n;
+    do {
+      n = ::write(ready_write.n, &setup_error, sizeof setup_error);
+    } while (n < 0 && errno == EINTR);
+    if (n != static_cast<ssize_t>(sizeof setup_error) || setup_error)
+      ::_exit(126);
+    char token;
+    do {
+      n = ::read(release_read.n, &token, 1);
+    } while (n < 0 && errno == EINTR);
+    if (n != 1)
+      ::_exit(126);
+    ::close(master);
     if (spec.pty) {
-      ::close(master);
-      (void)::ioctl(slave, TIOCSCTTY, 0);
+      if (::ioctl(slave, TIOCSCTTY, 0) < 0)
+        ::_exit(126);
       (void)::dup2(slave, 0);
-      (void)::dup2(slave, 1);
-      (void)::dup2(slave, 2);
-      if (slave > 2)
-        ::close(slave);
     } else {
-      ::close(pipes[0]);
-      (void)::dup2(pipes[1], 1);
-      (void)::dup2(pipes[1], 2);
-      ::close(pipes[1]);
-      int nullfd = ::open("/dev/null", O_RDONLY);
-      if (nullfd >= 0) {
-        (void)::dup2(nullfd, 0);
-        if (nullfd > 2)
-          ::close(nullfd);
-      }
+      const int nullfd = ::open("/dev/null", O_RDONLY);
+      if (nullfd < 0)
+        ::_exit(126);
+      (void)::dup2(nullfd, 0);
+      if (nullfd > 2)
+        ::close(nullfd);
     }
+    (void)::dup2(slave, 1);
+    (void)::dup2(slave, 2);
     for (int fd = 3; fd < 1024; ++fd)
       ::close(fd);
     if (!spec.cwd.empty() && ::chdir(spec.cwd.c_str()) != 0)
@@ -343,21 +444,61 @@ std::string NativeProcesses::start(const ProcessSpec &spec) {
     ::execvp(argv[0], argv.data());
     ::_exit(127);
   }
-  auto job = std::make_unique<Job>();
-  job->pid = pid;
-  job->spec = spec;
-  if (spec.pty) {
-    ::close(slave);
-    job->fd = master;
-  } else {
-    ::close(pipes[1]);
-    job->fd = pipes[0];
+  ::close(ready_write.n);
+  ready_write.n = -1;
+  ::close(release_read.n);
+  release_read.n = -1;
+  ::close(child_output.n);
+  child_output.n = -1;
+  bool group_ready = false;
+  try {
+    struct pollfd ready {
+      ready_read.n, POLLIN, 0
+    };
+    int result;
+    do {
+      result = ::poll(&ready, 1, std::max(1, std::min(spec.timeout_ms, 5000)));
+    } while (result < 0 && errno == EINTR);
+    int setup_error = 0;
+    if (result <= 0 ||
+        ::read(ready_read.n, &setup_error, sizeof setup_error) !=
+            static_cast<ssize_t>(sizeof setup_error) ||
+        setup_error)
+      throw Error("Child process setup failed");
+    group_ready = true;
+    auto job = std::make_unique<Job>();
+    job->pid = pid;
+    job->spec = spec;
+    job->began = began;
+    // The child cannot exit through exec before this watcher has been installed.
+    job->observer = control_->watch(pid);
+    const char token = 1;
+#ifdef __APPLE__
+    const int send_flags = 0;
+#else
+    const int send_flags = MSG_NOSIGNAL;
+#endif
+    if (::send(release_write.n, &token, 1, send_flags) != 1)
+      throw Error("Cannot release child process");
+    job->fd = parent_output.n;
+    parent_output.n = -1;
+    (void)::fcntl(job->fd, F_SETFL, O_NONBLOCK);
+    (void)::fcntl(job->fd, F_SETFD, FD_CLOEXEC);
+    const std::string id = "job-" + std::to_string(++next_);
+    jobs_.emplace(id, std::move(job));
+    return id;
+  } catch (...) {
+    const auto failure = std::current_exception();
+    try {
+      control_->signal(group_ready ? -pid : pid, SIGKILL);
+    } catch (...) {
+    }
+    try {
+      (void)control_->reap(pid);
+    } catch (...) {
+    }
+    std::rethrow_exception(failure);
   }
-  (void)::fcntl(job->fd, F_SETFL, O_NONBLOCK);
-  (void)::fcntl(job->fd, F_SETFD, FD_CLOEXEC);
-  const std::string id = "job-" + std::to_string(++next_);
-  jobs_.emplace(id, std::move(job));
-  return id;
 }
 void NativeProcesses::collect(Job &job) {
   char buf[8192];
@@ -375,16 +516,25 @@ void NativeProcesses::collect(Job &job) {
     if (keep < static_cast<size_t>(n))
       job.result.truncated = true;
   }
-  if (!job.done) {
-    int status = 0;
-    const pid_t result = ::waitpid(job.pid, &status, WNOHANG);
-    if (result == job.pid) {
-      job.done = true;
-      job.result.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
-    } else if (result < 0 && errno != EINTR)
-      throw Error(system_error("waitpid"));
-  }
+  if (!job.done && control_->exited(job.pid, job.observer))
+    finish(job);
   job.result.running = !job.done;
+}
+void NativeProcesses::finish(Job &job) {
+  if (job.done)
+    return;
+  // Keep the leader unreaped until every signal to this group has been issued.
+  control_->signal(-job.pid, SIGKILL);
+  const int status = control_->reap(job.pid);
+  job.pid = -1;
+  job.done = true;
+  if (job.observer >= 0) {
+    ::close(job.observer);
+    job.observer = -1;
+  }
+  job.result.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+  job.result.running = false;
+  collect(job);
 }
 ProcessResult NativeProcesses::poll(const std::string &id) {
   auto it = jobs_.find(id);
@@ -405,28 +555,16 @@ void NativeProcesses::stop(const std::string &id) {
   if (it == jobs_.end())
     throw Error("Unknown job: " + id);
   Job &job = *it->second;
-  (void)::kill(-job.pid, SIGTERM);
-  // Kill the whole session/process group, including shell grandchildren.
-  if (!job.done) {
-    (void)::kill(-job.pid, SIGTERM);
-    (void)::kill(job.pid, SIGTERM);
-    for (int i = 0; i < 10 && !job.done; ++i) {
-      collect(job);
+  if (job.done)
+    return;
+  control_->signal(-job.pid, SIGTERM);
+  for (int i = 0; i < 10 && !job.done; ++i) {
+    collect(job);
+    if (!job.done)
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    if (!job.done) {
-      (void)::kill(-job.pid, SIGKILL);
-      (void)::kill(job.pid, SIGKILL);
-      int status = 0;
-      while (::waitpid(job.pid, &status, 0) < 0 && errno == EINTR) {
-      }
-      job.done = true;
-      job.result.exit_code = 137;
-    }
   }
-  collect(job);
-  job.result.running = false;
-  (void)::kill(-job.pid, SIGKILL);
+  if (!job.done)
+    finish(job);
 }
 void NativeProcesses::write(const std::string &id, const std::string &input) {
   const auto it = jobs_.find(id);

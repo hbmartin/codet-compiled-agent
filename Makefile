@@ -23,7 +23,7 @@ host:
 test: host
 	ctest --test-dir build/host --output-on-failure
 .PHONY: analyze-modern
-analyze-modern: host
+analyze-modern:
 	python3 scripts/analyze-modern.py
 test-foundation:
 	cmake -S . -B build/foundation -DCODET_FOUNDATION_ONLY=ON
@@ -81,7 +81,7 @@ help:
 	@printf '%s\n' 'make [modern]     Cross-build the modern C++ application and GoogleTest executable.' \
 	  'make host / test   Build the modern host application / run hermetic tests.' \
 	  'make test-sanitize Run host tests with ASan and UBSan.' \
-	  'make analyze-modern Run Clang analysis using the host compilation database.' \
+	  'make analyze-modern Run Clang analysis using a separate Clang configuration.' \
 	  'make fetch-tiger-deps / toolchain-image Fetch pinned sources / prepare build utilities (network).' \
 	  'make tiger-sysroot Build pinned target dependencies offline.' \
 	  'make verify-tiger / tiger-package Statically verify / package the modern PPC artifacts.' \
