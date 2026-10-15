@@ -1,0 +1,4 @@
+FROM ghcr.io/variantxyz/gcc-powerpc-apple-darwin8@sha256:a9013745ae4a696dc3a047675a85e7c43b9453cdb1e26d9a7ac9738587c1e198
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake python3 perl make patch pkg-config gcc g++ && \
+    dpkg-query -W > /opt/codet-build-tools.txt && rm -rf /var/lib/apt/lists/*

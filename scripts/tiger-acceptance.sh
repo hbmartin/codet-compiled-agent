@@ -1,0 +1,37 @@
+#!/bin/sh
+# Run by the owner on Tiger. No real credentials/network are used by default.
+set -eu
+umask 077
+bundle_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+report_dir=${CODET_ACCEPTANCE_REPORT:-"$PWD/codet-acceptance-$(date +%Y%m%d-%H%M%S)"}
+mkdir -p "$report_dir"
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/codet-acceptance.XXXXXX")
+trap 'rm -rf -- "$test_root"' EXIT HUP INT TERM
+export CODET_HOME="$test_root/state"
+mkdir -p "$test_root/workspace"
+uname -a > "$report_dir/system.txt"
+sw_vers >> "$report_dir/system.txt" 2>/dev/null || true
+sysctl hw.memsize hw.cpufrequency >> "$report_dir/system.txt" 2>/dev/null || true
+otool -L "$bundle_dir/codet" > "$report_dir/dependencies.txt"
+"$bundle_dir/codet" doctor -C "$test_root/workspace" > "$report_dir/doctor.json"
+/usr/bin/time -l "$bundle_dir/codet" --version > "$report_dir/startup.txt" 2> "$report_dir/startup-resource.txt"
+/usr/bin/time -l "$bundle_dir/codet_tests" --gtest_output="xml:$report_dir/tests.xml" > "$report_dir/tests.txt" 2> "$report_dir/test-resource.txt"
+case "${1:-}" in
+  --tls)
+    export CODET_TEST_TLS_URL=${CODET_TEST_TLS_URL:-https://auth.openai.com/.well-known/openid-configuration}
+    "$bundle_dir/codet_tests" --gtest_filter=NetworkOptIn.TlsHandshake > "$report_dir/tls.txt" 2>&1
+    ;;
+  --subscription)
+    if [ "$#" -ne 2 ]; then printf '%s\n' 'Usage: tiger-acceptance.sh --subscription /path/to/explicit-token-file' >&2; exit 2; fi
+    "$bundle_dir/codet" login --import "$2" > "$report_dir/import.txt" 2>&1
+    /usr/bin/time -l "$bundle_dir/codet" exec -C "$test_root/workspace" --json 'Reply with exactly: Tiger subscription transport works.' > "$report_dir/subscription.jsonl" 2> "$report_dir/subscription-resource.txt"
+    ;;
+  --api)
+    provider=${CODET_TEST_PROVIDER:-openai}
+    model=${CODET_TEST_MODEL:?Set CODET_TEST_MODEL explicitly for your account}
+    /usr/bin/time -l "$bundle_dir/codet" exec -C "$test_root/workspace" --provider "$provider" --model "$model" --json 'Reply with exactly: Tiger API transport works.' > "$report_dir/api.jsonl" 2> "$report_dir/api-resource.txt"
+    ;;
+  '') ;;
+  *) printf '%s\n' 'Options: --tls | --subscription FILE | --api' >&2; exit 2 ;;
+esac
+printf '%s\n' "Acceptance reports: $report_dir" 'Runtime acceptance remains pending review of these reports.'

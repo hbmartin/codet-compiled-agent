@@ -1,0 +1,11 @@
+--- src/sys.h
++++ src/sys.h
+@@ -118,7 +118,7 @@
+ typedef unsigned int	u_int32_t;
+ #endif
+ 
+-#ifndef HAVE_SIZE_MAX
++#if !defined(HAVE_SIZE_MAX) && !defined(SIZE_MAX)
+ #define SIZE_MAX	((size_t)-1)
+ #endif
+ 
