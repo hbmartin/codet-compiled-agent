@@ -38,7 +38,7 @@ struct HttpRequest {
   std::string method = "POST", url, body;
   std::map<std::string, std::string> headers;
   int timeout_seconds = 120;
-  size_t max_bytes = 16 * 1024 * 1024;
+  size_t max_bytes = size_t{16} * 1024 * 1024;
 };
 struct HttpResponse {
   int status = 0;
@@ -55,13 +55,13 @@ struct CurlTransport final : HttpTransport {
 };
 struct FileSystem {
   virtual ~FileSystem() = default;
-  virtual std::string read(const fs::path &, size_t limit = 16 * 1024 * 1024) const = 0;
+  virtual std::string read(const fs::path &, size_t limit = size_t{16} * 1024 * 1024) const = 0;
   virtual void atomic_write(const fs::path &, const std::string &, bool private_file = false) = 0;
   virtual void remove(const fs::path &) = 0;
   virtual fs::path canonical(const fs::path &) const = 0;
 };
 struct NativeFileSystem final : FileSystem {
-  std::string read(const fs::path &, size_t = 16 * 1024 * 1024) const override;
+  std::string read(const fs::path &, size_t = size_t{16} * 1024 * 1024) const override;
   void atomic_write(const fs::path &, const std::string &, bool = false) override;
   void remove(const fs::path &) override;
   fs::path canonical(const fs::path &) const override;
@@ -220,7 +220,8 @@ struct PermissionRequest {
   std::optional<fs::path> path;
   bool mutation = false;
 };
-enum class Decision { allow, ask, deny };
+// NOLINTNEXTLINE(performance-enum-size): Preserve the public permission decision's existing int ABI.
+enum class Decision : int { allow, ask, deny };
 class Permissions {
   const Config &config_;
   const FileSystem &files_;

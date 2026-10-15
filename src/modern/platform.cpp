@@ -282,7 +282,7 @@ NativeProcesses::~NativeProcesses() {
   for (auto &j : jobs_) {
     try {
       stop(j.first);
-    } catch (...) {
+    } catch (...) { // NOLINT(bugprone-empty-catch): Destruction must continue stopping other jobs.
     }
   }
 }
@@ -292,6 +292,7 @@ std::string NativeProcesses::start(const ProcessSpec &spec) {
   if (spec.argv.empty())
     throw Error("Empty process command");
   std::vector<char *> argv;
+  argv.reserve(spec.argv.size() + 1);
   for (const auto &a : spec.argv)
     argv.push_back(const_cast<char *>(a.c_str()));
   argv.push_back(nullptr);
@@ -362,7 +363,7 @@ std::string NativeProcesses::start(const ProcessSpec &spec) {
 void NativeProcesses::collect(Job &job) {
   char buf[8192];
   size_t drained = 0;
-  while (drained < 1024 * 1024) {
+  while (drained < size_t{1024} * 1024) {
     ssize_t n = ::read(job.fd, buf, sizeof buf);
     if (n < 0 && errno == EINTR)
       continue;

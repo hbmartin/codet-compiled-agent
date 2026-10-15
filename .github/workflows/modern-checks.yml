@@ -1,0 +1,58 @@
+name: Modern checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: modern-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ubuntu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      MODERN_CC: clang-18
+      MODERN_CXX: clang++-18
+      CLANG_TIDY: clang-tidy-18
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install host tools and libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build python3 python3-yaml ca-certificates \
+            clang-18 clang-tidy-18 cppcheck libcurl4-openssl-dev libssl-dev \
+            zlib1g-dev libsqlite3-dev libncurses-dev libedit-dev
+      - name: Fetch verified dependencies
+        run: make fetch-deps
+      - name: Configure and build with Clang
+        id: build
+        run: make modern-analysis-host
+      - name: Test analysis runner
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: make test-modern-analysis-runner
+      - name: Verify analyzer detection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: make analyze-modern-selftest
+      - name: Analyze all application sources
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: make analyze-modern
+      - name: Run unit, CLI and integration tests
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ctest --test-dir build/modern-checks --output-on-failure
+      - name: Upload analysis and test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: modern-checks-ubuntu
+          retention-days: 14
+          path: |
+            build/modern-checks/analysis/
+            build/modern-checks/Testing/Temporary/
+            build/modern-checks/CMakeFiles/CMakeConfigureLog.yaml

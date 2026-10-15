@@ -32,7 +32,7 @@ void SseDecoder::line(std::string l) {
 }
 void SseDecoder::feed(const std::string &bytes) {
   pending_ += bytes;
-  if (pending_.size() > 16 * 1024 * 1024)
+  if (pending_.size() > size_t{16} * 1024 * 1024)
     throw Error("SSE frame exceeds limit");
   size_t pos;
   while ((pos = pending_.find('\n')) != std::string::npos) {

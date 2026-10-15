@@ -105,9 +105,11 @@ class CliTests(unittest.TestCase):
         r=self.run_cli('exec','fixture-recall')
         self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(r.stdout,'memory recovered\n')
     def test_interrupt_has_exit_130_and_terminal_event(self):
-        p=subprocess.Popen([BIN,'-C',str(self.workspace),'exec','--json','fixture-wait'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=self.env)
-        time.sleep(.3);p.send_signal(signal.SIGINT);out,err=p.communicate(timeout=8)
-        self.assertEqual(p.returncode,130,err);self.assertEqual(json.loads(out.splitlines()[-1])['type'],'turn.failed')
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(signal=sig):
+                p=subprocess.Popen([BIN,'-C',str(self.workspace),'exec','--json','fixture-wait'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=self.env)
+                time.sleep(.3);p.send_signal(sig);out,err=p.communicate(timeout=8)
+                self.assertEqual(p.returncode,130,err);self.assertEqual(json.loads(out.splitlines()[-1])['type'],'turn.failed')
     def test_terminal_modes_restore_terminal(self):
         import pty,termios,select,fcntl,struct
         for mode in ['line','curses']:

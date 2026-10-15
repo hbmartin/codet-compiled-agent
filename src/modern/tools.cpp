@@ -282,7 +282,7 @@ Json Tools::run_hooks(const std::string &event, const Json &input, const Cancell
     } catch (...) {
       try {
         files_.remove(file);
-      } catch (...) {
+      } catch (...) { // NOLINT(bugprone-empty-catch): Preserve the original hook failure if cleanup fails.
       }
       throw;
     }
@@ -434,7 +434,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
       std::optional<std::string> before;
       if (fs::exists(p))
         before = files_.read(p);
-      if (after && after->size() > 16 * 1024 * 1024)
+      if (after && after->size() > size_t{16} * 1024 * 1024)
         throw Error("Write exceeds 16 MiB limit");
       if (std::any_of(changes.begin(), changes.end(), [&](const Change &x) { return x.path == p; }))
         throw Error("Duplicate file in batch/patch");
@@ -487,7 +487,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
       if (ls.empty() || ls.front() != "*** Begin Patch" || ls.back() != "*** End Patch")
         throw Error("Expected complete *** Begin Patch envelope");
       for (size_t i = 1; i + 1 < ls.size();) {
-        const auto header = ls[i++];
+        const auto &header = ls[i++];
         const auto colon = header.find(": ");
         if (colon == std::string::npos)
           throw Error("Malformed patch file header");
@@ -526,7 +526,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
           ++i;
           std::vector<std::string> before, after;
           while (i + 1 < ls.size() && ls[i].rfind("@@", 0) != 0 && ls[i].rfind("*** ", 0) != 0) {
-            const auto l = ls[i++];
+            const auto &l = ls[i++];
             if (l.empty())
               throw Error("Patch lines require a prefix");
             if (l[0] == ' ' || l[0] == '-')
@@ -694,15 +694,21 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
             (pattern.rfind("**/", 0) == 0 &&
              fnmatch(pattern.substr(3).c_str(), relative.c_str(), 0) == 0))
           out += relative + "\n";
-      } else if (fs::file_size(p) <= 1024 * 1024) {
-        const auto content = files_.read(p, 1024 * 1024);
+      } else if (fs::file_size(p) <= size_t{1024} * 1024) {
+        const auto content = files_.read(p, size_t{1024} * 1024);
         if (content.find('\0') != std::string::npos)
           continue;
         size_t n = 0;
         for (const auto &l : lines(content)) {
           ++n;
-          if (std::regex_search(l, *re))
-            out += relative + ":" + std::to_string(n) + ":" + l + "\n";
+          if (re.has_value() && std::regex_search(l, re.value())) {
+            out += relative;
+            out += ':';
+            out += std::to_string(n);
+            out += ':';
+            out += l;
+            out += '\n';
+          }
           if (out.size() > config_.tool_output_limit * 2)
             break;
         }
@@ -716,7 +722,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     HttpRequest r;
     r.method = "GET";
     r.timeout_seconds = 20;
-    r.max_bytes = 2 * 1024 * 1024;
+    r.max_bytes = size_t{2} * 1024 * 1024;
     std::string backend = "html";
     if (name == "WebFetch")
       r.url = a.at("url");
