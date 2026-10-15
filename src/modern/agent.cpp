@@ -8,7 +8,7 @@ namespace codet {
 RunResult Agent::run(Session &session, const std::string &prompt, const Cancellation &cancel,
                      const Json &schema) {
   auto owner = state_.acquire(session.id);
-  session = state_.load(session.id, false);
+  session = state_.load_id(session.id, false);
   RunResult out;
   Json structured;
   session.provider = config_.provider;
@@ -44,12 +44,12 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
     try {
       state_.reconcile(session);
     } catch (const std::exception &e) {
-      std::cerr << "Transcript recovery failed: " << safe_text(e.what()) << '\n';
+      report_diagnostic(diagnostics_, "Transcript recovery failed: " + std::string(e.what()));
     }
     try {
       state_.finish_turn(session.id, status);
     } catch (const std::exception &e) {
-      std::cerr << "Turn status update failed: " << safe_text(e.what()) << '\n';
+      report_diagnostic(diagnostics_, "Turn status update failed: " + std::string(e.what()));
     }
   };
   try {
@@ -61,17 +61,20 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
                                             cancel);
     if (submitted.blocked || submitted.stopped)
       throw Error("Prompt blocked by hook: " + submitted.reason);
+    const auto expanded = safe_text(tools_.expand_command(prompt));
+    Session candidate = session;
     if (!submitted.additional_context.empty()) {
       Message context;
       context.role = "system";
       context.text = "UserPromptSubmit hook context:\n" + submitted.additional_context;
-      session.messages.push_back(context);
+      candidate.messages.push_back(context);
     }
     Message user;
     user.role = "user";
-    user.text = safe_text(tools_.expand_command(prompt));
-    session.messages.push_back(user);
-    state_.save(session);
+    user.text = expanded;
+    candidate.messages.push_back(user);
+    state_.save(candidate);
+    session = std::move(candidate);
     const std::string system =
         "You are Codet, a single-agent terminal coding assistant. Complete the user's request "
         "using tools. Read existing files before editing. Respect permission denials; do not retry "
@@ -84,7 +87,8 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         "for extended patterns. Use find with directory pruning to skip .git, build and "
         "node_modules; shell grep has no automatic exclusions. Command output is a bounded "
         "head/tail preview. Check spill_path, spill_bytes, total_output_bytes and spill_truncated "
-        "metadata before assuming the capture is complete. Page retained text with Read offset/limit "
+        "metadata before assuming the capture is complete. Page retained text with Read "
+        "offset/limit "
         "line ranges, or authorized Bash dd for byte ranges/long lines; files may expire. "
         "Glob finds file names; there is no dedicated Grep tool. Never claim tests ran unless "
         "you ran them. Use Memory for durable project facts. "
@@ -180,7 +184,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
                                               {"stop_hook_active", stop_blocks > 0}},
                                              cancel);
           if (stop.stopped)
-            std::cerr << "Stop hook stopped execution: " << safe_text(stop.reason) << '\n';
+            report_diagnostic(diagnostics_, "Stop hook stopped execution: " + stop.reason);
           else if (stop.blocked)
             throw Error(stop.reason);
         } catch (const Error &e) {

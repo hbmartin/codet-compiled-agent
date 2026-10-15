@@ -323,6 +323,12 @@ public:
     if (restore_)
       (void)tcsetattr(STDIN_FILENO, TCSANOW, &original_);
   }
+  void diagnostic(const std::string &text) {
+    if (curses_)
+      say(text);
+    else
+      std::cerr << text << '\n';
+  }
   void set_mode(const std::string &mode) {
     status_ = "Permissions: " + mode + "; no OS shell sandbox";
     prompt_ = "codet> [" + mode + "] ";
@@ -464,7 +470,34 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   CurlTransport http;
   // Keep session ownership until background-process destruction has finished.
   std::shared_ptr<void> lifecycle_owner, current_owner;
+  struct Diagnostics {
+    std::weak_ptr<Terminal> screen;
+    bool buffering = false;
+    size_t limit = 65536, used = 0;
+    std::vector<std::string> pending;
+    void emit(const std::string &text) {
+      if (buffering) {
+        if (used < limit) {
+          auto message = bounded_text(text, limit - used);
+          used += message.size();
+          pending.push_back(std::move(message));
+        }
+      } else if (auto terminal = screen.lock())
+        terminal->diagnostic(text);
+      else
+        std::cerr << text << '\n';
+    }
+    void flush() {
+      for (const auto &text : pending)
+        std::cerr << text << '\n';
+      pending.clear();
+      used = 0;
+    }
+  };
+  auto diagnostics = std::make_shared<Diagnostics>();
+  DiagnosticSink diagnostic = [diagnostics](const std::string &text) { diagnostics->emit(text); };
   NativeProcesses processes;
+  processes.set_diagnostics(diagnostic);
   std::string home = env("CODET_HOME");
   if (home.empty()) {
     const auto h = env("HOME");
@@ -588,7 +621,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     session = state.create();
   lifecycle_owner = state.acquire(session.id);
   current_owner = lifecycle_owner;
-  session = state.load(session.id, false);
+  session = state.load_id(session.id, false);
   state.reconcile(session);
   const auto resolved =
       resolve_selection(config, o.command == "resume" || o.command == "fork"
@@ -600,10 +633,11 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   session.provider = config.provider;
   state.save(session);
   const bool interactive = !o.exec && isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
-  std::unique_ptr<Terminal> terminal;
+  std::shared_ptr<Terminal> terminal;
   if (interactive) {
-    terminal = std::make_unique<Terminal>(config, o.color);
+    terminal = std::make_shared<Terminal>(config, o.color);
     terminal->set_mode(config.permission_mode);
+    diagnostics->screen = terminal;
   }
   Approver approver;
   Questioner questioner;
@@ -613,7 +647,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     questioner = [&](const std::string &question, const std::vector<std::string> &options) {
       return terminal->ask(question, options, cancel);
     };
-  Tools tools(config, files, processes, http, clock, approver, questioner);
+  Tools tools(config, files, processes, http, clock, approver, questioner, diagnostic);
   ApiProvider provider(http, credentials, clock);
   Json schema;
   if (!o.schema.empty()) {
@@ -633,7 +667,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     else if (event.value("type", "") == "item.started" && event["item"].contains("tool"))
       std::cerr << "[" << event["item"]["tool"].get<std::string>() << "]\n";
   };
-  Agent agent(config, provider, tools, state, events);
+  Agent agent(config, provider, tools, state, events, diagnostic);
   struct SessionEnd {
     std::function<void()> end;
     ~SessionEnd() {
@@ -646,31 +680,35 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       }
     }
   } session_end{[&, started_id = session.id] {
-    std::ostringstream diagnostics;
-    {
-      struct RestoreOutput {
-        std::streambuf *previous;
-        ~RestoreOutput() {
-          std::cerr.rdbuf(previous);
-        }
-      } restore{std::cerr.rdbuf(diagnostics.rdbuf())};
-      try {
-        Cancellation cleanup_cancel;
-        tools.run_hooks("SessionEnd",
-                        {{"hook_event_name", "SessionEnd"}, {"session_id", started_id}},
-                        cleanup_cancel, 10000);
-      } catch (const std::exception &error) {
-        std::cerr << "SessionEnd hook cleanup failed: " << safe_text(error.what()) << '\n';
-      } catch (...) {
-        std::cerr << "SessionEnd hook cleanup failed: unknown exception\n";
+    diagnostics->buffering = true;
+    diagnostics->limit = config.tool_output_limit;
+    struct RestoreTerminal {
+      std::shared_ptr<Terminal> &terminal;
+      Diagnostics &diagnostics;
+      RestoreTerminal(std::shared_ptr<Terminal> &screen, Diagnostics &sink)
+          : terminal(screen), diagnostics(sink) {}
+      ~RestoreTerminal() {
+        terminal.reset();
+        diagnostics.buffering = false;
+        diagnostics.flush();
       }
+    } restore{terminal, *diagnostics};
+    try {
+      Cancellation cleanup_cancel;
+      tools.run_hooks("SessionEnd", {{"hook_event_name", "SessionEnd"}, {"session_id", started_id}},
+                      cleanup_cancel, 10000);
+    } catch (const std::exception &error) {
+      report_diagnostic(diagnostic, "SessionEnd hook cleanup failed: " + std::string(error.what()));
+    } catch (...) {
+      report_diagnostic(diagnostic, "SessionEnd hook cleanup failed: unknown exception");
     }
-    terminal.reset();
-    std::cerr << bounded_text(diagnostics.str(), config.tool_output_limit);
   }};
   const auto started = tools.run_hooks("SessionStart",
                                        {{"hook_event_name", "SessionStart"},
                                         {"session_id", session.id},
+                                        {"source", o.command == "resume" ? "resume"
+                                                   : o.command == "fork" ? "fork"
+                                                                         : "startup"},
                                         {"cwd", config.cwd.string()}},
                                        cancel);
   if (started.blocked || started.stopped)

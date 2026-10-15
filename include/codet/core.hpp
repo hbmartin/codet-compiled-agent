@@ -25,6 +25,8 @@ struct ProcessTimeout : Error {
   ProcessTimeout() : Error("Command timed out during startup") {}
 };
 Json safe_json(const Json &);
+using DiagnosticSink = std::function<void(const std::string &)>;
+void report_diagnostic(const DiagnosticSink &, const std::string &);
 std::string bounded_text(const std::string &, size_t);
 struct Cancellation {
   std::atomic<bool> requested{false};
@@ -101,6 +103,7 @@ struct ProcessResult {
   uint64_t total_output_bytes = 0;
   size_t spill_bytes = 0;
   bool spill_truncated = false;
+  bool stdout_truncated = false, stderr_truncated = false;
   ProcessResult() = default;
   ProcessResult(int code, std::string text, bool cut = false, bool active = false,
                 std::string errors = {})
@@ -111,6 +114,7 @@ struct ProcessStatus {
   std::string id;
   bool running = false;
   int exit_code = 0;
+  std::string error = "";
 };
 struct Processes {
   virtual ~Processes() = default;
@@ -136,14 +140,20 @@ class NativeProcesses final : public Processes {
   std::shared_ptr<ProcessControl> control_;
   unsigned next_ = 0;
   uint64_t completed_ = 0;
+  DiagnosticSink diagnostics_;
   void collect(Job &);
   void finish(Job &, bool ownership_lost = false);
+  void terminate(Job &, int status);
+  [[noreturn]] void job_error(const std::string &, Job &, const Error &);
   void refresh();
   void prune();
 
 public:
   NativeProcesses();
-  explicit NativeProcesses(std::shared_ptr<ProcessControl>);
+  explicit NativeProcesses(std::shared_ptr<ProcessControl>, DiagnosticSink = {});
+  void set_diagnostics(DiagnosticSink sink) {
+    diagnostics_ = std::move(sink);
+  }
   ~NativeProcesses() override;
   ProcessResult run(const ProcessSpec &, const Cancellation &) override;
   std::string start(const ProcessSpec &) override;
@@ -265,6 +275,7 @@ public:
   Session create(const std::string &name = "");
   // Default loads are repaired snapshots, never persistent recovery writes.
   Session load(const std::string &id_or_name, bool repair = true);
+  Session load_id(const std::string &id, bool repair = true);
   std::shared_ptr<void> acquire(const std::string &id);
   void reconcile(Session &, bool persist = true);
   Session last();
@@ -281,16 +292,18 @@ struct PermissionRequest {
   std::optional<fs::path> path;
   bool mutation = false;
 };
-// NOLINTNEXTLINE(performance-enum-size): Preserve the public permission decision's existing int
-// ABI.
 enum class Decision : uint8_t { allow, ask, deny };
 class Permissions {
+  struct Rules;
+  mutable std::shared_ptr<Rules> rules_;
+  void refresh_rules() const;
   const Config &config_;
   const FileSystem &files_;
 
 public:
   Permissions(const Config &c, const FileSystem &f) : config_(c), files_(f) {}
   Decision decide(const PermissionRequest &) const;
+  bool has_scoped_denials(const std::string &tool) const;
 };
 using Approver = std::function<bool(const PermissionRequest &)>;
 using Questioner =
@@ -316,6 +329,7 @@ class Tools {
   Permissions permissions_;
   Approver approve_;
   Questioner question_;
+  DiagnosticSink diagnostics_;
   std::map<fs::path, std::string> read_versions_;
   Json todos_ = Json::array();
   bool plan_ = false;
@@ -328,9 +342,9 @@ class Tools {
 
 public:
   Tools(const Config &c, FileSystem &f, Processes &p, HttpTransport &h, Clock &clock,
-        Approver a = {}, Questioner q = {})
+        Approver a = {}, Questioner q = {}, DiagnosticSink diagnostics = {})
       : config_(c), files_(f), processes_(p), http_(h), clock_(clock), permissions_(c, f),
-        approve_(std::move(a)), question_(std::move(q)) {}
+        approve_(std::move(a)), question_(std::move(q)), diagnostics_(std::move(diagnostics)) {}
   Json schemas() const;
   void use_session(const std::string &id);
   ToolResult execute(const ToolCall &, const Cancellation &);
@@ -351,10 +365,13 @@ class Agent {
   Tools &tools_;
   StateStore &state_;
   EventSink events_;
+  DiagnosticSink diagnostics_;
 
 public:
-  Agent(const Config &c, Provider &p, Tools &t, StateStore &s, EventSink e)
-      : config_(c), provider_(p), tools_(t), state_(s), events_(std::move(e)) {}
+  Agent(const Config &c, Provider &p, Tools &t, StateStore &s, EventSink e,
+        DiagnosticSink diagnostics = {})
+      : config_(c), provider_(p), tools_(t), state_(s), events_(std::move(e)),
+        diagnostics_(std::move(diagnostics)) {}
   RunResult run(Session &, const std::string &, const Cancellation &, const Json &schema = Json());
 };
 int cli_main(const std::vector<std::string> &args, Cancellation &);

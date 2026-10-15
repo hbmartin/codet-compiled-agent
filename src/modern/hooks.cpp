@@ -17,8 +17,9 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
     const auto message = bounded_text(text, config_.tool_output_limit - diagnostic_bytes);
     diagnostic_bytes += message.size();
     out.diagnostics.push_back(message);
-    std::cerr << (event == "SessionEnd" ? "SessionEnd hook cleanup failed: " : "Hook: ") << message
-              << '\n';
+    report_diagnostic(diagnostics_,
+                      (event == "SessionEnd" ? "SessionEnd hook cleanup failed: " : "Hook: ") +
+                          message);
   };
   if (!config_.hooks.contains(event))
     return out;
@@ -35,7 +36,12 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
     fs::path file;
     ProcessResult result;
     try {
-      if (fnmatch(hook.value("matcher", "*").c_str(), input.value("tool_name", "").c_str(), 0))
+      auto matcher = hook.value("matcher", "*");
+      const auto subject =
+          event == "SessionStart" ? input.value("source", "startup") : input.value("tool_name", "");
+      if (event == "SessionStart" && matcher.empty())
+        matcher = "*";
+      if (fnmatch(matcher.c_str(), subject.c_str(), 0))
         continue;
       ProcessSpec spec;
       spec.cwd = config_.cwd;
@@ -72,11 +78,17 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
         }
       }
       cancel.check();
+      if (dynamic_cast<const std::bad_alloc *>(&error))
+        throw;
       if (const auto *e = dynamic_cast<const Error *>(&error); e && e->code == 130)
         throw;
       diagnose(event + ": " + error.what());
       continue;
     }
+    if (result.stdout_truncated)
+      diagnose(event + " stdout capture truncated");
+    if (result.stderr_truncated)
+      diagnose(event + " stderr capture truncated");
     const auto stdout_text = safe_text(result.output),
                stderr_text = safe_text(result.stderr_output);
     const auto nonempty = [](const std::string &s) {
@@ -105,6 +117,10 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
       continue;
     const auto first = stdout_text.find_first_not_of(" \t\r\n");
     const bool json_like = stdout_text[first] == '{' || stdout_text[first] == '[';
+    if (json_like && result.stdout_truncated) {
+      diagnose(event + " returned truncated JSON output");
+      continue;
+    }
     const auto value = Json::parse(stdout_text, nullptr, false);
     if (!value.is_object()) {
       if (json_like || event == "Stop")

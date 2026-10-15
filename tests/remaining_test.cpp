@@ -413,7 +413,24 @@ struct CountingFiles : FileSystem {
     return native.canonical(p);
   }
 };
-TEST_F(Remaining, GlobAvoidsRepeatedCanonicalizationWithoutApplicableDenials) {
+TEST_F(Remaining, PermissionDecisionSharesCanonicalPrefixesAcrossRules) {
+  fs::create_directories(config.cwd / "shared");
+  files.atomic_write(config.cwd / "shared/public", "public");
+  config.permission_mode = "default";
+  for (int i = 0; i < 50; ++i)
+    config.deny.push_back("Read(shared/secret-" + std::to_string(i) + "*)");
+  CountingFiles counted;
+  Permissions permissions(config, counted);
+  const auto target = config.cwd / "shared/public";
+  EXPECT_EQ(permissions.decide({"Read", target.string(), target, false}), Decision::allow);
+  // Target, cwd and shared prefix each resolve once; fifty rules must not multiply IO.
+  EXPECT_LE(counted.canonical_calls, 4u);
+  counted.canonical_calls = 0;
+  config.deny.push_back("Read(shared/public)");
+  EXPECT_EQ(permissions.decide({"Read", target.string(), target, false}), Decision::deny);
+  EXPECT_LE(counted.canonical_calls, 4u);
+}
+TEST_F(Remaining, GlobChecksEachResultOnceAndCachesCanonicalPrefixes) {
   config.permission_mode = "default";
   config.deny = {"Read(secret*)"};
   for (int i = 0; i < 100; ++i)
@@ -422,14 +439,14 @@ TEST_F(Remaining, GlobAvoidsRepeatedCanonicalizationWithoutApplicableDenials) {
   Tools tools(config, counted, processes, http, clock);
   const auto result = tools.execute(call("Glob", {{"pattern", "*"}}), cancel);
   ASSERT_FALSE(result.error);
-  EXPECT_LT(counted.canonical_calls, 20u);
+  EXPECT_LT(counted.canonical_calls, 310u);
   EXPECT_THAT(result.content, HasSubstr("file-99"));
   config.deny = {"Glob(file-99)"};
   counted.canonical_calls = 0;
   const auto filtered = tools.execute(call("Glob", {{"pattern", "*"}}), cancel);
   EXPECT_FALSE(filtered.error);
   EXPECT_THAT(filtered.content, Not(HasSubstr("file-99")));
-  EXPECT_GT(counted.canonical_calls, 20u);
+  EXPECT_LT(counted.canonical_calls, 410u);
 }
 TEST_F(Remaining, HookFailurePlaintextStderrAndExplicitDenialsFollowEventSemantics) {
   Tools tools(config, files, processes, http, clock);

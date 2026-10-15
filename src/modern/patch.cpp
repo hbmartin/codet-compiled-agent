@@ -106,20 +106,19 @@ std::string patch_update(const std::string &text, const std::vector<std::string>
   std::string preferred = "\n";
   bool chose_ending = false;
   for (size_t start = 0; start < text.size();) {
-    const auto end = text.find_first_of("\r\n", start);
+    const auto end = text.find('\n', start);
     if (end == std::string::npos) {
       source.push_back({text.substr(start), ""});
       break;
     }
-    const size_t width =
-        text[end] == '\r' && end + 1 < text.size() && text[end + 1] == '\n' ? 2 : 1;
-    const auto ending = text.substr(end, width);
+    const auto content_end = end > start && text[end - 1] == '\r' ? end - 1 : end;
+    const auto ending = text.substr(content_end, end - content_end + 1);
     if (!chose_ending) {
       preferred = ending;
       chose_ending = true;
     }
-    source.push_back({text.substr(start, end - start), ending});
-    start = end + width;
+    source.push_back({text.substr(start, content_end - start), ending});
+    start = end + 1;
   }
   std::vector<Replacement> replacements;
   size_t cursor = 0, chunks = 0;
@@ -206,10 +205,12 @@ std::string patch_update(const std::string &text, const std::vector<std::string>
                    [](const auto &a, const auto &b) { return a.start < b.start; });
   std::string result;
   size_t position = 0;
+  bool unterminated = false;
   const auto append_source = [&](size_t end) {
     while (position < end) {
       const auto &line = source[position++];
-      result += line.text + (line.ending.empty() ? preferred : line.ending);
+      result += line.text + line.ending;
+      unterminated = line.ending.empty();
     }
   };
   for (const auto &replacement : replacements) {
@@ -217,8 +218,12 @@ std::string patch_update(const std::string &text, const std::vector<std::string>
       throw Error("Overlapping patch replacements");
     append_source(replacement.start);
     position += replacement.length;
+    if (!replacement.lines.empty() && unterminated)
+      result += preferred;
     for (const auto &line : replacement.lines)
       result += line + preferred;
+    if (!replacement.lines.empty())
+      unterminated = false;
   }
   append_source(source.size());
   return result;

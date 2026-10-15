@@ -361,6 +361,60 @@ class CliTests(unittest.TestCase):
         self.assertTrue(any('startup-context' in m.get('content','') for m in messages))
         self.assertTrue(any('prompt-context' in m.get('content','') for m in messages))
 
+    def test_session_start_sources_append_identical_context_on_resume_and_fork(self):
+        config=self.home/'config.toml';marker=self.root/'starts.jsonl'
+        record='cat >> '+str(marker)+'; printf identical-context'
+        config.write_text(config.read_text()+'\n[hooks]\nSessionStart=[{matcher="",command='+json.dumps(record)+'},{matcher="resume",command="printf resume-context"},{matcher="fork",command="printf fork-context"}]\n')
+        first=self.run_cli('exec','--output-format','json','simple')
+        self.assertEqual(first.returncode,0,first.stderr);sid=json.loads(first.stdout)['session_id']
+        for command in ['resume','fork']:
+            result=self.run_cli('exec',command,sid,'simple')
+            self.assertEqual(result.returncode,0,result.stderr)
+            messages=self.server.requests[-1]['body']['messages']
+            contexts=[m['content'] for m in messages if m['role']=='system' and m.get('content','').startswith('SessionStart hook context:')]
+            self.assertEqual(len(contexts),2 if command=='resume' else 3)
+            self.assertTrue(all('identical-context' in m for m in contexts))
+            self.assertIn(command+'-context',contexts[-1])
+        self.assertEqual([json.loads(x)['source'] for x in marker.read_text().splitlines()],['startup','resume','fork'])
+
+    def test_diagnostics_render_in_terminal_and_failed_expansion_recovers(self):
+        import fcntl,pty,select,struct,termios
+        config=self.home/'config.toml';base=config.read_text()
+        for mode in ['line','curses']:
+            config.write_text(base+'\n[hooks]\nUserPromptSubmit=[{command="printf prompt-context"}]\nPreToolUse=[{matcher="Bash",command="printf hook-visible >&2"}]\n')
+            master,slave=pty.openpty()
+            fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',40,140,0,0))
+            p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode,'--permission-mode','bypass'],stdin=slave,stdout=slave,stderr=subprocess.PIPE,env=dict(self.env,TERM='xterm'))
+            received=b''
+            def wait_for(text):
+                nonlocal received
+                deadline=time.monotonic()+7
+                while text not in received and time.monotonic()<deadline:
+                    if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+                self.assertIn(text,received)
+            try:
+                wait_for(b'codet>');received=b''
+                os.write(master,b'/unknown\n');wait_for(b'Error:')
+                self.assertNotIn(b'recovery',received.lower());self.assertNotIn(b'concurrent',received.lower())
+                received=b'';os.write(master,b'fixture-command\n');wait_for(b'fixture done')
+                if mode=='curses':
+                    time.sleep(.05);received=b''
+                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',41,141,0,0));p.send_signal(signal.SIGWINCH)
+                    wait_for(b'hook-visible')
+                messages=self.server.requests[-1]['body']['messages']
+                self.assertEqual(sum(m.get('content','').startswith('UserPromptSubmit hook context:') for m in messages),1)
+                os.write(master,b'/quit\n')
+                deadline=time.monotonic()+5
+                while p.poll() is None and time.monotonic()<deadline:
+                    if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+                self.assertEqual(p.poll(),0,repr(received))
+                stderr=p.stderr.read()
+                if mode=='curses':self.assertEqual(stderr,b'')
+                else:self.assertIn(b'hook-visible',stderr)
+            finally:
+                if p.poll() is None:p.kill();p.wait()
+                p.stderr.close();os.close(master);os.close(slave)
+
     def test_new_session_lifecycle_and_invalid_hook_bytes_in_both_terminals(self):
         import pty,select
         marker=self.root/'lifecycle.jsonl'
