@@ -412,40 +412,6 @@ public:
       }
     }
   }
-  bool approve(const PermissionRequest &r, Cancellation &cancel) {
-    say(r.tool + ": " + r.target + " [y/N]");
-    if (!curses_) {
-      auto line = read(cancel);
-      return line && (*line == "y" || *line == "yes");
-    }
-    for (;;) {
-      cancel.check();
-      int ch = getch();
-      if (ch == 'y' || ch == 'Y')
-        return true;
-      if (ch == 'n' || ch == 'N' || ch == '\n' || ch == '\r')
-        return false;
-      if (ch == KEY_RESIZE)
-        render();
-    }
-  }
-  std::string ask(const std::string &question, const std::vector<std::string> &options,
-                  Cancellation &cancel) {
-    say(question);
-    for (size_t i = 0; i < options.size(); ++i)
-      say(std::to_string(i + 1) + ". " + options[i]);
-    if (!options.empty())
-      say("Enter a choice number or a text answer.");
-    auto answer = read(cancel);
-    cancel.check();
-    if (!answer.has_value())
-      throw Error("User dismissed the question");
-    const auto &text = answer.value();
-    for (size_t i = 0; i < options.size(); ++i)
-      if (text == std::to_string(i + 1))
-        return options[i];
-    return text;
-  }
   void begin_active() {
     input_.clear();
     if (!curses_ && restore_) {
@@ -600,10 +566,10 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   setting("permission_mode", o.mode);
   setting("approval_policy", o.approval);
   Config config = load_config(home, o.cwd, o.profile, overrides, files);
-  for (const auto &rule : o.allow)
-    config.add_allowed(rule);
-  for (const auto &rule : o.deny)
-    config.add_denied(rule);
+  auto allowed = config.rules().allow, denied = config.rules().deny;
+  allowed.insert(allowed.end(), o.allow.begin(), o.allow.end());
+  denied.insert(denied.end(), o.deny.begin(), o.deny.end());
+  config.set_rules(std::move(allowed), std::move(denied));
   for (const auto &root : o.roots)
     config.roots.push_back(files.canonical(config.cwd / root));
   if (config.ui != "auto" && config.ui != "line" && config.ui != "curses")
@@ -679,6 +645,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     state_home = p;
     cleanup.p = p;
     config.capture_root = fs::path(p) / "tool-output";
+    config.artifact_root = fs::path(p) / "artifacts";
   }
   // Destroy processes/capture handles before removing the private invocation directory.
   NativeProcesses processes;
@@ -757,7 +724,9 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   if (terminal)
     approver = [&](const PermissionRequest &request) {
       const auto answer = interaction->request(
-          "codet.approval", {{"tool", request.tool}, {"target", request.target}}, cancel);
+          "codet.approval",
+          {{"tool", request.tool}, {"target", request.target}, {"context", request.context}},
+          cancel);
       return answer == "y" || answer == "yes";
     };
   if (terminal)
@@ -838,12 +807,12 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     state.save(session);
   }
   bool quit_requested = false;
+  bool new_requested = false;
   auto execute_agent = [&](const std::string &text) -> RunResult {
     if (!terminal)
       return agent.run(session, text, cancel, schema);
-    terminal->begin_active();
-    auto work =
-        std::async(std::launch::async, [&] { return agent.run(session, text, cancel, schema); });
+    interaction->begin_turn(session.id);
+    std::future<RunResult> work;
     std::optional<Json> pending;
     const auto deliver = [&] {
       for (const auto &event : interaction->events()) {
@@ -853,7 +822,10 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
         else if (type == "codet.approval") {
           pending = event;
           terminal->say(event.at("tool").get<std::string>() + ": " +
-                        event.at("target").get<std::string>() + " [y/N]");
+                        event.at("target").get<std::string>());
+          if (event.contains("context") && !event.at("context").empty())
+            terminal->say(safe_json(event.at("context")).dump());
+          terminal->say("Approve? [y/N]");
         } else if (type == "codet.question") {
           pending = event;
           terminal->say(event.at("question"));
@@ -877,6 +849,9 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       }
     };
     try {
+      terminal->begin_active();
+      work =
+          std::async(std::launch::async, [&] { return agent.run(session, text, cancel, schema); });
       while (work.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
         deliver();
         bool closed = false;
@@ -892,26 +867,59 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
             pending.reset();
           } else if (line->rfind("/permissions", 0) == 0)
             terminal->say("Change permission modes after the active turn completes.");
-          else
-            interaction->submit(*line);
+          else if (*line == "/new") {
+            new_requested = true;
+            terminal->say("Starting a new session after pending messages are handled.");
+          } else {
+            try {
+              interaction->submit(*line);
+            } catch (const Error &error) {
+              terminal->say(error.what());
+            }
+          }
         }
       }
       deliver();
       terminal->end_active();
       return work.get();
     } catch (...) {
+      const auto failure = std::current_exception();
       cancel.requested = true;
       while (work.valid() &&
              work.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready) {
       }
-      deliver();
-      terminal->end_active();
-      throw;
+      try {
+        terminal->end_active();
+      } catch (...) {
+        std::fputs("Terminal restoration also failed\n", stderr);
+      }
+      if (!quit_requested)
+        cancel.requested = false;
+      std::rethrow_exception(failure);
+    }
+  };
+  std::deque<std::string> followups;
+  auto pending_input = [&](bool resume) {
+    if (!interaction)
+      return;
+    // Agent closes admission before its future becomes ready; close also covers early errors.
+    interaction->end_turn();
+    if (!resume) {
+      for (const auto &text : followups)
+        terminal->say("[Pending message not sent: " + text + "]");
+      followups.clear();
+    }
+    for (const auto &text : interaction->take_pending(session.id)) {
+      if (resume && !quit_requested)
+        followups.push_back(text);
+      else
+        terminal->say("[Pending message not sent: " + text + "]");
     }
   };
   auto run = [&](const std::string &text) {
     try {
       auto result = execute_agent(text);
+      pending_input(true);
       const auto answer = result.structured.is_null() ? result.text : result.structured.dump();
       if (!o.output.empty())
         files.atomic_write(fs::absolute(o.output), answer + "\n", true);
@@ -933,6 +941,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       return 0;
     } catch (const Error &e) {
       if (terminal) {
+        pending_input(false);
         terminal->say(std::string("Error: ") + safe_text(e.what()));
         cancel.requested = false;
         return e.code;
@@ -944,7 +953,10 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       throw;
     } catch (const std::exception &e) {
       if (terminal) {
+        pending_input(false);
         terminal->say("Error: " + safe_text(e.what()));
+        if (!quit_requested)
+          cancel.requested = false;
         return 1;
       }
       throw Error(safe_text(e.what()));
@@ -982,7 +994,15 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   if (quit_requested)
     return 0;
   while (!cancel.requested && !quit_requested) {
-    auto input = terminal->read(cancel);
+    std::optional<std::string> input;
+    if (!followups.empty()) {
+      input = followups.front();
+      followups.pop_front();
+    } else if (new_requested) {
+      input = "/new";
+      new_requested = false;
+    } else
+      input = terminal->read(cancel);
     if (!input)
       break;
     if (input->empty())

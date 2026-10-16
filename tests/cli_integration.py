@@ -309,11 +309,17 @@ class CliTests(unittest.TestCase):
                 wait_for(b'Responding:')
                 if index==2:p.send_signal(signal.SIGINT)
                 wait_for(finish)
-                # A resize forces curses to repaint the current screen from its state.
-                time.sleep(.1);received=b''
-                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',25+index,121+index,0,0))
-                p.send_signal(signal.SIGWINCH)
-                wait_for(b'Permissions: default')
+                # Streamed final text and older errors can precede turn completion.
+                # Require an idle repaint, allowing bounded worker/terminal scheduling latency.
+                deadline=time.monotonic()+7;repaint=0
+                while time.monotonic()<deadline:
+                    received=b''
+                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',25+2*index+repaint%2,121+2*index+repaint%2,0,0))
+                    repaint+=1
+                    p.send_signal(signal.SIGWINCH)
+                    wait_for(b'Permissions: default')
+                    if b'Responding:' not in received:break
+                    time.sleep(.02)
                 self.assertNotIn(b'Responding:',received)
             os.write(master,b'/quit\n');deadline=time.monotonic()+5
             while p.poll() is None and time.monotonic()<deadline:
@@ -713,5 +719,45 @@ class CliTests(unittest.TestCase):
             finally:
                 if p.poll() is None:p.kill();p.wait()
                 os.close(master);os.close(slave)
+
+    def test_late_steering_runs_before_a_deferred_new_session(self):
+        import pty,select
+        config=self.home/'config.toml';base=config.read_text()
+        for mode in ['line','curses']:
+            marker=self.workspace/('stop-'+mode);release=self.workspace/('release-'+mode)
+            hook='if test ! -f '+str(marker)+'; then touch '+str(marker)+'; while test ! -f '+str(release)+'; do sleep .01; done; fi'
+            config.write_text(base+'\n[hooks]\nStop=[{command='+json.dumps(hook)+'}]\n')
+            master,slave=pty.openpty();self.server.requests=[]
+            process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode,'--permission-mode','bypass'],stdin=slave,stdout=slave,stderr=subprocess.PIPE,env=dict(self.env,TERM='xterm'))
+            received=b''
+            def wait_for(text):
+                nonlocal received
+                deadline=time.monotonic()+7
+                while text not in received and time.monotonic()<deadline:
+                    if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+                self.assertIn(text,received)
+            try:
+                wait_for(b'codet>');os.write(master,b'first prompt\n')
+                deadline=time.monotonic()+7
+                while not marker.exists() and time.monotonic()<deadline:
+                    if select.select([master],[],[],.01)[0]:received+=os.read(master,65536)
+                self.assertTrue(marker.exists(),repr(received))
+                os.write(master,b'late steering\n/new\n')
+                wait_for(b'Starting a new session after pending messages are handled.')
+                release.touch();wait_for(b'Started ')
+                self.assertEqual(len(self.server.requests),2)
+                users=[m['content'] for m in self.server.requests[1]['body']['messages'] if m['role']=='user']
+                self.assertEqual(users,['first prompt','late steering'])
+                received=b'';os.write(master,b'fresh session prompt\n');wait_for(b'fixture done')
+                users=[m['content'] for m in self.server.requests[-1]['body']['messages'] if m['role']=='user']
+                self.assertEqual(users,['fresh session prompt'])
+                os.write(master,b'/quit\n');deadline=time.monotonic()+7
+                while process.poll() is None and time.monotonic()<deadline:
+                    if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+                self.assertEqual(process.poll(),0,repr(received))
+            finally:
+                release.touch()
+                if process.poll() is None:process.kill();process.wait()
+                process.stderr.close();os.close(master);os.close(slave)
 
 if __name__=='__main__':unittest.main()

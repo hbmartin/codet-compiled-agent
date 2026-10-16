@@ -53,7 +53,8 @@ std::string assemble_prompt(const Config &config, const Json &schemas, const Jso
       << "Deny rules: " << Json(config.rules().deny).dump() << "\n";
   if (planning)
     out << "Plan mode denies all shell execution (even reads, tests and dry runs), patches, "
-           "nonempty write_stdin input, and desktop mutations. Use read_file for numbered file "
+           "nonempty write_stdin input or closing stdin, and desktop mutations. Use read_file for "
+           "numbered file "
            "inspection and directory listings. Observation tools remain subject to deny rules.\n";
   else {
     out << "Use exec_command for reads, searches and shell work; use apply_patch for manual edits. "
@@ -72,6 +73,11 @@ std::string assemble_prompt(const Config &config, const Json &schemas, const Jso
   else
     out << "The application requests required tool approvals; question tools do not grant tool "
            "authorization.\n";
+  out << "Exec approvals and hooks include the effective command, cwd and shell. Outside-root "
+         "working directories are denied except in bypass mode. Scoped command allows require "
+         "the default shell; custom shells need an unscoped exec grant, bypass, or approval. "
+         "write_stdin rules match supplied chars, not the session ID. close_stdin sends pipe EOF "
+         "after chars and is a mutation; it is unsupported for PTYs.\n";
   out << "Available tools:";
   for (const auto &schema : schemas)
     out << ' ' << schema.at("name").get<std::string>();
@@ -102,6 +108,9 @@ std::string assemble_prompt(const Config &config, const Json &schemas, const Jso
              "in the returned image, including resized/cropped images; do not convert to global "
              "pixels. "
              "Window capture is a visible desktop crop, not an isolated or hidden window capture. "
+             "Choose display_id, window_id, or a global region; do not combine selectors. Window "
+             "and region captures select their sole display automatically and reject spans "
+             "across displays; use separate captures inside each display. "
              "Refresh after app, focus or layout changes; screenshot mappings expire after 60 "
              "seconds "
              "and at most eight are retained. Verify each consequential action through a new "

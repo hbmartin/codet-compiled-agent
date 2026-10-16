@@ -1,4 +1,5 @@
 #include "codet/computer.hpp"
+#include "codet/support.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -12,6 +13,55 @@
 #endif
 
 namespace codet {
+CaptureArea capture_area(const std::vector<CaptureRect> &displays, const Json &args,
+                         const std::optional<CaptureRect> &window) {
+  const bool region =
+      args.contains("x") || args.contains("y") || args.contains("width") || args.contains("height");
+  if ((args.contains("display_id") && (region || args.contains("window_id"))) ||
+      (region && args.contains("window_id")))
+    throw Error("Choose one screenshot selector: display_id, window_id, or a global region");
+  if (displays.empty())
+    throw Error("No active displays");
+  if (!region && !args.contains("window_id")) {
+    const auto id = args.value("display_id", size_t{1});
+    if (!id || id > displays.size())
+      throw Error("Invalid display ID; use get_state display IDs");
+    return {id - 1, displays[id - 1]};
+  }
+  CaptureRect requested{};
+  if (region) {
+    if (!args.contains("x") || !args.contains("y") || !args.contains("width") ||
+        !args.contains("height"))
+      throw Error("A region requires x, y, width and height");
+    requested = {args.at("x"), args.at("y"), args.at("width"), args.at("height")};
+  } else {
+    if (!window)
+      throw Error("Expired window ID; refresh computer.get_state");
+    requested = *window;
+  }
+  if (!std::isfinite(requested.x) || !std::isfinite(requested.y) ||
+      !std::isfinite(requested.width) || !std::isfinite(requested.height) ||
+      !std::isfinite(requested.x + requested.width) ||
+      !std::isfinite(requested.y + requested.height) || requested.width <= 0 ||
+      requested.height <= 0)
+    throw Error("Invalid capture region");
+  std::optional<CaptureArea> result;
+  for (size_t i = 0; i < displays.size(); ++i) {
+    const auto &display = displays[i];
+    const double x = std::max(requested.x, display.x), y = std::max(requested.y, display.y);
+    const double right = std::min(requested.x + requested.width, display.x + display.width);
+    const double bottom = std::min(requested.y + requested.height, display.y + display.height);
+    if (right > x && bottom > y) {
+      if (result)
+        throw Error("Capture spans displays; capture each display separately or choose a region "
+                    "inside one display");
+      result = CaptureArea{i, {x, y, right - x, bottom - y}};
+    }
+  }
+  if (!result)
+    throw Error("Capture is outside active displays");
+  return *result;
+}
 std::pair<double, double> desktop_point(double x, double y, size_t width, size_t height,
                                         double origin_x, double origin_y, double extent_x,
                                         double extent_y) {
@@ -25,19 +75,6 @@ std::pair<double, double> desktop_point(double x, double y, size_t width, size_t
 }
 #if defined(__APPLE__) && defined(__ppc__)
 namespace {
-template <class T> struct CF {
-  T value;
-  explicit CF(T v = nullptr) : value(v) {}
-  ~CF() {
-    if (value)
-      CFRelease(value);
-  }
-  operator T() const {
-    return value;
-  }
-  CF(const CF &) = delete;
-  CF &operator=(const CF &) = delete;
-};
 std::string string_value(CFTypeRef value, CFIndex limit = 8192) {
   if (!value || CFGetTypeID(value) != CFStringGetTypeID())
     return {};
@@ -327,29 +364,25 @@ class TigerComputer final : public ComputerBackend {
     CGDisplayCount count = 0;
     if (CGGetActiveDisplayList(16, active, &count) != kCGErrorSuccess)
       throw Error("Cannot enumerate displays");
-    const auto display_id = a.value("display_id", 1u);
-    if (display_id < 1 || display_id > count)
-      throw Error("Invalid display ID; use get_state display IDs");
-    const auto display = active[display_id - 1];
-    const auto screen = CGDisplayBounds(display);
-    if (CGRectIsEmpty(screen))
-      throw Error("Invalid display");
-    CGRect rect = screen;
+    std::vector<CaptureRect> displays;
+    for (CGDisplayCount i = 0; i < count; ++i) {
+      const auto bounds = CGDisplayBounds(active[i]);
+      displays.push_back({bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height});
+    }
+    std::optional<CaptureRect> window;
     if (a.contains("window_id")) {
       const auto it = windows_.find(a.at("window_id"));
       if (it == windows_.end() ||
           std::chrono::steady_clock::now() - observed_ > std::chrono::seconds(60))
-        throw Error("Expired window ID");
-      rect = CGRectIntersection(screen, it->second);
-    } else if (a.contains("x") || a.contains("y") || a.contains("width") || a.contains("height")) {
-      if (!a.contains("x") || !a.contains("y") || !a.contains("width") || !a.contains("height"))
-        throw Error("A region requires x, y, width and height");
-      rect = CGRectIntersection(screen,
-                                CGRectMake(a.at("x"), a.at("y"), a.at("width"), a.at("height")));
+        throw Error("Expired window ID; refresh computer.get_state");
+      const auto &r = it->second;
+      window = CaptureRect{r.origin.x, r.origin.y, r.size.width, r.size.height};
     }
-    if (CGRectIsEmpty(rect) || !std::isfinite(rect.origin.x) || !std::isfinite(rect.origin.y) ||
-        !std::isfinite(rect.size.width) || !std::isfinite(rect.size.height))
-      throw Error("Invalid capture region");
+    const auto area = capture_area(displays, a, window);
+    const auto display_id = area.display + 1;
+    const auto display = active[area.display];
+    const auto screen = CGDisplayBounds(display);
+    CGRect rect = CGRectMake(area.bounds.x, area.bounds.y, area.bounds.width, area.bounds.height);
     rect.origin.x = std::floor(rect.origin.x);
     rect.origin.y = std::floor(rect.origin.y);
     rect.size.width = std::floor(rect.size.width);

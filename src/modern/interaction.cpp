@@ -38,12 +38,47 @@ void Interaction::submit(const std::string &text) {
   std::lock_guard<std::mutex> lock(mutex_);
   if (input_.size() >= 100 || text.size() > 65536)
     throw Error("Pending user input limit exceeded");
-  input_.push_back(safe_text(text));
+  input_.push_back({session_, safe_text(text), turn_});
   changed_.notify_all();
 }
 std::vector<std::string> Interaction::take_input() {
   std::lock_guard<std::mutex> lock(mutex_);
-  std::vector<std::string> out(input_.begin(), input_.end());
+  if (!active_)
+    return {};
+  std::vector<std::string> out;
+  out.reserve(input_.size());
+  for (const auto &input : input_) {
+    if (input.session != session_ || input.turn > turn_)
+      throw Error("Queued input belongs to another session or turn");
+    out.push_back(input.text);
+  }
+  input_.clear();
+  return out;
+}
+void Interaction::begin_turn(const std::string &session) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!input_.empty() && session_ != session)
+    throw Error("Handle pending messages before switching sessions");
+  if (active_ && session_ == session)
+    return;
+  session_ = session;
+  ++turn_;
+  active_ = true;
+}
+void Interaction::end_turn() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  active_ = false;
+  answers_.clear();
+  changed_.notify_all();
+}
+std::vector<std::string> Interaction::take_pending(const std::string &session) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (active_ || session != session_)
+    throw Error("Pending messages belong to another active session");
+  std::vector<std::string> out;
+  out.reserve(input_.size());
+  for (const auto &input : input_)
+    out.push_back(input.text);
   input_.clear();
   return out;
 }

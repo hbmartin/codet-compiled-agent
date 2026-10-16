@@ -135,12 +135,22 @@ struct Processes {
     return {};
   }
   virtual ProcessResult poll(const std::string &) = 0;
+  virtual ProcessStatus status(const std::string &id) {
+    const auto result = poll(id);
+    return {id, result.running, result.exit_code, ""};
+  }
   virtual ProcessResult read_output(const std::string &id) {
     return poll(id);
+  }
+  virtual ProcessResult take_output(const std::string &id) {
+    return read_output(id);
   }
   virtual void stop(const std::string &) = 0;
   virtual void write(const std::string &, const std::string &) {
     throw Error("Process input is unavailable");
+  }
+  virtual void close_stdin(const std::string &) {
+    throw Error("Closing stdin is unavailable");
   }
 };
 class ProcessControl;
@@ -159,7 +169,10 @@ class NativeProcesses final : public Processes {
   void record_error(const std::string &, Job &, const std::exception_ptr &);
   [[noreturn]] void throw_failure(const Job &) const;
   Job &observe(const std::string &);
-  ProcessResult publish(Job &);
+  ProcessResult publish(Job &, bool render = true);
+  ProcessResult consume(const std::string &, bool render);
+  static size_t job_bytes(const Job &);
+  void advance_cleanup(Job &);
   void finish(Job &, bool ownership_lost = false);
   void terminate(Job &, int status);
   void refresh();
@@ -179,9 +192,12 @@ public:
   std::string start(const ProcessSpec &, const Cancellation &) override;
   std::vector<ProcessStatus> list() override;
   ProcessResult poll(const std::string &) override;
+  ProcessStatus status(const std::string &) override;
   ProcessResult read_output(const std::string &) override;
+  ProcessResult take_output(const std::string &) override;
   void stop(const std::string &) override;
   void write(const std::string &, const std::string &) override;
+  void close_stdin(const std::string &) override;
 };
 struct ToolCall {
   std::string id, name;
@@ -223,7 +239,7 @@ struct PermissionRuleSet {
   std::vector<std::string> allow, deny;
 };
 struct Config {
-  fs::path home, cwd, capture_root;
+  fs::path home, cwd, capture_root, artifact_root;
   std::string provider = "codex", model, permission_mode = "default", approval = "on-request";
   std::string ui = "auto", theme = "default", effort;
   size_t max_turns = 100, max_output_tokens = 8192, context_tokens = 32768;
@@ -241,6 +257,10 @@ public:
   }
   const std::shared_ptr<const PermissionRuleSet> &rule_snapshot() const {
     return rules_;
+  }
+  void set_rules(std::vector<std::string> allow, std::vector<std::string> deny) {
+    rules_ = std::make_shared<const PermissionRuleSet>(
+        PermissionRuleSet{std::move(allow), std::move(deny)});
   }
   void set_allow(std::vector<std::string> values) {
     rules_ = std::make_shared<const PermissionRuleSet>(
@@ -351,6 +371,7 @@ struct PermissionRequest {
   std::string tool, target;
   std::optional<fs::path> path;
   bool mutation = false;
+  Json context = Json::object();
 };
 enum class Decision : uint8_t { allow, ask, deny };
 class Permissions {
@@ -387,6 +408,8 @@ struct ToolResult {
         preview(std::move(output)), capture(std::move(store)) {}
   std::shared_ptr<const OutputSnapshot> preview = {};
   std::shared_ptr<OutputCapture> capture = {};
+  // Transient: the agent journals the completed result before propagating this failure.
+  std::exception_ptr failure_after_completion;
 };
 class Interaction;
 class ComputerBackend;
@@ -403,16 +426,13 @@ class Tools {
   const Config &config_;
   FileSystem &files_;
   Processes &processes_;
-  HttpTransport &http_;
   Clock &clock_;
   Permissions permissions_;
   Approver approve_;
   Questioner question_;
   DiagnosticSink diagnostics_;
   std::shared_ptr<CaptureStore> capture_store_;
-  std::map<fs::path, std::string> read_versions_;
   Json todos_ = Json::array();
-  bool plan_ = false;
   std::string session_id_;
   mutable std::set<std::string> warnings_;
   const Cancellation *active_cancel_ = nullptr;
@@ -421,12 +441,17 @@ class Tools {
   std::shared_ptr<ImageBackend> images_;
   struct ExecSession {
     std::string process, command;
-    size_t cursor = 0;
+    fs::path cwd;
+    std::string shell;
+    bool pty = false;
     bool completed = false;
+    std::optional<int> exit_code;
   };
   std::map<int, ExecSession> exec_sessions_;
   fs::path path(const std::string &) const;
   void authorize(const PermissionRequest &);
+  PermissionRequest execution_request(const ToolCall &) const;
+  Json hook_input(const ToolCall &, bool resolve = true) const;
   ToolResult execute_inner(const ToolCall &, const Cancellation &);
 
 public:
@@ -441,6 +466,8 @@ public:
   std::string instructions() const;
   std::string expand_command(const std::string &) const;
   std::vector<std::string> take_input();
+  void begin_input_turn(const std::string &);
+  void end_input_turn();
   void cancel_exec() noexcept;
   Json capabilities() const;
   HookOutcome run_hooks(const std::string &, const Json &, const Cancellation &, int budget_ms = 0,

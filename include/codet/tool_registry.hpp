@@ -29,4 +29,5 @@ const ToolDefinition *tool_definition(const std::string &);
 std::string tool_wire_name(std::string);
 std::string tool_logical_name(const std::string &);
 void validate_tool_rules(const std::vector<std::string> &);
+void validate_hook_matchers(const Json &);
 } // namespace codet

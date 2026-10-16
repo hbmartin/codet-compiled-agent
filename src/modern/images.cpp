@@ -1,6 +1,6 @@
 #include "codet/computer.hpp"
+#include "codet/support.hpp"
 #include <algorithm>
-#include <openssl/sha.h>
 #include <sys/stat.h>
 #ifdef __APPLE__
 #include <ApplicationServices/ApplicationServices.h>
@@ -11,37 +11,11 @@
 
 namespace codet {
 namespace {
-std::string image_hash(const std::string &bytes) {
-  unsigned char hash[SHA256_DIGEST_LENGTH];
-  SHA256(reinterpret_cast<const unsigned char *>(bytes.data()), bytes.size(), hash);
-  std::string out;
-  const char *hex = "0123456789abcdef";
-  for (auto ch : hash) {
-    out += hex[ch >> 4];
-    out += hex[ch & 15];
-  }
-  return out;
-}
 void dimensions(size_t w, size_t h) {
   if (!w || !h || w > image_buffer_limit / 4 || h > image_buffer_limit / (w * 4))
     throw Error("Image decoded buffer exceeds 32 MiB or has invalid dimensions");
 }
 #ifdef __APPLE__
-template <class T> class Owned {
-  T value_;
-
-public:
-  explicit Owned(T value) : value_(value) {}
-  ~Owned() {
-    if (value_)
-      CFRelease(value_);
-  }
-  operator T() const {
-    return value_;
-  }
-  Owned(const Owned &) = delete;
-  Owned &operator=(const Owned &) = delete;
-};
 ImageData encode_image(CGImageRef image, const std::string &detail) {
   if (!image)
     throw Error("Invalid image data");
@@ -50,16 +24,16 @@ ImageData encode_image(CGImageRef image, const std::string &detail) {
   const double scale = detail == "original" ? 1.0 : std::min(1.0, 1280.0 / std::max(width, height));
   const size_t w = std::max(size_t{1}, static_cast<size_t>(width * scale)),
                h = std::max(size_t{1}, static_cast<size_t>(height * scale));
-  Owned<CGColorSpaceRef> colors(CGColorSpaceCreateDeviceRGB());
+  CF<CGColorSpaceRef> colors(CGColorSpaceCreateDeviceRGB());
   std::vector<unsigned char> pixels(w * h * 4);
-  Owned<CGContextRef> context(
+  CF<CGContextRef> context(
       CGBitmapContextCreate(pixels.data(), w, h, 8, w * 4, colors, kCGImageAlphaPremultipliedLast));
   if (!static_cast<CGContextRef>(context))
     throw Error("Cannot allocate image context");
   CGContextDrawImage(context, CGRectMake(0, 0, w, h), image);
-  Owned<CGImageRef> resized(CGBitmapContextCreateImage(context));
-  Owned<CFMutableDataRef> data(CFDataCreateMutable(nullptr, 0));
-  Owned<CGImageDestinationRef> destination(
+  CF<CGImageRef> resized(CGBitmapContextCreateImage(context));
+  CF<CFMutableDataRef> data(CFDataCreateMutable(nullptr, 0));
+  CF<CGImageDestinationRef> destination(
       CGImageDestinationCreateWithData(data, CFSTR("public.png"), 1, nullptr));
   if (!static_cast<CGImageDestinationRef>(destination))
     throw Error("PNG encoding unavailable");
@@ -83,12 +57,12 @@ public:
     if (!fs::is_regular_file(path) || fs::file_size(path) > image_file_limit)
       throw Error("Image file exceeds 8 MiB or is not a regular file");
     const auto filename = path.string();
-    Owned<CFURLRef> url(CFURLCreateFromFileSystemRepresentation(
+    CF<CFURLRef> url(CFURLCreateFromFileSystemRepresentation(
         nullptr, reinterpret_cast<const UInt8 *>(filename.data()), filename.size(), false));
-    Owned<CGImageSourceRef> source(CGImageSourceCreateWithURL(url, nullptr));
+    CF<CGImageSourceRef> source(CGImageSourceCreateWithURL(url, nullptr));
     if (!static_cast<CGImageSourceRef>(source))
       throw Error("Invalid or unsupported image data");
-    Owned<CFDictionaryRef> props(CGImageSourceCopyPropertiesAtIndex(source, 0, nullptr));
+    CF<CFDictionaryRef> props(CGImageSourceCopyPropertiesAtIndex(source, 0, nullptr));
     if (!static_cast<CFDictionaryRef>(props))
       throw Error("Missing image dimensions");
     size_t w = 0, h = 0;
@@ -103,7 +77,7 @@ public:
     w = static_cast<size_t>(width);
     h = static_cast<size_t>(height);
     dimensions(w, h);
-    Owned<CGImageRef> image(CGImageSourceCreateImageAtIndex(source, 0, nullptr));
+    CF<CGImageRef> image(CGImageSourceCreateImageAtIndex(source, 0, nullptr));
     return encode_image(image, detail);
   }
 };
@@ -128,11 +102,11 @@ ImageData encode_rgb(const std::string &rgb, size_t width, size_t height,
   if (rgb.size() != width * height * 3)
     throw Error("Invalid RGB buffer");
 #ifdef __APPLE__
-  Owned<CGColorSpaceRef> colors(CGColorSpaceCreateDeviceRGB());
-  Owned<CGDataProviderRef> provider(
+  CF<CGColorSpaceRef> colors(CGColorSpaceCreateDeviceRGB());
+  CF<CGDataProviderRef> provider(
       CGDataProviderCreateWithData(nullptr, rgb.data(), rgb.size(), nullptr));
-  Owned<CGImageRef> image(CGImageCreate(width, height, 8, 24, width * 3, colors, kCGImageAlphaNone,
-                                        provider, nullptr, false, kCGRenderingIntentDefault));
+  CF<CGImageRef> image(CGImageCreate(width, height, 8, 24, width * 3, colors, kCGImageAlphaNone,
+                                     provider, nullptr, false, kCGRenderingIntentDefault));
   return encode_image(image, detail);
 #else
   (void)detail;
@@ -176,14 +150,17 @@ void from_json(const Json &j, ImageArtifact &a) {
   a.width = j.at("width");
   a.height = j.at("height");
 }
+fs::path artifact_directory(const Config &c) {
+  return c.artifact_root.empty() ? c.home / "artifacts" : c.artifact_root;
+}
 ImageArtifact persist_image(const Config &c, FileSystem &files, const ImageData &image,
                             const std::string &detail) {
   dimensions(image.width, image.height);
   if (image.bytes.empty() || image.bytes.size() > image_file_limit ||
       (image.mime != "image/png" && image.mime != "image/jpeg"))
     throw Error("Invalid image artifact");
-  const auto hash = image_hash(image.bytes);
-  const auto dir = c.home / "artifacts";
+  const auto hash = digest(image.bytes);
+  const auto dir = artifact_directory(c);
   if (fs::is_symlink(dir))
     throw Error("Artifact directory must not be a symlink");
   fs::create_directories(dir);
@@ -193,7 +170,7 @@ ImageArtifact persist_image(const Config &c, FileSystem &files, const ImageData 
   if (fs::is_symlink(p))
     throw Error("Artifact must not be a symlink");
   if (fs::exists(p)) {
-    if (image_hash(files.read(p, image_file_limit)) != hash)
+    if (digest(files.read(p, image_file_limit)) != hash)
       throw Error("Corrupt immutable artifact");
   } else
     files.atomic_write(p, image.bytes, true);
@@ -220,12 +197,12 @@ std::string image_data_url(const ImageArtifact &a, const Config &c) {
   if (a.mime != "image/png" && a.mime != "image/jpeg")
     throw Error("Unsupported artifact MIME type");
   NativeFileSystem files;
-  const auto root = files.canonical(c.home / "artifacts");
+  const auto root = files.canonical(artifact_directory(c));
   const auto p = files.canonical(a.path);
   if (!within(p, root) || fs::is_symlink(a.path))
     throw Error("Image artifact is outside private storage");
   const auto bytes = files.read(p, image_file_limit);
-  if (image_hash(bytes) != a.sha256)
+  if (digest(bytes) != a.sha256)
     throw Error("Image artifact checksum mismatch");
   return "data:" + a.mime + ";base64," + base64_encode(bytes);
 }

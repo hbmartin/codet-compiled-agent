@@ -56,19 +56,23 @@ std::string join_url(std::string base, const std::string &suffix) {
   return base + suffix;
 }
 std::string tool_text(const Message &m) {
-  if (m.role != "tool")
-    return m.text;
-  const auto value = Json::parse(m.text, nullptr, false);
-  if (value.is_object() && value.contains("content") && value.contains("is_error"))
-    return (value.value("is_error", false) ? std::string("Tool error: ") : std::string{}) +
-           value.at("content").get<std::string>();
-  return m.text;
+  std::string text = m.text;
+  if (m.role == "tool") {
+    const auto value = Json::parse(m.text, nullptr, false);
+    if (value.is_object() && value.contains("content") && value.contains("is_error"))
+      text = (value.value("is_error", false) ? std::string("Tool error: ") : std::string{}) +
+             value.at("content").get<std::string>();
+  }
+  if (!m.replay.empty() && m.replay.back().contains("codet_image_notes"))
+    for (const auto &note : m.replay.back().at("codet_image_notes"))
+      text += "\n" + note.get<std::string>();
+  return text;
 }
 std::vector<Message> prepare_images(const Config &config, const std::vector<Message> &input) {
   auto messages = input;
   size_t count = 0, bytes = 0;
   for (auto m = messages.rbegin(); m != messages.rend(); ++m) {
-    Json prepared = Json::array();
+    Json prepared = Json::array(), notes = Json::array();
     for (auto a = m->images.rbegin(); a != m->images.rend(); ++a) {
       try {
         if (!image_input_enabled(config) || count >= 4)
@@ -81,11 +85,11 @@ std::vector<Message> prepare_images(const Config &config, const std::vector<Mess
         ++count;
         prepared.insert(prepared.begin(), Json({{"artifact", *a}, {"url", data}}));
       } catch (const std::exception &e) {
-        m->text += "\n[Image artifact " + a->path + ": " + safe_text(e.what()) + "]";
+        notes.push_back("[Image artifact " + a->path + ": " + safe_text(e.what()) + "]");
       }
     }
     // Transient transport preparation is separate from stored provider reasoning replay.
-    m->replay.push_back({{"codet_prepared_images", prepared}});
+    m->replay.push_back({{"codet_prepared_images", prepared}, {"codet_image_notes", notes}});
   }
   return messages;
 }
@@ -385,18 +389,18 @@ eof_line: "*** End of File" LF
       Json content = Json::array();
       std::string role = m.role == "tool" ? "user" : m.role;
       if (role == "system") {
-        content.push_back({{"type", "text"}, {"text", m.text}});
+        content.push_back({{"type", "text"}, {"text", tool_text(m)}});
         role = "user";
       } else if (m.role == "tool")
         content.push_back(
-            {{"type", "tool_result"}, {"tool_use_id", m.tool_call_id}, {"content", m.text}});
+            {{"type", "tool_result"}, {"tool_use_id", m.tool_call_id}, {"content", tool_text(m)}});
       else {
         if (m.role == "assistant" && !clean_replay(m).empty() &&
             (m.replay_provider.empty() || m.replay_provider == c.provider))
           content = clean_replay(m);
         else {
-          if (!m.text.empty())
-            content.push_back({{"type", "text"}, {"text", m.text}});
+          if (!tool_text(m).empty())
+            content.push_back({{"type", "text"}, {"text", tool_text(m)}});
           for (const auto &t : m.calls)
             content.push_back({{"type", "tool_use"},
                                {"id", t.id},
@@ -405,7 +409,9 @@ eof_line: "*** End of File" LF
         }
       }
       if (!prepared_images(m).empty()) {
-        Json blocks = Json::array({{{"type", "text"}, {"text", tool_text(m)}}});
+        Json blocks = Json::array();
+        if (m.role == "tool")
+          blocks.push_back({{"type", "text"}, {"text", tool_text(m)}});
         for (const auto &image : prepared_images(m)) {
           const std::string url = image.at("url");
           blocks.push_back({{"type", "image"},
@@ -465,8 +471,8 @@ eof_line: "*** End of File" LF
             {{"functionResponse",
               {{"name", names[m.tool_call_id]}, {"response", {{"result", tool_text(m)}}}}}});
       else {
-        if (!m.text.empty())
-          parts.push_back({{"text", m.text}});
+        if (!tool_text(m).empty())
+          parts.push_back({{"text", tool_text(m)}});
         for (const auto &t : m.calls)
           parts.push_back(
               {{"functionCall", {{"name", tool_wire_name(t.name)}, {"args", t.arguments}}}});
@@ -496,7 +502,7 @@ eof_line: "*** End of File" LF
           schema.contains("properties") && schema["properties"].empty() &&
           schema.value("required", Json::array()).empty() && !schema.contains("patternProperties");
       if (!no_arguments)
-        declaration["parameters"] = schema;
+        declaration["parametersJsonSchema"] = schema;
       declarations.push_back(declaration);
     }
     body = {{"systemInstruction", {{"parts", Json::array({{{"text", system}}})}}},

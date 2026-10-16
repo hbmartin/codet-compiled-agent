@@ -3,6 +3,8 @@
 #include "codet/interaction.hpp"
 #include "codet/output.hpp"
 #include "codet/patch.hpp"
+#include "codet/process_control.hpp"
+#include "codet/support.hpp"
 #include "codet/tool_registry.hpp"
 #include <algorithm>
 #include <cstdio>
@@ -11,13 +13,19 @@
 #include <iostream>
 #include <limits>
 #include <nlohmann/json-schema.hpp>
-#include <openssl/sha.h>
 #include <set>
 #include <sstream>
 #include <sys/stat.h>
 
 namespace codet {
 namespace {
+void reject_nul_strings(const Json &value) {
+  if (value.is_string() && value.get_ref<const std::string &>().find('\0') != std::string::npos)
+    throw Error("Computer arguments must not contain NUL");
+  if (value.is_structured())
+    for (const auto &child : value)
+      reject_nul_strings(child);
+}
 bool literal_shell_command(const std::string &command) {
   if (command.empty())
     return false;
@@ -115,13 +123,15 @@ struct RulePaths {
       return !fnmatch(rule.pattern.c_str(), r.target.c_str(), 0);
     resolve(r);
     const auto cached = patterns.find(rule.pattern);
+    const auto matches_candidates = [&](const std::vector<std::string> &values) {
+      return std::any_of(values.begin(), values.end(), [&](const auto &candidate) {
+        return !fnmatch(candidate.c_str(), r.target.c_str(), 0) ||
+               !fnmatch(candidate.c_str(), requested.c_str(), 0) ||
+               !fnmatch(candidate.c_str(), target.c_str(), 0);
+      });
+    };
     if (cached != patterns.end()) {
-      for (const auto &candidate : cached->second)
-        if (!fnmatch(candidate.c_str(), r.target.c_str(), 0) ||
-            !fnmatch(candidate.c_str(), requested.c_str(), 0) ||
-            !fnmatch(candidate.c_str(), target.c_str(), 0))
-          return true;
-      return false;
+      return matches_candidates(cached->second);
     }
     auto pattern = fs::path(rule.pattern).lexically_normal().string();
     auto base = fs::absolute(config.cwd).lexically_normal();
@@ -140,10 +150,12 @@ struct RulePaths {
       const auto prefix = root.string();
       if (pattern == prefix ||
           (pattern.size() > prefix.size() && pattern.compare(0, prefix.size(), prefix) == 0 &&
-           pattern[prefix.size()] == '/')) {
+           (prefix == "/" || pattern[prefix.size()] == '/'))) {
         known_prefix = true;
         base = root;
-        pattern = pattern.size() == prefix.size() ? "" : pattern.substr(prefix.size() + 1);
+        pattern = pattern.size() == prefix.size()
+                      ? ""
+                      : pattern.substr(prefix.size() + (prefix == "/" ? 0 : 1));
         break;
       }
     }
@@ -154,9 +166,10 @@ struct RulePaths {
                         [&](const auto &root) { return canonical(alias) == canonical(root); })) {
           known_prefix = true;
           base = alias;
-          pattern = pattern.size() == alias.string().size()
+          const auto prefix_size = alias.string().size();
+          pattern = pattern.size() == prefix_size
                         ? ""
-                        : pattern.substr(alias.string().size() + 1);
+                        : pattern.substr(prefix_size + (alias == alias.root_path() ? 0 : 1));
           break;
         }
         auto parent = alias.parent_path();
@@ -193,25 +206,9 @@ struct RulePaths {
       candidates.push_back(std::move(candidate));
     }
     patterns.emplace(rule.pattern, candidates);
-    for (const auto &candidate : candidates)
-      if (!fnmatch(candidate.c_str(), r.target.c_str(), 0) ||
-          !fnmatch(candidate.c_str(), requested.c_str(), 0) ||
-          !fnmatch(candidate.c_str(), target.c_str(), 0))
-        return true;
-    return false;
+    return matches_candidates(candidates);
   }
 };
-std::string digest(const std::string &value) {
-  unsigned char sum[SHA256_DIGEST_LENGTH];
-  SHA256(reinterpret_cast<const unsigned char *>(value.data()), value.size(), sum);
-  std::string out;
-  const char *hex = "0123456789abcdef";
-  for (unsigned char c : sum) {
-    out += hex[c >> 4];
-    out += hex[c & 15];
-  }
-  return out;
-}
 std::vector<std::string> lines(const std::string &s) {
   std::vector<std::string> out;
   std::istringstream in(s);
@@ -289,6 +286,12 @@ Decision Permissions::decide(const PermissionRequest &r,
     return Decision::deny;
   if (config_.permission_mode == "bypass")
     return Decision::allow;
+  if (r.tool == "exec_command" && r.context.contains("cwd")) {
+    const auto cwd = paths.canonical(r.context.at("cwd").get<std::string>());
+    if (std::none_of(config_.roots.begin(), config_.roots.end(),
+                     [&](const auto &root) { return within(cwd, paths.canonical(root)); }))
+      return Decision::deny;
+  }
   if (r.path) {
     const auto &p = paths.resolve(r);
     bool found = false;
@@ -303,7 +306,8 @@ Decision Permissions::decide(const PermissionRequest &r,
   }
   for (const auto &rule : rules_->allow)
     if (paths.matches(rule, r) &&
-        (!rule.scoped || r.tool != "exec_command" || literal_shell_command(r.target)))
+        (!rule.scoped || r.tool != "exec_command" ||
+         (literal_shell_command(r.target) && !r.context.value("custom_shell", false))))
       return Decision::allow;
   if (!r.mutation)
     return Decision::allow;
@@ -317,17 +321,18 @@ fs::path Tools::path(const std::string &value) const {
   return files_.canonical(config_.cwd / fs::path(value));
 }
 void Tools::authorize(const PermissionRequest &r) {
-  if (plan_ && r.mutation)
-    throw Error("Permission denied: plan mode is read-only");
   const auto d = permissions_.decide(r);
   if (d == Decision::deny)
     throw Error("Permission denied for " + r.tool + ": " + r.target);
   if (d == Decision::ask && active_cancel_ && config_.hooks.contains("PermissionRequest")) {
+    const auto *definition = tool_definition(r.tool);
     const auto hook = run_hooks("PermissionRequest",
                                 {{"hook_event_name", "PermissionRequest"},
-                                 {"tool_name", r.tool},
+                                 {"tool_name", definition ? definition->hook_name : r.tool},
+                                 {"tool", r.tool},
                                  {"target", r.target},
-                                 {"cwd", config_.cwd.string()}},
+                                 {"tool_input", r.context},
+                                 {"cwd", r.context.value("cwd", config_.cwd.string())}},
                                 *active_cancel_);
     if (hook.blocked || hook.stopped || hook.permission == Decision::deny)
       throw Error("Permission denied by hook: " + hook.reason);
@@ -342,25 +347,105 @@ Tools::Tools(const Config &c, FileSystem &f, Processes &p, HttpTransport &h, Clo
              Approver a, Questioner q, DiagnosticSink diagnostics,
              std::shared_ptr<Interaction> interaction, std::shared_ptr<ComputerBackend> computer,
              std::shared_ptr<ImageBackend> images)
-    : config_(c), files_(f), processes_(p), http_(h), clock_(clock), permissions_(c, f),
+    : config_(c), files_(f), processes_(p), clock_(clock), permissions_(c, f),
       approve_(std::move(a)), question_(std::move(q)), diagnostics_(std::move(diagnostics)),
       capture_store_(std::make_shared<CaptureStore>(capture_directory(c), size_t{8} * 1024 * 1024,
                                                     size_t{64} * 1024 * 1024, 64, diagnostics_)),
       interaction_(std::move(interaction)),
       computer_(computer ? std::move(computer) : native_computer()),
-      images_(images ? std::move(images) : native_images()) {}
+      images_(images ? std::move(images) : native_images()) {
+  (void)h;
+}
+PermissionRequest Tools::execution_request(const ToolCall &call) const {
+  const auto &a = call.arguments;
+  const auto *definition = tool_definition(call.name);
+  PermissionRequest request{call.name, "", std::nullopt, definition && definition->mutation};
+  request.context = a;
+  if (call.name == "exec_command") {
+    const auto default_shell = env("SHELL").empty() ? std::string("/bin/sh") : env("SHELL");
+    const auto shell = a.value("shell", default_shell);
+    const auto command = a.at("cmd").get<std::string>();
+    if (command.empty() || command.size() > size_t{1024} * 1024 ||
+        command.find('\0') != std::string::npos)
+      throw Error("Invalid command length or embedded NUL");
+    if (shell.empty() || shell.front() != '/' || shell.find('\0') != std::string::npos)
+      throw Error("shell must be an absolute executable path without NUL");
+    const auto authored_cwd = a.value("workdir", config_.cwd.string());
+    if (authored_cwd.find('\0') != std::string::npos)
+      throw Error("Working directory contains NUL");
+    const auto cwd = files_.canonical(config_.cwd / fs::path(authored_cwd));
+    if (!fs::is_directory(cwd))
+      throw Error("Working directory does not exist");
+    request.target = command;
+    request.context = {{"command", command},
+                       {"cwd", cwd.string()},
+                       {"shell", shell},
+                       {"login", a.value("login", true)},
+                       {"tty", a.value("tty", false)},
+                       {"custom_shell", shell != default_shell}};
+  } else if (call.name == "write_stdin") {
+    const auto id = a.at("session_id").get<int>();
+    const auto it = exec_sessions_.find(id);
+    if (it == exec_sessions_.end() ||
+        (it->second.completed && (!it->second.exit_code || !a.value("close_stdin", false) ||
+                                  !a.value("chars", std::string{}).empty())))
+      throw Error("Unknown or completed exec session");
+    const auto &job = it->second;
+    const auto chars = a.value("chars", std::string{});
+    if (chars.find('\0') != std::string::npos)
+      throw Error("stdin input must not contain NUL");
+    const bool close = a.value("close_stdin", false);
+    if (close && job.pty)
+      throw Error("close_stdin is only supported for pipe sessions; use terminal input for PTYs");
+    request.target = chars;
+    request.mutation = !chars.empty() || close;
+    request.context = {{"command", job.command}, {"cwd", job.cwd.string()}, {"shell", job.shell},
+                       {"session_id", id},       {"chars", chars},          {"close_stdin", close}};
+  } else if (call.name.rfind("computer.", 0) == 0) {
+    reject_nul_strings(a);
+    for (const auto *key : {"script", "text", "path", "url"})
+      if (a.contains(key)) {
+        request.target = a.at(key).get<std::string>();
+        if (request.target.find('\0') != std::string::npos)
+          throw Error("Computer permission targets must not contain NUL");
+        return request;
+      }
+    request.target = a.dump();
+  }
+  return request;
+}
+Json Tools::hook_input(const ToolCall &call, bool resolve) const {
+  if (!resolve && call.name == "exec_command" && call.arguments.is_object()) {
+    auto input = call.arguments;
+    input["command"] = input.value("cmd", Json());
+    input.erase("cmd");
+    input["cwd"] = input.value("workdir", Json(config_.cwd.string()));
+    input.erase("workdir");
+    input["shell"] = input.value("shell", Json(env("SHELL").empty() ? "/bin/sh" : env("SHELL")));
+    return input;
+  }
+  if (!resolve)
+    return call.arguments;
+  if (call.name == "exec_command" || call.name == "write_stdin")
+    return execution_request(call).context;
+  return call.arguments;
+}
 Json Tools::capabilities() const {
-  return {{"desktop", computer_->capabilities()},
-          {"image_input", image_input_enabled(config_)},
-          {"image_codec", images_->available()},
-          {"interactive", bool(question_ || interaction_)},
-          {"approvals", bool(approve_)},
-          {"questions", bool(question_)},
-          {"async_input", bool(interaction_)},
-          {"os_sandbox", false}};
+  return {{"desktop", computer_->capabilities()}, {"image_input", image_input_enabled(config_)},
+          {"image_codec", images_->available()},  {"interactive", bool(question_ || interaction_)},
+          {"approvals", bool(approve_)},          {"questions", bool(question_)},
+          {"async_input", bool(interaction_)},    {"os_sandbox", false}};
 }
 std::vector<std::string> Tools::take_input() {
   return interaction_ ? interaction_->take_input() : std::vector<std::string>{};
+}
+void Tools::begin_input_turn(const std::string &session) {
+  if (interaction_)
+    interaction_->begin_turn(session);
+}
+void Tools::end_input_turn() {
+  if (interaction_)
+    interaction_->end_turn();
 }
 void Tools::cancel_exec() noexcept {
   for (auto &entry : exec_sessions_)
@@ -394,8 +479,7 @@ Json Tools::schemas(const Json &facts) const {
     if (d.availability == "image" &&
         (!facts.value("image_input", false) || !facts.value("image_codec", false)))
       continue;
-    if (d.availability.rfind("computer", 0) == 0 &&
-        !desktop.value("available", false))
+    if (d.availability.rfind("computer", 0) == 0 && !desktop.value("available", false))
       continue;
     if ((d.availability == "computer_image" || d.name == "computer.move" ||
          d.name == "computer.click" || d.name == "computer.drag" || d.name == "computer.scroll") &&
@@ -422,6 +506,30 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
     }
   } active{active_cancel_, active_cancel_};
   active_cancel_ = &cancel;
+  ToolCall effective = call;
+  Json invocation = call.arguments;
+  std::string invocation_cwd = config_.cwd.string();
+  ToolResult completed;
+  bool action_completed = false;
+  const auto preserve_completed = [&](const std::exception_ptr &failure,
+                                      const std::string &message) {
+    completed.error = true;
+    completed.metadata["action_completed"] = true;
+    completed.metadata["post_action_error"] = safe_text(message);
+    const auto primary = completed.preview
+                             ? render_output(*completed.preview, config_.tool_output_limit).text
+                             : completed.content;
+    const auto notice = feedback_text("Tool completed; post-action failure: " + message + "\n",
+                                      config_.tool_output_limit / 3);
+    completed.content = bounded_text(notice + primary, config_.tool_output_limit);
+    if (call.name == "exec_command" || call.name == "write_stdin") {
+      completed.metadata["output"] = completed.content;
+      completed.content = completed.metadata.dump();
+    }
+    if (fatal(failure))
+      completed.failure_after_completion = failure;
+    return completed;
+  };
   try {
     cancel.check();
     if (call.name == "Grep")
@@ -438,6 +546,7 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
     const auto *definition = tool_definition(call.name);
     nlohmann::json_schema::json_validator validator;
     validator.set_root_schema(definition->schema);
+    invocation = hook_input(call, false);
     validator.validate(call.arguments);
     const auto preflight = [&](const ToolCall &candidate) {
       const auto *d = tool_definition(candidate.name);
@@ -454,40 +563,44 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
                {"*** Update File: ", "*** Add File: ", "*** Delete File: ", "*** Move to: "})
             if (line.rfind(prefix, 0) == 0)
               check(line.substr(std::string(prefix).size()));
-      } else if (permissions_.decide(
-                     {candidate.name,
-                      candidate.arguments.value("cmd", candidate.arguments.value("script", "")),
-                      std::nullopt,
-                      d->mutation ||
-                          (candidate.name == "write_stdin" &&
-                           !candidate.arguments.value("chars", std::string{}).empty())}) ==
-                 Decision::deny)
+      } else if (permissions_.decide(execution_request(candidate)) == Decision::deny)
         throw Error("Permission denied for " + candidate.name);
     };
     preflight(call);
-    ToolCall effective = call;
-    Json hook_input = call.arguments;
-    if (call.name == "exec_command")
-      hook_input = {{"command", call.arguments.at("cmd")}};
+    invocation = hook_input(call);
+    invocation_cwd = invocation.value("cwd", config_.cwd.string());
     HookOutcome hook;
     if (call.name != "write_stdin")
       hook = run_hooks("PreToolUse",
                        {{"hook_event_name", "PreToolUse"},
                         {"tool_name", definition->hook_name},
-                        {"tool_input", hook_input},
-                        {"cwd", config_.cwd.string()}},
+                        {"tool_input", invocation},
+                        {"cwd", invocation_cwd}},
                        cancel);
     if (hook.blocked || hook.stopped)
       throw Error("Hook blocked PreToolUse: " + hook.reason);
     if (hook.updated_input) {
-      if (call.name == "exec_command")
-        effective.arguments["cmd"] = hook.updated_input->at("command");
-      else
-        effective.arguments = *hook.updated_input;
+      const auto updated = hook.updated_input.value();
+      if (call.name == "exec_command") {
+        effective.arguments["cmd"] = updated.at("command");
+        for (const auto *key : {"shell", "login", "tty"})
+          if (updated.contains(key))
+            effective.arguments[key] = updated.at(key);
+        if (updated.contains("cwd"))
+          effective.arguments["workdir"] = updated.at("cwd");
+      } else
+        effective.arguments = updated;
     }
+    invocation = hook_input(effective, false);
+    if (invocation.is_object() && invocation.value("cwd", Json()).is_string())
+      invocation_cwd = invocation.at("cwd").get<std::string>();
     validator.validate(effective.arguments);
+    invocation = hook_input(effective);
+    invocation_cwd = invocation.value("cwd", config_.cwd.string());
     preflight(effective);
-    auto result = execute_inner(effective, cancel);
+    completed = execute_inner(effective, cancel);
+    action_completed = true;
+    auto &result = completed;
     const bool exec_output =
         definition->handler == ToolHandler::exec || definition->handler == ToolHandler::stdin_write;
     const auto response_limit =
@@ -512,22 +625,15 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
                          .text;
     try {
       HookOutcome post;
-      Json post_input = effective.arguments;
-      if (call.name == "exec_command")
-        post_input = {{"command", effective.arguments.at("cmd")}};
-      if (call.name == "write_stdin") {
-        const auto it = exec_sessions_.find(call.arguments.at("session_id").get<int>());
-        if (it != exec_sessions_.end())
-          post_input = {{"command", it->second.command}};
-      }
-      if (!((call.name == "exec_command" || call.name == "write_stdin") &&
+      if (!result.metadata.value("already_completed", false) &&
+          !((call.name == "exec_command" || call.name == "write_stdin") &&
             result.metadata.contains("session_id")))
         post = run_hooks("PostToolUse",
                          {{"hook_event_name", "PostToolUse"},
                           {"tool_name", definition->hook_name},
-                          {"tool_input", post_input},
+                          {"tool_input", invocation},
                           {"tool_response", result.content},
-                          {"cwd", config_.cwd.string()}},
+                          {"cwd", invocation_cwd}},
                          cancel);
       if (!post.additional_context.empty())
         suffix += "\nHook context: " + post.additional_context;
@@ -597,6 +703,8 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
     }
     return result;
   } catch (const Error &e) {
+    if (action_completed)
+      return preserve_completed(std::current_exception(), e.what());
     if (e.code == 130)
       throw;
     try {
@@ -604,7 +712,8 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
                 {{"hook_event_name", "PostToolUseFailure"},
                  {"tool_name",
                   tool_definition(call.name) ? tool_definition(call.name)->hook_name : call.name},
-                 {"tool_input", call.arguments},
+                 {"tool_input", invocation},
+                 {"cwd", invocation_cwd},
                  {"error", e.what()}},
                 cancel);
     } catch (const Error &hook_error) {
@@ -617,8 +726,16 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
     return {bounded_text(e.what(), config_.tool_output_limit), true, metadata};
 
   } catch (const std::exception &e) {
+    if (action_completed)
+      return preserve_completed(std::current_exception(), e.what());
+    if (fatal(std::current_exception()))
+      throw;
     return {bounded_text(std::string("Tool failed: ") + e.what(), config_.tool_output_limit), true,
             Json::object()};
+  } catch (...) {
+    if (action_completed)
+      return preserve_completed(std::current_exception(), "Unknown post-action failure");
+    throw;
   }
 }
 ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel) {
@@ -795,7 +912,6 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     }
     Json paths = Json::array();
     for (const auto &change : changes) {
-      read_versions_[change.path] = change.after ? digest(*change.after) : "<missing>";
       paths.push_back(change.path.string());
     }
     return {
@@ -817,10 +933,10 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
           a.contains("justification") || a.contains("prefix_rule"))
         throw Error("Sandbox escalation and permission profiles are unavailable on Tiger; use "
                     "application permission configuration");
-      authorize({name, command, std::nullopt, true});
+      const auto request = execution_request(call);
+      authorize(request);
       ProcessSpec spec;
-      const auto shell =
-          a.value("shell", env("SHELL").empty() ? std::string("/bin/sh") : env("SHELL"));
+      const auto shell = request.context.at("shell").get<std::string>();
       if (shell.empty() || shell.front() != '/')
         throw Error("shell must be an absolute executable path");
       spec.argv = {shell};
@@ -828,7 +944,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
         spec.argv.push_back("-l");
       spec.argv.push_back("-c");
       spec.argv.push_back(command);
-      spec.cwd = a.contains("workdir") ? path(a.at("workdir")) : config_.cwd;
+      spec.cwd = request.context.at("cwd").get<std::string>();
       if (!fs::is_directory(spec.cwd))
         throw Error("Working directory does not exist");
       spec.pty = a.value("tty", false);
@@ -851,16 +967,31 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
       do {
         id = static_cast<int>(std::hash<std::string>{}(unique_id()) & 0x7fffffffU);
       } while (id == 0 || exec_sessions_.count(id));
-      exec_sessions_[id] = {processes_.start(spec, cancel), command, 0, false};
+      exec_sessions_[id] = {
+          processes_.start(spec, cancel), command, spec.cwd, shell, spec.pty, false, std::nullopt};
     } else {
       id = a.at("session_id").get<int>();
       const auto it = exec_sessions_.find(id);
-      if (it == exec_sessions_.end() || it->second.completed)
-        throw Error("Unknown or completed exec session");
+      if (it == exec_sessions_.end())
+        throw Error("Unknown exec session");
       const auto input = a.value("chars", std::string{});
-      authorize({name, std::to_string(id), std::nullopt, !input.empty()});
+      authorize(execution_request(call));
+      if (it->second.completed) {
+        const auto exit_status = it->second.exit_code;
+        if (!exit_status)
+          throw Error("Exec session ended without a collected exit status");
+        const auto exit_code = exit_status.value();
+        return {"",
+                false,
+                {{"exit_code", exit_code},
+                 {"already_completed", true},
+                 {"total_output_bytes", 0},
+                 {"stdin_closed", true}}};
+      }
       if (!input.empty())
         processes_.write(it->second.process, input);
+      if (a.value("close_stdin", false))
+        processes_.close_stdin(it->second.process);
       wait = std::clamp(a.value("yield_time_ms", input.empty() ? 5000 : 250),
                         input.empty() ? 5000 : 1, input.empty() ? 300000 : 30000);
     }
@@ -869,8 +1000,8 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     try {
       do {
         cancel.check();
-        result = processes_.poll(job.process);
-        if (!result.running)
+        const auto status = processes_.status(job.process);
+        if (!status.running)
           break;
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  std::chrono::steady_clock::now() - started)
@@ -879,7 +1010,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
           break;
         clock_.sleep_ms(static_cast<int>(std::min<int64_t>(10, wait - elapsed)), cancel);
       } while (true);
-      result = processes_.read_output(job.process);
+      result = processes_.take_output(job.process);
     } catch (...) {
       try {
         processes_.stop(job.process);
@@ -899,6 +1030,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     else {
       data["exit_code"] = result.exit_code;
       job.completed = true;
+      job.exit_code = result.exit_code;
     }
     if (result.truncated || result.total_output_bytes > static_cast<size_t>(requested) * 4)
       data["original_token_count"] = (result.total_output_bytes + 3) / 4;
@@ -965,8 +1097,10 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
       }
       auto answer = question_(prompt, options);
       for (size_t i = 0; i < options.size(); ++i)
-        if (answer == std::to_string(i + 1))
+        if (answer == std::to_string(i + 1)) {
           answer = options[i];
+          break;
+        }
       answers[id] = {{"answers", Json::array({answer})}};
     }
     return structured({{"answers", answers}});
@@ -1031,7 +1165,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
          {"interrupted", interrupted}});
   }
   if (definition->handler == ToolHandler::computer) {
-    authorize({name, a.dump(), std::nullopt, definition->mutation});
+    authorize(execution_request(call));
     auto result = computer_->invoke(name.substr(9), a, cancel);
     auto out = structured(result.data);
     if (result.image) {
@@ -1176,8 +1310,6 @@ void Tools::use_session(const std::string &id) {
     return;
   session_id_ = id;
   todos_ = Json::array();
-  plan_ = false;
-  read_versions_.clear();
   const auto p = config_.home / "plans" / (id + ".json");
   if (fs::exists(p)) {
     todos_ = Json::parse(files_.read(p, 65536), nullptr, false);

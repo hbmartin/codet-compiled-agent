@@ -71,3 +71,17 @@ This explicit check opens a temporary plain-text fixture in TextEdit, types Unic
 Also verify mouse clicks, a drag, scrolling, right/double click, shortcuts, cropped/window capture, AXPress/set_value on observed controls, stale screenshot/node rejection after expiry, and cancellation while input is active. Test multiple display origins and 16/32-bit display modes when available. Confirm images arrive as pixels in a live image-capable provider round trip. Repeat observation/action cycles and record memory growth, responsiveness and swapping on the 512 MB G4. Both terminal interfaces must accept asynchronous replies while the agent is sleeping or working.
 
 See `CODEX-TOOLS.md` for capability gates and exact compatibility boundaries. Offline fixtures and successful PPC linking do not mark these desktop/runtime checks complete.
+
+## Reviewed runtime regression acceptance
+
+In both terminal modes on the G4:
+
+- Run screenshot-led TextEdit and local browser tasks above. On a second display, capture an observed window and a global region without `display_id`; verify the returned display/bounds and pointer placement. A window or region spanning displays must fail clearly; capture each display separately. Mixed selectors must fail. Repeat with expired snapshots and accessibility disabled.
+- Start non-TTY `cat`, send Unicode text and `close_stdin: true`, and verify final output and exit status. Repeat close while a session is still alive, then confirm further writes fail. A PTY close request must fail before typing. Plan mode must reject EOF mutation.
+- Approve a command with explicit cwd/shell and inspect those fields in the terminal and Bash hook input. Check outside-root cwd denial and explicit deny precedence even with root `/`. Verify stdin approval shows the original command and actual input.
+- Use a PostToolUse hook that fails after a disposable patch or shell change. Resume the session and verify its completed result remains recorded and its side effect is not repeated. Check fatal/resource failures separately from ordinary blocking feedback.
+- Send steering while a Stop hook is briefly waiting, then `/new`. Verify steering completes in the old session before the new session starts; cancel a turn and verify pending text is shown without automatic execution. Recover from an input-limit error in both terminal modes.
+- Run image-producing tasks with `--ephemeral`; replay images during the invocation, then check that temporary images/captures disappear after success, failure and Ctrl-C and no files appear under permanent `CODET_HOME/artifacts`.
+- Compare 1/2/4 MiB output capture responsiveness and repeat process starts with failed cleanup observations. Record time, peak RSS and disk behavior. Tiny split Unicode output must not create a spill notice.
+
+Host fixtures and PPC compile/link checks do not establish these target results. Record actual execution and any unavailable multi-display setup separately.

@@ -50,7 +50,7 @@ add_library(codet_text STATIC src/text_compat.c)
 target_include_directories(codet_text PUBLIC include)
 include(cmake/prompts.cmake)
 add_library(codet_core STATIC
-  src/modern/platform.cpp src/modern/config.cpp src/modern/provider.cpp
+  src/modern/platform.cpp src/modern/failure.cpp src/modern/support.cpp src/modern/config.cpp src/modern/provider.cpp
   src/modern/state.cpp src/modern/output.cpp src/modern/hooks.cpp src/modern/patch.cpp src/modern/tools.cpp
   src/modern/tool_registry.cpp src/modern/interaction.cpp src/modern/images.cpp
   src/modern/computer.cpp src/modern/prompts.cpp src/modern/agent.cpp src/modern/cli.cpp)
@@ -86,7 +86,7 @@ if(CODET_BUILD_TESTS)
   set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
   set(BUILD_GMOCK ON CACHE BOOL "" FORCE)
   add_subdirectory("${CODET_DEPENDENCY_ROOT}/googletest" "deps/gtest" EXCLUDE_FROM_ALL)
-  add_executable(codet_tests tests/foundation_test.cpp tests/core_test.cpp tests/review_test.cpp tests/remaining_test.cpp tests/tool_contract_test.cpp tests/followup_test.cpp tests/final_review_test.cpp tests/output_test.cpp tests/process_policy_test.cpp tests/prompt_test.cpp)
+  add_executable(codet_tests tests/runtime_test.cpp tests/foundation_test.cpp tests/core_test.cpp tests/review_test.cpp tests/remaining_test.cpp tests/tool_contract_test.cpp tests/followup_test.cpp tests/final_review_test.cpp tests/output_test.cpp tests/process_policy_test.cpp tests/prompt_test.cpp)
   file(READ "${CMAKE_SOURCE_DIR}/tests/fixtures/core-tools-v1.json" CODET_CORE_CONTRACT)
   configure_file(tests/core_contract.hpp.in generated/core_contract.hpp @ONLY)
   target_include_directories(codet_tests PRIVATE "${CMAKE_BINARY_DIR}/generated")

@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <cmath>
 #include <csignal>
+#include <cstdio>
 #include <cstring>
 #include <curl/curl.h>
 #include <fcntl.h>
@@ -495,6 +496,9 @@ public:
   }
 };
 } // namespace
+ssize_t ProcessControl::read_output(int fd, void *buffer, size_t count) {
+  return ::read(fd, buffer, count);
+}
 std::shared_ptr<ProcessControl> native_process_control() {
   return std::make_shared<NativeProcessControl>();
 }
@@ -507,6 +511,7 @@ struct NativeProcesses::Job {
   std::chrono::steady_clock::time_point began = std::chrono::steady_clock::now();
   bool done = false, retain = true, exit_observed = false;
   bool cleanup_required = false;
+  bool cleanup_kill_sent = false;
   std::exception_ptr failure;
   std::optional<int> termination_status;
   std::string error, reported_error, pending_utf8;
@@ -574,23 +579,23 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
   argv.push_back(nullptr);
   int ready_pipe[2], release_pipe[2], output_pipe[2];
   if (::pipe(ready_pipe) < 0)
-    throw Error(system_error("startup pipe"));
+    process_error("startup pipe");
   Fd ready_read(ready_pipe[0]), ready_write(ready_pipe[1]);
   if (::socketpair(AF_UNIX, SOCK_STREAM, 0, release_pipe) < 0)
-    throw Error(system_error("startup gate"));
+    process_error("startup gate");
   Fd release_read(release_pipe[0]), release_write(release_pipe[1]);
 #ifdef __APPLE__
   const int no_sigpipe = 1;
   if (::setsockopt(release_write.n, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof no_sigpipe) < 0)
-    throw Error(system_error("startup gate SIGPIPE protection"));
+    process_error("startup gate SIGPIPE protection");
 #endif
   int master = -1, slave = -1;
   if (spec.pty) {
     if (::openpty(&master, &slave, nullptr, nullptr, nullptr) < 0)
-      throw Error(system_error("openpty"));
+      process_error("openpty");
   } else {
     if (::pipe(output_pipe) < 0)
-      throw Error(system_error("pipe"));
+      process_error("pipe");
     master = output_pipe[0];
     slave = output_pipe[1];
   }
@@ -599,12 +604,12 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
   if (!spec.pty && spec.interactive_stdin) {
     int input[2];
     if (::socketpair(AF_UNIX, SOCK_STREAM, 0, input) < 0)
-      throw Error(system_error("stdin socket"));
+      process_error("stdin socket");
     parent_input.n = input[0];
     child_input.n = input[1];
 #ifdef __APPLE__
     if (::setsockopt(parent_input.n, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof no_sigpipe) < 0)
-      throw Error(system_error("stdin SIGPIPE protection"));
+      process_error("stdin SIGPIPE protection");
 #endif
   }
   Fd stderr_read(-1), stderr_write(-1);
@@ -613,7 +618,7 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
       throw Error("Separate stderr is unavailable for PTYs");
     int errors[2];
     if (::pipe(errors) < 0)
-      throw Error(system_error("stderr pipe"));
+      process_error("stderr pipe");
     stderr_read.n = errors[0];
     stderr_write.n = errors[1];
   }
@@ -622,7 +627,7 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
     throw ProcessTimeout();
   const pid_t pid = ::fork();
   if (pid < 0)
-    throw Error(system_error("fork"));
+    process_error("fork");
   if (pid == 0) {
     ::close(ready_read.n);
     ::close(release_write.n);
@@ -785,7 +790,7 @@ void NativeProcesses::drain(Job &job) {
     char buffer[8192];
     size_t drained = 0;
     while (fd >= 0 && drained < size_t{1024} * 1024) {
-      const auto n = ::read(fd, buffer, sizeof buffer);
+      const auto n = control_->read_output(fd, buffer, sizeof buffer);
       if (n < 0 && errno == EINTR)
         continue;
       if (n <= 0)
@@ -859,13 +864,15 @@ void NativeProcesses::collect(Job &job) {
     drain(job);
   job.result.running = !job.done;
 }
+size_t NativeProcesses::job_bytes(const Job &job) {
+  return job.result.output.capacity() + job.result.stderr_output.capacity() +
+         (job.result.capture ? job.result.capture->memory_bytes() : 0);
+}
 size_t NativeProcesses::retained_output_bytes() const {
   size_t bytes = 0;
   for (const auto &entry : jobs_)
     if (entry.second->done && entry.second->retain)
-      bytes += entry.second->result.output.capacity() +
-               entry.second->result.stderr_output.capacity() +
-               (entry.second->result.capture ? entry.second->result.capture->memory_bytes() : 0);
+      bytes += job_bytes(*entry.second);
   return bytes;
 }
 void NativeProcesses::prune() {
@@ -873,9 +880,7 @@ void NativeProcesses::prune() {
   for (const auto &entry : jobs_)
     if (entry.second->done && entry.second->retain) {
       ++count;
-      bytes += entry.second->result.output.capacity() +
-               entry.second->result.stderr_output.capacity() +
-               (entry.second->result.capture ? entry.second->result.capture->memory_bytes() : 0);
+      bytes += job_bytes(*entry.second);
     }
   while (count > 64 || bytes > size_t{4} * size_t{1024} * 1024) {
     auto oldest = jobs_.end();
@@ -885,9 +890,7 @@ void NativeProcesses::prune() {
         oldest = it;
     if (oldest == jobs_.end())
       break;
-    bytes -= oldest->second->result.output.capacity() +
-             oldest->second->result.stderr_output.capacity() +
-             (oldest->second->result.capture ? oldest->second->result.capture->memory_bytes() : 0);
+    bytes -= job_bytes(*oldest->second);
     --count;
     jobs_.erase(oldest);
   }
@@ -901,7 +904,7 @@ void NativeProcesses::refresh() {
     auto &job = *jobs_.at(id);
     try {
       if (job.cleanup_required)
-        stop_owned(job);
+        advance_cleanup(job);
       else
         (void)observe(id);
     } catch (const std::exception &) {
@@ -957,16 +960,20 @@ void NativeProcesses::finish(Job &job, bool ownership_lost) {
   job.result.running = false;
   // Ownership is already invalidated. Capture failure cannot leave descriptors open.
   std::exception_ptr capture_failure;
+  bool secondary_capture_failure = false;
   try {
     drain(job);
-    if (job.result.capture)
-      job.result.capture->finish();
   } catch (...) {
     capture_failure = std::current_exception();
   }
-  if (!job.result.capture) {
-    std::string(job.result.output).swap(job.result.output);
-    std::string(job.result.stderr_output).swap(job.result.stderr_output);
+  try {
+    if (job.result.capture)
+      job.result.capture->finish();
+  } catch (...) {
+    if (!capture_failure)
+      capture_failure = std::current_exception();
+    else
+      secondary_capture_failure = true;
   }
   if (job.input_fd >= 0) {
     ::close(job.input_fd);
@@ -979,6 +986,13 @@ void NativeProcesses::finish(Job &job, bool ownership_lost) {
   if (job.stderr_fd >= 0) {
     ::close(job.stderr_fd);
     job.stderr_fd = -1;
+  }
+  if (secondary_capture_failure) {
+    try {
+      report_diagnostic(diagnostics_, "Output capture finalization also failed");
+    } catch (...) {
+      std::fputs("Output capture finalization also failed\n", stderr);
+    }
   }
   if (capture_failure)
     std::rethrow_exception(capture_failure);
@@ -994,16 +1008,10 @@ void NativeProcesses::clear_error(Job &job) {
 }
 void NativeProcesses::record_error(const std::string &id, Job &job,
                                    const std::exception_ptr &error) {
+  if (fatal(error))
+    std::rethrow_exception(error);
   try {
     std::rethrow_exception(error);
-  } catch (const std::bad_alloc &) {
-    throw;
-  } catch (const ProcessResourceError &) {
-    throw;
-  } catch (const Error &e) {
-    if (e.code == 130)
-      throw;
-    job.error = bounded_text("Job " + id + ": " + e.what(), 2048);
   } catch (const std::exception &e) {
     job.error = bounded_text("Job " + id + ": " + e.what(), 2048);
   }
@@ -1035,14 +1043,16 @@ NativeProcesses::Job &NativeProcesses::observe(const std::string &id) {
   }
   return job;
 }
-ProcessResult NativeProcesses::publish(Job &job) {
+ProcessResult NativeProcesses::publish(Job &job, bool render) {
   auto result = job.result;
   if (result.capture) {
     result.capture->flush();
     result.preview = result.capture->snapshot();
-    const auto rendered = result.capture->render(job.spec.output_limit);
-    result.output = rendered.text;
-    result.truncated = rendered.omitted != 0;
+    if (render) {
+      const auto rendered = result.capture->render(job.spec.output_limit);
+      result.output = rendered.text;
+      result.truncated = rendered.omitted != 0;
+    }
     result.capture->metadata(result, result.preview->total);
   }
   return result;
@@ -1065,21 +1075,7 @@ bool NativeProcesses::observe_cleanup(Job &job, std::exception_ptr &failure) {
     collect(job);
   } catch (...) {
     auto current = std::current_exception();
-    bool propagate = false;
-    try {
-      std::rethrow_exception(current);
-    } catch (const std::bad_alloc &) {
-      propagate = true;
-    } catch (const ProcessResourceError &) {
-      propagate = true;
-    } catch (const Error &e) {
-      propagate = e.code == 130;
-    } catch (const std::exception &) { // Job-local observation failure; preserve the first cause.
-      propagate = false;
-    } catch (...) {
-      propagate = true;
-    }
-    if (!failure || propagate)
+    if (!failure || fatal(current))
       failure = current;
   }
   return job.done;
@@ -1112,25 +1108,45 @@ void NativeProcesses::stop_owned(Job &job) {
   }
   clear_error(job);
   if (observation_failure) {
+    if (fatal(observation_failure))
+      std::rethrow_exception(observation_failure);
     try {
       std::rethrow_exception(observation_failure);
-    } catch (const std::bad_alloc &) {
-      throw;
-    } catch (const ProcessResourceError &) {
-      throw;
-    } catch (const Error &e) {
-      if (e.code == 130)
-        throw;
-      report_diagnostic(diagnostics_,
-                        std::string("Process observation during cleanup: ") + e.what());
     } catch (const std::exception &e) {
       report_diagnostic(diagnostics_,
                         std::string("Process observation during cleanup: ") + e.what());
     }
   }
 }
+ProcessStatus NativeProcesses::status(const std::string &id) {
+  const auto it = jobs_.find(id);
+  if (it == jobs_.end() || !it->second->retain)
+    throw Error("Unknown or expired job: " + id);
+  auto &job = observe(id);
+  return {id, !job.done, job.result.exit_code, job.error};
+}
+void NativeProcesses::advance_cleanup(Job &job) {
+  std::exception_ptr failure;
+  observe_cleanup(job, failure);
+  if (!job.done && !job.cleanup_kill_sent) {
+    control_->signal(-job.pid, SIGKILL);
+    job.cleanup_kill_sent = true;
+    observe_cleanup(job, failure);
+  }
+  if (fatal(failure))
+    std::rethrow_exception(failure);
+}
 ProcessResult NativeProcesses::read_output(const std::string &id) {
-  auto result = poll(id);
+  return consume(id, true);
+}
+ProcessResult NativeProcesses::take_output(const std::string &id) {
+  return consume(id, false);
+}
+ProcessResult NativeProcesses::consume(const std::string &id, bool render) {
+  const auto found = jobs_.find(id);
+  if (found == jobs_.end() || !found->second->retain)
+    throw Error("Unknown or expired job: " + id);
+  auto result = publish(observe(id), render);
   const auto it = jobs_.find(id);
   if (it != jobs_.end()) {
     auto &job = *it->second;
@@ -1160,6 +1176,18 @@ void NativeProcesses::stop(const std::string &id) {
   } catch (const std::exception &) {
     record_error(id, *it->second, std::current_exception());
     throw_failure(*it->second);
+  }
+}
+void NativeProcesses::close_stdin(const std::string &id) {
+  const auto it = jobs_.find(id);
+  if (it == jobs_.end() || !it->second->retain)
+    throw Error("Unknown or expired job: " + id);
+  auto &job = *it->second;
+  if (job.spec.pty || !job.spec.interactive_stdin)
+    throw Error("close_stdin requires a pipe session");
+  if (job.input_fd >= 0) {
+    ::close(job.input_fd);
+    job.input_fd = -1;
   }
 }
 void NativeProcesses::write(const std::string &id, const std::string &input) {

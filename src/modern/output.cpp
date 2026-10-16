@@ -28,7 +28,7 @@ int open_regular(const fs::path &path, int flags, bool protect) {
   const int fd = ::open(path.c_str(), flags | O_NOFOLLOW | O_NONBLOCK, 0600);
   if (fd < 0)
     throw Error("Cannot open output capture: " + std::string(std::strerror(errno)));
-  struct stat status {};
+  struct stat status{};
   if (::fstat(fd, &status) || !S_ISREG(status.st_mode) || status.st_uid != ::geteuid() ||
       (protect && ::fchmod(fd, 0600)) || ::fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) {
     ::close(fd);
@@ -165,7 +165,7 @@ size_t OutputSpool::available(size_t requested) {
     if (!((name.rfind("capture-", 0) == 0 && entry.path().extension() == ".txt") ||
           uuid_name(name)))
       continue;
-    struct stat st {};
+    struct stat st{};
     if (::lstat(entry.path().c_str(), &st) != 0) {
       store_->warn("Cannot inspect " + name);
       continue;
@@ -182,7 +182,7 @@ size_t OutputSpool::available(size_t requested) {
     if (!active) {
       try {
         Descriptor file(open_regular(entry.path(), O_RDWR, false));
-        struct stat opened {};
+        struct stat opened{};
         require(::fstat(file.fd, &opened) == 0, "Inspect output capture");
         if (opened.st_dev != st.st_dev || opened.st_ino != st.st_ino)
           throw Error("Capture changed during inspection");
@@ -221,8 +221,7 @@ size_t OutputSpool::available(size_t requested) {
       Descriptor owned(open_regular(record.path, O_RDWR, false));
       if (::flock(owned.fd, LOCK_EX | LOCK_NB) < 0)
         continue;
-      struct stat current {
-      }, link{};
+      struct stat current{}, link{};
       require(::fstat(owned.fd, &current) == 0 && ::lstat(record.path.c_str(), &link) == 0,
               "Recheck capture eviction");
       if (current.st_dev != record.device || current.st_ino != record.inode ||
@@ -311,6 +310,18 @@ void OutputSpool::append(const std::string &text) {
 void OutputSpool::close() {
   if (closed_)
     return;
+  struct Release {
+    int &fd;
+    bool &closed;
+    std::unique_ptr<char[]> &pending;
+    ~Release() {
+      if (fd >= 0)
+        ::close(fd);
+      fd = -1;
+      closed = true;
+      pending.reset();
+    }
+  } release{fd_, closed_, pending_};
   flush();
   closed_ = true;
   pending_.reset();
@@ -328,8 +339,7 @@ void OutputSpool::close() {
     }
   } else {
     // Only remove our own empty file, never a substituted directory entry.
-    struct stat own {
-    }, current{};
+    struct stat own{}, current{};
     if (::fstat(fd_, &own) == 0 && ::lstat(path_.c_str(), &current) == 0 &&
         own.st_dev == current.st_dev && own.st_ino == current.st_ino)
       (void)::unlink(path_.c_str());
@@ -350,8 +360,7 @@ RenderedOutput render_output(const OutputSnapshot &data, size_t limit) {
   const bool whole = data.total == data.head.size();
   if (whole && display_size(data.head, data.final) <= limit) {
     const auto kept = prefix_bytes(data.head, limit, data.final);
-    if (kept == data.total)
-      return {safe_text(data.head), 0};
+    return {safe_text(data.head.substr(0, kept)), 0};
   }
   const auto maximum_marker = "\n[... " + std::to_string(data.total) + " bytes omitted ...]\n";
   if (maximum_marker.size() >= limit)
@@ -363,17 +372,12 @@ RenderedOutput render_output(const OutputSnapshot &data, size_t limit) {
   const auto last =
       suffix_bytes(tail, budget - safe_text(data.head.substr(0, first)).size(),
                    first > offset ? first - static_cast<size_t>(offset) : 0, data.final);
-  const auto omitted = data.total - first - (last.second - last.first);
+  const auto deferred = data.final ? 0 : tail.size() - prefix_bytes(tail, SIZE_MAX, false);
+  const auto omitted = data.total - first - (last.second - last.first) - deferred;
   return {safe_text(data.head.substr(0, first)) + "\n[... " + std::to_string(omitted) +
               " bytes omitted ...]\n" +
               safe_text(tail.substr(last.first, last.second - last.first)),
           omitted};
-}
-std::string head_tail_text(const std::string &head, const std::string &tail, uint64_t total,
-                           size_t limit) {
-  if (total == head.size() + tail.size())
-    return render_output({head + tail, "", total, true}, limit).text;
-  return render_output({head, tail, total, true}, limit).text;
 }
 fs::path capture_directory(const Config &config) {
   return config.capture_root.empty() ? config.home / "tool-output" : config.capture_root;
@@ -399,15 +403,28 @@ void OutputCapture::append(const std::string &text) {
     const auto count = std::min(size_t{8192}, text.size() - at);
     const auto chunk = text.substr(at, count);
     at += count;
+    const auto scan = pending_utf8_ + chunk;
+    pending_utf8_.clear();
+    for (size_t offset = 0; offset < scan.size();) {
+      const auto next = unit(scan, offset, false);
+      if (!next.bytes) {
+        pending_utf8_ = scan.substr(offset);
+        break;
+      }
+      display_bytes_ += next.display;
+      if (store_)
+        store_->metrics.display_bytes += next.bytes;
+      offset += next.bytes;
+    }
     const bool whole = data_.total == data_.head.size();
-    if (whole && (data_.total + count > limit_ || display_size(data_.head + chunk, false) > limit_))
+    if (whole && display_bytes_ > limit_)
       retain();
     if (spool_)
       spool_->append(chunk);
     data_.total += count;
     if (whole) {
       data_.head += chunk;
-      if (data_.head.size() > limit_) {
+      if (display_bytes_ > limit_ && data_.head.size() > limit_) {
         const auto first = limit_ / 2 + 3, last = limit_ - limit_ / 2 + 3;
         data_.tail = data_.head.substr(data_.head.size() > last ? data_.head.size() - last : 0);
         data_.head.resize(std::min(first, data_.head.size()));
@@ -432,7 +449,9 @@ void OutputCapture::flush() {
 void OutputCapture::finish() {
   if (finished_)
     return;
-  if (data_.total == data_.head.size() && display_size(data_.head, true) > limit_)
+  display_bytes_ += display_size(pending_utf8_, true);
+  pending_utf8_.clear();
+  if (data_.total == data_.head.size() && display_bytes_ > limit_)
     retain();
   finished_ = true;
   data_.final = true;
@@ -450,7 +469,8 @@ RenderedOutput OutputCapture::render(size_t limit) const {
   return render_output(data_, limit);
 }
 size_t OutputCapture::memory_bytes() const {
-  return data_.head.capacity() + data_.tail.capacity() + (spool_ ? spool_->memory_bytes() : 0);
+  return data_.head.capacity() + data_.tail.capacity() + pending_utf8_.capacity() +
+         (spool_ ? spool_->memory_bytes() : 0);
 }
 void OutputCapture::metadata(ProcessResult &result, uint64_t total) const {
   result.total_output_bytes = total;
