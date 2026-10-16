@@ -1,4 +1,5 @@
 #include "codet/core.hpp"
+#include "codet/output.hpp"
 #include <iostream>
 #include <nlohmann/json-schema.hpp>
 #include <set>
@@ -120,12 +121,8 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
           throw Error(compact_hook.reason);
         std::string bounded = transcript;
         const auto limit = std::max(size_t{512}, config_.context_tokens * 2);
-        if (bounded.size() > limit) {
-          const auto tail = bounded.substr(bounded.size() - limit / 2);
-          bounded.resize(limit / 2);
-          bounded += "\n[older transcript omitted]\n";
-          bounded += tail;
-        }
+        if (bounded.size() > limit)
+          bounded = render_output({transcript, "", transcript.size(), true}, limit).text;
         Message request;
         request.role = "user";
         request.text = "Summarize this completed conversation for continuation. Preserve the "

@@ -1,5 +1,7 @@
 // Host-only measurement of the serialization component of saves and streamed events.
 #include "codet/core.hpp"
+#include "codet/output.hpp"
+#include "temp.hpp"
 #include <atomic>
 #include <cstdlib>
 #include <iostream>
@@ -71,4 +73,34 @@ int main() {
                 << '\n';
     }
   }
+  TempDirectory temporary;
+  auto store = std::make_shared<CaptureStore>(temporary.root / "output");
+  const std::string chunk(8192, 'x');
+  allocations = 0;
+  allocated_bytes = 0;
+  const auto began = std::chrono::steady_clock::now();
+  size_t retained_capacity = 0;
+  {
+    OutputCapture capture(store, 65536);
+    for (int i = 0; i < 128; ++i)
+      capture.append(chunk);
+    capture.finish();
+    retained_capacity = capture.memory_bytes();
+    if (capture.render(65536).omitted == 0)
+      return 1;
+  }
+  const auto elapsed =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - began).count();
+  const auto count = allocations.load(), bytes = allocated_bytes.load();
+  std::cout << Json({{"case", "lazy_capture_1MiB_8KiB_chunks"},
+                     {"milliseconds", elapsed},
+                     {"allocations", count},
+                     {"allocated_bytes", bytes},
+                     {"retained_capacity", retained_capacity},
+                     {"flushes", store->metrics.batches},
+                     {"scans", store->metrics.scans},
+                     {"syncs", store->metrics.syncs},
+                     {"renders", store->metrics.renders}})
+                   .dump()
+            << '\n';
 }

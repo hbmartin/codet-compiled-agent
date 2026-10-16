@@ -106,3 +106,35 @@ Host-only Release measurement of serialization within a representative 100-messa
 - The checkout credential setting is verified through parsed workflow YAML; triggers, permissions and dependency pins stay unchanged. GitHub CI is not dispatched and no push or PR modification is performed.
 
 Full reports remain under ignored `build/remaining-native-analysis`, `build/followup-linux/modern-checks/analysis` and `build/review-final-*`. Current condensed evidence is [validation/remaining-review.json](validation/remaining-review.json). The earlier Cppcheck 2.13 evidence remains invalid; the earlier follow-up JSON is retained only as its original source snapshot.
+
+
+## Output capture and compaction review (base `36b67c4`)
+
+These dispositions cover the 15 new findings; repeated earlier findings retain their R1–R17 dispositions above. C++17, PPC750, dependency pins, authorization, process ownership and JSONL compatibility remain unchanged.
+
+| Item | Disposition | Implementation / regression evidence |
+|---|---|---|
+| N1 Double-cut preview / false omission count | Fixed | Structured original-byte snapshots survive process conversion and hooks; one final rendering pass budgets annotations and counts original omitted bytes. Megabyte shell fixture checks exact counts and original capture contents. |
+| N2 Capture warning truncates complete output | Fixed | Storage warnings remain independent metadata/diagnostics; complete short output keeps `truncated=false`, status and exact content. |
+| N3 One bad entry disables capture | Fixed | Diagnose individual nonregular/unreadable entries; no symlink following or recursive directory deletion. Conservative regular-file accounting, healthy captures and full-store behavior tested. |
+| N4 Compaction splits UTF-8 | Fixed | Shared UTF-8-safe head/tail selection includes marker in budget. Actual request builders for every retained adapter compact non-ASCII transcripts and continue using loopback/fake transports. |
+| N5 Trivial outputs evict large captures / ephemeral files persist | Fixed | Lazy activation, temporary invocation capture root, Read paging and ordered cleanup. More than 64 trivial commands leave a large capture intact; ephemeral success, error, cancellation and background cases remove temporary captures. |
+| N6 Broken UTF-8 / clipped spill notice | Fixed | Repair source units without splitting characters; budget complete notices, with metadata reference for long paths. Source-byte counts, malformed bytes and chunk/window boundaries tested. |
+| N7 Locationless clang-tidy error escapes gate | Rejected; unchanged | Existing `first_party` treats absent/empty paths as first-party; locationless diagnostic regressions already gate errors. |
+| N8 Codex `parallel_tool_calls` without tools | Deferred unconfirmed concern | No verified Codex endpoint failure; keep current request contract. Chat Completions behavior alone does not establish the subscription endpoint's rules. |
+| N9 Cppcheck cache hash attribute | Rejected; unchanged | Pinned 2.22.0 emits a `<hash>` child, verified against its source and actual cache artifacts. Existing completion/canary checks remain. |
+| N10 Per-chunk scans / I/O | Fixed | Bounded 64 KiB staged writes, per-flush coordination, one completion sync. Deterministic counters and host-only allocation/time sample; no timing threshold. |
+| N11 Internal polling formats / uncounted completed buffers | Fixed | Internal observation and explicit publication separated. Completed raw-window/staging capacities count toward 4 MiB; no redundant formatted cache. Counter and retention tests. |
+| N12 Non-shell UUID spills bypass quota | Fixed | One managed capture path for shell and non-shell results; adopt existing UUID files without rewriting or renaming, count full legacy sizes and evict normally. |
+| N13 Duplicate result conversion | Fixed | Bash, TaskOutput and TaskStop share conversion while preserving running/exit semantics. Existing foreground, PTY, background and lifecycle fixtures retained. |
+| N14 Dead initial head/tail transfer | Fixed | Remove obsolete eager-spool branch; lazy capture transfers the buffered prefix once. Exact capture contents checked across chunk boundaries and hook-triggered activation. |
+| N15 Decision ABI comment | Already fixed | Existing comment describes scoped enum serialization; retained unchanged. |
+
+Current source-hashed evidence is [validation/output-capture.json](validation/output-capture.json). Earlier JSON reports remain evidence of their original snapshots; Cppcheck 2.13 coverage remains invalid. Tiger runtime and G4/512 MB memory/performance acceptance require owner results. No push or PR changes are part of delivery.
+
+
+### Output capture measurement and validation
+
+The host-only Release benchmark adds a 1 MiB capture received in 128 chunks of 8 KiB, with a 64 KiB preview. One sample took 1.96 ms, made 381 C++ `new` allocations (2,178,448 cumulative allocated bytes), retained 65,550 bytes of completed window capacity, and recorded 16 flush batches, 17 store scans, one sync and one explicit render. Cumulative allocation is not peak resident memory; this benchmark includes capture I/O but does not measure Tiger/HDD performance. Reproduce with the existing `codet_sanitization_bench` target. Timing is recorded evidence, never a test threshold.
+
+The final macOS and Linux host/sanitizer suites register 149 C++ cases and run 30 loopback/PTY integration cases. The opt-in live TLS case remains skipped; the unreadable-file case additionally skips for root in the Linux image and executes on macOS. Analyzer-runner tests, semantic/fatal canaries, all three Linux analyzers, native Cppcheck/Clang Static Analyzer, and PPC architecture/import/install-path checks are recorded in the current source-hashed evidence. The acceptance archive carries these cases and updated owner-run instructions. No PPC executable is run on the build host.

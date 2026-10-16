@@ -154,7 +154,7 @@ TEST_F(Remaining, BoundedToolOutputRetainsItsSpillNoticeAndFullContent) {
   const auto result = execute("Read", {{"file_path", "long"}});
   ASSERT_FALSE(result.error) << result.content;
   EXPECT_LE(result.content.size(), 256u);
-  EXPECT_THAT(result.content, HasSubstr("Output truncated"));
+  EXPECT_THAT(result.content, HasSubstr("bytes omitted"));
   ASSERT_TRUE(result.metadata.contains("spill_path"));
   EXPECT_GT(files.read(result.metadata["spill_path"].get<std::string>()).size(), 2000u);
   EXPECT_NO_THROW(Json(result.content).dump());

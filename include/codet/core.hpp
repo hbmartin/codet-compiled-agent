@@ -83,6 +83,9 @@ struct NativeFileSystem final : FileSystem {
   void remove(const fs::path &) override;
   fs::path canonical(const fs::path &) const override;
 };
+class CaptureStore;
+class OutputCapture;
+struct OutputSnapshot;
 struct ProcessSpec {
   std::vector<std::string> argv;
   fs::path cwd;
@@ -91,6 +94,7 @@ struct ProcessSpec {
   size_t output_limit = 65536;
   bool pty = false, separate_stderr = false;
   fs::path spool_directory;
+  std::shared_ptr<CaptureStore> capture_store;
   size_t spool_limit = size_t{8} * 1024 * 1024, spool_quota = size_t{64} * 1024 * 1024;
   size_t spool_records = 64;
 };
@@ -104,6 +108,8 @@ struct ProcessResult {
   size_t spill_bytes = 0;
   bool spill_truncated = false;
   bool stdout_truncated = false, stderr_truncated = false;
+  std::shared_ptr<const OutputSnapshot> preview;
+  std::shared_ptr<OutputCapture> capture;
   ProcessResult() = default;
   ProcessResult(int code, std::string text, bool cut = false, bool active = false,
                 std::string errors = {})
@@ -142,6 +148,8 @@ class NativeProcesses final : public Processes {
   uint64_t completed_ = 0;
   DiagnosticSink diagnostics_;
   void collect(Job &);
+  Job &observe(const std::string &);
+  ProcessResult publish(Job &);
   void finish(Job &, bool ownership_lost = false);
   void terminate(Job &, int status);
   [[noreturn]] void job_error(const std::string &, Job &, const Error &);
@@ -155,6 +163,8 @@ public:
     diagnostics_ = std::move(sink);
   }
   ~NativeProcesses() override;
+  void shutdown();
+  size_t retained_output_bytes() const;
   ProcessResult run(const ProcessSpec &, const Cancellation &) override;
   std::string start(const ProcessSpec &) override;
   std::string start(const ProcessSpec &, const Cancellation &) override;
@@ -192,7 +202,7 @@ struct Selection {
   std::string provider, model;
 };
 struct Config {
-  fs::path home, cwd;
+  fs::path home, cwd, capture_root;
   std::string provider = "codex", model, permission_mode = "default", approval = "on-request";
   std::string ui = "auto", theme = "default", effort;
   size_t max_turns = 100, max_output_tokens = 8192, context_tokens = 32768;
@@ -312,6 +322,8 @@ struct ToolResult {
   std::string content;
   bool error = false;
   Json metadata = Json::object();
+  std::shared_ptr<const OutputSnapshot> preview = {};
+  std::shared_ptr<OutputCapture> capture = {};
 };
 struct HookOutcome {
   bool blocked = false, stopped = false;
@@ -330,6 +342,7 @@ class Tools {
   Approver approve_;
   Questioner question_;
   DiagnosticSink diagnostics_;
+  std::shared_ptr<CaptureStore> capture_store_;
   std::map<fs::path, std::string> read_versions_;
   Json todos_ = Json::array();
   bool plan_ = false;
@@ -342,9 +355,7 @@ class Tools {
 
 public:
   Tools(const Config &c, FileSystem &f, Processes &p, HttpTransport &h, Clock &clock,
-        Approver a = {}, Questioner q = {}, DiagnosticSink diagnostics = {})
-      : config_(c), files_(f), processes_(p), http_(h), clock_(clock), permissions_(c, f),
-        approve_(std::move(a)), question_(std::move(q)), diagnostics_(std::move(diagnostics)) {}
+        Approver a = {}, Questioner q = {}, DiagnosticSink diagnostics = {});
   Json schemas() const;
   void use_session(const std::string &id);
   ToolResult execute(const ToolCall &, const Cancellation &);

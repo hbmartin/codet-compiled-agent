@@ -494,8 +494,6 @@ struct NativeProcesses::Job {
   uint64_t completed_order = 0;
   ProcessSpec spec;
   ProcessResult result;
-  std::string head, tail;
-  std::unique_ptr<OutputSpool> spool;
   std::chrono::steady_clock::time_point began = std::chrono::steady_clock::now();
   bool done = false, retain = true, exit_observed = false;
   std::optional<int> termination_status;
@@ -514,10 +512,25 @@ NativeProcesses::NativeProcesses(std::shared_ptr<ProcessControl> control,
                                  DiagnosticSink diagnostics)
     : control_(std::move(control)), diagnostics_(std::move(diagnostics)) {}
 NativeProcesses::~NativeProcesses() {
+  shutdown();
+}
+void NativeProcesses::shutdown() {
   for (auto &j : jobs_) {
     try {
       stop(j.first);
-    } catch (...) { // NOLINT(bugprone-empty-catch): Destruction must continue stopping other jobs.
+    } catch (...) {
+      try {
+        std::string detail = "Unknown exception";
+        try {
+          throw;
+        } catch (const std::exception &e) {
+          detail = e.what();
+        } catch (...) { // NOLINT(bugprone-empty-catch): Report nonstandard cleanup failures too.
+        }
+        report_diagnostic(diagnostics_, "Process cleanup " + j.first + ": " + detail);
+      } catch (...) { // NOLINT(bugprone-empty-catch): Cleanup must continue even if diagnostic
+                      // allocation fails.
+      }
     }
   }
 }
@@ -679,6 +692,13 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
     auto job = std::make_unique<Job>();
     job->pid = pid;
     job->spec = spec;
+    if (!spec.separate_stderr) {
+      auto store = spec.capture_store;
+      if (!store && !spec.spool_directory.empty())
+        store = std::make_shared<CaptureStore>(spec.spool_directory, spec.spool_limit,
+                                               spec.spool_quota, spec.spool_records, diagnostics_);
+      job->result.capture = std::make_shared<OutputCapture>(store, spec.output_limit);
+    }
     job->began = began;
     // The child cannot exit through exec before this watcher has been installed.
     try {
@@ -745,46 +765,12 @@ void NativeProcesses::collect(Job &job) {
           job.result.stdout_truncated |= keep < count;
         job.result.truncated = job.result.stdout_truncated || job.result.stderr_truncated;
       } else {
-        if (!job.spec.spool_directory.empty()) {
-          if (!job.spool) {
-            job.spool =
-                std::make_unique<OutputSpool>(job.spec.spool_directory, job.spec.spool_limit,
-                                              job.spec.spool_quota, job.spec.spool_records);
-            job.spool->append(job.head + job.tail);
-          }
-          if (job.spool)
-            job.spool->append(std::string(buffer, count));
-        }
-        const auto head_limit = job.spec.output_limit / 2;
-        const auto tail_limit = job.spec.output_limit - head_limit;
-        const auto head_bytes = std::min(count, head_limit - job.head.size());
-        job.head.append(buffer, head_bytes);
-        const auto remaining = count - head_bytes;
-        if (remaining >= tail_limit)
-          job.tail.assign(buffer + count - tail_limit, tail_limit);
-        else {
-          const auto discard = job.tail.size() + remaining > tail_limit
-                                   ? job.tail.size() + remaining - tail_limit
-                                   : 0;
-          job.tail.erase(0, discard);
-          job.tail.append(buffer + head_bytes, remaining);
-        }
-        job.result.truncated = job.result.total_output_bytes > job.spec.output_limit;
+        job.result.capture->append(std::string(buffer, count));
       }
     }
   };
   drain(job.fd, job.result.output, false);
   drain(job.stderr_fd, job.result.stderr_output, true);
-  if (!job.spec.separate_stderr)
-    job.result.output =
-        head_tail_text(job.head, job.tail, job.result.total_output_bytes, job.spec.output_limit);
-  if (job.spool) {
-    job.result.spill_path = job.spool->path().string();
-    job.result.spill_bytes = job.spool->bytes();
-    job.result.spill_truncated = job.spool->truncated();
-    if (!job.spool->error().empty())
-      job.result.capture_error = job.spool->error();
-  }
   if (!job.done) {
     try {
       job.exit_observed = job.exit_observed || control_->exited(job.pid, job.observer);
@@ -797,12 +783,23 @@ void NativeProcesses::collect(Job &job) {
   }
   job.result.running = !job.done;
 }
+size_t NativeProcesses::retained_output_bytes() const {
+  size_t bytes = 0;
+  for (const auto &entry : jobs_)
+    if (entry.second->done && entry.second->retain)
+      bytes += entry.second->result.output.capacity() +
+               entry.second->result.stderr_output.capacity() +
+               (entry.second->result.capture ? entry.second->result.capture->memory_bytes() : 0);
+  return bytes;
+}
 void NativeProcesses::prune() {
   size_t count = 0, bytes = 0;
   for (const auto &entry : jobs_)
     if (entry.second->done && entry.second->retain) {
       ++count;
-      bytes += entry.second->result.output.size() + entry.second->result.stderr_output.size();
+      bytes += entry.second->result.output.capacity() +
+               entry.second->result.stderr_output.capacity() +
+               (entry.second->result.capture ? entry.second->result.capture->memory_bytes() : 0);
     }
   while (count > 64 || bytes > size_t{4} * size_t{1024} * 1024) {
     auto oldest = jobs_.end();
@@ -812,7 +809,9 @@ void NativeProcesses::prune() {
         oldest = it;
     if (oldest == jobs_.end())
       break;
-    bytes -= oldest->second->result.output.size() + oldest->second->result.stderr_output.size();
+    bytes -= oldest->second->result.output.capacity() +
+             oldest->second->result.stderr_output.capacity() +
+             (oldest->second->result.capture ? oldest->second->result.capture->memory_bytes() : 0);
     --count;
     jobs_.erase(oldest);
   }
@@ -825,7 +824,7 @@ void NativeProcesses::refresh() {
       ids.push_back(job.first);
   for (const auto &id : ids) {
     try {
-      (void)poll(id);
+      (void)observe(id);
     } catch (const Error &error) {
       if (error.code == 130)
         throw;
@@ -873,11 +872,11 @@ void NativeProcesses::finish(Job &job, bool ownership_lost) {
                                                                          : 128 + WTERMSIG(status));
   job.result.running = false;
   collect(job);
-  if (job.spool) {
-    job.spool->close();
-    if (!job.spool->error().empty())
-      job.result.capture_error = job.spool->error();
-    job.result.spill_truncated = job.spool->truncated();
+  if (job.result.capture)
+    job.result.capture->finish();
+  else {
+    std::string(job.result.output).swap(job.result.output);
+    std::string(job.result.stderr_output).swap(job.result.stderr_output);
   }
   if (job.fd >= 0) {
     ::close(job.fd);
@@ -898,7 +897,7 @@ void NativeProcesses::terminate(Job &job, int status) {
   job.error = bounded_text("Job " + id + ": " + error.what(), 2048);
   throw Error(job.error, error.code);
 }
-ProcessResult NativeProcesses::poll(const std::string &id) {
+NativeProcesses::Job &NativeProcesses::observe(const std::string &id) {
   auto it = jobs_.find(id);
   if (it == jobs_.end())
     throw Error("Unknown or expired job: " + id);
@@ -912,7 +911,22 @@ ProcessResult NativeProcesses::poll(const std::string &id) {
   } catch (const Error &error) {
     job_error(id, job, error);
   }
-  const auto result = job.result;
+  return job;
+}
+ProcessResult NativeProcesses::publish(Job &job) {
+  auto result = job.result;
+  if (result.capture) {
+    result.capture->flush();
+    result.preview = result.capture->snapshot();
+    const auto rendered = result.capture->render(job.spec.output_limit);
+    result.output = rendered.text;
+    result.truncated = rendered.omitted != 0;
+    result.capture->metadata(result, result.preview->total);
+  }
+  return result;
+}
+ProcessResult NativeProcesses::poll(const std::string &id) {
+  auto result = publish(observe(id));
   prune();
   return result;
 }
@@ -979,15 +993,16 @@ ProcessResult NativeProcesses::run(const ProcessSpec &spec, const Cancellation &
   }
   jobs_.at(id)->retain = false;
   try {
-    ProcessResult result;
-    do {
+    while (true) {
       cancel.check();
-      result = poll(id);
-      if (result.running)
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    } while (result.running);
-    jobs_.erase(id);
-    return result;
+      auto &job = observe(id);
+      if (job.done) {
+        auto result = publish(job);
+        jobs_.erase(id);
+        return result;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
   } catch (...) {
     try {
       if (jobs_.count(id))

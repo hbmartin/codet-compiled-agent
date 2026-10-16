@@ -79,7 +79,7 @@ if(CODET_BUILD_TESTS)
   set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
   set(BUILD_GMOCK ON CACHE BOOL "" FORCE)
   add_subdirectory("${CODET_DEPENDENCY_ROOT}/googletest" "deps/gtest" EXCLUDE_FROM_ALL)
-  add_executable(codet_tests tests/foundation_test.cpp tests/core_test.cpp tests/review_test.cpp tests/remaining_test.cpp tests/followup_test.cpp tests/final_review_test.cpp)
+  add_executable(codet_tests tests/foundation_test.cpp tests/core_test.cpp tests/review_test.cpp tests/remaining_test.cpp tests/followup_test.cpp tests/final_review_test.cpp tests/output_test.cpp)
   target_link_libraries(codet_tests PRIVATE codet_core codet_text GTest::gmock_main)
   # No discovery-time execution: the same build must work for PPC cross builds.
   if(NOT CMAKE_CROSSCOMPILING)

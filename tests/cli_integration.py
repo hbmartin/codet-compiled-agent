@@ -42,7 +42,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if 'fixture-wait' in prompt:time.sleep(2)
         last_user=max((i for i,m in enumerate(messages) if m['role']=='user'),default=0)
         completed=[m for m in messages[last_user:] if m['role']=='tool']
-        if 'fixture-long-batch' in prompt and not completed:
+        if 'fixture-capture' in prompt:
+            if 'final-error' in prompt and len(completed)>=2:
+                data=b'{"error":{"message":"fixture failure after capture"}}'
+                self.send_response(401);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+            if not completed:
+                name='TaskCreate' if 'background' in prompt else 'Bash'
+                command='cat output.txt'
+                if 'wait' in prompt:command+='; printf ready > ready; while test ! -f release; do sleep .02; done'
+                if 'background' in prompt:command='printf ready > ready; cat output.txt; while test ! -f release; do sleep .02; done'
+                args={'command':command}
+            elif 'background' in prompt:
+                job=json.loads(completed[0]['content'])['content']
+                name='TaskOutput';args={'task_id':job}
+                if any('spill_path' in json.loads(x['content']).get('metadata',{}) for x in completed[1:]):name=None
+            elif len(completed)==1:
+                path=json.loads(completed[0]['content'])['metadata']['spill_path']
+                name='Read';args={'file_path':path,'offset':1,'limit':1}
+            else:name=None
+            if name:
+                delta={'tool_calls':[{'index':0,'id':'capture-'+str(last_user)+'-'+str(len(completed)),'function':{'name':name,'arguments':json.dumps(args)}}]};reason='tool_calls'
+            else:delta={'content':'fixture done'};reason='stop'
+        elif 'fixture-long-batch' in prompt and not completed:
             commands=['printf begun > begun; while test ! -f release; do sleep .02; done','printf completed > completed']
             delta={'tool_calls':[{'index':i,'id':'batch-'+str(i),'function':{'name':'Bash','arguments':json.dumps({'command':command})}} for i,command in enumerate(commands)]};reason='tool_calls'
         elif 'fixture-command' in messages[last_user].get('content','') and not completed:
@@ -414,6 +435,40 @@ class CliTests(unittest.TestCase):
             finally:
                 if p.poll() is None:p.kill();p.wait()
                 p.stderr.close();os.close(master);os.close(slave)
+
+    def test_ephemeral_capture_is_pageable_and_removed_after_success_or_error(self):
+        (self.workspace/'output.txt').write_text('雪-output\n'*20000)
+        temporary=self.root/'temporary';temporary.mkdir();self.env['TMPDIR']=str(temporary)
+        for prompt,code in [('fixture-capture',0),('fixture-capture-final-error',1),('fixture-capture-background',0)]:
+            with self.subTest(prompt=prompt):
+                self.server.requests=[]
+                r=self.run_cli('exec','--ephemeral','--permission-mode','bypass',prompt)
+                self.assertEqual(r.returncode,code,r.stderr)
+                outcomes=[json.loads(m['content']) for m in self.server.requests[-1]['body']['messages'] if m['role']=='tool']
+                capture=next(x for x in outcomes if 'spill_path' in x['metadata'])
+                self.assertFalse(capture['is_error']);self.assertTrue(str(capture['metadata']['spill_path']).startswith(str(temporary)))
+                self.assertFalse(pathlib.Path(capture['metadata']['spill_path']).exists())
+                self.assertFalse(list(temporary.glob('codet-ephemeral-*')))
+                self.assertFalse((self.home/'tool-output').exists());self.assertFalse((self.home/'state.sqlite3').exists())
+                if 'background' not in prompt:self.assertIn('雪-output',outcomes[-1]['content'])
+                self.assertTrue((self.home/'config.toml').exists())
+
+    def test_ephemeral_cancellation_closes_captures_before_removing_directory(self):
+        (self.workspace/'output.txt').write_text('capture-data\n'*20000)
+        temporary=self.root/'temporary';temporary.mkdir();self.env['TMPDIR']=str(temporary)
+        p=subprocess.Popen([BIN,'-C',str(self.workspace),'exec','--ephemeral','--permission-mode','bypass','fixture-capture-wait'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=self.env)
+        try:
+            deadline=time.monotonic()+7
+            while not (self.workspace/'ready').exists() and time.monotonic()<deadline:time.sleep(.01)
+            self.assertTrue((self.workspace/'ready').exists())
+            self.assertTrue(list(temporary.glob('codet-ephemeral-*/tool-output/capture-*.txt')))
+            p.send_signal(signal.SIGINT);stdout,stderr=p.communicate(timeout=7)
+            self.assertEqual(p.returncode,130,stderr)
+            self.assertFalse(list(temporary.glob('codet-ephemeral-*')))
+            self.assertFalse((self.home/'tool-output').exists())
+        finally:
+            if p.poll() is None:p.kill();p.wait()
+            p.stdout.close();p.stderr.close()
 
     def test_new_session_lifecycle_and_invalid_hook_bytes_in_both_terminals(self):
         import pty,select

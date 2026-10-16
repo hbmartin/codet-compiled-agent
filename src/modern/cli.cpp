@@ -36,7 +36,7 @@ Usage: codet [OPTIONS] [PROMPT]
       --add-dir DIR             Additional authorized root
       --ui MODE                 auto, curses, line
       --max-turns N             Model request limit
-      --ephemeral               Do not retain the session database
+      --ephemeral               Temporary sessions and automatic output captures
       --last                    Select most recent session
       --color auto|always|never  Terminal color policy
       --version / --help
@@ -496,8 +496,6 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   };
   auto diagnostics = std::make_shared<Diagnostics>();
   DiagnosticSink diagnostic = [diagnostics](const std::string &text) { diagnostics->emit(text); };
-  NativeProcesses processes;
-  processes.set_diagnostics(diagnostic);
   std::string home = env("CODET_HOME");
   if (home.empty()) {
     const auto h = env("HOME");
@@ -567,13 +565,21 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   fs::path state_home = config.home;
   struct Cleanup {
     fs::path p;
+    DiagnosticSink diagnostics;
     ~Cleanup() {
       if (!p.empty()) {
         std::error_code e;
         fs::remove_all(p, e);
+        if (e) {
+          try {
+            report_diagnostic(diagnostics, "Ephemeral cleanup: " + e.message());
+          } catch (...) { // NOLINT(bugprone-empty-catch): Cleanup diagnostics must preserve the
+                          // invocation result.
+          }
+        }
       }
     }
-  } cleanup;
+  } cleanup{{}, diagnostic};
   if (o.ephemeral) {
     std::string pattern = (fs::temp_directory_path() / "codet-ephemeral-XXXXXX").string();
     std::vector<char> buf(pattern.begin(), pattern.end());
@@ -583,7 +589,11 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       throw Error("Cannot create ephemeral state");
     state_home = p;
     cleanup.p = p;
+    config.capture_root = fs::path(p) / "tool-output";
   }
+  // Destroy processes/capture handles before removing the private invocation directory.
+  NativeProcesses processes;
+  processes.set_diagnostics(diagnostic);
   StateStore state(state_home);
   if (o.command == "sessions") {
     std::cout << state.list().dump(2) << '\n';

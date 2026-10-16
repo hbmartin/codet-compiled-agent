@@ -1,29 +1,61 @@
 #pragma once
 #include "codet/core.hpp"
+#include <sys/types.h>
 
 namespace codet {
-// Byte-preserving capture. Conversion to display text happens at tool boundaries.
-class OutputSpool {
-  fs::path directory_, path_;
-  size_t limit_, quota_, records_, bytes_ = 0;
-  int fd_ = -1;
-  bool stopped_ = false, truncated_ = false;
-  std::string error_;
-  size_t available(size_t requested);
-  void append_checked(const char *, size_t);
+struct CaptureMetrics {
+  size_t scans = 0, batches = 0, syncs = 0, files = 0, renders = 0;
+};
+struct CaptureIo {
+  virtual ~CaptureIo() = default;
+  virtual ssize_t write(int, const char *, size_t);
+  virtual int sync(int);
+};
+class CaptureStore {
+  fs::path directory_;
+  size_t limit_, quota_, records_;
+  DiagnosticSink diagnostics_;
+  std::shared_ptr<CaptureIo> io_;
+  std::set<std::string> warnings_;
+  friend class OutputSpool;
 
 public:
+  CaptureMetrics metrics;
+  explicit CaptureStore(fs::path, size_t limit = size_t{8} * 1024 * 1024,
+                        size_t quota = size_t{64} * 1024 * 1024, size_t records = 64,
+                        DiagnosticSink diagnostics = {}, std::shared_ptr<CaptureIo> io = {});
+  void warn(const std::string &);
+};
+// Disk capture is byte-preserving. A bounded staging buffer is flushed at publication/close.
+class OutputSpool {
+  std::shared_ptr<CaptureStore> store_;
+  fs::path path_;
+  size_t bytes_ = 0, pending_size_ = 0;
+  int fd_ = -1;
+  bool stopped_ = false, truncated_ = false, closed_ = false, admitted_ = false;
+  std::string error_;
+  std::unique_ptr<char[]> pending_;
+  size_t available(size_t requested);
+  void flush_checked();
+
+public:
+  static constexpr size_t batch_bytes = 65536;
+  explicit OutputSpool(std::shared_ptr<CaptureStore>);
   OutputSpool(fs::path directory, size_t limit, size_t quota, size_t records);
   ~OutputSpool();
   OutputSpool(const OutputSpool &) = delete;
   OutputSpool &operator=(const OutputSpool &) = delete;
   void append(const std::string &);
+  void flush();
   void close();
   const fs::path &path() const {
     return path_;
   }
   size_t bytes() const {
     return bytes_;
+  }
+  size_t memory_bytes() const {
+    return pending_ ? batch_bytes : 0;
   }
   bool truncated() const {
     return truncated_;
@@ -32,6 +64,38 @@ public:
     return error_;
   }
 };
-std::string head_tail_text(const std::string &head, const std::string &tail, uint64_t total,
-                           size_t limit);
+struct OutputSnapshot {
+  std::string head, tail;
+  uint64_t total = 0;
+  bool final = true;
+};
+struct RenderedOutput {
+  std::string text;
+  uint64_t omitted = 0;
+};
+RenderedOutput render_output(const OutputSnapshot &, size_t limit);
+std::string head_tail_text(const std::string &, const std::string &, uint64_t, size_t);
+fs::path capture_directory(const Config &);
+// Owns raw windows and the optional lazy capture through process and tool lifetimes.
+class OutputCapture {
+  std::shared_ptr<CaptureStore> store_;
+  size_t limit_;
+  OutputSnapshot data_;
+  std::unique_ptr<OutputSpool> spool_;
+  bool finished_ = false;
+
+public:
+  OutputCapture(std::shared_ptr<CaptureStore>, size_t limit);
+  void append(const std::string &);
+  void retain();
+  void flush();
+  void finish();
+  std::shared_ptr<const OutputSnapshot> snapshot() const;
+  RenderedOutput render(size_t limit) const;
+  uint64_t total() const {
+    return data_.total;
+  }
+  size_t memory_bytes() const;
+  void metadata(ProcessResult &, uint64_t total) const;
+};
 } // namespace codet

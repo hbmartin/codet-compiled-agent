@@ -230,6 +230,37 @@ struct Change {
   std::optional<std::string> before, after;
   mode_t mode = 0644;
 };
+ToolResult process_result(const ProcessResult &r, bool background) {
+  Json metadata = {{"exit_code", r.exit_code},
+                   {"truncated", r.truncated},
+                   {"total_output_bytes", r.total_output_bytes}};
+  if (background)
+    metadata["running"] = r.running;
+  if (!r.spill_path.empty())
+    metadata["spill_path"] = r.spill_path;
+  if (!r.spill_path.empty() || r.spill_truncated || !r.capture_error.empty()) {
+    metadata["spill_bytes"] = r.spill_bytes;
+    metadata["spill_truncated"] = r.spill_truncated;
+  }
+  if (!r.capture_error.empty())
+    metadata["capture_error"] = r.capture_error;
+  return {r.output, r.exit_code != 0 && (!background || !r.running), metadata, r.preview,
+          r.capture};
+}
+std::string feedback_text(const std::string &text, size_t limit) {
+  auto clean = safe_text(text);
+  if (clean.size() <= limit)
+    return clean;
+  const std::string marker = "\n[Hook feedback truncated]";
+  if (limit < marker.size())
+    return bounded_text(marker, limit);
+  return bounded_text(clean, limit - marker.size()) + marker;
+}
+RenderedOutput annotated(const OutputSnapshot &data, size_t limit, const std::string &prefix,
+                         const std::string &suffix, const std::string &notice) {
+  const auto rendered = render_output(data, limit - prefix.size() - suffix.size() - notice.size());
+  return {prefix + rendered.text + suffix + notice, rendered.omitted};
+}
 } // namespace
 struct Permissions::Rules {
   std::vector<std::string> allow_source, deny_source;
@@ -268,7 +299,7 @@ Decision Permissions::decide(const PermissionRequest &r) const {
     for (const auto &root : config_.roots)
       if (within(p, paths.canonical(root)))
         found = true;
-    const auto spill = config_.home / "tool-output";
+    const auto spill = capture_directory(config_);
     if (r.tool == "Read" && !fs::is_symlink(spill) && within(p, paths.canonical(spill)))
       found = true;
     if (!found)
@@ -313,6 +344,12 @@ void Tools::authorize(const PermissionRequest &r) {
     throw Error("Permission denied: " + r.tool +
                 " requires approval. Do not retry without a policy change.");
 }
+Tools::Tools(const Config &c, FileSystem &f, Processes &p, HttpTransport &h, Clock &clock,
+             Approver a, Questioner q, DiagnosticSink diagnostics)
+    : config_(c), files_(f), processes_(p), http_(h), clock_(clock), permissions_(c, f),
+      approve_(std::move(a)), question_(std::move(q)), diagnostics_(std::move(diagnostics)),
+      capture_store_(std::make_shared<CaptureStore>(capture_directory(c), size_t{8} * 1024 * 1024,
+                                                    size_t{64} * 1024 * 1024, 64, diagnostics_)) {}
 Json Tools::schemas() const {
   Json out = Json::array();
   auto add = [&](const char *name, const char *desc, Json props, Json required) {
@@ -469,8 +506,20 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
       effective.arguments = *hook.updated_input;
     preflight(effective);
     auto result = execute_inner(effective, cancel);
+    const bool process_output = result.metadata.contains("total_output_bytes");
+    if (!result.capture) {
+      result.capture = std::make_shared<OutputCapture>(capture_store_, config_.tool_output_limit);
+      result.capture->append(result.content);
+      result.capture->finish();
+    }
+    if (!result.preview)
+      result.preview = result.capture->snapshot();
+    std::string prefix, suffix;
     if (!hook.additional_context.empty())
-      result.content += "\nHook context: " + hook.additional_context;
+      suffix = "\nHook context: " + hook.additional_context;
+    result.content = annotated(*result.preview, config_.tool_output_limit, "",
+                               feedback_text(suffix, config_.tool_output_limit / 3), "")
+                         .text;
     try {
       const auto post = run_hooks("PostToolUse",
                                   {{"hook_event_name", "PostToolUse"},
@@ -480,60 +529,67 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
                                    {"cwd", config_.cwd.string()}},
                                   cancel);
       if (!post.additional_context.empty())
-        result.content += "\nHook context: " + post.additional_context;
+        suffix += "\nHook context: " + post.additional_context;
       if (post.stopped) {
         result.error = true;
         result.metadata["action_completed"] = true;
         result.metadata["hook_stop"] = post.reason;
-        result.content =
-            "Tool completed; hook requested stop: " + post.reason + "\n" + result.content;
+        prefix = "Tool completed; hook requested stop: " + post.reason + "\n";
       } else if (post.blocked)
         throw Error(post.reason);
     } catch (const Error &e) {
       if (e.code == 130)
         throw;
-      result.content =
-          "Tool completed; PostToolUse feedback: " + std::string(e.what()) + "\n" + result.content;
+      prefix = "Tool completed; PostToolUse feedback: " + std::string(e.what()) + "\n";
       result.error = true;
       result.metadata["action_completed"] = true;
     }
-    result.content = safe_text(result.content);
-    result.metadata = safe_json(result.metadata);
-    if (result.metadata.contains("total_output_bytes") &&
-        (result.metadata.value("truncated", false) || result.metadata.contains("capture_error") ||
-         result.metadata.value("spill_truncated", false) ||
-         result.content.size() > config_.tool_output_limit)) {
-      result.metadata["truncated"] = true;
-      std::string notice;
+    const auto annotation_budget = config_.tool_output_limit / 3;
+    const auto clean_prefix = safe_text(prefix), clean_suffix = safe_text(suffix);
+    prefix = feedback_text(clean_prefix, annotation_budget);
+    suffix = feedback_text(clean_suffix, annotation_budget - prefix.size());
+    if (prefix.size() != clean_prefix.size() || suffix.size() != clean_suffix.size())
+      result.metadata["hook_feedback_truncated"] = true;
+    auto rendered = annotated(*result.preview, config_.tool_output_limit, prefix, suffix, "");
+    if (rendered.omitted)
+      result.capture->retain();
+    result.capture->flush();
+    ProcessResult retention;
+    result.capture->metadata(retention, result.preview->total);
+    if (!retention.spill_path.empty())
+      result.metadata["spill_path"] = retention.spill_path;
+    if (!retention.spill_path.empty() || retention.spill_truncated ||
+        !retention.capture_error.empty()) {
+      result.metadata["spill_bytes"] = retention.spill_bytes;
+      result.metadata["spill_truncated"] = retention.spill_truncated;
+    }
+    if (!retention.capture_error.empty())
+      result.metadata["capture_error"] = retention.capture_error;
+    if (result.metadata.contains("capture_error"))
+      capture_store_->warn(result.metadata["capture_error"].get<std::string>());
+    std::string notice;
+    if (rendered.omitted) {
       if (result.metadata.contains("spill_path")) {
-        notice = "\n[Output saved to " + result.metadata["spill_path"].get<std::string>();
+        notice =
+            "\n[Output saved to " + safe_text(result.metadata["spill_path"].get<std::string>());
         if (result.metadata.value("spill_truncated", false))
           notice += "; capture incomplete";
         notice += "]";
+        if (notice.size() > config_.tool_output_limit / 3)
+          notice = result.metadata.value("spill_truncated", false)
+                       ? "\n[Capture incomplete; see metadata.spill_path]"
+                       : "\n[Output saved; see metadata.spill_path]";
       } else
-        notice = "\n[Output truncated; disk capture unavailable]";
-      if (result.metadata.contains("capture_error"))
-        notice +=
-            "\n[Capture warning: " + result.metadata["capture_error"].get<std::string>() + "]";
-      if (notice.size() > config_.tool_output_limit / 2)
-        notice = "\n[Output truncated; see capture metadata]";
-      const auto budget = config_.tool_output_limit - notice.size();
-      result.content = head_tail_text(result.content.substr(0, result.content.size() / 2),
-                                      result.content.substr(result.content.size() / 2),
-                                      result.content.size(), budget) +
-                       notice;
-    } else if (result.content.size() > config_.tool_output_limit) {
-      fs::create_directories(config_.home / "tool-output");
-      const auto spill = config_.home / "tool-output" / (unique_id() + ".txt");
-      files_.atomic_write(spill, result.content, true);
-      auto notice = safe_text("\n[Output truncated; saved to " + spill.string() + "]");
-      if (notice.size() > config_.tool_output_limit)
-        notice = "\n[Output truncated; see metadata.spill_path]";
-      result.content =
-          bounded_text(result.content, config_.tool_output_limit - notice.size()) + notice;
-      result.metadata["spill_path"] = safe_text(spill.string());
+        notice = "\n[Output omitted; disk capture unavailable]";
+      rendered = annotated(*result.preview, config_.tool_output_limit, prefix, suffix, notice);
     }
-    result.content = bounded_text(result.content, config_.tool_output_limit);
+    if (process_output || rendered.omitted || result.metadata.contains("spill_path")) {
+      result.metadata["total_output_bytes"] = result.preview->total;
+      result.metadata["omitted_output_bytes"] = rendered.omitted;
+      result.metadata["truncated"] = rendered.omitted != 0;
+    }
+    result.content = std::move(rendered.text);
+    result.metadata = safe_json(result.metadata);
     return result;
   } catch (const Error &e) {
     if (e.code == 130)
@@ -769,7 +825,8 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     spec.timeout_ms = a.value("timeout_ms", 120000);
     spec.pty = a.value("pty", false);
     spec.output_limit = config_.tool_output_limit;
-    spec.spool_directory = config_.home / "tool-output";
+    spec.spool_directory = capture_directory(config_);
+    spec.capture_store = capture_store_;
     if (spec.timeout_ms < 1 || spec.timeout_ms > 3600000)
       throw Error("Timeout must be 1..3600000 ms");
     if (name == "TaskCreate" || a.value("run_in_background", false)) {
@@ -777,17 +834,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
       return {id, false, {{"lifetime", "current codet process"}}};
     }
     const auto r = processes_.run(spec, cancel);
-    Json metadata = {{"exit_code", r.exit_code},
-                     {"truncated", r.truncated},
-                     {"total_output_bytes", r.total_output_bytes}};
-    if (!r.spill_path.empty()) {
-      metadata["spill_path"] = r.spill_path;
-      metadata["spill_bytes"] = r.spill_bytes;
-      metadata["spill_truncated"] = r.spill_truncated;
-    }
-    if (!r.capture_error.empty())
-      metadata["capture_error"] = r.capture_error;
-    return {r.output, r.exit_code != 0, metadata};
+    return process_result(r, false);
   }
   if (name == "TaskInput") {
     const auto id = a.at("task_id").get<std::string>();
@@ -801,18 +848,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     if (name == "TaskStop")
       processes_.stop(id);
     const auto r = processes_.poll(id);
-    Json metadata = {{"running", r.running},
-                     {"exit_code", r.exit_code},
-                     {"truncated", r.truncated},
-                     {"total_output_bytes", r.total_output_bytes}};
-    if (!r.spill_path.empty()) {
-      metadata["spill_path"] = r.spill_path;
-      metadata["spill_bytes"] = r.spill_bytes;
-      metadata["spill_truncated"] = r.spill_truncated;
-    }
-    if (!r.capture_error.empty())
-      metadata["capture_error"] = r.capture_error;
-    return {r.output, r.exit_code != 0 && !r.running, metadata};
+    return process_result(r, true);
   }
   if (name == "TaskList") {
     Json jobs = Json::array();
