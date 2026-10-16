@@ -311,10 +311,11 @@ class CliTests(unittest.TestCase):
                 wait_for(finish)
                 # Streamed final text and older errors can precede turn completion.
                 # Require an idle repaint, allowing bounded worker/terminal scheduling latency.
-                deadline=time.monotonic()+7
+                deadline=time.monotonic()+7;repaint=0
                 while time.monotonic()<deadline:
                     received=b''
-                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',25+index,121+index,0,0))
+                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',25+2*index+repaint%2,121+2*index+repaint%2,0,0))
+                    repaint+=1
                     p.send_signal(signal.SIGWINCH)
                     wait_for(b'Permissions: default')
                     if b'Responding:' not in received:break
