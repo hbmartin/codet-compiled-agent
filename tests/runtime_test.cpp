@@ -1,19 +1,19 @@
-#include "codet/computer.hpp"
 #include "codet/artifacts.hpp"
+#include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/interaction.hpp"
 #include "codet/output.hpp"
 #include "codet/process_control.hpp"
 #include "codet/tool_registry.hpp"
 #include "temp.hpp"
+#include <future>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include <future>
 #include <limits>
-#include <thread>
 #include <nlohmann/json-schema.hpp>
 #include <sys/resource.h>
 #include <sys/wait.h>
+#include <thread>
 #include <unistd.h>
 using namespace codet;
 using namespace testing;
@@ -348,13 +348,15 @@ TEST_F(Runtime, StdinHookAllowRequiresExactNestedOperationScopeIncludingEof) {
     return ProcessResult{0, response.dump()};
   };
   Tools tools(config, files, process, http, clock);
-  const auto start = tools.execute(
-      call("exec_command", {{"cmd", "python3 -i"}, {"yield_time_ms", 250}}), cancel);
+  const auto start =
+      tools.execute(call("exec_command", {{"cmd", "python3 -i"}, {"yield_time_ms", 250}}), cancel);
   ASSERT_FALSE(start.error);
   const auto id = start.metadata.at("session_id");
   config.permission_mode = "default";
-  config.hooks = {{"PermissionRequest", Json::array({{{"matcher", "Bash"}, {"command", "check"}}})}};
-  auto input = call("write_stdin", {{"session_id", id}, {"chars", "arbitrary input"}, {"yield_time_ms", 1}});
+  config.hooks = {
+      {"PermissionRequest", Json::array({{{"matcher", "Bash"}, {"command", "check"}}})}};
+  auto input =
+      call("write_stdin", {{"session_id", id}, {"chars", "arbitrary input"}, {"yield_time_ms", 1}});
   for (const auto &invalid : {Json(), Json("exec_command"), Json("write_stdin*"), Json(1)}) {
     if (invalid.is_null())
       response["hookSpecificOutput"]["decision"].erase("tool");
@@ -372,7 +374,9 @@ TEST_F(Runtime, StdinHookAllowRequiresExactNestedOperationScopeIncludingEof) {
   response["hookSpecificOutput"]["decision"]["tool"] = "write_stdin";
   EXPECT_FALSE(tools.execute(input, cancel).error);
   process.running = false;
-  EXPECT_FALSE(tools.execute(call("write_stdin", {{"session_id", id}, {"close_stdin", true}}), cancel).error);
+  EXPECT_FALSE(
+      tools.execute(call("write_stdin", {{"session_id", id}, {"close_stdin", true}}), cancel)
+          .error);
   EXPECT_EQ(process.writes.size(), 1u);
   EXPECT_EQ(process.closes, 1u);
 }
@@ -382,20 +386,22 @@ TEST_F(Runtime, PermissionMatcherAliasesOnlySelectTheirOwnOperationAndDenyAlways
   std::vector<std::string> matched;
   process.hook = [&](const ProcessSpec &spec) {
     matched.push_back(spec.argv[4]);
-    return ProcessResult{0, R"({"hookSpecificOutput":{"decision":{"behavior":"allow","tool":"exec_command"}}})"};
+    return ProcessResult{
+        0, R"({"hookSpecificOutput":{"decision":{"behavior":"allow","tool":"exec_command"}}})"};
   };
-  config.hooks = {{"PermissionRequest", Json::array({
-    {{"matcher", "write_stdin"}, {"command", "stdin-only"}},
-    {{"matcher", "exec_command"}, {"command", "exec-only"}},
-    {{"matcher", "Ba*"}, {"command", "bash-glob"}}})}};
+  config.hooks = {
+      {"PermissionRequest", Json::array({{{"matcher", "write_stdin"}, {"command", "stdin-only"}},
+                                         {{"matcher", "exec_command"}, {"command", "exec-only"}},
+                                         {{"matcher", "Ba*"}, {"command", "bash-glob"}}})}};
   Tools tools(config, files, process, http, clock);
   EXPECT_FALSE(tools.execute(call("exec_command", {{"cmd", "safe"}}), cancel).error);
   EXPECT_EQ(matched, (std::vector<std::string>{"exec-only", "bash-glob"}));
   config.hooks["PermissionRequest"].push_back({{"matcher", "Bash"}, {"command", "deny"}});
   process.hook = [](const ProcessSpec &spec) {
-    return ProcessResult{0, spec.argv[4] == "deny"
-      ? R"({"hookSpecificOutput":{"decision":{"behavior":"deny","message":"blocked"}}})"
-      : R"({"hookSpecificOutput":{"decision":{"behavior":"allow"}}})"};
+    return ProcessResult{
+        0, spec.argv[4] == "deny"
+               ? R"({"hookSpecificOutput":{"decision":{"behavior":"deny","message":"blocked"}}})"
+               : R"({"hookSpecificOutput":{"decision":{"behavior":"allow"}}})"};
   };
   EXPECT_TRUE(tools.execute(call("exec_command", {{"cmd", "safe"}}), cancel).error);
 }
@@ -403,7 +409,9 @@ TEST_F(Runtime, GlobalOutputLimitStillReportsOriginalTokenCount) {
   config.permission_mode = "bypass";
   config.tool_output_limit = 256;
   Tools tools(config, files, processes, http, clock);
-  const auto result = tools.execute(call("exec_command", {{"cmd", "printf '" + std::string(1000, 'x') + "'"}, {"login", false}}), cancel);
+  const auto result = tools.execute(
+      call("exec_command", {{"cmd", "printf '" + std::string(1000, 'x') + "'"}, {"login", false}}),
+      cancel);
   ASSERT_FALSE(result.error);
   EXPECT_TRUE(result.metadata.at("truncated"));
   EXPECT_EQ(result.metadata.at("original_token_count"), 250);
@@ -478,12 +486,14 @@ TEST_F(Runtime, WorkerDeliveryRetainsRemainingEventsOnUiFailureAndExpiresApprova
   EXPECT_FALSE(input.answer(request, "yes"));
   input.post({{"type", "turn.failed"}});
   std::vector<std::string> delivered;
-  input.deliver([&](const Json &event) {
-    const auto type = event.at("type").get<std::string>();
-    if (type == "ui.failure")
-      throw Error("UI still unavailable");
-    delivered.push_back(type);
-  }, [](const std::string &) {}, true);
+  input.deliver(
+      [&](const Json &event) {
+        const auto type = event.at("type").get<std::string>();
+        if (type == "ui.failure")
+          throw Error("UI still unavailable");
+        delivered.push_back(type);
+      },
+      [](const std::string &) {}, true);
   EXPECT_EQ(delivered, (std::vector<std::string>{"codet.diagnostic", "turn.failed"}));
   EXPECT_TRUE(input.events().empty());
   input.begin_turn("second");
@@ -496,12 +506,14 @@ TEST_F(Runtime, InvalidWorkerEventDoesNotDiscardTheFollowingOutcome) {
   input.post({{"type", "bad"}, {"text", 42}});
   input.post({{"type", "turn.failed"}});
   size_t warnings = 0, outcomes = 0;
-  input.deliver([&](const Json &event) {
-    if (event.at("type") == "bad")
-      (void)event.at("text").get<std::string>();
-    else
-      ++outcomes;
-  }, [&](const std::string &) { ++warnings; });
+  input.deliver(
+      [&](const Json &event) {
+        if (event.at("type") == "bad")
+          (void)event.at("text").get<std::string>();
+        else
+          ++outcomes;
+      },
+      [&](const std::string &) { ++warnings; });
   EXPECT_EQ(warnings, 1u);
   EXPECT_EQ(outcomes, 1u);
 }

@@ -197,8 +197,7 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
                      "match the requested tool");
           else
             permission = Decision::allow;
-        }
-        else if (behavior == "deny") {
+        } else if (behavior == "deny") {
           block = true;
           permission = Decision::deny;
           reason = decision.value("message", specific.value("permissionDecisionReason", ""));

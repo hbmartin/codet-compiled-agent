@@ -1,5 +1,5 @@
-#include "codet/core.hpp"
 #include "codet/computer.hpp"
+#include "codet/core.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/interaction.hpp"
 #include "codet/tool_registry.hpp"
@@ -816,43 +816,45 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     std::future<RunResult> work;
     std::optional<Json> pending;
     const auto deliver = [&](bool recovering = false) {
-      interaction->deliver([&](const Json &event) {
-        const auto type = event.value("type", "");
-        if (type == "codet.diagnostic")
-          diagnostics->emit(event.at("text"));
-        else if (type == "codet.approval") {
-          terminal->say(event.at("tool").get<std::string>() + ": " +
-                        event.at("target").get<std::string>());
-          if (event.contains("context") && !event.at("context").empty())
-            terminal->say(safe_json(event.at("context")).dump());
-          terminal->say("Approve? [y/N]");
-          pending = event;
-        } else if (type == "codet.question") {
-          terminal->say(event.at("question"));
-          const auto options = event.at("options").get<std::vector<std::string>>();
-          for (size_t i = 0; i < options.size(); ++i)
-            terminal->say(std::to_string(i + 1) + ". " + options[i]);
-          terminal->say("Enter a choice number or a text answer.");
-          pending = event;
-        } else if (type == "codet.user_input.requested") {
-          for (const auto &q : event.at("questions")) {
-            terminal->say(q.at("title"));
-            size_t i = 0;
-            for (const auto &option : q.value("options", Json::array()))
-              terminal->say(std::to_string(++i) + ". " + option.get<std::string>());
-          }
-        } else if (type == "codet.user_message")
-          terminal->say(event.at("message"));
-        else if (type == "codet.artifact")
-          terminal->say("[Image: " + event.at("artifact").at("path").get<std::string>() + "]");
-        else
-          terminal->progress(event);
-      }, diagnostic, recovering);
+      interaction->deliver(
+          [&](const Json &event) {
+            const auto type = event.value("type", "");
+            if (type == "codet.diagnostic")
+              diagnostics->emit(event.at("text"));
+            else if (type == "codet.approval") {
+              terminal->say(event.at("tool").get<std::string>() + ": " +
+                            event.at("target").get<std::string>());
+              if (event.contains("context") && !event.at("context").empty())
+                terminal->say(safe_json(event.at("context")).dump());
+              terminal->say("Approve? [y/N]");
+              pending = event;
+            } else if (type == "codet.question") {
+              terminal->say(event.at("question"));
+              const auto options = event.at("options").get<std::vector<std::string>>();
+              for (size_t i = 0; i < options.size(); ++i)
+                terminal->say(std::to_string(i + 1) + ". " + options[i]);
+              terminal->say("Enter a choice number or a text answer.");
+              pending = event;
+            } else if (type == "codet.user_input.requested") {
+              for (const auto &q : event.at("questions")) {
+                terminal->say(q.at("title"));
+                size_t i = 0;
+                for (const auto &option : q.value("options", Json::array()))
+                  terminal->say(std::to_string(++i) + ". " + option.get<std::string>());
+              }
+            } else if (type == "codet.user_message")
+              terminal->say(event.at("message"));
+            else if (type == "codet.artifact")
+              terminal->say("[Image: " + event.at("artifact").at("path").get<std::string>() + "]");
+            else
+              terminal->progress(event);
+          },
+          diagnostic, recovering);
     };
     try {
       terminal->begin_active();
-      work =
-          std::async(std::launch::async, [&] { return agent.run(session, text, cancel, schema, !steering); });
+      work = std::async(std::launch::async,
+                        [&] { return agent.run(session, text, cancel, schema, !steering); });
       while (work.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
         deliver();
         bool closed = false;

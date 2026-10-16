@@ -122,10 +122,10 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
       const auto context_error = [&](const std::string &cause, size_t transcript_bytes) {
         const auto required = (budget.fixed + budget.output + transcript_bytes + 2) / 3;
         return Error(cause + ". context_tokens=" + std::to_string(config_.context_tokens) +
-                     ", fixed_bytes=" + std::to_string(budget.fixed) + ", output_tokens=" +
-                     std::to_string(config_.max_output_tokens) + ", transcript_bytes=" +
-                     std::to_string(transcript_bytes) + ". Increase context_tokens to at least " +
-                     std::to_string(required) +
+                     ", fixed_bytes=" + std::to_string(budget.fixed) +
+                     ", output_tokens=" + std::to_string(config_.max_output_tokens) +
+                     ", transcript_bytes=" + std::to_string(transcript_bytes) +
+                     ". Increase context_tokens to at least " + std::to_string(required) +
                      " or reduce max_output_tokens/project_doc_max_bytes/memory_context_max_bytes; "
                      "instructions and human input are never silently truncated.");
       };
@@ -177,11 +177,12 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
             "\nLatest user instruction (preserve verbatim):\n" + latest.text;
         const auto continuation_fixed = Json(std::vector<Message>{compact, latest}).dump().size();
         Config summary_config = config_;
-        summary_config.max_output_tokens = std::min(config_.max_output_tokens,
-                                                     (available - continuation_fixed) / 3);
+        summary_config.max_output_tokens =
+            std::min(config_.max_output_tokens, (available - continuation_fixed) / 3);
         if (!summary_config.max_output_tokens)
           throw context_error("No space remains for a compaction summary", continuation_fixed);
-        compact_system += "\nReturn at most " + std::to_string(summary_config.max_output_tokens * 3) +
+        compact_system += "\nReturn at most " +
+                          std::to_string(summary_config.max_output_tokens * 3) +
                           " bytes of summary text.\n" + tools_.dynamic_context();
         const auto summary_fixed = compact_system.size() + label.size() + steering.size() + 256;
         const auto summary_reserve = summary_config.max_output_tokens * 3;
@@ -192,13 +193,16 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         Message request;
         request.role = "user";
         const auto fit_request = [&](size_t limit) {
-          request.text = label + render_output({transcript, "", transcript.size(), true}, limit).text + steering;
+          request.text = label;
+          request.text += render_output({transcript, "", transcript.size(), true}, limit).text;
+          request.text += steering;
           const auto accounting = prompt_budget(summary_config, compact_system, Json::array());
           return Json(std::vector<Message>{request}).dump().size() <= accounting.available();
         };
         size_t low = 0, high = std::min(transcript.size(), summary_input);
         if (!fit_request(0))
-          throw context_error("Compaction request cannot preserve human input and output reserve", continuation_fixed);
+          throw context_error("Compaction request cannot preserve human input and output reserve",
+                              continuation_fixed);
         while (low < high) {
           const auto middle = low + (high - low + 1) / 2;
           if (fit_request(middle))
@@ -208,8 +212,8 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         }
         fit_request(low);
         ++requests;
-        const auto summary =
-            provider_.complete(summary_config, compact_system, {request}, Json::array(), cancel, {});
+        const auto summary = provider_.complete(summary_config, compact_system, {request},
+                                                Json::array(), cancel, {});
         out.usage.input += summary.usage.input;
         out.usage.output += summary.usage.output;
         out.usage.cached += summary.usage.cached;
@@ -220,7 +224,8 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         std::vector<Message> continuation = {std::move(compact), std::move(latest)};
         const auto size = Json(continuation).dump().size();
         if (size > available)
-          throw context_error("Compaction summary exceeded the continuation allowance; history retained", size);
+          throw context_error(
+              "Compaction summary exceeded the continuation allowance; history retained", size);
         const auto before = session.messages.size();
         session.messages = std::move(continuation);
         state_.save(session);

@@ -1175,7 +1175,7 @@ ProcessResult NativeProcesses::take_output(const std::string &id) {
 ProcessResult NativeProcesses::consume(const std::string &id, bool render) {
   auto &job = retained_job(id);
   try {
-  auto result = publish(observe(id), render);
+    auto result = publish(observe(id), render);
     if (result.capture) {
       result.capture->finish();
       job.result = ProcessResult{};
@@ -1190,8 +1190,8 @@ ProcessResult NativeProcesses::consume(const std::string &id, bool render) {
       job.result.stderr_output.clear();
       job.result.truncated = false;
     }
-  prune();
-  return result;
+    prune();
+    return result;
   } catch (const std::exception &) {
     record_error(id, job, std::current_exception());
     throw_failure(job);

@@ -18,7 +18,8 @@ std::vector<Json> Interaction::events() {
   events_.clear();
   return out;
 }
-void Interaction::deliver(const EventSink &sink, const DiagnosticSink &diagnostics, bool recovering) {
+void Interaction::deliver(const EventSink &sink, const DiagnosticSink &diagnostics,
+                          bool recovering) {
   auto batch = events();
   const auto diagnose = [&](const std::string &message) {
     try {
@@ -43,7 +44,8 @@ void Interaction::deliver(const EventSink &sink, const DiagnosticSink &diagnosti
       if (!recovering) {
         // Preserve the failed event and every undelivered event ahead of newer worker output.
         std::lock_guard<std::mutex> lock(mutex_);
-        events_.insert(events_.begin(), std::make_move_iterator(batch.begin() + i),
+        events_.insert(events_.begin(),
+                       std::make_move_iterator(batch.begin() + static_cast<std::ptrdiff_t>(i)),
                        std::make_move_iterator(batch.end()));
         throw;
       }

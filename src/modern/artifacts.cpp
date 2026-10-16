@@ -15,7 +15,7 @@ fs::path artifact_index_path(const fs::path &root, const std::string &session) {
 }
 fs::path archive_image_history(const fs::path &root, FileSystem &files, const std::string &session,
                                const std::vector<Message> &messages) {
-  const auto target = artifact_index_path(root, session);
+  auto target = artifact_index_path(root, session);
   const auto directory = target.parent_path();
   if (fs::is_symlink(root) || fs::is_symlink(directory) || fs::is_symlink(target))
     throw Error("Artifact index storage must not be a symlink");

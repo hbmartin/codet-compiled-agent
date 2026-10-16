@@ -1,5 +1,5 @@
-#include "codet/computer.hpp"
 #include "codet/artifacts.hpp"
+#include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/interaction.hpp"
 #include "codet/output.hpp"
@@ -306,8 +306,8 @@ Decision Permissions::decide(const PermissionRequest &r,
     const auto spill = capture_directory(config_);
     if (r.tool == "read_file" && !fs::is_symlink(spill) && within(p, paths.canonical(spill)))
       found = true;
-    if (!found && !(r.internal_read && !r.mutation &&
-                    (r.tool == "read_file" || r.tool == "view_image")))
+    if (!found &&
+        !(r.internal_read && !r.mutation && (r.tool == "read_file" || r.tool == "view_image")))
       return Decision::deny;
   }
   for (const auto &rule : rules_->allow)
@@ -503,8 +503,8 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
     completed.error = true;
     completed.metadata["action_completed"] = true;
     completed.metadata["post_action_error"] = safe_text(message);
-    const auto notice = feedback_text("Tool completed; post-action failure: " + message + "\n",
-                                      response_limit / 3);
+    const auto notice =
+        feedback_text("Tool completed; post-action failure: " + message + "\n", response_limit / 3);
     if (completed.preview) {
       const auto rendered = annotated(*completed.preview, response_limit, notice, "", "");
       completed.content = rendered.text;
@@ -546,10 +546,10 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
         if (permissions_.decide({candidate.name, value, requested, d->mutation}) == Decision::deny)
           throw Error("Permission denied for " + candidate.name + ": " + value);
       };
-      if (candidate.name == "read_file" || candidate.name == "view_image")
-        { if (permissions_.decide(request) == Decision::deny)
-            throw Error("Permission denied for " + candidate.name + ": " + request.target); }
-      else if (candidate.name == "apply_patch") {
+      if (candidate.name == "read_file" || candidate.name == "view_image") {
+        if (permissions_.decide(request) == Decision::deny)
+          throw Error("Permission denied for " + candidate.name + ": " + request.target);
+      } else if (candidate.name == "apply_patch") {
         for (const auto &line : patch_lines(candidate.arguments.at("patch")))
           for (const auto &prefix :
                {"*** Update File: ", "*** Add File: ", "*** Delete File: ", "*** Move to: "})

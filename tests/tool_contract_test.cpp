@@ -1,11 +1,11 @@
-#include "prompt_support.hpp"
-#include "codet/computer.hpp"
 #include "codet/artifacts.hpp"
+#include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/interaction.hpp"
 #include "codet/prompt.hpp"
 #include "codet/tool_registry.hpp"
 #include "core_contract.hpp"
+#include "prompt_support.hpp"
 #include <future>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -496,8 +496,7 @@ TEST_F(Contracts, CompactionRetainsReloadableImageReferences) {
   session.messages = {first, second};
   state.save(session);
   auto t = tools();
-  config.context_tokens =
-      codet::test::context_tokens(t, config, 1200);
+  config.context_tokens = codet::test::context_tokens(t, config, 1200);
   ScriptProvider provider;
   int summaries = 0;
   provider.next = [&](const auto &, const Json &schemas) {
@@ -527,7 +526,9 @@ TEST_F(Contracts, CompactionRetainsReloadableImageReferences) {
   EXPECT_EQ(fork.messages[0].artifact_index, child_index.string());
   EXPECT_EQ(files.read(child_index), text);
   config.permission_mode = "plan";
-  EXPECT_FALSE(t.execute(call("read_file", {{"path", index.string()}, {"offset", 2}, {"limit", 2}}), cancel).error);
+  EXPECT_FALSE(
+      t.execute(call("read_file", {{"path", index.string()}, {"offset", 2}, {"limit", 2}}), cancel)
+          .error);
   EXPECT_TRUE(t.execute(call("read_file", {{"path", child_index.string()}}), cancel).error);
   EXPECT_FALSE(t.execute(call("view_image", {{"path", artifact.path}}), cancel).error);
   config.set_deny({"read_file(" + index.string() + ")", "view_image(" + artifact.path + ")"});

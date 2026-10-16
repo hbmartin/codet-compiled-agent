@@ -23,10 +23,9 @@ CaptureArea capture_area(const std::vector<CaptureRect> &displays, const Json &a
   if (displays.empty())
     throw Error("No active displays");
   for (const auto &display : displays)
-    if (!std::isfinite(display.x) || !std::isfinite(display.y) ||
-        !std::isfinite(display.width) || !std::isfinite(display.height) ||
-        !std::isfinite(display.x + display.width) || !std::isfinite(display.y + display.height) ||
-        display.width <= 0 || display.height <= 0)
+    if (!std::isfinite(display.x) || !std::isfinite(display.y) || !std::isfinite(display.width) ||
+        !std::isfinite(display.height) || !std::isfinite(display.x + display.width) ||
+        !std::isfinite(display.y + display.height) || display.width <= 0 || display.height <= 0)
       throw Error("Invalid display bounds; refresh computer.get_state");
   if (!region && !args.contains("window_id")) {
     const auto id = args.value("display_id", size_t{1});

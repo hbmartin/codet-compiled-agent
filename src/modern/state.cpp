@@ -1,5 +1,5 @@
-#include "codet/core.hpp"
 #include "codet/artifacts.hpp"
+#include "codet/core.hpp"
 #include <cerrno>
 #include <fcntl.h>
 #include <set>
@@ -49,7 +49,8 @@ struct StateStore::Impl {
       sqlite3_close(db);
   }
 };
-StateStore::StateStore(const fs::path &home, const fs::path &artifact_root) : impl_(std::make_unique<Impl>()) {
+StateStore::StateStore(const fs::path &home, const fs::path &artifact_root)
+    : impl_(std::make_unique<Impl>()) {
   impl_->home = home;
   impl_->artifact_root = artifact_root.empty() ? home / "artifacts" : artifact_root;
   if (fs::is_symlink(home))

@@ -137,14 +137,16 @@ const std::vector<ToolDefinition> &tool_registry() {
     drag["to_x"] = num;
     drag["to_y"] = num;
     add("computer.drag", "Drag with the left mouse button between two screenshot coordinates.",
-        drag, {"screenshot_id", "x", "y", "to_x", "to_y"}, ToolHandler::computer, true, "computer_pointer");
+        drag, {"screenshot_id", "x", "y", "to_x", "to_y"}, ToolHandler::computer, true,
+        "computer_pointer");
     Json scroll = point;
     scroll["delta_y"] = field("integer");
     scroll["delta_x"] = field("integer");
     add("computer.scroll",
         "Scroll wheel lines at screenshot coordinates. Positive delta_y scrolls up; positive "
         "delta_x scrolls left.",
-        scroll, {"screenshot_id", "x", "y", "delta_y"}, ToolHandler::computer, true, "computer_pointer");
+        scroll, {"screenshot_id", "x", "y", "delta_y"}, ToolHandler::computer, true,
+        "computer_pointer");
     add("computer.type_text",
         "Type Unicode text into the focused application without changing the clipboard.",
         {{"text", str}}, {"text"}, ToolHandler::computer, true, "computer");
@@ -156,14 +158,16 @@ const std::vector<ToolDefinition> &tool_registry() {
     add("computer.perform_action",
         "Perform an advertised accessibility action on an observed node.",
         {{"snapshot_id", str}, {"element_id", str}, {"action", str}},
-        {"snapshot_id", "element_id", "action"}, ToolHandler::computer, true, "computer_accessibility");
+        {"snapshot_id", "element_id", "action"}, ToolHandler::computer, true,
+        "computer_accessibility");
     add("computer.set_value",
         "Set an advertised settable accessibility attribute (default AXValue).",
         {{"snapshot_id", str},
          {"element_id", str},
          {"attribute", str},
          {"value", {{"anyOf", Json::array({str, field("boolean"), num})}}}},
-        {"snapshot_id", "element_id", "value"}, ToolHandler::computer, true, "computer_accessibility");
+        {"snapshot_id", "element_id", "value"}, ToolHandler::computer, true,
+        "computer_accessibility");
     add("computer.activate_app", "Activate an observed application by PID.",
         {{"pid", field("integer")}}, {"pid"}, ToolHandler::computer, true, "computer");
     add("computer.open_app", "Open an application bundle by absolute path.", {{"path", str}},
@@ -245,13 +249,15 @@ void validate_hook_matchers(const Json &hooks) {
     if (!event.value().is_array())
       throw Error("Hook event must be an array: " + event.key(), 2);
     const bool tool_event = event.key() == "PreToolUse" || event.key() == "PostToolUse" ||
-                            event.key() == "PostToolUseFailure" || event.key() == "PermissionRequest";
+                            event.key() == "PostToolUseFailure" ||
+                            event.key() == "PermissionRequest";
     for (const auto &hook : event.value()) {
       if (!hook.is_object() || !hook.contains("command") || !hook.at("command").is_string() ||
           (hook.contains("matcher") && !hook.at("matcher").is_string()) ||
           (hook.contains("timeout_ms") && !hook.at("timeout_ms").is_number_integer()))
         throw Error("Invalid hook entry for " + event.key() +
-                        ": expected command string, optional matcher string and timeout_ms integer", 2);
+                        ": expected command string, optional matcher string and timeout_ms integer",
+                    2);
       if (hook.contains("timeout_ms") &&
           (hook.at("timeout_ms") < 1 || hook.at("timeout_ms") > 120000))
         throw Error("Hook timeout must be 1..120000 ms", 2);
@@ -261,8 +267,8 @@ void validate_hook_matchers(const Json &hooks) {
         throw Error("Hook command and matcher must not contain NUL", 2);
       if (!tool_event || matcher.find_first_of("*?[") != std::string::npos)
         continue;
-      const bool known = std::any_of(tool_registry().begin(), tool_registry().end(),
-          [&](const ToolDefinition &d) {
+      const bool known =
+          std::any_of(tool_registry().begin(), tool_registry().end(), [&](const ToolDefinition &d) {
             return d.hook_name == matcher ||
                    (event.key() == "PermissionRequest" && d.name == matcher);
           });

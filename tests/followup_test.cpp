@@ -1,10 +1,10 @@
-#include "prompt_support.hpp"
-#include "codet/core.hpp"
 #include "codet/computer.hpp"
+#include "codet/core.hpp"
 #include "codet/output.hpp"
 #include "codet/process_control.hpp"
 #include "codet/prompt.hpp"
 #include "core_tools.hpp"
+#include "prompt_support.hpp"
 #include "temp.hpp"
 #include <cerrno>
 #include <csignal>
@@ -140,8 +140,7 @@ TEST_F(Followup, CompactionUsesRealAdaptersWithoutToolsAndRetainsNormalTools) {
     transport.provider = name;
     ApiProvider provider(transport, credentials, clock);
     Tools tools(config, files, processes, transport, clock);
-    config.context_tokens =
-        codet::test::context_tokens(tools, config, 1200);
+    config.context_tokens = codet::test::context_tokens(tools, config, 1200);
     Agent agent(config, provider, tools, state, {});
     EXPECT_EQ(agent.run(session, "objective", cancel).text, "done") << name;
     ASSERT_EQ(transport.requests.size(), 2u) << name;

@@ -1,7 +1,7 @@
-#include "prompt_support.hpp"
 #include "codet/computer.hpp"
 #include "codet/interaction.hpp"
 #include "codet/prompt.hpp"
+#include "prompt_support.hpp"
 #include "temp.hpp"
 #include <algorithm>
 #include <gmock/gmock.h>
@@ -225,7 +225,10 @@ TEST_F(Prompts, TaskPlanRefreshesWithoutReloadingProjectDocuments) {
     if (++requests == 1) {
       EXPECT_THAT(system, Not(HasSubstr("Current task plan")));
       auto r = answer("");
-      r.message.calls = {{"plan", "update_plan", {{"plan", Json::array({{{"step", "current step"}, {"status", "in_progress"}}})}}}};
+      r.message.calls = {
+          {"plan",
+           "update_plan",
+           {{"plan", Json::array({{{"step", "current step"}, {"status", "in_progress"}}})}}}};
       return r;
     }
     EXPECT_THAT(system, HasSubstr("Current task plan"));
@@ -237,7 +240,10 @@ TEST_F(Prompts, TaskPlanRefreshesWithoutReloadingProjectDocuments) {
   EXPECT_EQ(files.document_reads, 1u);
 }
 TEST_F(Prompts, HookFeedbackNeverReplacesHumanInstructionDuringCompaction) {
-  config.hooks = {{"Stop", Json::array({{{"command", "if test ! -f stop-once; then touch stop-once; printf '%s' '{\"decision\":\"block\",\"reason\":\"verify results\"}'; fi"}}})}};
+  config.hooks = {
+      {"Stop", Json::array({{{"command",
+                              "if test ! -f stop-once; then touch stop-once; printf '%s' "
+                              "'{\"decision\":\"block\",\"reason\":\"verify results\"}'; fi"}}})}};
   auto t = tools();
   config.context_tokens = codet::test::context_tokens(t, config, 1600);
   StateStore state(config.home);
@@ -248,7 +254,8 @@ TEST_F(Prompts, HookFeedbackNeverReplacesHumanInstructionDuringCompaction) {
     if (++requests == 1)
       return answer(std::string(5000, 'x'));
     if (schemas.empty()) {
-      EXPECT_THAT(messages[0].text, HasSubstr("Latest user instruction (preserve verbatim):\nreal human objective"));
+      EXPECT_THAT(messages[0].text,
+                  HasSubstr("Latest user instruction (preserve verbatim):\nreal human objective"));
       return answer("Keep real human objective and verify results.");
     }
     EXPECT_EQ(messages.back().text, "real human objective");
