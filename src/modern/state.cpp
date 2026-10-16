@@ -127,11 +127,19 @@ Session StateStore::create(const std::string &name) {
   save(s);
   return s;
 }
-Session StateStore::load(const std::string &id, bool repair) {
-  Statement q(impl_->db, "SELECT id,name,messages,status,provider,model FROM sessions WHERE id=? "
-                         "OR name=? ORDER BY updated DESC LIMIT 1");
+Session StateStore::load(const std::string &selector, bool repair) {
+  Statement q(impl_->db, "SELECT id FROM sessions WHERE id=? OR name=? "
+                         "ORDER BY (id=?) DESC,updated DESC,rowid DESC LIMIT 1");
+  q.text(1, selector);
+  q.text(2, selector);
+  q.text(3, selector);
+  if (sqlite3_step(q.p) != SQLITE_ROW)
+    throw Error("Session not found: " + selector, 2);
+  return load_id(column(q.p, 0), repair);
+}
+Session StateStore::load_id(const std::string &id, bool repair) {
+  Statement q(impl_->db, "SELECT id,name,messages,status,provider,model FROM sessions WHERE id=?");
   q.text(1, id);
-  q.text(2, id);
   if (sqlite3_step(q.p) != SQLITE_ROW)
     throw Error("Session not found: " + id, 2);
   Session s{column(q.p, 0), column(q.p, 1), {}};
@@ -295,7 +303,7 @@ Session StateStore::last() {
   Statement q(impl_->db, "SELECT id FROM sessions ORDER BY updated DESC,rowid DESC LIMIT 1");
   if (sqlite3_step(q.p) != SQLITE_ROW)
     throw Error("No saved sessions", 2);
-  return load(column(q.p, 0));
+  return load_id(column(q.p, 0));
 }
 Session StateStore::fork(const Session &parent) {
   auto recovered = parent;

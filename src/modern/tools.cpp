@@ -27,38 +27,137 @@ bool literal_shell_command(const std::string &command) {
       "do", "done", "case", "esac", "in",   "function", "time", "select", "coproc"};
   return !first.empty() && !reserved.count(first) && first.find('=') == std::string::npos;
 }
-bool rule_matches(const std::string &rule, const PermissionRequest &r, const Config &config,
-                  const FileSystem &files) {
-  const auto pos = rule.find('(');
-  if (pos == std::string::npos)
-    return fnmatch(rule.c_str(), r.tool.c_str(), 0) == 0;
-  if (rule.back() != ')' || fnmatch(rule.substr(0, pos).c_str(), r.tool.c_str(), 0))
-    return false;
-  const auto pattern = rule.substr(pos + 1, rule.size() - pos - 2);
-  // Preserve raw glob scope, including leading wildcards that cover additional roots.
-  if (fnmatch(pattern.c_str(), r.target.c_str(), 0) == 0)
-    return true;
-  if (!r.path)
-    return false;
-  const auto cwd = files.canonical(config.cwd);
-  const auto requested = (cwd / *r.path).lexically_normal();
-  const auto canonical = files.canonical(requested);
-  auto absolute_pattern = (cwd / fs::path(pattern)).lexically_normal();
-  const auto wildcard = absolute_pattern.string().find_first_of("*?[\\");
-  fs::path canonical_pattern;
-  if (wildcard == std::string::npos)
-    canonical_pattern = files.canonical(absolute_pattern);
-  else {
-    const auto slash = absolute_pattern.string().rfind('/', wildcard);
-    const auto prefix = absolute_pattern.string().substr(0, slash + 1);
-    canonical_pattern = files.canonical(prefix) / absolute_pattern.string().substr(slash + 1);
+struct ParsedRule {
+  std::string tool, pattern;
+  bool scoped = false, valid = true;
+  explicit ParsedRule(const std::string &text) {
+    const auto open = text.find('(');
+    scoped = open != std::string::npos;
+    tool = text.substr(0, open);
+    valid = !scoped || text.back() == ')';
+    if (scoped && valid)
+      pattern = text.substr(open + 1, text.size() - open - 2);
   }
-  for (const auto &target : {requested, canonical})
-    for (const auto &candidate : {fs::path(pattern), absolute_pattern, canonical_pattern})
-      if (!fnmatch(candidate.c_str(), target.c_str(), 0))
-        return true;
-  return false;
+  bool applies(const std::string &name) const {
+    return valid && !fnmatch(tool.c_str(), name.c_str(), 0);
+  }
+};
+std::string literal_glob(const std::string &text) {
+  std::string result;
+  for (char ch : text) {
+    if (ch == '*' || ch == '?' || ch == '[' || ch == ']' || ch == '\\')
+      result += '\\';
+    result += ch;
+  }
+  return result;
 }
+std::string unescape_glob(const std::string &text) {
+  std::string result;
+  for (size_t i = 0; i < text.size(); ++i) {
+    if (text[i] == '\\' && i + 1 < text.size())
+      ++i;
+    result += text[i];
+  }
+  return result;
+}
+size_t first_wildcard(const std::string &text) {
+  for (size_t i = 0; i < text.size(); ++i) {
+    if (text[i] == '\\' && i + 1 < text.size())
+      ++i;
+    else if (text[i] == '*' || text[i] == '?' || text[i] == '[')
+      return i;
+  }
+  return std::string::npos;
+}
+struct RulePaths {
+  const Config &config;
+  const FileSystem &files;
+  std::map<fs::path, fs::path> canonical_cache;
+  fs::path requested, target;
+  std::vector<fs::path> literal_roots;
+  bool resolved = false;
+  RulePaths(const Config &c, const FileSystem &f) : config(c), files(f) {}
+  fs::path canonical(const fs::path &p) {
+    const auto found = canonical_cache.find(p);
+    if (found != canonical_cache.end())
+      return found->second;
+    return canonical_cache.emplace(p, files.canonical(p)).first->second;
+  }
+  const fs::path &resolve(const PermissionRequest &r) {
+    if (!r.path)
+      throw Error("Permission path is required");
+    if (!resolved) {
+      requested = (fs::absolute(config.cwd) / r.path.value()).lexically_normal();
+      target = canonical(requested);
+      resolved = true;
+    }
+    return target;
+  }
+  bool matches(const ParsedRule &rule, const PermissionRequest &r) {
+    if (!rule.applies(r.tool))
+      return false;
+    if (!rule.scoped)
+      return true;
+    if (!r.path)
+      return !fnmatch(rule.pattern.c_str(), r.target.c_str(), 0);
+    resolve(r);
+    auto pattern = rule.pattern;
+    auto base = fs::absolute(config.cwd).lexically_normal();
+    // Configured filesystem roots are literal even when their names contain glob syntax.
+    if (literal_roots.empty()) {
+      literal_roots = std::vector<fs::path>{base, canonical(base)};
+      for (const auto &root : config.roots) {
+        literal_roots.push_back(fs::absolute(root).lexically_normal());
+        literal_roots.push_back(canonical(root));
+      }
+      std::sort(literal_roots.begin(), literal_roots.end(),
+                [](const auto &a, const auto &b) { return a.string().size() > b.string().size(); });
+    }
+    bool known_prefix = false;
+    for (const auto &root : literal_roots) {
+      const auto prefix = root.string();
+      if (pattern == prefix ||
+          (pattern.size() > prefix.size() && pattern.compare(0, prefix.size(), prefix) == 0 &&
+           pattern[prefix.size()] == '/')) {
+        known_prefix = true;
+        base = root;
+        pattern = pattern.size() == prefix.size() ? "" : pattern.substr(prefix.size() + 1);
+        break;
+      }
+    }
+    // Unanchored authored globs may match absolute aliases outside cwd. Known filesystem
+    // prefixes must never participate in raw glob matching (including allow rules).
+    if (!known_prefix && (!fnmatch(pattern.c_str(), r.target.c_str(), 0) ||
+                          !fnmatch(pattern.c_str(), requested.c_str(), 0) ||
+                          !fnmatch(pattern.c_str(), target.c_str(), 0)))
+      return true;
+    const auto wildcard = first_wildcard(pattern);
+    fs::path prefix;
+    std::string suffix;
+    if (wildcard == std::string::npos)
+      prefix = (base / fs::path(unescape_glob(pattern))).lexically_normal();
+    else {
+      const auto slash = pattern.rfind('/', wildcard);
+      prefix =
+          (base /
+           fs::path(unescape_glob(slash == std::string::npos ? "" : pattern.substr(0, slash + 1))))
+              .lexically_normal();
+      suffix = pattern.substr(slash == std::string::npos ? 0 : slash + 1);
+    }
+    for (const auto &fixed : {prefix, canonical(prefix)}) {
+      auto candidate = literal_glob(fixed.string());
+      if (!suffix.empty()) {
+        if (candidate.empty() || candidate.back() != '/')
+          candidate += '/';
+        candidate += suffix;
+      }
+      if (!fnmatch(candidate.c_str(), requested.c_str(), 0) ||
+          !fnmatch(candidate.c_str(), target.c_str(), 0))
+        return true;
+    }
+    return false;
+  }
+};
 std::string digest(const std::string &value) {
   unsigned char sum[SHA256_DIGEST_LENGTH];
   SHA256(reinterpret_cast<const unsigned char *>(value.data()), value.size(), sum);
@@ -132,30 +231,52 @@ struct Change {
   mode_t mode = 0644;
 };
 } // namespace
-Decision Permissions::decide(const PermissionRequest &r) const {
+struct Permissions::Rules {
+  std::vector<std::string> allow_source, deny_source;
+  std::vector<ParsedRule> allow, deny;
+};
+void Permissions::refresh_rules() const {
+  if (rules_ && rules_->allow_source == config_.allow && rules_->deny_source == config_.deny)
+    return;
+  auto next = std::make_shared<Rules>();
+  next->allow_source = config_.allow;
+  next->deny_source = config_.deny;
+  for (const auto &rule : config_.allow)
+    next->allow.emplace_back(rule);
   for (const auto &rule : config_.deny)
-    if (rule_matches(rule, r, config_, files_))
+    next->deny.emplace_back(rule);
+  rules_ = std::move(next);
+}
+bool Permissions::has_scoped_denials(const std::string &tool) const {
+  refresh_rules();
+  return std::any_of(rules_->deny.begin(), rules_->deny.end(),
+                     [&](const auto &rule) { return rule.scoped && rule.applies(tool); });
+}
+Decision Permissions::decide(const PermissionRequest &r) const {
+  refresh_rules();
+  RulePaths paths(config_, files_);
+  for (const auto &rule : rules_->deny)
+    if (paths.matches(rule, r))
       return Decision::deny;
   if (config_.permission_mode == "plan" && r.mutation)
     return Decision::deny;
   if (config_.permission_mode == "bypass")
     return Decision::allow;
   if (r.path) {
-    const auto p = files_.canonical(*r.path);
+    const auto &p = paths.resolve(r);
     bool found = false;
     for (const auto &root : config_.roots)
-      if (within(p, files_.canonical(root)))
+      if (within(p, paths.canonical(root)))
         found = true;
     const auto spill = config_.home / "tool-output";
-    if (r.tool == "Read" && !fs::is_symlink(spill) && within(p, files_.canonical(spill)))
+    if (r.tool == "Read" && !fs::is_symlink(spill) && within(p, paths.canonical(spill)))
       found = true;
     if (!found)
       return Decision::deny;
   }
-  for (const auto &rule : config_.allow)
-    if (rule_matches(rule, r, config_, files_) &&
-        (rule.find('(') == std::string::npos || (r.tool != "Bash" && r.tool != "TaskCreate") ||
-         literal_shell_command(r.target)))
+  for (const auto &rule : rules_->allow)
+    if (paths.matches(rule, r) && (!rule.scoped || (r.tool != "Bash" && r.tool != "TaskCreate") ||
+                                   literal_shell_command(r.target)))
       return Decision::allow;
   if (!r.mutation)
     return Decision::allow;
@@ -529,6 +650,9 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     } else {
       const auto patch = a.at("patch").get<std::string>();
       auto ls = lines(patch);
+      for (auto &line : ls)
+        if (!line.empty() && line.back() == '\r')
+          line.pop_back();
       const auto trim = [](const std::string &line) {
         const auto first = line.find_first_not_of(" \t\r");
         return first == std::string::npos
@@ -692,8 +816,12 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
   }
   if (name == "TaskList") {
     Json jobs = Json::array();
-    for (const auto &job : processes_.list())
-      jobs.push_back({{"id", job.id}, {"running", job.running}, {"exit_code", job.exit_code}});
+    for (const auto &job : processes_.list()) {
+      Json item = {{"id", job.id}, {"running", job.running}, {"exit_code", job.exit_code}};
+      if (!job.error.empty())
+        item["error"] = job.error;
+      jobs.push_back(std::move(item));
+    }
     return {jobs.dump(), false, Json::object()};
   }
   if (name == "Glob") {
@@ -702,12 +830,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     const auto pattern = a.at("pattern").get<std::string>();
     if (pattern.size() > 4096)
       throw Error("Pattern too large");
-    const bool scoped_denials =
-        std::any_of(config_.deny.begin(), config_.deny.end(), [&](const auto &rule) {
-          const auto open = rule.find('(');
-          return open != std::string::npos && rule.back() == ')' &&
-                 fnmatch(rule.substr(0, open).c_str(), name.c_str(), 0) == 0;
-        });
+    const bool scoped_denials = permissions_.has_scoped_denials(name);
     const auto denied = [&](const fs::path &p) {
       return scoped_denials && permissions_.decide({name, p.string(), p, false}) == Decision::deny;
     };
@@ -722,9 +845,8 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
            it != end && visited++ < 10000; ++it) {
         cancel.check();
         const auto base = it->path().filename().string();
-        if (denied(it->path())) {
-          if (it->is_directory())
-            it.disable_recursion_pending();
+        if (it->is_directory() && denied(it->path())) {
+          it.disable_recursion_pending();
           continue;
         }
         if (it->is_directory() &&
@@ -745,7 +867,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     std::string out;
     for (const auto &p : candidates) {
       cancel.check();
-      if (denied(p))
+      if (permissions_.decide({name, p.string(), p, false}) == Decision::deny)
         continue;
       const auto relative = fs::relative(p, config_.cwd).string();
       if (fnmatch(pattern.c_str(), relative.c_str(), 0) == 0 ||
@@ -936,7 +1058,7 @@ std::string Tools::instructions() const {
   std::string out;
   const auto warn = [&](const std::string &message) {
     if (warnings_.insert(message).second)
-      std::cerr << safe_text(message) << '\n';
+      report_diagnostic(diagnostics_, message);
   };
   std::set<fs::path> seen;
   const auto append = [&](const std::string &text, size_t cap) {

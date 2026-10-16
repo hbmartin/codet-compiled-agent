@@ -65,3 +65,5 @@ See `MODERN-AGENT.md` for exact interfaces and `TIGER-ACCEPTANCE.md` for the out
 Shell deny rules intentionally retain their documented lexical contract. No broad command-policy, sandbox, plugin, or background-memory-agent port is added. See `MODERN-AGENT.md` for exact bounds and hook decisions.
 
 Follow-up application/analysis review dispositions and validation are tracked in [REVIEW-FOLLOWUP.md](REVIEW-FOLLOWUP.md). Earlier Cppcheck coverage evidence is invalid; use the corrected source-hashed pipeline described in [MODERN-ANALYSIS.md](MODERN-ANALYSIS.md).
+
+The remaining 17 comments and intentional/deferred dispositions are tracked in [REVIEW-FOLLOWUP.md](REVIEW-FOLLOWUP.md#remaining-17-comments-base-local-commit-0a60e1f), with current source-hashed evidence in [validation/remaining-review.json](validation/remaining-review.json). New regressions are in `final_review_test.cpp` and the CLI loopback/PTY suite.

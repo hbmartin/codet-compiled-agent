@@ -61,3 +61,48 @@ Source-hashed analysis evidence is checked in at [validation/followup-analysis.j
 - The complete developer image builds from a fresh local clone using the documented root build context and explicit provisioning stage. Dependency sources were reconstructed from checksum-verified cached archives. Tool version/PyYAML checks and all three analyzer detection self-checks then pass with networking disabled; configure-only targets create no application/test executable.
 
 Reproduction: `make test`, `make test-sanitize`, `make test-modern-analysis-runner`, `make analyze-modern-selftest`, `make analyze-modern`, `make verify-tiger`, and `make tiger-package`. On macOS the native analyzer runs use `build/analysis-venv/bin/python` (PyYAML installed); Clang-Tidy is exercised in the Linux image. Full logs remain under ignored `build/followup-*` and analyzer report directories. GitHub-hosted CI was not dispatched because this delivery is local only.
+
+
+## Remaining 17 comments (base local commit `0a60e1f`)
+
+| Item | Disposition | Implementation / evidence |
+|---|---|---|
+| R1 Checkout credentials | Fixed | `persist-credentials: false`; workflow permissions/triggers unchanged. Hardening, not an observed token leak. |
+| R2 Timeout on stop/destruction | Fixed | Central termination reason survives cleanup retry. Observe completion first; timeout before stop or during grace is 124. Deterministic clock tests preserve an already-exited status. |
+| R3 Literal workspace glob characters | Fixed | Literal filesystem prefixes are escaped independently of authored patterns. Metacharacter workspaces, aliases, absolute grants/denials, sibling non-grants and rewritten-input regressions. |
+| R4 Interior CRLF patch lines | Fixed | Normalize every protocol line; add/update/move/delete fixtures verify filenames and significant whitespace. |
+| R5 Glob repeated work | Fixed | Cached parsed rules; per-decision canonical/path-prefix cache. Prune denied directories and authorize files once at result production. Filesystem-call counter bounds replace timing assertions. |
+| R6 Duplicated parsing/read mechanics | Fixed | Shared parsed permission rules and shared regular-file/open/EINTR reads; strict size/growth checks remain separate from bounded previews. |
+| R7 Hook stdout consumes stderr | Fixed | Separate half/remainder budgets, full drain, per-stream truncation diagnostics; stdout/stderr flood, exit-2 reason and truncated JSON fixtures. |
+| R8 One broken job blocks starts | Fixed | Isolate job errors during refresh, retain handle/ownership/capacity, retry cleanup, expose optional snapshot/TaskList error. Persistent observation/reap failures, healthy hooks/jobs, active limits, cancellation and allocation failure tests. Failed foreground cleanup retains its job too. |
+| R9 Malformed hook fail-open | Intentional behavior | Preserve diagnostic-only malformed/unsupported decisions, required blocking reasons and existing explicit policy restrictions. This is the agreed Codex-style contract, not a new implicit deny policy. |
+| R10 Diagnostics corrupt curses | Fixed | Lifetime-safe callback routes live diagnostics through the transcript. End diagnostics remain buffered until terminal restoration. PTY tests repaint the screen and separately inspect stderr. |
+| R11 First-match patch ambiguity | Intentional behavior | Retain sequential first-match/fuzzy matching from supplied Codex; Edit retains its separate ambiguity rules. Existing reference fixtures remain. |
+| R12 Lone CR selects CR endings | Fixed | Only LF/CRLF terminate target lines; first recognized ending selects inserted lines, otherwise LF. Lone CR and untouched unterminated EOF fixtures. No CR-only file support added. |
+| R13 Startup context accumulation | Intentional persistence; dispatch improved | Append newly accepted context, including identical text, in invocation order. SessionStart source matchers distinguish startup/resume/fork. Inherited history does not redispatch original startup. CLI persistence matrix and existing `/new`/promptless-fork lifecycle tests. |
+| R14 Corrupt session cannot export/load | Intentional strict rejection; raw export deferred | Keep duplicate-ID/journal mismatch errors for normal load/export/resume/fork; no raw-export interface in this batch. Existing corruption fixtures retained. |
+| R15 ID/name collision | Fixed | Exact-ID API for ownership/stored references/last; user selector prioritizes ID then newest name with deterministic tie-break. Collision and exact ownership reload fixtures. |
+| R16 Serialization round trips | Fixed | UTF-8 string/tree repair replaces dump/parse sanitization; one serialization at boundaries. Every-byte-pair/random UTF-8 oracle, key collisions, metadata and JSON representations checked against pinned nlohmann. Host-only reproducible allocation/time benchmark. Filesystem path bytes remain unchanged. |
+| R17 Failed expansion changes live transcript | Fixed | Expand and build pending messages before saving/committing the candidate transcript. Failure keeps the original error and no false recovery warning; unit and both-terminal continuation tests. |
+
+No schema migration, runtime dependency, broader hook lifecycle, shell authorization change or revived Grep is included. See [validation/remaining-review.json](validation/remaining-review.json) for current source-hashed results; earlier follow-up evidence describes its earlier source snapshot. Tiger execution and G4/512 MB memory/performance remain pending owner target reports.
+
+
+### Serialization measurement
+
+Host-only Release measurement of serialization within a representative 100-message transcript save (about 824 KiB) and a small streamed event; it excludes SQLite I/O and measures C++ `new` allocations, not every library `malloc`. These timings describe this development host, not the G4. Reproduce with `cmake -S . -B build/benchmark -DCMAKE_BUILD_TYPE=Release`, `cmake --build build/benchmark --target codet_sanitization_bench -j4`, then `build/benchmark/codet_sanitization_bench`. The benchmark first checks identical serialized results.
+
+| Case | Iterations | Previous / tree time (ms) | Previous / tree allocations | Previous / tree allocated bytes |
+|---|---:|---:|---:|---:|
+| transcript_save_serialization | 20 | 103.01 / 40.61 | 17,380 / 16,380 | 107,480,780 / 61,718,240 |
+| streamed_event | 20000 | 39.76 / 16.70 | 640,000 / 280,000 | 52,780,000 / 26,240,000 |
+
+
+### Remaining-review validation (2026-10-15)
+
+- macOS and Linux host suites, plus ASan/UBSan: all CTest suites pass. Each final C++ suite runs 131 cases (130 pass; the opt-in live TLS case skips), and the loopback/PTY suite runs 28 cases. Tests use fake credentials and local services.
+- Analyzer runner: 33 cases pass on each host. All three Linux analyzers and detection self-checks pass; Cppcheck's three actual-header/fatal canaries pass. All 12 application translation units complete with zero gated findings. Native Cppcheck 2.22.0 and Clang Static Analyzer also pass. No new suppression is added. Current first-party source/header hashes must equal each aggregate manifest before evidence is recorded.
+- GCC 14.2 Tiger cross-build and architecture/import/install-path checks pass. The acceptance archive is regenerated with current executable, tests, documentation and source-hashed evidence. PPC code is not executed here; Tiger/G4 runtime, TLS/account round trips and memory/performance remain pending owner reports.
+- The checkout credential setting is verified through parsed workflow YAML; triggers, permissions and dependency pins stay unchanged. GitHub CI is not dispatched and no push or PR modification is performed.
+
+Full reports remain under ignored `build/remaining-native-analysis`, `build/followup-linux/modern-checks/analysis` and `build/review-final-*`. Current condensed evidence is [validation/remaining-review.json](validation/remaining-review.json). The earlier Cppcheck 2.13 evidence remains invalid; the earlier follow-up JSON is retained only as its original source snapshot.

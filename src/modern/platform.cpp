@@ -3,10 +3,12 @@
 #include "codet/process_control.hpp"
 #include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <csignal>
 #include <cstring>
 #include <curl/curl.h>
 #include <fcntl.h>
+#include <iostream>
 #include <poll.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
@@ -84,11 +86,84 @@ int curl_progress(void *data, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
 }
 } // namespace
 std::string safe_text(const std::string &text) {
-  return Json::parse(Json(text).dump(-1, ' ', false, Json::error_handler_t::replace))
-      .get<std::string>();
+  std::string result;
+  size_t copied = 0;
+  bool repaired = false;
+  for (size_t i = 0; i < text.size();) {
+    const auto lead = static_cast<unsigned char>(text[i]);
+    if (lead < 0x80) {
+      ++i;
+      continue;
+    }
+    const size_t width = lead >= 0xc2 && lead <= 0xdf   ? 2
+                         : lead >= 0xe0 && lead <= 0xef ? 3
+                         : lead >= 0xf0 && lead <= 0xf4 ? 4
+                                                        : 0;
+    size_t accepted = 1;
+    while (width && accepted < width && i + accepted < text.size()) {
+      const auto byte = static_cast<unsigned char>(text[i + accepted]);
+      const unsigned char low = accepted == 1 && lead == 0xe0   ? 0xa0
+                                : accepted == 1 && lead == 0xf0 ? 0x90
+                                                                : 0x80;
+      const unsigned char high = accepted == 1 && lead == 0xed   ? 0x9f
+                                 : accepted == 1 && lead == 0xf4 ? 0x8f
+                                                                 : 0xbf;
+      if (byte < low || byte > high)
+        break;
+      ++accepted;
+    }
+    if (width && accepted == width) {
+      i += width;
+      continue;
+    }
+    repaired = true;
+    result.append(text, copied, i - copied);
+    result += "\xef\xbf\xbd";
+    i += accepted;
+    copied = i;
+  }
+  if (!repaired)
+    return text;
+  result.append(text, copied, text.size() - copied);
+  return result;
 }
 Json safe_json(const Json &value) {
-  return Json::parse(value.dump(-1, ' ', false, Json::error_handler_t::replace));
+  if (value.is_string())
+    return safe_text(value.get_ref<const std::string &>());
+  if (value.is_array()) {
+    Json result = Json::array();
+    result.get_ref<Json::array_t &>().reserve(value.size());
+    for (const auto &item : value)
+      result.push_back(safe_json(item));
+    return result;
+  }
+  if (value.is_object()) {
+    Json result = Json::object();
+    for (auto it = value.begin(); it != value.end(); ++it)
+      result[safe_text(it.key())] = safe_json(it.value());
+    return result;
+  }
+  if (value.is_number_float() && !std::isfinite(value.get<double>()))
+    return nullptr;
+  // Binary/discarded values are not provider JSON. Retain the previous JSON representation.
+  if (value.is_binary() || value.is_discarded())
+    return Json::parse(value.dump(-1, ' ', false, Json::error_handler_t::replace));
+  return value;
+}
+void report_diagnostic(const DiagnosticSink &sink, const std::string &message) {
+  const auto text = bounded_text(message, 65536);
+  if (sink) {
+    try {
+      sink(text);
+      return;
+    } catch (const std::bad_alloc &) {
+      throw;
+    } catch (...) { // A failed diagnostic renderer must not change a completed action.
+      std::cerr << text << '\n';
+      return;
+    }
+  }
+  std::cerr << text << '\n';
 }
 std::string bounded_text(const std::string &text, size_t limit) {
   auto clean = safe_text(text);
@@ -245,53 +320,48 @@ HttpResponse CurlTransport::perform(const HttpRequest &r, const Cancellation &ca
   curl_easy_getinfo(raw, CURLINFO_RESPONSE_CODE, &status);
   return {static_cast<int>(status), std::move(c.body)};
 }
-std::string NativeFileSystem::read(const fs::path &p, size_t limit) const {
-  Fd fd(::open(p.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK));
+namespace {
+std::string read_file_bytes(const fs::path &path, size_t limit, bool prefix) {
+  Fd fd(::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK));
   if (fd.n < 0)
-    throw Error(system_error("Read " + p.string()));
-  struct stat st {};
-  if (fstat(fd.n, &st) != 0 || !S_ISREG(st.st_mode))
-    throw Error("Expected regular file: " + p.string());
-  if (st.st_size < 0 || static_cast<uint64_t>(st.st_size) > limit)
-    throw Error("File exceeds read limit: " + p.string());
+    throw Error(system_error("Read " + path.string()));
+  struct stat status {};
+  if (::fstat(fd.n, &status) != 0 || !S_ISREG(status.st_mode))
+    throw Error("Expected regular file: " + path.string());
+  if (!prefix && (status.st_size < 0 || static_cast<uint64_t>(status.st_size) > limit))
+    throw Error("File exceeds read limit: " + path.string());
   std::string result;
-  char buf[8192];
+  char buffer[8192];
   for (;;) {
-    ssize_t n = ::read(fd.n, buf, sizeof buf);
-    if (n < 0 && errno == EINTR)
+    const auto remaining = limit - result.size();
+    const auto request = remaining >= sizeof buffer ? sizeof buffer : remaining + 1;
+    const auto count = ::read(fd.n, buffer, request);
+    if (count < 0 && errno == EINTR)
       continue;
-    if (n < 0)
-      throw Error(system_error("Read " + p.string()));
-    if (n == 0)
+    if (count < 0)
+      throw Error(system_error("Read " + path.string()));
+    if (!count)
       break;
-    if (static_cast<size_t>(n) > limit - result.size())
-      throw Error("File grew beyond read limit");
-    result.append(buf, static_cast<size_t>(n));
+    if (static_cast<size_t>(count) > remaining) {
+      if (!prefix)
+        throw Error("File grew beyond read limit");
+      result.append(buffer, static_cast<size_t>(count));
+      break;
+    }
+    result.append(buffer, static_cast<size_t>(count));
   }
   return result;
 }
-std::string NativeFileSystem::read_prefix(const fs::path &p, size_t limit, bool &truncated) const {
-  Fd fd(::open(p.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK));
-  if (fd.n < 0)
-    throw Error(system_error("Read " + p.string()));
-  struct stat st {};
-  if (fstat(fd.n, &st) != 0 || !S_ISREG(st.st_mode))
-    throw Error("Expected regular file: " + p.string());
-  std::string text;
-  char buffer[8192];
-  while (text.size() <= limit) {
-    const auto n = ::read(fd.n, buffer, std::min(sizeof buffer, limit + 1 - text.size()));
-    if (n < 0 && errno == EINTR)
-      continue;
-    if (n < 0)
-      throw Error(system_error("Read " + p.string()));
-    if (!n)
-      break;
-    text.append(buffer, static_cast<size_t>(n));
-  }
-  const auto clean = safe_text(text);
-  truncated = text.size() > limit || clean.size() > limit;
-  return bounded_text(clean, limit);
+} // namespace
+std::string NativeFileSystem::read(const fs::path &path, size_t limit) const {
+  return read_file_bytes(path, limit, false);
+}
+std::string NativeFileSystem::read_prefix(const fs::path &path, size_t limit,
+                                          bool &truncated) const {
+  const auto bytes = read_file_bytes(path, limit, true);
+  const auto text = safe_text(bytes);
+  truncated = bytes.size() > limit || text.size() > limit;
+  return bounded_text(text, limit);
 }
 void NativeFileSystem::atomic_write(const fs::path &p, const std::string &text, bool private_file) {
   if (!fs::exists(p.parent_path()))
@@ -428,6 +498,8 @@ struct NativeProcesses::Job {
   std::unique_ptr<OutputSpool> spool;
   std::chrono::steady_clock::time_point began = std::chrono::steady_clock::now();
   bool done = false, retain = true, exit_observed = false;
+  std::optional<int> termination_status;
+  std::string error, reported_error;
   ~Job() {
     if (fd >= 0)
       ::close(fd);
@@ -438,8 +510,9 @@ struct NativeProcesses::Job {
   }
 };
 NativeProcesses::NativeProcesses() : NativeProcesses(native_process_control()) {}
-NativeProcesses::NativeProcesses(std::shared_ptr<ProcessControl> control)
-    : control_(std::move(control)) {}
+NativeProcesses::NativeProcesses(std::shared_ptr<ProcessControl> control,
+                                 DiagnosticSink diagnostics)
+    : control_(std::move(control)), diagnostics_(std::move(diagnostics)) {}
 NativeProcesses::~NativeProcesses() {
   for (auto &j : jobs_) {
     try {
@@ -649,7 +722,7 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
   }
 }
 void NativeProcesses::collect(Job &job) {
-  const auto drain = [&](int fd, std::string &output) {
+  const auto drain = [&](int fd, std::string &output, bool stderr_stream) {
     char buffer[8192];
     size_t drained = 0;
     while (fd >= 0 && drained < size_t{1024} * 1024) {
@@ -662,10 +735,15 @@ void NativeProcesses::collect(Job &job) {
       drained += count;
       job.result.total_output_bytes += count;
       if (job.spec.separate_stderr) {
-        const auto used = job.result.output.size() + job.result.stderr_output.size();
-        const auto keep = std::min(count, job.spec.output_limit - used);
+        const auto stdout_limit = job.spec.output_limit / 2;
+        const auto limit = stderr_stream ? job.spec.output_limit - stdout_limit : stdout_limit;
+        const auto keep = std::min(count, limit - output.size());
         output.append(buffer, keep);
-        job.result.truncated = job.result.truncated || keep < count;
+        if (stderr_stream)
+          job.result.stderr_truncated |= keep < count;
+        else
+          job.result.stdout_truncated |= keep < count;
+        job.result.truncated = job.result.stdout_truncated || job.result.stderr_truncated;
       } else {
         if (!job.spec.spool_directory.empty()) {
           if (!job.spool) {
@@ -695,8 +773,8 @@ void NativeProcesses::collect(Job &job) {
       }
     }
   };
-  drain(job.fd, job.result.output);
-  drain(job.stderr_fd, job.result.stderr_output);
+  drain(job.fd, job.result.output, false);
+  drain(job.stderr_fd, job.result.stderr_output, true);
   if (!job.spec.separate_stderr)
     job.result.output =
         head_tail_text(job.head, job.tail, job.result.total_output_bytes, job.spec.output_limit);
@@ -745,8 +823,19 @@ void NativeProcesses::refresh() {
   for (const auto &job : jobs_)
     if (!job.second->done)
       ids.push_back(job.first);
-  for (const auto &id : ids)
-    (void)poll(id);
+  for (const auto &id : ids) {
+    try {
+      (void)poll(id);
+    } catch (const Error &error) {
+      if (error.code == 130)
+        throw;
+      auto &job = *jobs_.at(id);
+      if (job.reported_error != job.error) {
+        job.reported_error = job.error;
+        report_diagnostic(diagnostics_, job.error);
+      }
+    }
+  }
   prune();
 }
 std::vector<ProcessStatus> NativeProcesses::list() {
@@ -754,7 +843,7 @@ std::vector<ProcessStatus> NativeProcesses::list() {
   std::vector<ProcessStatus> out;
   out.reserve(jobs_.size());
   for (const auto &job : jobs_)
-    out.push_back({job.first, !job.second->done, job.second->result.exit_code});
+    out.push_back({job.first, !job.second->done, job.second->result.exit_code, job.second->error});
   return out;
 }
 void NativeProcesses::finish(Job &job, bool ownership_lost) {
@@ -779,7 +868,9 @@ void NativeProcesses::finish(Job &job, bool ownership_lost) {
     job.observer = -1;
   }
   job.result.exit_code =
-      ownership_lost ? 1 : (WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status));
+      ownership_lost ? 1
+                     : job.termination_status.value_or(WIFEXITED(status) ? WEXITSTATUS(status)
+                                                                         : 128 + WTERMSIG(status));
   job.result.running = false;
   collect(job);
   if (job.spool) {
@@ -797,17 +888,29 @@ void NativeProcesses::finish(Job &job, bool ownership_lost) {
     job.stderr_fd = -1;
   }
 }
+void NativeProcesses::terminate(Job &job, int status) {
+  job.termination_status = status;
+  finish(job);
+}
+[[noreturn]] void NativeProcesses::job_error(const std::string &id, Job &job, const Error &error) {
+  if (error.code == 130)
+    throw error;
+  job.error = bounded_text("Job " + id + ": " + error.what(), 2048);
+  throw Error(job.error, error.code);
+}
 ProcessResult NativeProcesses::poll(const std::string &id) {
   auto it = jobs_.find(id);
   if (it == jobs_.end())
     throw Error("Unknown or expired job: " + id);
   auto &job = *it->second;
-  collect(job);
-  if (!job.done &&
-      std::chrono::duration_cast<std::chrono::milliseconds>(control_->now() - job.began).count() >
-          job.spec.timeout_ms) {
-    finish(job);
-    job.result.exit_code = 124;
+  try {
+    collect(job);
+    if (!job.done && control_->now() >= job.began + std::chrono::milliseconds(job.spec.timeout_ms))
+      terminate(job, 124);
+    job.error.clear();
+    job.reported_error.clear();
+  } catch (const Error &error) {
+    job_error(id, job, error);
   }
   const auto result = job.result;
   prune();
@@ -818,22 +921,35 @@ void NativeProcesses::stop(const std::string &id) {
   if (it == jobs_.end())
     throw Error("Unknown or expired job: " + id);
   Job &job = *it->second;
-  if (job.done)
-    return;
-  if (control_->now() >= job.began + std::chrono::milliseconds(job.spec.timeout_ms)) {
-    finish(job);
-    return;
-  }
-  control_->signal(-job.pid, SIGTERM);
-  for (int i = 0; i < 10 && !job.done &&
-                  control_->now() < job.began + std::chrono::milliseconds(job.spec.timeout_ms);
-       ++i) {
+  try {
     collect(job);
-    if (!job.done)
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    job.error.clear();
+    job.reported_error.clear();
+    if (job.done)
+      return;
+    const auto deadline = job.began + std::chrono::milliseconds(job.spec.timeout_ms);
+    if (control_->now() >= deadline) {
+      terminate(job, 124);
+      return;
+    }
+    control_->signal(-job.pid, SIGTERM);
+    for (int i = 0; i < 10 && !job.done && control_->now() < deadline; ++i) {
+      collect(job);
+      if (!job.done)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    // A child can exit during the last grace sleep; observe before forcing termination.
+    collect(job);
+    if (!job.done) {
+      if (control_->now() >= deadline)
+        terminate(job, 124);
+      else
+        finish(job);
+    }
+    job.error.clear();
+  } catch (const Error &error) {
+    job_error(id, job, error);
   }
-  if (!job.done)
-    finish(job);
 }
 void NativeProcesses::write(const std::string &id, const std::string &input) {
   const auto it = jobs_.find(id);
@@ -878,7 +994,13 @@ ProcessResult NativeProcesses::run(const ProcessSpec &spec, const Cancellation &
         stop(id);
     } catch (...) { // NOLINT(bugprone-empty-catch): Preserve the original run failure.
     }
-    jobs_.erase(id);
+    const auto found = jobs_.find(id);
+    if (found != jobs_.end()) {
+      if (found->second->done)
+        jobs_.erase(found);
+      else
+        found->second->retain = true; // Failed cleanup retains ownership and active capacity.
+    }
     throw;
   }
 }
