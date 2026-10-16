@@ -445,7 +445,7 @@ class Tools {
     std::string shell;
     bool pty = false;
     bool completed = false;
-    int exit_code = 0;
+    std::optional<int> exit_code;
   };
   std::map<int, ExecSession> exec_sessions_;
   fs::path path(const std::string &) const;

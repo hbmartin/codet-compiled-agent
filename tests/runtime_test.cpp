@@ -37,7 +37,7 @@ struct Recording : Processes {
   std::vector<ProcessSpec> starts;
   std::vector<std::string> writes;
   std::function<ProcessResult(const ProcessSpec &)> hook;
-  bool running = false;
+  bool running = false, poll_error = false;
   size_t closes = 0;
   ProcessResult run(const ProcessSpec &spec, const Cancellation &) override {
     return hook ? hook(spec) : ProcessResult{};
@@ -47,6 +47,8 @@ struct Recording : Processes {
     return "owned";
   }
   ProcessResult poll(const std::string &) override {
+    if (poll_error)
+      throw Error("injected output collection failure");
     return {0, "done", false, running};
   }
   void stop(const std::string &) override {
@@ -242,6 +244,27 @@ TEST_F(Runtime, PipeEofPublishesFinalOutputAndPtyRejectsBeforeWriting) {
                            cancel)
                   .error);
   EXPECT_TRUE(recording.writes.empty());
+}
+TEST_F(Runtime, EofRetryDoesNotInventExitStatusAfterFailedCollection) {
+  Recording process;
+  process.running = true;
+  config.permission_mode = "bypass";
+  Tools tools(config, files, process, http, clock);
+  const auto start =
+      tools.execute(call("exec_command", {{"cmd", "cat"}, {"yield_time_ms", 250}}), cancel);
+  ASSERT_FALSE(start.error);
+  const auto id = start.metadata.at("session_id");
+  process.poll_error = true;
+  EXPECT_TRUE(
+      tools
+          .execute(call("write_stdin", {{"session_id", id}, {"chars", "x"}, {"yield_time_ms", 1}}),
+                   cancel)
+          .error);
+  process.poll_error = false;
+  const auto retry =
+      tools.execute(call("write_stdin", {{"session_id", id}, {"close_stdin", true}}), cancel);
+  EXPECT_TRUE(retry.error);
+  EXPECT_FALSE(retry.metadata.contains("exit_code"));
 }
 struct OneCall : Provider {
   ToolCall tool;

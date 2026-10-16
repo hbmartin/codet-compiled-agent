@@ -387,8 +387,8 @@ PermissionRequest Tools::execution_request(const ToolCall &call) const {
     const auto id = a.at("session_id").get<int>();
     const auto it = exec_sessions_.find(id);
     if (it == exec_sessions_.end() ||
-        (it->second.completed &&
-         (!a.value("close_stdin", false) || !a.value("chars", std::string{}).empty())))
+        (it->second.completed && (!it->second.exit_code || !a.value("close_stdin", false) ||
+                                  !a.value("chars", std::string{}).empty())))
       throw Error("Unknown or completed exec session");
     const auto &job = it->second;
     const auto chars = a.value("chars", std::string{});
@@ -968,7 +968,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
         id = static_cast<int>(std::hash<std::string>{}(unique_id()) & 0x7fffffffU);
       } while (id == 0 || exec_sessions_.count(id));
       exec_sessions_[id] = {
-          processes_.start(spec, cancel), command, spec.cwd, shell, spec.pty, false};
+          processes_.start(spec, cancel), command, spec.cwd, shell, spec.pty, false, std::nullopt};
     } else {
       id = a.at("session_id").get<int>();
       const auto it = exec_sessions_.find(id);
@@ -976,13 +976,16 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
         throw Error("Unknown exec session");
       const auto input = a.value("chars", std::string{});
       authorize(execution_request(call));
-      if (it->second.completed)
+      if (it->second.completed) {
+        if (!it->second.exit_code)
+          throw Error("Exec session ended without a collected exit status");
         return {"",
                 false,
-                {{"exit_code", it->second.exit_code},
+                {{"exit_code", it->second.exit_code.value()},
                  {"already_completed", true},
                  {"total_output_bytes", 0},
                  {"stdin_closed", true}}};
+      }
       if (!input.empty())
         processes_.write(it->second.process, input);
       if (a.value("close_stdin", false))
