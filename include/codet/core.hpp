@@ -169,11 +169,12 @@ class NativeProcesses final : public Processes {
   void record_error(const std::string &, Job &, const std::exception_ptr &);
   [[noreturn]] void throw_failure(const Job &) const;
   Job &observe(const std::string &);
+  Job &retained_job(const std::string &);
   ProcessResult publish(Job &, bool render = true);
   ProcessResult consume(const std::string &, bool render);
   static size_t job_bytes(const Job &);
   void advance_cleanup(Job &);
-  void finish(Job &, bool ownership_lost = false);
+  void finish(Job &, bool ownership_lost = false, std::optional<int> collected_status = {});
   void terminate(Job &, int status);
   void refresh();
   void prune();
@@ -493,7 +494,8 @@ public:
         DiagnosticSink diagnostics = {})
       : config_(c), provider_(p), tools_(t), state_(s), events_(std::move(e)),
         diagnostics_(std::move(diagnostics)) {}
-  RunResult run(Session &, const std::string &, const Cancellation &, const Json &schema = Json());
+  RunResult run(Session &, const std::string &, const Cancellation &, const Json &schema = Json(),
+                bool expand_command = true);
 };
 int cli_main(const std::vector<std::string> &args, Cancellation &);
 } // namespace codet

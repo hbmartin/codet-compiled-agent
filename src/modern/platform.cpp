@@ -494,6 +494,17 @@ public:
       process_error("reap child");
     return status;
   }
+  std::optional<int> try_reap(pid_t pid) override {
+    int status = 0;
+    const auto result = ::waitpid(pid, &status, WNOHANG);
+    if (result < 0 && errno == EINTR)
+      return std::nullopt;
+    if (result < 0 && errno == ECHILD)
+      throw ProcessOwnershipLost("Owned child is no longer available for reaping");
+    if (result < 0)
+      process_error("reap child without waiting");
+    return result == pid ? std::optional<int>(status) : std::nullopt;
+  }
 };
 } // namespace
 ssize_t ProcessControl::read_output(int fd, void *buffer, size_t count) {
@@ -932,12 +943,12 @@ std::vector<ProcessStatus> NativeProcesses::list() {
           {job.first, !job.second->done, job.second->result.exit_code, job.second->error});
   return out;
 }
-void NativeProcesses::finish(Job &job, bool ownership_lost) {
+void NativeProcesses::finish(Job &job, bool ownership_lost, std::optional<int> collected_status) {
   if (job.done)
     return;
   // Keep the leader unreaped until every signal to this group has been issued.
-  int status = 0;
-  if (!ownership_lost) {
+  int status = collected_status.value_or(0);
+  if (!ownership_lost && !collected_status) {
     control_->signal(-job.pid, SIGKILL);
     try {
       status = control_->reap(job.pid);
@@ -1058,16 +1069,14 @@ ProcessResult NativeProcesses::publish(Job &job, bool render) {
   return result;
 }
 ProcessResult NativeProcesses::poll(const std::string &id) {
-  const auto it = jobs_.find(id);
-  if (it == jobs_.end() || !it->second->retain)
-    throw Error("Unknown or expired job: " + id);
+  auto &job = retained_job(id);
   try {
     auto result = publish(observe(id));
     prune();
     return result;
   } catch (const std::exception &) {
-    record_error(id, *it->second, std::current_exception());
-    throw_failure(*it->second);
+    record_error(id, job, std::current_exception());
+    throw_failure(job);
   }
 }
 bool NativeProcesses::observe_cleanup(Job &job, std::exception_ptr &failure) {
@@ -1119,11 +1128,20 @@ void NativeProcesses::stop_owned(Job &job) {
   }
 }
 ProcessStatus NativeProcesses::status(const std::string &id) {
+  auto &job = retained_job(id);
+  try {
+    observe(id);
+    return {id, !job.done, job.result.exit_code, job.error};
+  } catch (const std::exception &) {
+    record_error(id, job, std::current_exception());
+    throw_failure(job);
+  }
+}
+NativeProcesses::Job &NativeProcesses::retained_job(const std::string &id) {
   const auto it = jobs_.find(id);
   if (it == jobs_.end() || !it->second->retain)
     throw Error("Unknown or expired job: " + id);
-  auto &job = observe(id);
-  return {id, !job.done, job.result.exit_code, job.error};
+  return *it->second;
 }
 void NativeProcesses::advance_cleanup(Job &job) {
   std::exception_ptr failure;
@@ -1131,7 +1149,19 @@ void NativeProcesses::advance_cleanup(Job &job) {
   if (!job.done && !job.cleanup_kill_sent) {
     control_->signal(-job.pid, SIGKILL);
     job.cleanup_kill_sent = true;
-    observe_cleanup(job, failure);
+  }
+  if (!job.done) {
+    try {
+      if (const auto status = control_->try_reap(job.pid))
+        finish(job, false, status);
+    } catch (const ProcessOwnershipLost &error) {
+      job.result.capture_error = error.what();
+      finish(job, true);
+    } catch (...) {
+      const auto current = std::current_exception();
+      if (!failure || fatal(current))
+        failure = current;
+    }
   }
   if (fatal(failure))
     std::rethrow_exception(failure);
@@ -1143,13 +1173,9 @@ ProcessResult NativeProcesses::take_output(const std::string &id) {
   return consume(id, false);
 }
 ProcessResult NativeProcesses::consume(const std::string &id, bool render) {
-  const auto found = jobs_.find(id);
-  if (found == jobs_.end() || !found->second->retain)
-    throw Error("Unknown or expired job: " + id);
+  auto &job = retained_job(id);
+  try {
   auto result = publish(observe(id), render);
-  const auto it = jobs_.find(id);
-  if (it != jobs_.end()) {
-    auto &job = *it->second;
     if (result.capture) {
       result.capture->finish();
       job.result = ProcessResult{};
@@ -1164,25 +1190,24 @@ ProcessResult NativeProcesses::consume(const std::string &id, bool render) {
       job.result.stderr_output.clear();
       job.result.truncated = false;
     }
-  }
+  prune();
   return result;
+  } catch (const std::exception &) {
+    record_error(id, job, std::current_exception());
+    throw_failure(job);
+  }
 }
 void NativeProcesses::stop(const std::string &id) {
-  auto it = jobs_.find(id);
-  if (it == jobs_.end() || !it->second->retain)
-    throw Error("Unknown or expired job: " + id);
+  auto &job = retained_job(id);
   try {
-    stop_owned(*it->second);
+    stop_owned(job);
   } catch (const std::exception &) {
-    record_error(id, *it->second, std::current_exception());
-    throw_failure(*it->second);
+    record_error(id, job, std::current_exception());
+    throw_failure(job);
   }
 }
 void NativeProcesses::close_stdin(const std::string &id) {
-  const auto it = jobs_.find(id);
-  if (it == jobs_.end() || !it->second->retain)
-    throw Error("Unknown or expired job: " + id);
-  auto &job = *it->second;
+  auto &job = retained_job(id);
   if (job.spec.pty || !job.spec.interactive_stdin)
     throw Error("close_stdin requires a pipe session");
   if (job.input_fd >= 0) {

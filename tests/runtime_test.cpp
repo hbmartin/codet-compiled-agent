@@ -448,8 +448,62 @@ TEST_F(Runtime, MalformedHookEntriesAreConfigurationErrorsForEveryEvent) {
     EXPECT_THAT(error.what(), HasSubstr("Invalid hook entry"));
   }
 }
-
-
+TEST_F(Runtime, WorkerDeliveryRetainsRemainingEventsOnUiFailureAndExpiresApprovals) {
+  Interaction input;
+  input.begin_turn("first");
+  input.post({{"type", "ui.failure"}});
+  auto work = std::async(std::launch::async, [&] {
+    return input.request("codet.approval", {{"tool", "exec_command"}}, cancel);
+  });
+  std::vector<Json> staged;
+  std::string request;
+  for (int i = 0; i < 1000 && request.empty(); ++i) {
+    for (const auto &event : input.events()) {
+      staged.push_back(event);
+      if (event.contains("request_id"))
+        request = event.at("request_id");
+    }
+    if (request.empty())
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  for (const auto &event : staged)
+    input.post(event);
+  input.post({{"type", "codet.diagnostic"}, {"text", "recovery diagnostic"}});
+  EXPECT_THROW(input.deliver([](const Json &) { throw Error("UI failed"); }), Error);
+  input.end_turn();
+  EXPECT_THROW(work.get(), Error);
+  ASSERT_FALSE(staged.empty());
+  ASSERT_FALSE(request.empty());
+  EXPECT_FALSE(input.answer(request, "yes"));
+  input.post({{"type", "turn.failed"}});
+  std::vector<std::string> delivered;
+  input.deliver([&](const Json &event) {
+    const auto type = event.at("type").get<std::string>();
+    if (type == "ui.failure")
+      throw Error("UI still unavailable");
+    delivered.push_back(type);
+  }, [](const std::string &) {}, true);
+  EXPECT_EQ(delivered, (std::vector<std::string>{"codet.diagnostic", "turn.failed"}));
+  EXPECT_TRUE(input.events().empty());
+  input.begin_turn("second");
+  EXPECT_FALSE(input.answer(request, "yes"));
+  EXPECT_FALSE(input.current_event(staged.front()));
+}
+TEST_F(Runtime, InvalidWorkerEventDoesNotDiscardTheFollowingOutcome) {
+  Interaction input;
+  input.begin_turn("current");
+  input.post({{"type", "bad"}, {"text", 42}});
+  input.post({{"type", "turn.failed"}});
+  size_t warnings = 0, outcomes = 0;
+  input.deliver([&](const Json &event) {
+    if (event.at("type") == "bad")
+      (void)event.at("text").get<std::string>();
+    else
+      ++outcomes;
+  }, [&](const std::string &) { ++warnings; });
+  EXPECT_EQ(warnings, 1u);
+  EXPECT_EQ(outcomes, 1u);
+}
 
 TEST_F(Runtime, PendingInputCannotLeakAcrossTurnOrSessionBoundaries) {
   Interaction input;

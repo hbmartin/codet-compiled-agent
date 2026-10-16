@@ -720,7 +720,7 @@ class CliTests(unittest.TestCase):
                 if p.poll() is None:p.kill();p.wait()
                 os.close(master);os.close(slave)
 
-    def test_late_steering_runs_before_a_deferred_new_session(self):
+    def test_late_slash_steering_runs_before_a_deferred_new_session(self):
         import pty,select
         config=self.home/'config.toml';base=config.read_text()
         for mode in ['line','curses']:
@@ -742,12 +742,12 @@ class CliTests(unittest.TestCase):
                 while not marker.exists() and time.monotonic()<deadline:
                     if select.select([master],[],[],.01)[0]:received+=os.read(master,65536)
                 self.assertTrue(marker.exists(),repr(received))
-                os.write(master,b'late steering\n/new\n')
+                os.write(master,b'/memory consolidate\n/new\n')
                 wait_for(b'Starting a new session after pending messages are handled.')
                 release.touch();wait_for(b'Started ')
                 self.assertEqual(len(self.server.requests),2)
                 users=[m['content'] for m in self.server.requests[1]['body']['messages'] if m['role']=='user']
-                self.assertEqual(users,['first prompt','late steering'])
+                self.assertEqual(users,['first prompt','/memory consolidate'])
                 received=b'';os.write(master,b'fresh session prompt\n');wait_for(b'fixture done')
                 users=[m['content'] for m in self.server.requests[-1]['body']['messages'] if m['role']=='user']
                 self.assertEqual(users,['fresh session prompt'])
