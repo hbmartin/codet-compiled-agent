@@ -1,4 +1,5 @@
 #include "codet/computer.hpp"
+#include "codet/artifacts.hpp"
 #include "codet/core.hpp"
 #include "codet/interaction.hpp"
 #include "codet/output.hpp"
@@ -504,7 +505,14 @@ TEST_F(Runtime, InvalidWorkerEventDoesNotDiscardTheFollowingOutcome) {
   EXPECT_EQ(warnings, 1u);
   EXPECT_EQ(outcomes, 1u);
 }
-
+TEST_F(Runtime, CaptureRejectsInvalidDisplayBoundsBeforeImageArithmetic) {
+  for (const auto &display : {CaptureRect{0, 0, 0, 100}, CaptureRect{0, 0, 100, -1},
+                              CaptureRect{0, 0, std::numeric_limits<double>::infinity(), 100},
+                              CaptureRect{std::numeric_limits<double>::quiet_NaN(), 0, 100, 100}}) {
+    EXPECT_THAT([&] { capture_area({display}, Json::object()); },
+                ThrowsMessage<Error>(HasSubstr("Invalid display bounds")));
+  }
+}
 TEST_F(Runtime, PendingInputCannotLeakAcrossTurnOrSessionBoundaries) {
   Interaction input;
   input.begin_turn("first");
@@ -544,6 +552,20 @@ TEST_F(Runtime, EphemeralArtifactRootIsUsedForPersistenceAndReplay) {
   EXPECT_TRUE(within(image.path, config.artifact_root));
   EXPECT_FALSE(fs::exists(config.home / "artifacts"));
   EXPECT_EQ(image_data_url(image, config), "data:image/png;base64,ZW5jb2RlZA==");
+  StateStore state(config.artifact_root.parent_path() / "state", config.artifact_root);
+  auto session = state.create();
+  Tools tools(config, files, processes, http, clock);
+  tools.use_session(session.id);
+  codet::Message message;
+  message.role = "system";
+  message.images = {image};
+  message.artifact_index = tools.archive_images({message}).string();
+  EXPECT_TRUE(within(message.artifact_index, config.artifact_root));
+  session.messages = {message};
+  state.save(session);
+  const auto fork = state.fork(session);
+  EXPECT_TRUE(within(fork.messages[0].artifact_index, config.artifact_root));
+  EXPECT_NE(fork.messages[0].artifact_index, message.artifact_index);
   fs::remove_all(config.artifact_root.parent_path());
   EXPECT_THROW(image_data_url(image, config), Error);
 }

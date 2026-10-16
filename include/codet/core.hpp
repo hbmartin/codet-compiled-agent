@@ -216,6 +216,7 @@ struct Message {
   Json replay = Json::array();
   std::string replay_provider = "";
   std::vector<ImageArtifact> images;
+  std::string origin, artifact_index;
 };
 void to_json(Json &, const ToolCall &);
 void from_json(const Json &, ToolCall &);
@@ -351,7 +352,7 @@ class StateStore {
   std::unique_ptr<Impl> impl_;
 
 public:
-  explicit StateStore(const fs::path &);
+  explicit StateStore(const fs::path &, const fs::path &artifact_root = {});
   ~StateStore();
   Session create(const std::string &name = "");
   // Default loads are repaired snapshots, never persistent recovery writes.
@@ -373,6 +374,8 @@ struct PermissionRequest {
   std::optional<fs::path> path;
   bool mutation = false;
   Json context = Json::object();
+  // Set only by trusted read-tool normalization after validating private artifact storage.
+  bool internal_read = false;
 };
 enum class Decision : uint8_t { allow, ask, deny };
 class Permissions {
@@ -465,6 +468,8 @@ public:
   void use_session(const std::string &id);
   ToolResult execute(const ToolCall &, const Cancellation &);
   std::string instructions() const;
+  std::string dynamic_context() const;
+  fs::path archive_images(const std::vector<Message> &);
   std::string expand_command(const std::string &) const;
   std::vector<std::string> take_input();
   void begin_input_turn(const std::string &);

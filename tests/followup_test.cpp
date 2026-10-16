@@ -1,4 +1,6 @@
+#include "prompt_support.hpp"
 #include "codet/core.hpp"
+#include "codet/computer.hpp"
 #include "codet/output.hpp"
 #include "codet/process_control.hpp"
 #include "codet/prompt.hpp"
@@ -123,9 +125,11 @@ TEST_F(Followup, CompactionUsesRealAdaptersWithoutToolsAndRetainsNormalTools) {
     config.providers[name].api_key = "fixture";
     StateStore state(config.home);
     auto session = state.create();
+    const auto image = persist_image(config, files, {"encoded", "image/png", 1, 1}, "high");
     for (int i = 0; i < 3; ++i) {
       codet::Message message;
       message.role = i % 2 ? "assistant" : "user";
+      message.images = {image};
       message.text = std::string(17 + i, 'x');
       for (int j = 0; j < 400; ++j)
         message.text += "雪🌲e\xcc\x81";
@@ -137,10 +141,7 @@ TEST_F(Followup, CompactionUsesRealAdaptersWithoutToolsAndRetainsNormalTools) {
     ApiProvider provider(transport, credentials, clock);
     Tools tools(config, files, processes, transport, clock);
     config.context_tokens =
-        (assemble_prompt(config, tools.schemas(), tools.capabilities(), tools.instructions())
-             .size() +
-         tools.schemas().dump().size() + 1200) /
-        3;
+        codet::test::context_tokens(tools, config, 1200);
     Agent agent(config, provider, tools, state, {});
     EXPECT_EQ(agent.run(session, "objective", cancel).text, "done") << name;
     ASSERT_EQ(transport.requests.size(), 2u) << name;
@@ -148,6 +149,8 @@ TEST_F(Followup, CompactionUsesRealAdaptersWithoutToolsAndRetainsNormalTools) {
     EXPECT_FALSE(transport.requests[1]["tools"].empty()) << name;
     EXPECT_THAT(transport.requests[0].dump(), HasSubstr("CONTEXT CHECKPOINT COMPACTION"));
     EXPECT_THAT(transport.requests[1].dump(), HasSubstr("You are Codet"));
+    EXPECT_THAT(transport.requests[1].dump(), Not(HasSubstr("data:image/")));
+    EXPECT_THAT(transport.requests[1].dump(), HasSubstr("Historical image index"));
   }
 }
 TEST_F(Followup, ShellSpoolPreservesOutputAndSupportsReadPaging) {

@@ -1,4 +1,5 @@
 #include "codet/core.hpp"
+#include "codet/computer.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/interaction.hpp"
 #include "codet/tool_registry.hpp"
@@ -650,7 +651,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   // Destroy processes/capture handles before removing the private invocation directory.
   NativeProcesses processes;
   processes.set_diagnostics(diagnostic);
-  StateStore state(state_home);
+  StateStore state(state_home, artifact_directory(config));
   if (o.command == "sessions") {
     std::cout << state.list().dump(2) << '\n';
     return 0;

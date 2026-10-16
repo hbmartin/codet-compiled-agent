@@ -1,4 +1,5 @@
 #include "codet/computer.hpp"
+#include "codet/artifacts.hpp"
 #include "codet/core.hpp"
 #include "codet/interaction.hpp"
 #include "codet/output.hpp"
@@ -305,7 +306,8 @@ Decision Permissions::decide(const PermissionRequest &r,
     const auto spill = capture_directory(config_);
     if (r.tool == "read_file" && !fs::is_symlink(spill) && within(p, paths.canonical(spill)))
       found = true;
-    if (!found)
+    if (!found && !(r.internal_read && !r.mutation &&
+                    (r.tool == "read_file" || r.tool == "view_image")))
       return Decision::deny;
   }
   for (const auto &rule : rules_->allow)
@@ -365,7 +367,19 @@ PermissionRequest Tools::execution_request(const ToolCall &call) const {
   const auto *definition = tool_definition(call.name);
   PermissionRequest request{call.name, "", std::nullopt, definition && definition->mutation};
   request.context = a;
-  if (call.name == "exec_command") {
+  if (call.name == "read_file" || call.name == "view_image") {
+    const auto value = a.at("path").get<std::string>();
+    request.target = value;
+    request.path = (config_.cwd / fs::path(value)).lexically_normal();
+    const auto p = files_.canonical(*request.path);
+    const auto root = artifact_directory(config_);
+    if (call.name == "read_file" && !session_id_.empty()) {
+      const auto index = artifact_index_path(root, session_id_);
+      request.internal_read = !fs::is_symlink(root) && !fs::is_symlink(index.parent_path()) &&
+                              !fs::is_symlink(*request.path) && p == files_.canonical(index);
+    } else if (call.name == "view_image")
+      request.internal_read = generated_image(config_, files_, p, false);
+  } else if (call.name == "exec_command") {
     const auto configured_shell = default_shell();
     const auto shell = a.value("shell", configured_shell);
     const auto command = a.at("cmd").get<std::string>();
@@ -533,7 +547,8 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
           throw Error("Permission denied for " + candidate.name + ": " + value);
       };
       if (candidate.name == "read_file" || candidate.name == "view_image")
-        check(candidate.arguments.at("path"));
+        { if (permissions_.decide(request) == Decision::deny)
+            throw Error("Permission denied for " + candidate.name + ": " + request.target); }
       else if (candidate.name == "apply_patch") {
         for (const auto &line : patch_lines(candidate.arguments.at("patch")))
           for (const auto &prefix :
@@ -728,7 +743,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
   const auto structured = [](Json data) { return ToolResult{data.dump(), false, std::move(data)}; };
   if (definition->handler == ToolHandler::read) {
     const auto p = path(a.at("path"));
-    authorize({name, p.string(), p, false});
+    authorize(request);
     if (fs::is_directory(p)) {
       Json entries = Json::array();
       size_t visited = 0;
@@ -1015,7 +1030,9 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
   }
   if (definition->handler == ToolHandler::image) {
     const auto p = path(a.at("path"));
-    authorize({name, p.string(), p, false});
+    authorize(request);
+    if (request.internal_read && !generated_image(config_, files_, p))
+      throw Error("Generated image artifact checksum mismatch");
     const auto detail = a.value("detail", std::string("high"));
     auto artifact = persist_image(config_, files_, images_->load(p, detail), detail);
     auto out = structured({{"detail", detail}, {"artifact", artifact}});
@@ -1149,6 +1166,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
   throw Error("Unavailable tool handler");
 }
 std::string Tools::instructions() const {
+  const std::string inspection = config_.permission_mode == "plan" ? "read_file" : "exec_command";
   const auto cwd = files_.canonical(config_.cwd), home = files_.canonical(config_.home);
   fs::path root = cwd;
   for (auto p = cwd; !p.empty(); p = p.parent_path()) {
@@ -1244,10 +1262,10 @@ std::string Tools::instructions() const {
     const auto cap = out.size() + config_.memory_context_max_bytes;
     for (const auto &p : paths) {
       if (++count > 200 || out.size() >= cap) {
-        warn("Memory context budget exhausted; use exec_command to read additional files");
+        warn("Memory context budget exhausted; use " + inspection + " to read additional files");
         break;
       }
-      if (!append("\n# Memory: " + p.string() + " (read through exec_command)\n", cap))
+      if (!append("\n# Memory: " + p.string() + " (read through " + inspection + ")\n", cap))
         break;
       bool truncated = false;
       try {
@@ -1270,9 +1288,24 @@ std::string Tools::instructions() const {
       for (const auto &entry : fs::directory_iterator(dir))
         if (++count <= 100 && !entry.is_symlink() && fs::exists(entry.path() / "SKILL.md"))
           out += entry.path().string() + "\n";
-  if (!todos_.empty())
-    out += "\n# Current task plan\n" + todos_.dump();
   return out;
+}
+std::string Tools::dynamic_context() const {
+  std::string out;
+  if (!todos_.empty())
+    out = "\n# Current task plan\n" + todos_.dump();
+  if (!session_id_.empty()) {
+    const auto index = artifact_index_path(artifact_directory(config_), session_id_);
+    if (fs::exists(index))
+      out += "\n# Historical image index\n" + index.string() +
+             "\nCompacted images are text references only. Page this JSONL index through " +
+             (config_.permission_mode == "plan" ? "read_file" : "exec_command") +
+             "; explicitly reload needed artifacts with view_image when available.\n";
+  }
+  return out;
+}
+fs::path Tools::archive_images(const std::vector<Message> &messages) {
+  return archive_image_history(artifact_directory(config_), files_, session_id_, messages);
 }
 void Tools::use_session(const std::string &id) {
   if (id == session_id_)

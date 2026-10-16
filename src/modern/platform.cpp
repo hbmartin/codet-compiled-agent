@@ -1292,6 +1292,10 @@ void to_json(Json &j, const Message &m) {
        {"calls", m.calls}, {"replay", m.replay}, {"replay_provider", m.replay_provider}};
   if (!m.images.empty())
     j["images"] = m.images;
+  if (!m.origin.empty())
+    j["origin"] = m.origin;
+  if (!m.artifact_index.empty())
+    j["artifact_index"] = m.artifact_index;
 }
 void from_json(const Json &j, Message &m) {
   m.role = j.at("role");
@@ -1301,5 +1305,7 @@ void from_json(const Json &j, Message &m) {
   m.replay = j.value("replay", Json::array());
   m.replay_provider = j.value("replay_provider", "");
   m.images = j.value("images", std::vector<ImageArtifact>{});
+  m.origin = j.value("origin", "");
+  m.artifact_index = j.value("artifact_index", "");
 }
 } // namespace codet

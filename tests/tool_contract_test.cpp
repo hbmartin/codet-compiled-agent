@@ -1,4 +1,6 @@
+#include "prompt_support.hpp"
 #include "codet/computer.hpp"
+#include "codet/artifacts.hpp"
 #include "codet/core.hpp"
 #include "codet/interaction.hpp"
 #include "codet/prompt.hpp"
@@ -40,8 +42,7 @@ struct Images : ImageBackend {
 struct Desktop : ComputerBackend {
   std::vector<std::pair<std::string, Json>> calls;
   bool fail = false;
-  Json facts = {{"available", true},     {"backend", "test"}, {"framebuffer", true},
-                {"accessibility", true}, {"clipboard", true}, {"applescript", true}};
+  Json facts = codet::test::desktop_facts();
   Json capabilities() const override {
     return facts;
   }
@@ -483,6 +484,11 @@ TEST_F(Contracts, CompactionRetainsReloadableImageReferences) {
   first.role = "user";
   first.text = std::string(2000, 'x');
   first.images = {artifact};
+  for (int i = 0; i < 200; ++i) {
+    auto older = artifact;
+    older.path += ".historical-" + std::to_string(i);
+    first.images.push_back(older);
+  }
   codet::Message second;
   second.role = "assistant";
   second.text = "earlier response";
@@ -491,9 +497,7 @@ TEST_F(Contracts, CompactionRetainsReloadableImageReferences) {
   state.save(session);
   auto t = tools();
   config.context_tokens =
-      (assemble_prompt(config, t.schemas(), t.capabilities(), t.instructions()).size() +
-       t.schemas().dump().size() + 1200) /
-      3;
+      codet::test::context_tokens(t, config, 1200);
   ScriptProvider provider;
   int summaries = 0;
   provider.next = [&](const auto &, const Json &schemas) {
@@ -509,9 +513,29 @@ TEST_F(Contracts, CompactionRetainsReloadableImageReferences) {
   Agent agent(config, provider, t, state, {});
   EXPECT_EQ(agent.run(session, "continue", cancel).text, "done");
   EXPECT_GE(summaries, 1);
-  ASSERT_FALSE(session.messages[0].images.empty());
-  EXPECT_EQ(session.messages[0].images.size(), 1u);
-  EXPECT_EQ(session.messages[0].images[0].sha256, artifact.sha256);
+  EXPECT_TRUE(session.messages[0].images.empty());
+  EXPECT_TRUE(session.messages[1].images.empty());
+  const auto index = artifact_index_path(artifact_directory(config), session.id);
+  const auto text = files.read(index);
+  EXPECT_EQ(std::count(text.begin(), text.end(), '\n'), 201);
+  EXPECT_EQ(session.messages[0].artifact_index, index.string());
+  EXPECT_THAT(t.dynamic_context(), HasSubstr(index.string()));
+  const auto restored = state.load_id(session.id);
+  EXPECT_EQ(restored.messages[0].artifact_index, index.string());
+  const auto fork = state.fork(restored);
+  const auto child_index = artifact_index_path(artifact_directory(config), fork.id);
+  EXPECT_EQ(fork.messages[0].artifact_index, child_index.string());
+  EXPECT_EQ(files.read(child_index), text);
+  config.permission_mode = "plan";
+  EXPECT_FALSE(t.execute(call("read_file", {{"path", index.string()}, {"offset", 2}, {"limit", 2}}), cancel).error);
+  EXPECT_TRUE(t.execute(call("read_file", {{"path", child_index.string()}}), cancel).error);
+  EXPECT_FALSE(t.execute(call("view_image", {{"path", artifact.path}}), cancel).error);
+  config.set_deny({"read_file(" + index.string() + ")", "view_image(" + artifact.path + ")"});
+  EXPECT_TRUE(t.execute(call("read_file", {{"path", index.string()}}), cancel).error);
+  EXPECT_TRUE(t.execute(call("view_image", {{"path", artifact.path}}), cancel).error);
+  config.set_deny({});
+  files.atomic_write(artifact.path, "corrupt");
+  EXPECT_TRUE(t.execute(call("view_image", {{"path", artifact.path}}), cancel).error);
 }
 struct FailingFiles : FileSystem {
   NativeFileSystem native;

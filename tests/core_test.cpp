@@ -1,3 +1,4 @@
+#include "prompt_support.hpp"
 #include "codet/core.hpp"
 #include "codet/prompt.hpp"
 #include "temp.hpp"
@@ -669,9 +670,7 @@ TEST_F(Fixture, ContextCompactionUsesSameProviderAndRetainsCurrentRequest) {
   StrictMock<MockProvider> provider;
   ProviderResult summary;
   config.context_tokens =
-      (assemble_prompt(config, tools.schemas(), tools.capabilities(), tools.instructions()).size() +
-       tools.schemas().dump().size() + 1200) /
-      3;
+      codet::test::context_tokens(tools, config, 1200);
   summary.message.role = "assistant";
   summary.message.text = "preserved summary";
   ProviderResult final;

@@ -13,6 +13,13 @@ std::string assemble_prompt(const Config &, const Json &schemas, const Json &cap
                             const std::string &project_context, bool structured_output = false);
 std::string_view summarization_prompt();
 std::string_view summary_prefix();
+struct PromptBudget {
+  size_t total, fixed, output;
+  size_t available() const {
+    return fixed >= total || output >= total - fixed ? 0 : total - fixed - output;
+  }
+};
+PromptBudget prompt_budget(const Config &, const std::string &system, const Json &schemas);
 
 // Append prepared messages without copying history. Roll back before turn recovery on failure.
 class PromptAppend {
