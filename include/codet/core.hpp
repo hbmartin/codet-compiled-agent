@@ -93,7 +93,7 @@ struct ProcessSpec {
   std::map<std::string, std::string> env;
   int timeout_ms = 120000;
   size_t output_limit = 65536;
-  bool pty = false, separate_stderr = false;
+  bool pty = false, separate_stderr = false, interactive_stdin = false;
   fs::path spool_directory;
   std::shared_ptr<CaptureStore> capture_store;
   size_t spool_limit = size_t{8} * 1024 * 1024, spool_quota = size_t{64} * 1024 * 1024;
@@ -135,6 +135,9 @@ struct Processes {
     return {};
   }
   virtual ProcessResult poll(const std::string &) = 0;
+  virtual ProcessResult read_output(const std::string &id) {
+    return poll(id);
+  }
   virtual void stop(const std::string &) = 0;
   virtual void write(const std::string &, const std::string &) {
     throw Error("Process input is unavailable");
@@ -176,6 +179,7 @@ public:
   std::string start(const ProcessSpec &, const Cancellation &) override;
   std::vector<ProcessStatus> list() override;
   ProcessResult poll(const std::string &) override;
+  ProcessResult read_output(const std::string &) override;
   void stop(const std::string &) override;
   void write(const std::string &, const std::string &) override;
 };
@@ -183,11 +187,18 @@ struct ToolCall {
   std::string id, name;
   Json arguments = Json::object();
 };
+struct ImageArtifact {
+  std::string path, mime = "image/png", sha256, detail = "high";
+  size_t width = 0, height = 0;
+};
+void to_json(Json &, const ImageArtifact &);
+void from_json(const Json &, ImageArtifact &);
 struct Message {
   std::string role, text, tool_call_id;
   std::vector<ToolCall> calls;
   Json replay = Json::array();
   std::string replay_provider = "";
+  std::vector<ImageArtifact> images;
 };
 void to_json(Json &, const ToolCall &);
 void from_json(const Json &, ToolCall &);
@@ -203,6 +214,7 @@ struct ProviderResult {
 };
 struct ProviderConfig {
   std::string api_key, base_url, model;
+  std::optional<bool> image_input;
 };
 struct Selection {
   std::string provider, model;
@@ -259,6 +271,7 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
                    const std::vector<std::string> &overrides, FileSystem &);
 std::string default_model(const Config &, const std::string &provider);
 Selection resolve_selection(const Config &, const std::optional<Selection> &saved = std::nullopt);
+bool image_input_enabled(const Config &);
 std::string env(const char *);
 std::string unique_id();
 bool within(const fs::path &, const fs::path &);
@@ -362,9 +375,22 @@ struct ToolResult {
   std::string content;
   bool error = false;
   Json metadata = Json::object();
+  std::vector<ImageArtifact> images;
+  ToolResult() = default;
+  ToolResult(std::string text, bool failed = false, Json data = Json::object(),
+             std::vector<ImageArtifact> attachments = {})
+      : content(std::move(text)), error(failed), metadata(std::move(data)),
+        images(std::move(attachments)) {}
+  ToolResult(std::string text, bool failed, Json data, std::shared_ptr<const OutputSnapshot> output,
+             std::shared_ptr<OutputCapture> store)
+      : content(std::move(text)), error(failed), metadata(std::move(data)),
+        preview(std::move(output)), capture(std::move(store)) {}
   std::shared_ptr<const OutputSnapshot> preview = {};
   std::shared_ptr<OutputCapture> capture = {};
 };
+class Interaction;
+class ComputerBackend;
+class ImageBackend;
 struct HookOutcome {
   bool blocked = false, stopped = false;
   std::string reason, additional_context;
@@ -390,18 +416,32 @@ class Tools {
   std::string session_id_;
   mutable std::set<std::string> warnings_;
   const Cancellation *active_cancel_ = nullptr;
+  std::shared_ptr<Interaction> interaction_;
+  std::shared_ptr<ComputerBackend> computer_;
+  std::shared_ptr<ImageBackend> images_;
+  struct ExecSession {
+    std::string process, command;
+    size_t cursor = 0;
+    bool completed = false;
+  };
+  std::map<int, ExecSession> exec_sessions_;
   fs::path path(const std::string &) const;
   void authorize(const PermissionRequest &);
   ToolResult execute_inner(const ToolCall &, const Cancellation &);
 
 public:
   Tools(const Config &c, FileSystem &f, Processes &p, HttpTransport &h, Clock &clock,
-        Approver a = {}, Questioner q = {}, DiagnosticSink diagnostics = {});
+        Approver a = {}, Questioner q = {}, DiagnosticSink diagnostics = {},
+        std::shared_ptr<Interaction> interaction = {},
+        std::shared_ptr<ComputerBackend> computer = {}, std::shared_ptr<ImageBackend> images = {});
   Json schemas() const;
   void use_session(const std::string &id);
   ToolResult execute(const ToolCall &, const Cancellation &);
   std::string instructions() const;
   std::string expand_command(const std::string &) const;
+  std::vector<std::string> take_input();
+  void cancel_exec() noexcept;
+  Json capabilities() const;
   HookOutcome run_hooks(const std::string &, const Json &, const Cancellation &, int budget_ms = 0,
                         DiagnosticBuffer *diagnostics = nullptr);
 };

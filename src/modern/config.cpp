@@ -1,4 +1,5 @@
 #include "codet/core.hpp"
+#include "codet/tool_registry.hpp"
 #include <fcntl.h>
 #include <sstream>
 #include <sys/file.h>
@@ -172,6 +173,8 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
         p.api_key = expand_env(it.value().value("api_key", ""));
         p.base_url = it.value().value("base_url", "");
         p.model = it.value().value("model", "");
+        if (it.value().contains("image_input"))
+          p.image_input = it.value().at("image_input").get<bool>();
         c.providers[it.key()] = p;
       }
     for (const auto &p : data.value("add_dirs", std::vector<std::string>{}))
@@ -199,7 +202,15 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
   const auto resolved = resolve_selection(c);
   c.provider = resolved.provider;
   c.model = resolved.model;
+  validate_tool_rules(c.rules().allow);
+  validate_tool_rules(c.rules().deny);
   return c;
+}
+bool image_input_enabled(const Config &c) {
+  const auto p = c.providers.find(c.provider);
+  if (p != c.providers.end())
+    return p->second.image_input.value_or(c.provider != "ollama");
+  return c.provider != "ollama";
 }
 std::string default_model(const Config &c, const std::string &provider) {
   if (c.configured.provider == provider && !c.configured.model.empty())

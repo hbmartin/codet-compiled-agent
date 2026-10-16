@@ -1,9 +1,16 @@
+#include "codet/computer.hpp"
 #include "codet/core.hpp"
+#include "codet/interaction.hpp"
 #include "codet/output.hpp"
 #include "codet/patch.hpp"
+#include "codet/tool_registry.hpp"
 #include <algorithm>
+#include <cstdio>
+#include <ctime>
 #include <fnmatch.h>
 #include <iostream>
+#include <limits>
+#include <nlohmann/json-schema.hpp>
 #include <openssl/sha.h>
 #include <set>
 #include <sstream>
@@ -213,76 +220,11 @@ std::vector<std::string> lines(const std::string &s) {
     out.push_back(l);
   return out;
 }
-std::string html_text(const std::string &s) {
-  std::string out;
-  bool tag = false;
-  std::string name, skip;
-  for (char c : s) {
-    if (c == '<') {
-      tag = true;
-      name.clear();
-      continue;
-    }
-    if (tag) {
-      if (c == '>') {
-        tag = false;
-        std::string n = name;
-        std::transform(n.begin(), n.end(), n.begin(),
-                       [](unsigned char x) { return static_cast<char>(std::tolower(x)); });
-        if (n.rfind("script", 0) == 0)
-          skip = "script";
-        if (n.rfind("style", 0) == 0)
-          skip = "style";
-        if (n == "/" + skip)
-          skip.clear();
-        if (skip.empty())
-          out += '\n';
-      } else
-        name += c;
-      continue;
-    }
-    if (skip.empty())
-      out += c;
-  }
-  for (const auto &e : std::vector<std::pair<std::string, std::string>>{{"&amp;", "&"},
-                                                                        {"&lt;", "<"},
-                                                                        {"&gt;", ">"},
-                                                                        {"&quot;", "\""},
-                                                                        {"&#39;", "'"},
-                                                                        {"&nbsp;", " "}}) {
-    size_t pos = 0;
-    while ((pos = out.find(e.first, pos)) != std::string::npos) {
-      out.replace(pos, e.first.size(), e.second);
-      pos += e.second.size();
-    }
-  }
-  return out;
-}
-Json property(const char *type) {
-  return {{"type", type}};
-}
 struct Change {
   fs::path path;
   std::optional<std::string> before, after;
   mode_t mode = 0644;
 };
-ToolResult process_result(const ProcessResult &r, bool background) {
-  Json metadata = {{"exit_code", r.exit_code},
-                   {"truncated", r.truncated},
-                   {"total_output_bytes", r.total_output_bytes}};
-  if (background)
-    metadata["running"] = r.running;
-  if (!r.spill_path.empty())
-    metadata["spill_path"] = r.spill_path;
-  if (!r.spill_path.empty() || r.spill_truncated || !r.capture_error.empty()) {
-    metadata["spill_bytes"] = r.spill_bytes;
-    metadata["spill_truncated"] = r.spill_truncated;
-  }
-  if (!r.capture_error.empty())
-    metadata["capture_error"] = r.capture_error;
-  return {r.output, r.exit_code != 0 && (!background || !r.running), metadata, r.preview,
-          r.capture};
-}
 std::string feedback_text(const std::string &text, size_t limit) {
   auto clean = safe_text(text);
   if (clean.size() <= limit)
@@ -354,20 +296,18 @@ Decision Permissions::decide(const PermissionRequest &r,
       if (within(p, paths.canonical(root)))
         found = true;
     const auto spill = capture_directory(config_);
-    if (r.tool == "Read" && !fs::is_symlink(spill) && within(p, paths.canonical(spill)))
+    if (r.tool == "read_file" && !fs::is_symlink(spill) && within(p, paths.canonical(spill)))
       found = true;
     if (!found)
       return Decision::deny;
   }
   for (const auto &rule : rules_->allow)
-    if (paths.matches(rule, r) && (!rule.scoped || (r.tool != "Bash" && r.tool != "TaskCreate") ||
-                                   literal_shell_command(r.target)))
+    if (paths.matches(rule, r) &&
+        (!rule.scoped || r.tool != "exec_command" || literal_shell_command(r.target)))
       return Decision::allow;
   if (!r.mutation)
     return Decision::allow;
-  if (config_.permission_mode == "accept-edits" &&
-      (r.tool == "Write" || r.tool == "Edit" || r.tool == "BatchEdit" || r.tool == "ApplyPatch" ||
-       r.tool == "Memory"))
+  if (config_.permission_mode == "accept-edits" && r.tool == "apply_patch")
     return Decision::allow;
   return Decision::ask;
 }
@@ -399,102 +339,58 @@ void Tools::authorize(const PermissionRequest &r) {
                 " requires approval. Do not retry without a policy change.");
 }
 Tools::Tools(const Config &c, FileSystem &f, Processes &p, HttpTransport &h, Clock &clock,
-             Approver a, Questioner q, DiagnosticSink diagnostics)
+             Approver a, Questioner q, DiagnosticSink diagnostics,
+             std::shared_ptr<Interaction> interaction, std::shared_ptr<ComputerBackend> computer,
+             std::shared_ptr<ImageBackend> images)
     : config_(c), files_(f), processes_(p), http_(h), clock_(clock), permissions_(c, f),
       approve_(std::move(a)), question_(std::move(q)), diagnostics_(std::move(diagnostics)),
       capture_store_(std::make_shared<CaptureStore>(capture_directory(c), size_t{8} * 1024 * 1024,
-                                                    size_t{64} * 1024 * 1024, 64, diagnostics_)) {}
+                                                    size_t{64} * 1024 * 1024, 64, diagnostics_)),
+      interaction_(std::move(interaction)),
+      computer_(computer ? std::move(computer) : native_computer()),
+      images_(images ? std::move(images) : native_images()) {}
+Json Tools::capabilities() const {
+  return {{"desktop", computer_->capabilities()},
+          {"image_input", image_input_enabled(config_)},
+          {"image_codec", images_->available()},
+          {"interactive", bool(question_ || interaction_)},
+          {"os_sandbox", false}};
+}
+std::vector<std::string> Tools::take_input() {
+  return interaction_ ? interaction_->take_input() : std::vector<std::string>{};
+}
+void Tools::cancel_exec() noexcept {
+  for (auto &entry : exec_sessions_)
+    if (!entry.second.completed) {
+      try {
+        processes_.stop(entry.second.process);
+      } catch (...) {
+        std::fputs("Exec cleanup failed while stopping owned process\n", stderr);
+      }
+      entry.second.completed = true;
+    }
+}
 Json Tools::schemas() const {
   Json out = Json::array();
-  auto add = [&](const char *name, const char *desc, Json props, Json required) {
-    out.push_back(
-        {{"name", name},
-         {"description", desc},
-         {"input_schema", {{"type", "object"}, {"properties", props}, {"required", required}}}});
-  };
-  add("Read", "Read a text file before editing. Paths are workspace-relative or absolute.",
-      {{"file_path", property("string")},
-       {"offset", property("integer")},
-       {"limit", property("integer")}},
-      Json::array({"file_path"}));
-  add("Write", "Atomically write a file. Existing files must have been read and unchanged.",
-      {{"file_path", property("string")}, {"content", property("string")}},
-      Json::array({"file_path", "content"}));
-  add("Edit", "Replace an exact unique string; read the file first.",
-      {{"file_path", property("string")},
-       {"old_string", property("string")},
-       {"new_string", property("string")},
-       {"replace_all", property("boolean")}},
-      Json::array({"file_path", "old_string", "new_string"}));
-  add("BatchEdit",
-      "Validate then apply edits across files, restoring previous content if a write fails.",
-      {{"edits",
-        {{"type", "array"},
-         {"items",
-          {{"type", "object"},
-           {"properties",
-            {{"file_path", property("string")},
-             {"old_string", property("string")},
-             {"new_string", property("string")}}},
-           {"required", Json::array({"file_path", "old_string", "new_string"})}}}}}},
-      Json::array({"edits"}));
-  add("ApplyPatch",
-      "Apply a Codex *** Begin Patch envelope. Supports Add/Delete/Update/Move; read existing "
-      "files first.",
-      {{"patch", property("string")}}, Json::array({"patch"}));
-  add("Bash",
-      "Execute a shell command under application permission controls; this is not an OS sandbox.",
-      {{"command", property("string")},
-       {"timeout_ms", property("integer")},
-       {"pty", property("boolean")},
-       {"run_in_background", property("boolean")}},
-      Json::array({"command"}));
-  add("Glob",
-      "Find workspace files with a glob pattern; skips generated and version-control directories.",
-      {{"pattern", property("string")}}, Json::array({"pattern"}));
-  add("WebFetch", "Fetch an HTTP(S) URL and return bounded readable text.",
-      {{"url", property("string")}}, Json::array({"url"}));
-  add("WebSearch",
-      "Search DuckDuckGo or configured SEARXNG_URL, BRAVE_SEARCH_API_KEY, SERPLY_API_KEY.",
-      {{"query", property("string")}}, Json::array({"query"}));
-  add("TaskCreate", "Start a background shell job for this process lifetime.",
-      {{"command", property("string")},
-       {"timeout_ms", property("integer")},
-       {"pty", property("boolean")}},
-      Json::array({"command"}));
-  add("TaskInput", "Send input to a running PTY shell job.",
-      {{"task_id", property("string")}, {"text", property("string")}},
-      Json::array({"task_id", "text"}));
-  add("TaskOutput", "Read a background job result.", {{"task_id", property("string")}},
-      Json::array({"task_id"}));
-  add("TaskList", "List shell jobs in this Codet process.", Json::object(), Json::array());
-  add("TaskStop", "Stop a background job and its process group.", {{"task_id", property("string")}},
-      Json::array({"task_id"}));
-  add("TodoWrite", "Replace the current task plan.",
-      {{"todos",
-        {{"type", "array"},
-         {"items",
-          {{"type", "object"},
-           {"properties", {{"content", property("string")}, {"status", property("string")}}},
-           {"required", Json::array({"content", "status"})}}}}}},
-      Json::array({"todos"}));
-  add("AskUserQuestion",
-      "Ask for a text answer, optionally suggesting choices. Noninteractive runs cannot answer.",
-      {{"question", property("string")},
-       {"options", {{"type", "array"}, {"items", property("string")}, {"maxItems", 12}}}},
-      Json::array({"question"}));
-  add("EnterPlanMode", "Temporarily restrict tools to reads.", Json::object(), Json::array());
-  add("ExitPlanMode", "Request permission to leave read-only plan mode.", Json::object(),
-      Json::array());
-  add("Memory", "List/read/write durable Markdown memory. Names are simple .md filenames.",
-      {{"action", property("string")},
-       {"name", property("string")},
-       {"content", property("string")}},
-      Json::array({"action"}));
-  add("Skill", "Load an installed skill's SKILL.md by name.", {{"name", property("string")}},
-      Json::array({"name"}));
-  add("Sleep", "Wait up to 60 seconds, cancellably.", {{"seconds", property("integer")}},
-      Json::array({"seconds"}));
+  const bool planning = config_.permission_mode == "plan";
+  for (const auto &d : tool_registry()) {
+    if (d.availability == "plan" && !planning)
+      continue;
+    if (d.availability == "default" && planning)
+      continue;
+    if (d.availability == "question" && (!planning || !question_))
+      continue;
+    if (d.availability == "interactive" && !interaction_)
+      continue;
+    if (d.availability == "image" && (!image_input_enabled(config_) || !images_->available()))
+      continue;
+    if (d.availability.rfind("computer", 0) == 0 &&
+        !computer_->capabilities().value("available", false))
+      continue;
+    if (d.availability == "computer_image" && !image_input_enabled(config_))
+      continue;
+    out.push_back({{"name", d.name}, {"description", d.description}, {"input_schema", d.schema}});
+  }
   return out;
 }
 ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
@@ -509,7 +405,8 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
   try {
     cancel.check();
     if (call.name == "Grep")
-      throw Error("Grep is retired; use Bash to run system grep, subject to shell permissions");
+      throw Error(
+          "Grep is retired; use exec_command to run system grep, subject to shell permissions");
     if (!call.arguments.is_object())
       throw Error("Tool arguments must be an object");
     bool known = false;
@@ -517,52 +414,71 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
       if (s["name"] == call.name)
         known = true;
     if (!known)
-      throw Error("Unknown tool: " + call.name);
+      throw Error("Unknown, removed, or unavailable tool: " + call.name);
+    const auto *definition = tool_definition(call.name);
+    nlohmann::json_schema::json_validator validator;
+    validator.set_root_schema(definition->schema);
+    validator.validate(call.arguments);
     const auto preflight = [&](const ToolCall &candidate) {
-      const bool mutation = candidate.name == "Write" || candidate.name == "Edit" ||
-                            candidate.name == "BatchEdit" || candidate.name == "ApplyPatch";
-      const auto check = [&](const std::string &value) {
+      const auto *d = tool_definition(candidate.name);
+      auto check = [&](const std::string &value) {
         const auto requested = (config_.cwd / fs::path(value)).lexically_normal();
-        if (permissions_.decide({candidate.name, value, requested, mutation}) == Decision::deny)
+        if (permissions_.decide({candidate.name, value, requested, d->mutation}) == Decision::deny)
           throw Error("Permission denied for " + candidate.name + ": " + value);
       };
-      if (candidate.arguments.contains("file_path"))
-        check(candidate.arguments.at("file_path"));
-      else if (candidate.name == "Glob")
-        check(candidate.arguments.value("path", "."));
-      else if (candidate.name == "BatchEdit" && candidate.arguments.contains("edits")) {
-        for (const auto &edit : candidate.arguments.at("edits"))
-          check(edit.at("file_path"));
-      } else if (candidate.name == "ApplyPatch" && candidate.arguments.contains("patch")) {
+      if (candidate.name == "read_file" || candidate.name == "view_image")
+        check(candidate.arguments.at("path"));
+      else if (candidate.name == "apply_patch") {
         for (const auto &line : patch_lines(candidate.arguments.at("patch")))
           for (const auto &prefix :
                {"*** Update File: ", "*** Add File: ", "*** Delete File: ", "*** Move to: "})
             if (line.rfind(prefix, 0) == 0)
               check(line.substr(std::string(prefix).size()));
-      } else {
-        const auto target =
-            candidate.arguments.value("command", candidate.arguments.value("name", ""));
-        if (permissions_.decide({candidate.name, target, std::nullopt, false}) == Decision::deny)
-          throw Error("Permission denied for " + candidate.name);
-      }
+      } else if (permissions_.decide(
+                     {candidate.name,
+                      candidate.arguments.value("cmd", candidate.arguments.value("script", "")),
+                      std::nullopt,
+                      d->mutation ||
+                          (candidate.name == "write_stdin" &&
+                           !candidate.arguments.value("chars", std::string{}).empty())}) ==
+                 Decision::deny)
+        throw Error("Permission denied for " + candidate.name);
     };
     preflight(call);
     ToolCall effective = call;
-    const auto hook = run_hooks("PreToolUse",
-                                {{"hook_event_name", "PreToolUse"},
-                                 {"tool_name", call.name},
-                                 {"tool_input", call.arguments},
-                                 {"cwd", config_.cwd.string()}},
-                                cancel);
+    Json hook_input = call.arguments;
+    if (call.name == "exec_command")
+      hook_input = {{"command", call.arguments.at("cmd")}};
+    HookOutcome hook;
+    if (call.name != "write_stdin")
+      hook = run_hooks("PreToolUse",
+                       {{"hook_event_name", "PreToolUse"},
+                        {"tool_name", definition->hook_name},
+                        {"tool_input", hook_input},
+                        {"cwd", config_.cwd.string()}},
+                       cancel);
     if (hook.blocked || hook.stopped)
       throw Error("Hook blocked PreToolUse: " + hook.reason);
-    if (hook.updated_input)
-      effective.arguments = *hook.updated_input;
+    if (hook.updated_input) {
+      if (call.name == "exec_command")
+        effective.arguments["cmd"] = hook.updated_input->at("command");
+      else
+        effective.arguments = *hook.updated_input;
+    }
+    validator.validate(effective.arguments);
     preflight(effective);
     auto result = execute_inner(effective, cancel);
+    const bool exec_output =
+        definition->handler == ToolHandler::exec || definition->handler == ToolHandler::stdin_write;
+    const auto response_limit =
+        exec_output
+            ? std::min(config_.tool_output_limit,
+                       static_cast<size_t>(effective.arguments.value("max_output_tokens", 10000)) *
+                           4)
+            : config_.tool_output_limit;
     const bool process_output = result.metadata.contains("total_output_bytes");
     if (!result.capture) {
-      result.capture = std::make_shared<OutputCapture>(capture_store_, config_.tool_output_limit);
+      result.capture = std::make_shared<OutputCapture>(capture_store_, response_limit);
       result.capture->append(result.content);
       result.capture->finish();
     }
@@ -571,17 +487,28 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
     std::string prefix, suffix;
     if (!hook.additional_context.empty())
       suffix = "\nHook context: " + hook.additional_context;
-    result.content = annotated(*result.preview, config_.tool_output_limit, "",
-                               feedback_text(suffix, config_.tool_output_limit / 3), "")
+    result.content = annotated(*result.preview, response_limit, "",
+                               feedback_text(suffix, response_limit / 3), "")
                          .text;
     try {
-      const auto post = run_hooks("PostToolUse",
-                                  {{"hook_event_name", "PostToolUse"},
-                                   {"tool_name", call.name},
-                                   {"tool_input", effective.arguments},
-                                   {"tool_response", result.content},
-                                   {"cwd", config_.cwd.string()}},
-                                  cancel);
+      HookOutcome post;
+      Json post_input = effective.arguments;
+      if (call.name == "exec_command")
+        post_input = {{"command", effective.arguments.at("cmd")}};
+      if (call.name == "write_stdin") {
+        const auto it = exec_sessions_.find(call.arguments.at("session_id").get<int>());
+        if (it != exec_sessions_.end())
+          post_input = {{"command", it->second.command}};
+      }
+      if (!((call.name == "exec_command" || call.name == "write_stdin") &&
+            result.metadata.contains("session_id")))
+        post = run_hooks("PostToolUse",
+                         {{"hook_event_name", "PostToolUse"},
+                          {"tool_name", definition->hook_name},
+                          {"tool_input", post_input},
+                          {"tool_response", result.content},
+                          {"cwd", config_.cwd.string()}},
+                         cancel);
       if (!post.additional_context.empty())
         suffix += "\nHook context: " + post.additional_context;
       if (post.stopped) {
@@ -598,13 +525,13 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
       result.error = true;
       result.metadata["action_completed"] = true;
     }
-    const auto annotation_budget = config_.tool_output_limit / 3;
+    const auto annotation_budget = response_limit / 3;
     const auto clean_prefix = safe_text(prefix), clean_suffix = safe_text(suffix);
     prefix = feedback_text(clean_prefix, annotation_budget);
     suffix = feedback_text(clean_suffix, annotation_budget - prefix.size());
     if (prefix.size() != clean_prefix.size() || suffix.size() != clean_suffix.size())
       result.metadata["hook_feedback_truncated"] = true;
-    auto rendered = annotated(*result.preview, config_.tool_output_limit, prefix, suffix, "");
+    auto rendered = annotated(*result.preview, response_limit, prefix, suffix, "");
     if (rendered.omitted)
       result.capture->retain();
     result.capture->flush();
@@ -622,20 +549,20 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
     if (result.metadata.contains("capture_error"))
       capture_store_->warn(result.metadata["capture_error"].get<std::string>());
     std::string notice;
-    if (rendered.omitted) {
+    if (rendered.omitted && response_limit >= 128) {
       if (result.metadata.contains("spill_path")) {
         notice =
             "\n[Output saved to " + safe_text(result.metadata["spill_path"].get<std::string>());
         if (result.metadata.value("spill_truncated", false))
           notice += "; capture incomplete";
         notice += "]";
-        if (notice.size() > config_.tool_output_limit / 3)
+        if (notice.size() > response_limit / 3)
           notice = result.metadata.value("spill_truncated", false)
                        ? "\n[Capture incomplete; see metadata.spill_path]"
                        : "\n[Output saved; see metadata.spill_path]";
       } else
         notice = "\n[Output omitted; disk capture unavailable]";
-      rendered = annotated(*result.preview, config_.tool_output_limit, prefix, suffix, notice);
+      rendered = annotated(*result.preview, response_limit, prefix, suffix, notice);
     }
     if (process_output || rendered.omitted || result.metadata.contains("spill_path")) {
       result.metadata["total_output_bytes"] = result.preview->total;
@@ -644,6 +571,10 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
     }
     result.content = std::move(rendered.text);
     result.metadata = safe_json(result.metadata);
+    if (exec_output) {
+      result.metadata["output"] = result.content;
+      result.content = result.metadata.dump();
+    }
     return result;
   } catch (const Error &e) {
     if (e.code == 130)
@@ -651,7 +582,8 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
     try {
       run_hooks("PostToolUseFailure",
                 {{"hook_event_name", "PostToolUseFailure"},
-                 {"tool_name", call.name},
+                 {"tool_name",
+                  tool_definition(call.name) ? tool_definition(call.name)->hook_name : call.name},
                  {"tool_input", call.arguments},
                  {"error", e.what()}},
                 cancel);
@@ -672,36 +604,57 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
 ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel) {
   const auto &a = call.arguments;
   const auto &name = call.name;
-  auto getpath = [&] { return path(a.at("file_path").get<std::string>()); };
-  auto guard = [&](const fs::path &p) {
-    if (fs::exists(p)) {
-      const auto it = read_versions_.find(p);
-      if (it == read_versions_.end())
-        throw Error("Read the file before changing it: " + p.string());
-      if (it->second != digest(files_.read(p)))
-        throw Error("File changed since Read; read it again: " + p.string());
-    }
-  };
-  if (name == "Read") {
-    const auto p = getpath();
+  const auto *definition = tool_definition(name);
+  const auto structured = [](Json data) { return ToolResult{data.dump(), false, std::move(data)}; };
+  if (definition->handler == ToolHandler::read) {
+    const auto p = path(a.at("path"));
     authorize({name, p.string(), p, false});
+    if (fs::is_directory(p)) {
+      Json entries = Json::array();
+      size_t visited = 0;
+      const auto context = permissions_.context();
+      for (const auto &entry : fs::directory_iterator(p)) {
+        cancel.check();
+        if (++visited > 10000)
+          break;
+        if (permissions_.decide({name, entry.path().string(), entry.path(), false}, context) ==
+            Decision::deny)
+          continue;
+        entries.push_back({{"name", safe_text(entry.path().filename().string())},
+                           {"type", entry.is_symlink()     ? "symlink"
+                                    : entry.is_directory() ? "directory"
+                                                           : "file"}});
+        if (entries.dump().size() > config_.tool_output_limit / 2)
+          break;
+      }
+      return structured({{"entries", entries}, {"truncated", visited > entries.size()}});
+    }
     const auto content = files_.read(p);
     if (content.find('\0') != std::string::npos)
       throw Error("Binary file cannot be read as text");
-    read_versions_[p] = digest(content);
     const auto ls = lines(content);
-    const size_t first = a.value("offset", size_t{1}), limit = a.value("limit", size_t{2000});
-    if (first == 0 || limit > 100000)
+    const auto first = a.value("offset", 1), count = a.value("limit", 2000);
+    if (first < 1 || count < 1 || count > 100000)
       throw Error("Invalid line range");
-    std::string out;
-    for (size_t i = first - 1; i < ls.size() && i - first + 1 < limit; ++i) {
-      out += std::to_string(i + 1) + "\t" + ls[i] + "\n";
-      if (out.size() > config_.tool_output_limit * 2)
+    std::string text;
+    for (size_t i = static_cast<size_t>(first - 1);
+         i < ls.size() && i - static_cast<size_t>(first - 1) < static_cast<size_t>(count); ++i) {
+      text += std::to_string(i + 1) + "\t" + ls[i] + "\n";
+      if (text.size() > config_.tool_output_limit)
         break;
     }
-    return {out, false, {{"total_lines", ls.size()}, {"version", digest(content)}}};
+    return {text, false, {{"total_lines", ls.size()}}};
   }
-  if (name == "Write" || name == "Edit" || name == "BatchEdit" || name == "ApplyPatch") {
+  if (definition->handler == ToolHandler::patch) {
+    // Snapshot only within this call. A prior model-facing read is not required.
+    std::map<fs::path, std::string> snapshots;
+    auto guard = [&](const fs::path &p) {
+      const auto current = fs::exists(p) ? digest(files_.read(p)) : "<missing>";
+      const auto it = snapshots.find(p);
+      if (it != snapshots.end() && it->second != current)
+        throw Error("File changed during patch: " + p.string());
+      snapshots[p] = current;
+    };
     std::vector<Change> changes;
     auto add = [&](const fs::path &p, std::optional<std::string> after, bool approved = false) {
       if (!approved)
@@ -716,112 +669,73 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
         throw Error("Duplicate file in batch/patch");
       if (!before && !after)
         throw Error("Cannot delete a missing file");
-      struct stat st {};
+      struct stat st{};
       const auto mode = stat(p.c_str(), &st) == 0 ? st.st_mode & 0777 : 0644;
       changes.push_back({p, before, std::move(after), static_cast<mode_t>(mode)});
     };
-    auto edit = [&](const Json &e) {
-      const auto p = path(e.at("file_path").get<std::string>());
-      auto staged = std::find_if(changes.begin(), changes.end(),
-                                 [&](const Change &x) { return x.path == p; });
-      if (staged == changes.end()) {
-        authorize({name, p.string(), p, true});
-        guard(p);
-      }
-      auto text = staged == changes.end() ? files_.read(p) : staged->after.value();
-      const auto old = e.at("old_string").get<std::string>(),
-                 replacement = e.at("new_string").get<std::string>();
-      if (old.empty())
-        throw Error("old_string cannot be empty");
-      size_t at = text.find(old);
-      if (at == std::string::npos)
-        throw Error("old_string was not found");
-      const bool all = e.value("replace_all", false);
-      if (!all && text.find(old, at + old.size()) != std::string::npos)
-        throw Error("Ambiguous edit; provide unique context or replace_all");
-      do {
-        text.replace(at, old.size(), replacement);
-        at = text.find(old, at + replacement.size());
-      } while (all && at != std::string::npos);
-      if (staged == changes.end())
-        add(p, text, true);
-      else
-        staged->after = text;
+    const auto patch = a.at("patch").get<std::string>();
+    auto ls = patch_lines(patch);
+    const auto trim = [](const std::string &line) {
+      const auto first = line.find_first_not_of(" \t\r");
+      return first == std::string::npos
+                 ? std::string{}
+                 : line.substr(first, line.find_last_not_of(" \t\r") - first + 1);
     };
-    if (name == "Write")
-      add(getpath(), a.at("content").get<std::string>());
-    else if (name == "Edit")
-      edit(a);
-    else if (name == "BatchEdit") {
-      if (!a.at("edits").is_array() || a["edits"].empty() || a["edits"].size() > 100)
-        throw Error("Batch requires 1..100 edits");
-      for (const auto &e : a["edits"])
-        edit(e);
-    } else {
-      const auto patch = a.at("patch").get<std::string>();
-      auto ls = patch_lines(patch);
-      const auto trim = [](const std::string &line) {
-        const auto first = line.find_first_not_of(" \t\r");
-        return first == std::string::npos
-                   ? std::string{}
-                   : line.substr(first, line.find_last_not_of(" \t\r") - first + 1);
-      };
-      while (!ls.empty() && trim(ls.front()).empty())
-        ls.erase(ls.begin());
-      while (!ls.empty() && trim(ls.back()).empty())
-        ls.pop_back();
-      if (!ls.empty()) {
-        ls.front() = trim(ls.front());
-        ls.back() = trim(ls.back());
-      }
-      if (ls.empty() || ls.front() != "*** Begin Patch" || ls.back() != "*** End Patch")
-        throw Error("Expected complete *** Begin Patch envelope");
-      for (size_t i = 1; i + 1 < ls.size();) {
-        const auto &header = ls[i++];
-        const auto colon = header.find(": ");
-        if (colon == std::string::npos)
-          throw Error("Malformed patch file header");
-        const auto p = path(header.substr(colon + 2));
-        const auto kind = header.substr(0, colon);
-        if (kind == "*** Delete File") {
-          add(p, std::nullopt);
-          continue;
-        }
-        if (kind == "*** Add File") {
-          if (fs::exists(p))
-            throw Error("Add File already exists");
-          std::string text;
-          while (i + 1 < ls.size() && ls[i].rfind("*** ", 0) != 0) {
-            if (ls[i].empty() || ls[i][0] != '+')
-              throw Error("Invalid add line");
-            text += ls[i++].substr(1) + "\n";
-          }
-          add(p, text);
-          continue;
-        }
-        if (kind != "*** Update File")
-          throw Error("Unknown patch directive");
-        authorize({name, p.string(), p, true});
-        guard(p);
-        auto text = files_.read(p);
-        fs::path destination = p;
-        if (i < ls.size() && ls[i].rfind("*** Move to: ", 0) == 0) {
-          destination = path(ls[i++].substr(13));
-          if (fs::exists(destination))
-            throw Error("Move destination exists");
-        }
-        text = patch_update(text, ls, i, cancel);
-        if (destination != p) {
-          add(p, std::nullopt, true);
-          const auto original_mode = changes.back().mode;
-          add(destination, text);
-          changes.back().mode = original_mode;
-        } else
-          add(p, text, true);
-      }
-      if (changes.empty())
-        throw Error("Empty patch");
+    while (!ls.empty() && trim(ls.front()).empty())
+      ls.erase(ls.begin());
+    while (!ls.empty() && trim(ls.back()).empty())
+      ls.pop_back();
+    if (!ls.empty()) {
+      ls.front() = trim(ls.front());
+      ls.back() = trim(ls.back());
     }
+    if (ls.empty() || ls.front() != "*** Begin Patch" || ls.back() != "*** End Patch")
+      throw Error("Expected complete *** Begin Patch envelope");
+    for (size_t i = 1; i + 1 < ls.size();) {
+      const auto &header = ls[i++];
+      const auto colon = header.find(": ");
+      if (colon == std::string::npos)
+        throw Error("Malformed patch file header");
+      const auto p = path(header.substr(colon + 2));
+      const auto kind = header.substr(0, colon);
+      if (kind == "*** Delete File") {
+        add(p, std::nullopt);
+        continue;
+      }
+      if (kind == "*** Add File") {
+        if (fs::exists(p))
+          throw Error("Add File already exists");
+        std::string text;
+        while (i + 1 < ls.size() && ls[i].rfind("*** ", 0) != 0) {
+          if (ls[i].empty() || ls[i][0] != '+')
+            throw Error("Invalid add line");
+          text += ls[i++].substr(1) + "\n";
+        }
+        add(p, text);
+        continue;
+      }
+      if (kind != "*** Update File")
+        throw Error("Unknown patch directive");
+      authorize({name, p.string(), p, true});
+      guard(p);
+      auto text = files_.read(p);
+      fs::path destination = p;
+      if (i < ls.size() && ls[i].rfind("*** Move to: ", 0) == 0) {
+        destination = path(ls[i++].substr(13));
+        if (fs::exists(destination))
+          throw Error("Move destination exists");
+      }
+      text = patch_update(text, ls, i, cancel);
+      if (destination != p) {
+        add(p, std::nullopt, true);
+        const auto original_mode = changes.back().mode;
+        add(destination, text);
+        changes.back().mode = original_mode;
+      } else
+        add(p, text, true);
+    }
+    if (changes.empty())
+      throw Error("Empty patch");
     for (const auto &change : changes)
       guard(change.path);
     size_t applied = 0;
@@ -867,265 +781,249 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     return {
         "Applied " + std::to_string(changes.size()) + " file change(s)", false, {{"paths", paths}}};
   }
-  if (name == "Bash" || name == "TaskCreate") {
-    const auto command = a.at("command").get<std::string>();
-    authorize({name, command, std::nullopt, true});
-    ProcessSpec spec;
-    spec.argv = {"/bin/sh", "-c", command};
-    spec.cwd = config_.cwd;
-    spec.timeout_ms = a.value("timeout_ms", 120000);
-    spec.pty = a.value("pty", false);
-    spec.output_limit = config_.tool_output_limit;
-    spec.spool_directory = capture_directory(config_);
-    spec.capture_store = capture_store_;
-    if (spec.timeout_ms < 1 || spec.timeout_ms > 3600000)
-      throw Error("Timeout must be 1..3600000 ms");
-    if (name == "TaskCreate" || a.value("run_in_background", false)) {
-      const auto id = processes_.start(spec, cancel);
-      return {id, false, {{"lifetime", "current codet process"}}};
+
+  if (definition->handler == ToolHandler::exec || definition->handler == ToolHandler::stdin_write) {
+    const auto started = std::chrono::steady_clock::now();
+    const auto requested = a.value("max_output_tokens", 10000);
+    if (requested < 1 || requested > 1000000)
+      throw Error("Invalid max_output_tokens");
+    int id = 0;
+    int wait = 10000;
+    if (definition->handler == ToolHandler::exec) {
+      const auto command = a.at("cmd").get<std::string>();
+      if (command.empty() || command.size() > size_t{1024} * 1024)
+        throw Error("Invalid command length");
+      if (a.value("sandbox_permissions", "use_default") != "use_default" ||
+          a.contains("justification") || a.contains("prefix_rule"))
+        throw Error("Sandbox escalation and permission profiles are unavailable on Tiger; use "
+                    "application permission configuration");
+      authorize({name, command, std::nullopt, true});
+      ProcessSpec spec;
+      const auto shell =
+          a.value("shell", env("SHELL").empty() ? std::string("/bin/sh") : env("SHELL"));
+      if (shell.empty() || shell.front() != '/')
+        throw Error("shell must be an absolute executable path");
+      spec.argv = {shell};
+      if (a.value("login", true))
+        spec.argv.push_back("-l");
+      spec.argv.push_back("-c");
+      spec.argv.push_back(command);
+      spec.cwd = a.contains("workdir") ? path(a.at("workdir")) : config_.cwd;
+      if (!fs::is_directory(spec.cwd))
+        throw Error("Working directory does not exist");
+      spec.pty = a.value("tty", false);
+      spec.interactive_stdin = true;
+      spec.timeout_ms = std::numeric_limits<int>::max();
+      spec.output_limit = config_.tool_output_limit;
+      spec.spool_directory = capture_directory(config_);
+      spec.capture_store = capture_store_;
+      wait = std::clamp(a.value("yield_time_ms", 10000), 250, 30000);
+      if (exec_sessions_.size() >= 128) {
+        for (auto it = exec_sessions_.begin(); it != exec_sessions_.end();) {
+          if (it->second.completed)
+            it = exec_sessions_.erase(it);
+          else
+            ++it;
+        }
+        if (exec_sessions_.size() >= 128)
+          throw Error("Exec session limit reached");
+      }
+      do {
+        id = static_cast<int>(std::hash<std::string>{}(unique_id()) & 0x7fffffffU);
+      } while (id == 0 || exec_sessions_.count(id));
+      exec_sessions_[id] = {processes_.start(spec, cancel), command, 0, false};
+    } else {
+      id = a.at("session_id").get<int>();
+      const auto it = exec_sessions_.find(id);
+      if (it == exec_sessions_.end() || it->second.completed)
+        throw Error("Unknown or completed exec session");
+      const auto input = a.value("chars", std::string{});
+      authorize({name, std::to_string(id), std::nullopt, !input.empty()});
+      if (!input.empty())
+        processes_.write(it->second.process, input);
+      wait = std::clamp(a.value("yield_time_ms", input.empty() ? 5000 : 250),
+                        input.empty() ? 5000 : 1, input.empty() ? 300000 : 30000);
     }
-    const auto r = processes_.run(spec, cancel);
-    return process_result(r, false);
-  }
-  if (name == "TaskInput") {
-    const auto id = a.at("task_id").get<std::string>();
-    authorize({name, id, std::nullopt, true});
-    processes_.write(id, a.at("text").get<std::string>());
-    return {"Input sent", false, Json::object()};
-  }
-  if (name == "TaskOutput" || name == "TaskStop") {
-    const auto id = a.at("task_id").get<std::string>();
-    authorize({name, id, std::nullopt, name == "TaskStop"});
-    if (name == "TaskStop")
-      processes_.stop(id);
-    const auto r = processes_.poll(id);
-    return process_result(r, true);
-  }
-  if (name == "TaskList") {
-    Json jobs = Json::array();
-    for (const auto &job : processes_.list()) {
-      Json item = {{"id", job.id}, {"running", job.running}, {"exit_code", job.exit_code}};
-      if (!job.error.empty())
-        item["error"] = job.error;
-      jobs.push_back(std::move(item));
-    }
-    return {jobs.dump(), false, Json::object()};
-  }
-  if (name == "Glob") {
-    const auto start = a.contains("path") ? path(a["path"].get<std::string>()) : config_.cwd;
-    authorize({name, start.string(), start, false});
-    const auto pattern = a.at("pattern").get<std::string>();
-    if (pattern.size() > 4096)
-      throw Error("Pattern too large");
-    const bool scoped_denials = permissions_.has_scoped_denials(name);
-    const auto context = permissions_.context();
-    const auto denied = [&](const fs::path &p) {
-      return scoped_denials &&
-             permissions_.decide({name, p.string(), p, false}, context) == Decision::deny;
-    };
-    std::vector<fs::path> candidates;
-    if (fs::is_regular_file(start))
-      candidates.push_back(start);
-    else {
-      size_t visited = 0;
-      for (fs::recursive_directory_iterator
-               it(start, fs::directory_options::skip_permission_denied),
-           end;
-           it != end && visited++ < 10000; ++it) {
+    auto &job = exec_sessions_.at(id);
+    ProcessResult result;
+    try {
+      do {
         cancel.check();
-        const auto base = it->path().filename().string();
-        if (it->is_directory() && denied(it->path())) {
-          it.disable_recursion_pending();
-          continue;
-        }
-        if (it->is_directory() &&
-            (base == ".git" || base == ".deps" || base == "build" || base == "node_modules")) {
-          it.disable_recursion_pending();
-          continue;
-        }
-        if (it->is_symlink()) {
-          if (it->is_directory())
-            it.disable_recursion_pending();
-          continue;
-        }
-        if (it->is_regular_file())
-          candidates.push_back(it->path());
+        result = processes_.poll(job.process);
+        if (!result.running)
+          break;
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - started)
+                                 .count();
+        if (elapsed >= wait)
+          break;
+        clock_.sleep_ms(static_cast<int>(std::min<int64_t>(10, wait - elapsed)), cancel);
+      } while (true);
+      result = processes_.read_output(job.process);
+    } catch (...) {
+      try {
+        processes_.stop(job.process);
+      } catch (...) {
+        std::fputs("Exec cleanup failed; preserving original error\n", stderr);
       }
+      job.completed = true;
+      throw;
     }
-    std::sort(candidates.begin(), candidates.end());
-    std::string out;
-    for (const auto &p : candidates) {
-      cancel.check();
-      const auto relative = p.lexically_relative(config_.cwd).string();
-      if (fnmatch(pattern.c_str(), relative.c_str(), 0) == 0 ||
-          (pattern.rfind("**/", 0) == 0 &&
-           fnmatch(pattern.substr(3).c_str(), relative.c_str(), 0) == 0))
-        if (!fs::is_symlink(p) && within(p, start) &&
-            (!scoped_denials ||
-             permissions_.decide({name, p.string(), p, false}, context) != Decision::deny))
-          out += relative + "\n";
-      if (out.size() > config_.tool_output_limit * 2)
-        break;
-    }
-    return {out, false, Json::object()};
-  }
-  if (name == "WebFetch" || name == "WebSearch") {
-    HttpRequest r;
-    r.method = "GET";
-    r.timeout_seconds = 20;
-    r.max_bytes = size_t{2} * size_t{1024} * 1024;
-    std::string backend = "html";
-    if (name == "WebFetch")
-      r.url = a.at("url");
+    Json data = {
+        {"chunk_id", unique_id()},
+        {"wall_time_seconds",
+         std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count()},
+        {"total_output_bytes", result.total_output_bytes}};
+    if (result.running)
+      data["session_id"] = id;
     else {
-      const auto query = url_encode(a.at("query").get<std::string>());
-      if (!env("SEARXNG_URL").empty()) {
-        r.url = env("SEARXNG_URL") + "/search?q=" + query + "&format=json";
-        backend = "searxng";
-      } else if (!env("BRAVE_SEARCH_API_KEY").empty()) {
-        r.url = "https://api.search.brave.com/res/v1/web/search?q=" + query + "&count=5";
-        r.headers["X-Subscription-Token"] = env("BRAVE_SEARCH_API_KEY");
-        backend = "brave";
-      } else if (!env("SERPLY_API_KEY").empty()) {
-        r.url = "https://api.serply.io/v1/search/?q=" + query + "&num=5";
-        r.headers["X-Api-Key"] = env("SERPLY_API_KEY");
-        backend = "serply";
-      } else {
-        r.url = "https://api.duckduckgo.com/?q=" + query + "&format=json&no_html=1&skip_disambig=1";
-        backend = "ddg";
-      }
+      data["exit_code"] = result.exit_code;
+      job.completed = true;
     }
-    authorize({name, r.url, std::nullopt, false});
-    const auto response = http_.perform(r, cancel);
-    if (response.status < 200 || response.status >= 300)
-      throw Error("Web request failed (HTTP " + std::to_string(response.status) + ")");
-    if (backend == "html") {
-      const auto first = response.body.find_first_not_of(" \t\r\n");
-      return {first != std::string::npos && response.body[first] == '<' ? html_text(response.body)
-                                                                        : response.body,
-              false,
-              {{"url", r.url}}};
+    if (result.truncated || result.total_output_bytes > static_cast<size_t>(requested) * 4)
+      data["original_token_count"] = (result.total_output_bytes + 3) / 4;
+    if (!result.spill_path.empty())
+      data["spill_path"] = result.spill_path;
+    if (!result.spill_path.empty() || result.spill_truncated || !result.capture_error.empty()) {
+      data["spill_bytes"] = result.spill_bytes;
+      data["spill_truncated"] = result.spill_truncated;
     }
-    const auto data = Json::parse(response.body);
-    if (backend == "ddg") {
-      std::string out;
-      if (!data.value("Abstract", "").empty())
-        out = data.value("AbstractSource", "") + "\n" + data.value("AbstractURL", "") + "\n" +
-              data.value("Abstract", "") + "\n\n";
-      size_t count = 0;
-      std::function<void(const Json &)> topics = [&](const Json &list) {
-        for (const auto &item : list) {
-          if (count >= 5)
-            break;
-          if (item.contains("Topics"))
-            topics(item["Topics"]);
-          else if (!item.value("Text", "").empty()) {
-            ++count;
-            out += item.value("Text", "") + "\n" + item.value("FirstURL", "") + "\n\n";
-          }
-        }
-      };
-      topics(data.value("RelatedTopics", Json::array()));
-      return {out.empty() ? "No DuckDuckGo instant answers. Configure SearXNG, Brave, or Serply "
-                            "for general web search."
-                          : out,
-              false, Json::object()};
-    }
-    const auto results = backend == "brave"
-                             ? data.value("web", Json::object()).value("results", Json::array())
-                             : data.value("results", Json::array());
-    std::string out;
-    size_t count = 0;
-    for (const auto &item : results) {
-      if (++count > 5)
-        break;
-      out += item.value("title", "") + "\n" + item.value("url", item.value("link", "")) + "\n" +
-             item.value("content", item.value("description", item.value("snippet", ""))) + "\n\n";
-    }
-    return {out, false, Json::object()};
+    if (!result.capture_error.empty())
+      data["capture_error"] = result.capture_error;
+    return {result.output, false, data, result.preview, result.capture};
   }
-  if (name == "TodoWrite") {
+  if (definition->handler == ToolHandler::image) {
+    const auto p = path(a.at("path"));
+    authorize({name, p.string(), p, false});
+    const auto detail = a.value("detail", std::string("high"));
+    auto artifact = persist_image(config_, files_, images_->load(p, detail), detail);
+    auto out = structured({{"detail", detail}, {"artifact", artifact}});
+    out.images.push_back(artifact);
+    return out;
+  }
+  if (definition->handler == ToolHandler::plan) {
     authorize({name, "task plan", std::nullopt, false});
-    todos_ = a.at("todos");
-    if (!todos_.is_array() || todos_.size() > 100)
-      throw Error("todos must be an array of at most 100 items");
+    const auto &plan = a.at("plan");
+    if (plan.size() > 100)
+      throw Error("Plan exceeds 100 steps");
+    size_t active = 0;
+    for (const auto &step : plan)
+      if (step.at("status") == "in_progress")
+        ++active;
+    if (active > 1)
+      throw Error("At most one step may be in_progress");
+    todos_ = plan;
     if (!session_id_.empty()) {
       fs::create_directories(config_.home / "plans");
-      files_.atomic_write(config_.home / "plans" / (session_id_ + ".json"), todos_.dump(), true);
+      files_.atomic_write(config_.home / "plans" / (session_id_ + ".json"), plan.dump(), true);
     }
-    return {todos_.dump(), false, Json::object()};
+    return {"Plan updated"};
   }
-  if (name == "EnterPlanMode") {
-    plan_ = true;
-    return {"Plan mode enabled", false, Json::object()};
-  }
-  if (name == "ExitPlanMode") {
-    if (config_.approval == "never" || !approve_ ||
-        !approve_({name, "Leave read-only plan mode", std::nullopt, true}))
-      throw Error("Leaving plan mode requires explicit approval");
-    plan_ = false;
-    return {"Plan mode disabled", false, Json::object()};
-  }
-  if (name == "AskUserQuestion") {
-    if (!question_)
-      throw Error("Cannot ask the user in noninteractive mode");
-    const auto question = a.at("question").get<std::string>();
-    const auto options = a.value("options", std::vector<std::string>{});
-    if (question.empty() || question.size() > 8192 || options.size() > 12)
-      throw Error("Question exceeds supported limits");
-    for (const auto &option : options)
-      if (option.size() > 1024)
-        throw Error("Question option exceeds supported limits");
-    return {question_(question, options), false, Json::object()};
-  }
-  if (name == "Sleep") {
-    const auto seconds = a.at("seconds").get<int>();
-    if (seconds < 0 || seconds > 60)
-      throw Error("Sleep must be 0..60 seconds");
-    clock_.sleep_ms(seconds * 1000, cancel);
-    return {"Wait complete", false, Json::object()};
-  }
-  if (name == "Memory") {
-    const auto dir = config_.home / "memory";
-    const auto action = a.at("action").get<std::string>();
-    if (action == "list") {
-      std::string out;
-      if (fs::exists(dir))
-        for (const auto &entry : fs::directory_iterator(dir))
-          if (entry.path().extension() == ".md" && !entry.is_symlink())
-            out += entry.path().filename().string() + "\n";
-      return {out, false, Json::object()};
+  if (definition->handler == ToolHandler::question) {
+    authorize({name, "user questions", std::nullopt, false});
+    const auto &questions = a.at("questions");
+    if (questions.empty() || questions.size() > 3)
+      throw Error("Provide one to three questions");
+    Json answers = Json::object();
+    for (const auto &q : questions) {
+      const auto id = q.at("id").get<std::string>();
+      if (id.empty() || answers.contains(id) || q.at("header").get<std::string>().size() > 12)
+        throw Error("Invalid question ID/header");
+      const auto &choices = q.at("options");
+      if (choices.size() < 2 || choices.size() > 3)
+        throw Error("Provide two or three options");
+      std::vector<std::string> options;
+      std::string prompt = q.at("question");
+      if (prompt.empty() || prompt.size() > 8192)
+        throw Error("Invalid question length");
+      for (const auto &option : choices) {
+        const auto label = option.at("label").get<std::string>();
+        if (label.empty() || label.size() > 1024)
+          throw Error("Invalid option label");
+        options.push_back(label);
+        prompt += "\n" + label + ": " + option.at("description").get<std::string>();
+      }
+      auto answer = question_(prompt, options);
+      for (size_t i = 0; i < options.size(); ++i)
+        if (answer == std::to_string(i + 1))
+          answer = options[i];
+      answers[id] = {{"answers", Json::array({answer})}};
     }
-    const auto file = a.at("name").get<std::string>();
-    if (file.empty() || fs::path(file).filename() != file || file == ".." ||
-        fs::path(file).extension() != ".md")
-      throw Error("Memory name must be a simple .md filename");
-    if (action == "read")
-      return {files_.read(dir / file, 65536), false, Json::object()};
-    if (action != "write")
-      throw Error("Memory action must be list/read/write");
-    authorize({name, file, std::nullopt, true});
-    const auto content = a.at("content").get<std::string>();
-    if (content.size() > 65536)
-      throw Error("Memory file too large");
-    fs::create_directories(dir);
-    files_.atomic_write(dir / file, content, true);
-    return {"Memory saved", false, Json::object()};
+    return structured({{"answers", answers}});
   }
-  if (name == "Skill") {
-    const auto skill = a.at("name").get<std::string>();
-    if (skill.empty() || fs::path(skill).filename() != skill || skill == "..")
-      throw Error("Invalid skill name");
-    for (const auto &dir :
-         std::vector<fs::path>{config_.cwd / ".codet/skills", config_.cwd / ".agents/skills",
-                               config_.cwd / ".claude/skills", config_.home / "skills"}) {
-      const auto p = dir / skill / "SKILL.md";
-      if (fs::exists(p) && within(files_.canonical(p), files_.canonical(dir)))
-        return {files_.read(p, 65536), false, Json::object()};
+  if (definition->handler == ToolHandler::async_question ||
+      definition->handler == ToolHandler::message) {
+    authorize({name, "user interaction", std::nullopt, false});
+    Json event = {{"type", definition->handler == ToolHandler::message
+                               ? "codet.user_message"
+                               : "codet.user_input.requested"},
+                  {"request_id", call.id}};
+    if (definition->handler == ToolHandler::message) {
+      const auto text = a.at("message").get<std::string>();
+      if (text.empty() || text.size() > 8192)
+        throw Error("Invalid message length");
+      event["message"] = text;
+    } else {
+      const auto &qs = a.at("questions");
+      if (qs.empty() || qs.size() > 32)
+        throw Error("Invalid question count");
+      for (const auto &q : qs) {
+        const auto title = q.at("title").get<std::string>();
+        if (title.empty() || title.size() > 8192)
+          throw Error("Invalid question title");
+        if (q.contains("options")) {
+          if (q["options"].empty() || q["options"].size() > 32)
+            throw Error("Invalid options");
+          for (const auto &o : q["options"])
+            if (o.get<std::string>().empty() || o.get<std::string>().size() > 1024)
+              throw Error("Invalid option");
+        }
+      }
+      event["questions"] = qs;
     }
-    throw Error("Skill not found");
+    interaction_->post(event);
+    return structured({{"accepted", true}});
   }
-  throw Error("Unknown tool");
+  if (definition->handler == ToolHandler::time) {
+    authorize({name, "current time", std::nullopt, false});
+    const auto stamp = static_cast<time_t>(clock_.seconds());
+    std::tm time{};
+    if (!gmtime_r(&stamp, &time))
+      throw Error("Current time unavailable");
+    char text[64];
+    std::strftime(text, sizeof text, "%Y-%m-%d %H:%M:%S UTC", &time);
+    return structured({{"current_time", text}});
+  }
+  if (definition->handler == ToolHandler::sleep) {
+    authorize({name, "wait", std::nullopt, false});
+    const auto duration = a.at("duration_ms").get<int64_t>();
+    if (duration < 1 || duration > 43200000)
+      throw Error("duration_ms must be between 1 and 43200000");
+    const auto start = std::chrono::steady_clock::now();
+    bool interrupted = false;
+    if (interaction_)
+      interrupted = interaction_->sleep(duration, cancel);
+    else
+      clock_.sleep_ms(static_cast<int>(duration), cancel);
+    return structured(
+        {{"wall_time_seconds",
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count()},
+         {"interrupted", interrupted}});
+  }
+  if (definition->handler == ToolHandler::computer) {
+    authorize({name, a.dump(), std::nullopt, definition->mutation});
+    auto result = computer_->invoke(name.substr(9), a, cancel);
+    auto out = structured(result.data);
+    if (result.image) {
+      auto artifact =
+          persist_image(config_, files_, *result.image, a.value("detail", std::string("high")));
+      out.images.push_back(artifact);
+      out.metadata["artifact"] = artifact;
+      out.content = out.metadata.dump();
+    }
+    return out;
+  }
+  throw Error("Unavailable tool handler");
 }
 std::string Tools::instructions() const {
   const auto cwd = files_.canonical(config_.cwd), home = files_.canonical(config_.home);
@@ -1223,10 +1121,10 @@ std::string Tools::instructions() const {
     const auto cap = out.size() + config_.memory_context_max_bytes;
     for (const auto &p : paths) {
       if (++count > 200 || out.size() >= cap) {
-        warn("Memory context budget exhausted; use Memory to read additional files");
+        warn("Memory context budget exhausted; use exec_command to read additional files");
         break;
       }
-      if (!append("\n# Memory: " + p.string() + " (use Memory to read more)\n", cap))
+      if (!append("\n# Memory: " + p.string() + " (read through exec_command)\n", cap))
         break;
       bool truncated = false;
       try {
@@ -1239,7 +1137,7 @@ std::string Tools::instructions() const {
       }
     }
   }
-  out += "\n# Available skills (load with Skill)\n";
+  out += "\n# Available skills (read SKILL.md through exec_command)\n";
   count = 0;
   for (const auto &dir :
        std::vector<fs::path>{config_.cwd / ".codet/skills", config_.cwd / ".agents/skills",
@@ -1247,7 +1145,7 @@ std::string Tools::instructions() const {
     if (fs::exists(dir))
       for (const auto &entry : fs::directory_iterator(dir))
         if (++count <= 100 && !entry.is_symlink() && fs::exists(entry.path() / "SKILL.md"))
-          out += entry.path().filename().string() + "\n";
+          out += entry.path().string() + "\n";
   if (!todos_.empty())
     out += "\n# Current task plan\n" + todos_.dump();
   return out;

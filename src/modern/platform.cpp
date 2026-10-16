@@ -176,9 +176,7 @@ std::string bounded_text(const std::string &text, size_t limit) {
   return clean;
 }
 int ProcessControl::wait_ready(int fd, int timeout_ms) {
-  struct pollfd ready {
-    fd, POLLIN, 0
-  };
+  struct pollfd ready{fd, POLLIN, 0};
   const int result = ::poll(&ready, 1, timeout_ms);
   if (result < 0 && errno != EINTR)
     throw Error(system_error("wait for child setup"));
@@ -325,7 +323,7 @@ std::string read_file_bytes(const fs::path &path, size_t limit, bool prefix) {
   Fd fd(::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK));
   if (fd.n < 0)
     throw Error(system_error("Read " + path.string()));
-  struct stat status {};
+  struct stat status{};
   if (::fstat(fd.n, &status) != 0 || !S_ISREG(status.st_mode))
     throw Error("Expected regular file: " + path.string());
   if (!prefix && (status.st_size < 0 || static_cast<uint64_t>(status.st_size) > limit))
@@ -366,7 +364,7 @@ std::string NativeFileSystem::read_prefix(const fs::path &path, size_t limit,
 void NativeFileSystem::atomic_write(const fs::path &p, const std::string &text, bool private_file) {
   if (!fs::exists(p.parent_path()))
     throw Error("Parent directory does not exist: " + p.parent_path().string());
-  struct stat old {};
+  struct stat old{};
   const bool exists = ::lstat(p.c_str(), &old) == 0;
   if (exists && !S_ISREG(old.st_mode))
     throw Error("Refusing to replace non-regular file: " + p.string());
@@ -391,7 +389,7 @@ void NativeFileSystem::atomic_write(const fs::path &p, const std::string &text, 
     }
     if (::fsync(fd.n) != 0)
       throw Error(system_error("Sync file"));
-    struct stat current {};
+    struct stat current{};
     const bool now = ::lstat(p.c_str(), &current) == 0;
     if (now != exists || (now && (old.st_dev != current.st_dev || old.st_ino != current.st_ino)))
       throw Error("File changed during atomic write");
@@ -406,7 +404,7 @@ void NativeFileSystem::atomic_write(const fs::path &p, const std::string &text, 
   }
 }
 void NativeFileSystem::remove(const fs::path &p) {
-  struct stat st {};
+  struct stat st{};
   if (lstat(p.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
     throw Error("Expected regular file for deletion");
   if (::unlink(p.c_str()) != 0)
@@ -449,7 +447,7 @@ public:
 #ifdef __APPLE__
     (void)pid;
     struct kevent event;
-    struct timespec immediate {};
+    struct timespec immediate{};
     const int count = ::kevent(observer, nullptr, 0, &event, 1, &immediate);
     if (count < 0 && errno == EINTR)
       return false;
@@ -502,7 +500,7 @@ std::shared_ptr<ProcessControl> native_process_control() {
 }
 struct NativeProcesses::Job {
   pid_t pid = -1;
-  int fd = -1, stderr_fd = -1, observer = -1;
+  int fd = -1, stderr_fd = -1, observer = -1, input_fd = -1;
   uint64_t completed_order = 0;
   ProcessSpec spec;
   ProcessResult result;
@@ -511,8 +509,10 @@ struct NativeProcesses::Job {
   bool cleanup_required = false;
   std::exception_ptr failure;
   std::optional<int> termination_status;
-  std::string error, reported_error;
+  std::string error, reported_error, pending_utf8;
   ~Job() {
+    if (input_fd >= 0)
+      ::close(input_fd);
     if (fd >= 0)
       ::close(fd);
     if (stderr_fd >= 0)
@@ -595,6 +595,18 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
     slave = output_pipe[1];
   }
   Fd parent_output(master), child_output(slave);
+  Fd parent_input(-1), child_input(-1);
+  if (!spec.pty && spec.interactive_stdin) {
+    int input[2];
+    if (::socketpair(AF_UNIX, SOCK_STREAM, 0, input) < 0)
+      throw Error(system_error("stdin socket"));
+    parent_input.n = input[0];
+    child_input.n = input[1];
+#ifdef __APPLE__
+    if (::setsockopt(parent_input.n, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof no_sigpipe) < 0)
+      throw Error(system_error("stdin SIGPIPE protection"));
+#endif
+  }
   Fd stderr_read(-1), stderr_write(-1);
   if (spec.separate_stderr) {
     if (spec.pty)
@@ -614,7 +626,7 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
   if (pid == 0) {
     ::close(ready_read.n);
     ::close(release_write.n);
-    struct sigaction disposition {};
+    struct sigaction disposition{};
     disposition.sa_handler = SIG_DFL;
     sigemptyset(&disposition.sa_mask);
     for (int sig = 1; sig < NSIG; ++sig)
@@ -641,6 +653,8 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
       if (::ioctl(slave, TIOCSCTTY, 0) < 0)
         ::_exit(126);
       (void)::dup2(slave, 0);
+    } else if (spec.interactive_stdin) {
+      (void)::dup2(child_input.n, 0);
     } else {
       const int nullfd = ::open("/dev/null", O_RDONLY);
       if (nullfd < 0)
@@ -666,6 +680,10 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
   release_read.n = -1;
   ::close(child_output.n);
   child_output.n = -1;
+  if (child_input.n >= 0) {
+    ::close(child_input.n);
+    child_input.n = -1;
+  }
   if (stderr_write.n >= 0) {
     ::close(stderr_write.n);
     stderr_write.n = -1;
@@ -711,6 +729,7 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
       if (!store && !spec.spool_directory.empty())
         store = std::make_shared<CaptureStore>(spec.spool_directory, spec.spool_limit,
                                                spec.spool_quota, spec.spool_records, diagnostics_);
+      job->spec.capture_store = store;
       job->result.capture = std::make_shared<OutputCapture>(store, spec.output_limit);
     }
     job->began = began;
@@ -734,6 +753,12 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
     parent_output.n = -1;
     job->stderr_fd = stderr_read.n;
     stderr_read.n = -1;
+    job->input_fd = parent_input.n;
+    parent_input.n = -1;
+    if (job->input_fd >= 0) {
+      (void)::fcntl(job->input_fd, F_SETFL, O_NONBLOCK);
+      (void)::fcntl(job->input_fd, F_SETFD, FD_CLOEXEC);
+    }
     if (job->stderr_fd >= 0) {
       (void)::fcntl(job->stderr_fd, F_SETFL, O_NONBLOCK);
       (void)::fcntl(job->stderr_fd, F_SETFD, FD_CLOEXEC);
@@ -778,12 +803,45 @@ void NativeProcesses::drain(Job &job) {
           job.result.stdout_truncated |= keep < count;
         job.result.truncated = job.result.stdout_truncated || job.result.stderr_truncated;
       } else {
-        job.result.capture->append(std::string(buffer, count));
+        auto chunk = job.pending_utf8 + std::string(buffer, count);
+        job.pending_utf8.clear();
+        // Keep only a valid, incomplete trailing UTF-8 sequence across publications.
+        if (job.spec.interactive_stdin && !job.done) {
+          size_t lead = chunk.size();
+          while (lead && (static_cast<unsigned char>(chunk[lead - 1]) & 0xc0) == 0x80)
+            --lead;
+          if (lead) {
+            --lead;
+            const auto byte = static_cast<unsigned char>(chunk[lead]);
+            const size_t width = byte >= 0xc2 && byte <= 0xdf   ? 2
+                                 : byte >= 0xe0 && byte <= 0xef ? 3
+                                 : byte >= 0xf0 && byte <= 0xf4 ? 4
+                                                                : 0;
+            const auto available = chunk.size() - lead;
+            if (width && available < width) {
+              bool valid = true;
+              if (available > 1) {
+                const auto next = static_cast<unsigned char>(chunk[lead + 1]);
+                valid = !(byte == 0xe0 && next < 0xa0) && !(byte == 0xed && next > 0x9f) &&
+                        !(byte == 0xf0 && next < 0x90) && !(byte == 0xf4 && next > 0x8f);
+              }
+              if (valid) {
+                job.pending_utf8 = chunk.substr(lead);
+                chunk.resize(lead);
+              }
+            }
+          }
+        }
+        job.result.capture->append(chunk);
       }
     }
   };
   drain(job.fd, job.result.output, false);
   drain(job.stderr_fd, job.result.stderr_output, true);
+  if (job.done && !job.pending_utf8.empty()) {
+    job.result.capture->append(job.pending_utf8);
+    job.pending_utf8.clear();
+  }
 }
 void NativeProcesses::collect(Job &job) {
   // Observation is independent of capture: stop_owned can still terminate after either fails.
@@ -909,6 +967,10 @@ void NativeProcesses::finish(Job &job, bool ownership_lost) {
   if (!job.result.capture) {
     std::string(job.result.output).swap(job.result.output);
     std::string(job.result.stderr_output).swap(job.result.stderr_output);
+  }
+  if (job.input_fd >= 0) {
+    ::close(job.input_fd);
+    job.input_fd = -1;
   }
   if (job.fd >= 0) {
     ::close(job.fd);
@@ -1067,6 +1129,28 @@ void NativeProcesses::stop_owned(Job &job) {
     }
   }
 }
+ProcessResult NativeProcesses::read_output(const std::string &id) {
+  auto result = poll(id);
+  const auto it = jobs_.find(id);
+  if (it != jobs_.end()) {
+    auto &job = *it->second;
+    if (result.capture) {
+      result.capture->finish();
+      job.result = ProcessResult{};
+      job.result.running = !job.done;
+      job.result.exit_code = result.exit_code;
+      job.result.capture =
+          std::make_shared<OutputCapture>(job.spec.capture_store, job.spec.output_limit);
+      if (job.done)
+        job.result.capture->finish();
+    } else {
+      job.result.output.clear();
+      job.result.stderr_output.clear();
+      job.result.truncated = false;
+    }
+  }
+  return result;
+}
 void NativeProcesses::stop(const std::string &id) {
   auto it = jobs_.find(id);
   if (it == jobs_.end() || !it->second->retain)
@@ -1080,13 +1164,24 @@ void NativeProcesses::stop(const std::string &id) {
 }
 void NativeProcesses::write(const std::string &id, const std::string &input) {
   const auto it = jobs_.find(id);
-  if (it == jobs_.end() || !it->second->retain || it->second->done || !it->second->spec.pty)
-    throw Error("Input requires a running PTY job");
+  if (it == jobs_.end() || !it->second->retain || it->second->done ||
+      (!it->second->spec.pty && it->second->input_fd < 0))
+    throw Error("Input requires a running interactive job");
   if (input.size() > 65536)
     throw Error("PTY input limit exceeded");
   size_t at = 0;
   while (at < input.size()) {
-    const auto n = ::write(it->second->fd, input.data() + at, input.size() - at);
+    ssize_t n;
+    if (it->second->spec.pty)
+      n = ::write(it->second->fd, input.data() + at, input.size() - at);
+    else {
+#ifdef __APPLE__
+      const int flags = 0;
+#else
+      const int flags = MSG_NOSIGNAL;
+#endif
+      n = ::send(it->second->input_fd, input.data() + at, input.size() - at, flags);
+    }
     if (n < 0 && errno == EINTR)
       continue;
     if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
@@ -1142,6 +1237,8 @@ void from_json(const Json &j, ToolCall &t) {
 void to_json(Json &j, const Message &m) {
   j = {{"role", m.role},   {"text", m.text},     {"tool_call_id", m.tool_call_id},
        {"calls", m.calls}, {"replay", m.replay}, {"replay_provider", m.replay_provider}};
+  if (!m.images.empty())
+    j["images"] = m.images;
 }
 void from_json(const Json &j, Message &m) {
   m.role = j.at("role");
@@ -1150,5 +1247,6 @@ void from_json(const Json &j, Message &m) {
   m.calls = j.value("calls", std::vector<ToolCall>{});
   m.replay = j.value("replay", Json::array());
   m.replay_provider = j.value("replay_provider", "");
+  m.images = j.value("images", std::vector<ImageArtifact>{});
 }
 } // namespace codet

@@ -2,6 +2,7 @@
 #include "codet/diagnostics.hpp"
 #include "codet/process_control.hpp"
 #include "codet/prompt.hpp"
+#include "core_tools.hpp"
 #include "temp.hpp"
 #include <cerrno>
 #include <csignal>
@@ -187,10 +188,11 @@ TEST_F(Policies, CanonicalLoadedWorkspaceAndEquivalentAliasDenyLiteralMetacharac
   fs::create_directory_symlink(config.cwd, alias);
   auto loaded = load_config(config.home, config.cwd, "", {}, files);
   loaded.permission_mode = "bypass";
-  loaded.set_deny({"Read(" + (alias / "secret").string() + ")"});
+  loaded.set_deny({"read_file(" + (alias / "secret").string() + ")"});
   files.atomic_write(config.cwd / "secret", "private");
   Tools tools(loaded, files, processes, http, clock);
-  EXPECT_TRUE(tools.execute({"read", "Read", {{"file_path", "secret"}}}, cancel).error);
+  EXPECT_TRUE(
+      execute_core(tools, loaded, {"read", "read_file", {{"path", "secret"}}}, cancel).error);
 #ifdef __APPLE__
   TempDirectory unused;
   char name[] = "/tmp/codet-alias-XXXXXX";
@@ -200,10 +202,10 @@ TEST_F(Policies, CanonicalLoadedWorkspaceAndEquivalentAliasDenyLiteralMetacharac
   fs::create_directory(temporary / "w[1]");
   auto cfg = load_config(config.home, files.canonical(temporary / "w[1]"), "", {}, files);
   cfg.permission_mode = "bypass";
-  cfg.set_deny({"Read(" + (temporary / "w[1]/secret").string() + ")"});
+  cfg.set_deny({"read_file(" + (temporary / "w[1]/secret").string() + ")"});
   files.atomic_write(cfg.cwd / "secret", "private");
   Tools mac(cfg, files, processes, http, clock);
-  EXPECT_TRUE(mac.execute({"mac", "Read", {{"file_path", "secret"}}}, cancel).error);
+  EXPECT_TRUE(execute_core(mac, cfg, {"mac", "read_file", {{"path", "secret"}}}, cancel).error);
   fs::remove_all(temporary);
 #endif
 }
@@ -211,18 +213,20 @@ TEST_F(Policies, WildcardParentsNormalizeWithoutExpandingGlobsAndSnapshotChanges
   files.atomic_write(config.cwd / "secret", "private");
   Permissions permissions(config, files);
   for (const auto &pattern : {"*/../secret", "**/../secret", "a/*/../../secret", "./secret"}) {
-    config.set_deny({std::string("Read(") + pattern + ")"});
-    EXPECT_EQ(permissions.decide({"Read", "secret", config.cwd / "secret", false}), Decision::deny)
+    config.set_deny({std::string("read_file(") + pattern + ")"});
+    EXPECT_EQ(permissions.decide({"read_file", "secret", config.cwd / "secret", false}),
+              Decision::deny)
         << pattern;
   }
   auto old = config.rule_snapshot();
   config.set_deny({});
   EXPECT_NE(old, config.rule_snapshot());
   EXPECT_FALSE(old->deny.empty());
-  EXPECT_EQ(permissions.decide({"Read", "secret", config.cwd / "secret", false}), Decision::allow);
+  EXPECT_EQ(permissions.decide({"read_file", "secret", config.cwd / "secret", false}),
+            Decision::allow);
 }
 TEST_F(Policies, DeniedCrLfPatchNeverRunsAnInputRewritingHook) {
-  config.set_deny({"ApplyPatch(secret)"});
+  config.set_deny({"apply_patch(secret)"});
   Json rewrite = {
       {"hookSpecificOutput",
        {{"permissionDecision", "allow"},
@@ -234,11 +238,12 @@ TEST_F(Policies, DeniedCrLfPatchNeverRunsAnInputRewritingHook) {
   for (const auto &directive :
        {"*** Add File: secret", "*** Update File: secret", "*** Delete File: secret",
         "*** Update File: public\r\n*** Move to: secret"}) {
-    const auto r = tools.execute({unique_id(),
-                                  "ApplyPatch",
-                                  {{"patch", std::string("*** Begin Patch\r\n") + directive +
-                                                 "\r\n+x\r\n*** End Patch\r\n"}}},
-                                 cancel);
+    const auto r = execute_core(tools, config,
+                                {unique_id(),
+                                 "apply_patch",
+                                 {{"patch", std::string("*** Begin Patch\r\n") + directive +
+                                                "\r\n+x\r\n*** End Patch\r\n"}}},
+                                cancel);
     EXPECT_TRUE(r.error);
     EXPECT_FALSE(fs::exists(config.cwd / "hook-ran"));
     EXPECT_FALSE(fs::exists(config.cwd / "public"));

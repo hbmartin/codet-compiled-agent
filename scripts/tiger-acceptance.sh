@@ -27,6 +27,10 @@ printf '%s\n' 'Manual: both UIs, progress clear on success/error/Ctrl-C, Session
 printf '%s\n' 'FinalReview.* / Sanitization.* cover literal workspace rules, timeout reasons, retained failed-job ownership, hook channel budgets/source matching, CRLF/lone-CR patches, exact IDs, expansion recovery and UTF-8 equivalence.' >> "$report_dir/followup-cases.txt"
 printf '%s\n' 'Manual: live hook diagnostics in curses transcript, SessionStart startup/resume/fork context order, failed command expansion followed by a successful turn.' >> "$report_dir/followup-cases.txt"
 case "${1:-}" in
+  --desktop)
+    export CODET_TEST_DESKTOP=1 CODET_DESKTOP_REPORT="$report_dir"
+    /usr/bin/time -l "$bundle_dir/codet_tests" --gtest_filter=Contracts.NativeTigerDesktopAcceptance > "$report_dir/desktop.txt" 2> "$report_dir/desktop-resource.txt"
+    ;;
   --tls)
     export CODET_TEST_TLS_URL=${CODET_TEST_TLS_URL:-https://auth.openai.com/.well-known/openid-configuration}
     "$bundle_dir/codet_tests" --gtest_filter=NetworkOptIn.TlsHandshake > "$report_dir/tls.txt" 2>&1
@@ -42,6 +46,6 @@ case "${1:-}" in
     /usr/bin/time -l "$bundle_dir/codet" exec -C "$test_root/workspace" --provider "$provider" --model "$model" --json 'Reply with exactly: Tiger API transport works.' > "$report_dir/api.jsonl" 2> "$report_dir/api-resource.txt"
     ;;
   '') ;;
-  *) printf '%s\n' 'Options: --tls | --subscription FILE | --api' >&2; exit 2 ;;
+  *) printf '%s\n' 'Options: --desktop | --tls | --subscription FILE | --api' >&2; exit 2 ;;
 esac
 printf '%s\n' "Acceptance reports: $report_dir" 'Runtime acceptance remains pending review of these reports.'

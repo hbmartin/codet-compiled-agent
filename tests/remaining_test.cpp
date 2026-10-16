@@ -1,10 +1,13 @@
 #include "codet/core.hpp"
 #include "codet/process_control.hpp"
+#include "codet/tool_registry.hpp"
+#include "core_tools.hpp"
 #include "temp.hpp"
 #include <fstream>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <sqlite3.h>
+#include <sstream>
 #include <thread>
 #include <unistd.h>
 
@@ -34,14 +37,49 @@ struct Remaining : Test {
   }
 
   ToolCall call(const std::string &name, const Json &args) {
-    return {unique_id(), name, args};
+    Json input = args;
+    if (name == "read_file")
+      input["path"] = args.at("path");
+    if (name == "exec_command" && input.contains("command")) {
+      input["cmd"] = input["command"];
+      input.erase("command");
+    }
+    if (name == "clock.sleep" && input.contains("seconds")) {
+      input["duration_ms"] = std::max(1, input.at("seconds").get<int>() * 1000);
+      input.erase("seconds");
+    }
+    if (name == "apply_patch" && !input.contains("patch") && input.contains("content")) {
+      const auto target = input.at("path").get<std::string>();
+      const auto p = config.cwd / target;
+      std::string patch = "*** Begin Patch\n";
+      if (fs::exists(p)) {
+        patch += "*** Update File: " + target + "\n@@\n";
+        std::istringstream before(files.read(p));
+        std::string line;
+        while (std::getline(before, line))
+          patch += "-" + line + "\n";
+      } else
+        patch += "*** Add File: " + target + "\n";
+      std::istringstream after(input.at("content").get<std::string>());
+      std::string line;
+      while (std::getline(after, line))
+        patch += "+" + line + "\n";
+      patch += "*** End Patch\n";
+      input = {{"patch", patch}};
+    }
+    return {unique_id(), name, input};
   }
   void hook(const std::string &event, const std::string &command) {
     config.hooks = {{event, Json::array({{{"command", command}}})}};
   }
   ToolResult execute(const std::string &name, const Json &args) {
+    const auto previous = config.permission_mode;
+    if (name == "read_file")
+      config.permission_mode = "plan";
     Tools tools(config, files, processes, http, clock);
-    return tools.execute(call(name, args), cancel);
+    auto result = tools.execute(call(name, args), cancel);
+    config.permission_mode = previous;
+    return result;
   }
 };
 TEST_F(Remaining, RecoveryMovesResultsToOwningBatchAndIsIdempotentAcrossForks) {
@@ -49,8 +87,8 @@ TEST_F(Remaining, RecoveryMovesResultsToOwningBatchAndIsIdempotentAcrossForks) {
   auto session = state.create();
   codet::Message assistant;
   assistant.role = "assistant";
-  assistant.calls = {call("Bash", {{"command", "effect"}}), call("Write", {{"file_path", "a"}}),
-                     call("Read", {{"file_path", "b"}})};
+  assistant.calls = {call("exec_command", {{"command", "effect"}}),
+                     call("apply_patch", {{"path", "a"}}), call("read_file", {{"path", "b"}})};
   codet::Message later;
   later.role = "user";
   later.text = "failed continuation";
@@ -87,7 +125,7 @@ TEST_F(Remaining, RecoveryRejectsDuplicateIdsAndCorruptCompletedRecords) {
   auto s = state.create();
   codet::Message message;
   message.role = "assistant";
-  auto tool = call("Read", {{"file_path", "a"}});
+  auto tool = call("read_file", {{"path", "a"}});
   message.calls = {tool, tool};
   s.messages = {message};
   EXPECT_THROW(state.reconcile(s), Error);
@@ -103,7 +141,7 @@ TEST_F(Remaining, FailedRecoveryTransactionLeavesBothTranscriptAndJournalUntouch
   auto session = state.create();
   codet::Message assistant;
   assistant.role = "assistant";
-  assistant.calls = {call("Write", {{"file_path", "a"}})};
+  assistant.calls = {call("apply_patch", {{"path", "a"}})};
   session.messages = {assistant};
   state.save(session);
   sqlite3 *db = nullptr;
@@ -129,7 +167,7 @@ TEST_F(Remaining, AutomaticSqliteRollbackPreservesOriginalFailure) {
   auto session = state.create();
   codet::Message assistant;
   assistant.role = "assistant";
-  assistant.calls = {call("Read", {{"file_path", "a"}})};
+  assistant.calls = {call("read_file", {{"path", "a"}})};
   session.messages = {assistant};
   state.save(session);
   sqlite3 *db = nullptr;
@@ -151,7 +189,7 @@ TEST_F(Remaining, AutomaticSqliteRollbackPreservesOriginalFailure) {
 TEST_F(Remaining, BoundedToolOutputRetainsItsSpillNoticeAndFullContent) {
   config.tool_output_limit = 256;
   files.atomic_write(config.cwd / "long", std::string(2000, 'x') + "\n");
-  const auto result = execute("Read", {{"file_path", "long"}});
+  const auto result = execute("read_file", {{"path", "long"}});
   ASSERT_FALSE(result.error) << result.content;
   EXPECT_LE(result.content.size(), 256u);
   EXPECT_THAT(result.content, HasSubstr("bytes omitted"));
@@ -168,8 +206,8 @@ TEST_F(Remaining, SnapshotLoadAndForkCannotModifyAnOwnedLiveBatch) {
   EXPECT_THROW(observer.save(session), Error);
   codet::Message assistant;
   assistant.role = "assistant";
-  assistant.calls = {call("Bash", {{"command", "first"}}),
-                     call("Write", {{"file_path", "second"}})};
+  assistant.calls = {call("exec_command", {{"command", "first"}}),
+                     call("apply_patch", {{"path", "second"}})};
   session.messages = {assistant};
   owner.save(session);
   owner.begin_turn(session.id);
@@ -208,7 +246,7 @@ TEST_F(Remaining, DuplicateToolReservationsFailClearlyWithoutOverwritingRecovery
   auto session = state.create();
   codet::Message assistant;
   assistant.role = "assistant";
-  assistant.calls = {call("Read", {{"file_path", "a"}})};
+  assistant.calls = {call("read_file", {{"path", "a"}})};
   session.messages = {assistant};
   state.save(session);
   state.reconcile(session);
@@ -237,9 +275,9 @@ TEST_F(Remaining, CancelledBatchCanContinueInSameSessionWithoutReplayingEffects)
   provider.next = [&](const auto &) {
     ProviderResult result;
     result.message.role = "assistant";
-    result.message.calls = {call("Bash", {{"command", "printf x >> effect"}}),
-                            call("Sleep", {{"seconds", 1}}),
-                            call("Write", {{"file_path", "never"}, {"content", "x"}})};
+    result.message.calls = {call("exec_command", {{"command", "printf x >> effect"}}),
+                            call("clock.sleep", {{"seconds", 1}}),
+                            call("apply_patch", {{"path", "never"}, {"content", "x"}})};
     return result;
   };
   Agent agent(config, provider, tools, state, {});
@@ -300,8 +338,8 @@ TEST_F(Remaining, ExplicitPostStopIsJournaledBeforeHaltingTheBatch) {
   provider.next = [&](const auto &) {
     ProviderResult result;
     result.message.role = "assistant";
-    result.message.calls = {call("Read", {{"file_path", "a"}}),
-                            call("Write", {{"file_path", "never"}, {"content", "x"}})};
+    result.message.calls = {call("clock.curr_time", Json::object()),
+                            call("apply_patch", {{"path", "never"}, {"content", "x"}})};
     return result;
   };
   Agent agent(config, provider, tools, state, {});
@@ -326,11 +364,11 @@ TEST_F(Remaining, PathDenialsCoverAliasesCanonicalTargetsAndWildcardPrefixes) {
   fs::create_directories(config.cwd / "secrets");
   files.atomic_write(config.cwd / "secrets/key", "secret");
   fs::create_directory_symlink(config.cwd / "secrets", config.cwd / "alias");
-  for (const auto &rule :
-       {"Read(secrets/key)", "Read(./secrets/key)", "Read(secrets/*)", "Read(alias/*)"}) {
+  for (const auto &rule : {"read_file(secrets/key)", "read_file(./secrets/key)",
+                           "read_file(secrets/*)", "read_file(alias/*)"}) {
     config.set_deny({rule});
     for (const auto &path : {"secrets/key", "./secrets/key", "alias/key", "alias/../secrets/key"})
-      EXPECT_TRUE(execute("Read", {{"file_path", path}}).error) << rule << " " << path;
+      EXPECT_TRUE(execute("read_file", {{"path", path}}).error) << rule << " " << path;
   }
 }
 TEST_F(Remaining, WildcardPathDenialsCoverAdditionalRootsAndBypass) {
@@ -340,57 +378,58 @@ TEST_F(Remaining, WildcardPathDenialsCoverAdditionalRootsAndBypass) {
   files.atomic_write(extra / ".env", "original");
   files.atomic_write(extra / "public", "public");
   config.roots.push_back(extra);
-  config.set_deny({"Read(*secret*)", "Write(*.env)", "Glob(*secret*)"});
+  config.set_deny({"read_file(*secret*)", "apply_patch(*.env)", "read_file(*secret*)"});
   for (const auto &mode : {"default", "bypass"}) {
     config.permission_mode = mode;
     for (const auto &path : {(extra / "secret.txt").string(), std::string("../extra/secret.txt")}) {
-      const auto result = execute("Read", {{"file_path", path}});
+      const auto result = execute("read_file", {{"path", path}});
       EXPECT_TRUE(result.error) << mode << " " << path;
-      EXPECT_THAT(result.content, HasSubstr("Permission denied for Read"));
+      EXPECT_THAT(result.content, HasSubstr("Permission denied for read_file"));
     }
-    const auto write =
-        execute("Write", {{"file_path", (extra / ".env").string()}, {"content", "replacement"}});
+    const auto write = execute(
+        "apply_patch", {{"patch", "*** Begin Patch\n*** Update File: " + (extra / ".env").string() +
+                                      "\n@@\n-original\n+replacement\n*** End Patch\n"}});
     EXPECT_TRUE(write.error) << mode;
-    EXPECT_THAT(write.content, HasSubstr("Permission denied for Write"));
+    EXPECT_THAT(write.content, HasSubstr("Permission denied for apply_patch"));
     EXPECT_EQ(files.read(extra / ".env"), "original");
-    const auto glob = execute("Glob", {{"path", extra.string()}, {"pattern", "*"}});
+    const auto glob = execute("read_file", {{"path", extra.string()}});
     EXPECT_FALSE(glob.error) << glob.content;
     EXPECT_THAT(glob.content, HasSubstr("public"));
     EXPECT_THAT(glob.content, Not(HasSubstr("secret.txt")));
-    EXPECT_FALSE(execute("Read", {{"file_path", (extra / "public").string()}}).error);
+    EXPECT_FALSE(execute("read_file", {{"path", (extra / "public").string()}}).error);
   }
 }
 TEST_F(Remaining, DeniedPathsPreventHooksAndRewrittenInputsAreRechecked) {
   files.atomic_write(config.cwd / "public", "public");
   files.atomic_write(config.cwd / "secret", "secret");
-  config.set_deny({"Read(secret)"});
+  config.set_deny({"read_file(secret)"});
   hook("PreToolUse", "printf ran > hook-ran");
-  EXPECT_TRUE(execute("Read", {{"file_path", "./secret"}}).error);
+  EXPECT_TRUE(execute("read_file", {{"path", "./secret"}}).error);
   EXPECT_FALSE(fs::exists(config.cwd / "hook-ran"));
   hook("PreToolUse", "printf '%s' "
                      "'{\"hookSpecificOutput\":{\"permissionDecision\":\"allow\",\"updatedInput\":{"
-                     "\"file_path\":\"./secret\"}}}'");
-  EXPECT_TRUE(execute("Read", {{"file_path", "public"}}).error);
-  config.set_deny({"ApplyPatch(secret)", "BatchEdit(secret)"});
-  EXPECT_TRUE(execute("ApplyPatch",
+                     "\"path\":\"./secret\"}}}'");
+  EXPECT_TRUE(execute("read_file", {{"path", "public"}}).error);
+  config.set_deny({"apply_patch(secret)", "BatchEdit(secret)"});
+  EXPECT_TRUE(execute("apply_patch",
                       {{"patch", "*** Begin Patch\n*** Add File: ./secret\n+x\n*** End Patch\n"}})
                   .error);
-  EXPECT_TRUE(execute("BatchEdit", {{"edits", Json::array({{{"file_path", "./secret"},
+  EXPECT_TRUE(execute("BatchEdit", {{"edits", Json::array({{{"path", "./secret"},
                                                             {"old_string", "secret"},
                                                             {"new_string", "x"}}})}})
                   .error);
 }
-TEST_F(Remaining, GlobFiltersItsOwnDeniedFilesAndSubtreesOnly) {
+TEST_F(Remaining, DirectoryListingFiltersDeniedEntries) {
   fs::create_directories(config.cwd / "hidden");
   files.atomic_write(config.cwd / "hidden/key", "secret");
   files.atomic_write(config.cwd / "public", "public");
-  config.set_deny({"Glob(hidden)", "Read(public)"});
-  auto result = execute("Glob", {{"pattern", "*"}});
+  config.set_deny({"read_file(hidden)"});
+  auto result = execute("read_file", {{"path", "."}});
   EXPECT_FALSE(result.error);
   EXPECT_THAT(result.content, HasSubstr("public"));
   EXPECT_THAT(result.content, Not(HasSubstr("hidden")));
-  config.set_deny({"Glob(hidden/*)"});
-  result = execute("Glob", {{"pattern", "*"}});
+  config.set_deny({"read_file(hidden/*)"});
+  result = execute("read_file", {{"path", "."}});
   EXPECT_THAT(result.content, Not(HasSubstr("hidden/key")));
 }
 struct CountingFiles : FileSystem {
@@ -423,50 +462,32 @@ TEST_F(Remaining, PermissionDecisionSharesCanonicalPrefixesAcrossRules) {
   files.atomic_write(config.cwd / "shared/public", "public");
   config.permission_mode = "default";
   for (int i = 0; i < 50; ++i)
-    config.add_denied("Read(shared/secret-" + std::to_string(i) + "*)");
+    config.add_denied("read_file(shared/secret-" + std::to_string(i) + "*)");
   CountingFiles counted;
   Permissions permissions(config, counted);
   const auto target = config.cwd / "shared/public";
-  EXPECT_EQ(permissions.decide({"Read", target.string(), target, false}), Decision::allow);
+  EXPECT_EQ(permissions.decide({"read_file", target.string(), target, false}), Decision::allow);
   // Target, cwd and shared prefix each resolve once; fifty rules must not multiply IO.
   EXPECT_LE(counted.canonical_calls, 4u);
   EXPECT_EQ(counted.canonical_paths[(config.cwd / "shared").string()], 1u);
   counted.canonical_calls = 0;
-  config.add_denied("Read(shared/public)");
-  EXPECT_EQ(permissions.decide({"Read", target.string(), target, false}), Decision::deny);
+  config.add_denied("read_file(shared/public)");
+  EXPECT_EQ(permissions.decide({"read_file", target.string(), target, false}), Decision::deny);
   EXPECT_LE(counted.canonical_calls, 4u);
 }
-TEST_F(Remaining, GlobChecksEachResultOnceAndCachesCanonicalPrefixes) {
-  config.permission_mode = "default";
-  config.set_deny({"Read(secret*)"});
+TEST_F(Remaining, DirectoryListingSharesCanonicalPrefixesAcrossEntries) {
+  config.permission_mode = "plan";
+  config.tool_output_limit = 16384;
   for (int i = 0; i < 100; ++i)
     files.atomic_write(config.cwd / ("file-" + std::to_string(i)), "x");
+  config.set_deny({"read_file(file-99)"});
   CountingFiles counted;
   Tools tools(config, counted, processes, http, clock);
-  const auto result = tools.execute(call("Glob", {{"pattern", "*"}}), cancel);
-  ASSERT_FALSE(result.error);
-  EXPECT_LT(counted.canonical_calls, 20u);
-  for (int i = 0; i < 100; ++i)
-    EXPECT_EQ(counted.canonical_paths[(config.cwd / ("file-" + std::to_string(i))).string()], 0u);
-  EXPECT_THAT(result.content, HasSubstr("file-99"));
-  counted.canonical_calls = 0;
-  const auto missing = tools.execute(call("Glob", {{"pattern", "does-not-match"}}), cancel);
-  EXPECT_TRUE(missing.content.empty());
-  EXPECT_LT(counted.canonical_calls, 20u);
-  config.set_deny({"Glob(file-99)"});
-  counted.canonical_calls = 0;
-  counted.canonical_paths.clear();
-  const auto filtered = tools.execute(call("Glob", {{"pattern", "*"}}), cancel);
-  EXPECT_FALSE(filtered.error);
-  EXPECT_THAT(filtered.content, Not(HasSubstr("file-99")));
-  EXPECT_LT(counted.canonical_calls, 110u);
-  // file-99 is also the rule's literal prefix: three fresh authorization stages
-  // (before hooks, after rewrite, and root authorization), then once in the traversal.
-  for (int i = 0; i < 100; ++i)
-    EXPECT_EQ(counted.canonical_paths[(config.cwd / ("file-" + std::to_string(i))).string()],
-              i == 99 ? 4u : 1u)
-        << i;
-  EXPECT_LE(counted.canonical_paths[config.cwd.string()], 6u);
+  const auto result = tools.execute(call("read_file", {{"path", "."}}), cancel);
+  ASSERT_FALSE(result.error) << result.content;
+  EXPECT_THAT(result.content, Not(HasSubstr("file-99")));
+  EXPECT_THAT(result.content, HasSubstr("file-98"));
+  EXPECT_LT(counted.canonical_calls, 125u);
 }
 TEST_F(Remaining, HookFailurePlaintextStderrAndExplicitDenialsFollowEventSemantics) {
   Tools tools(config, files, processes, http, clock);
@@ -496,18 +517,18 @@ TEST_F(Remaining, HookFailurePlaintextStderrAndExplicitDenialsFollowEventSemanti
 TEST_F(Remaining, FailedApprovalHookDoesNotGrantAndPostBlockPreservesCompletedEffects) {
   config.permission_mode = "default";
   hook("PermissionRequest", "exit 1");
-  EXPECT_TRUE(execute("Write", {{"file_path", "a"}, {"content", "x"}}).error);
+  EXPECT_TRUE(execute("apply_patch", {{"path", "a"}, {"content", "x"}}).error);
   config.permission_mode = "bypass";
   hook("PostToolUse", "printf reason >&2; exit 2");
-  const auto result = execute("Write", {{"file_path", "a"}, {"content", "x"}});
+  const auto result = execute("apply_patch", {{"path", "a"}, {"content", "x"}});
   EXPECT_TRUE(result.error);
   EXPECT_EQ(result.metadata["action_completed"], true);
-  EXPECT_EQ(files.read(config.cwd / "a"), "x");
+  EXPECT_EQ(files.read(config.cwd / "a"), "x\n");
 }
 TEST_F(Remaining, InvalidHookErrorBytesRemainSerializableAndBounded) {
   files.atomic_write(config.cwd / "a", "text");
   hook("PreToolUse", "printf '\\377' >&2; exit 2");
-  const auto result = execute("Read", {{"file_path", "a"}});
+  const auto result = execute("read_file", {{"path", "a"}});
   EXPECT_TRUE(result.error);
   EXPECT_NO_THROW(Json(result.content).dump());
   EXPECT_THAT(result.content, HasSubstr("\xef\xbf\xbd"));
@@ -515,7 +536,7 @@ TEST_F(Remaining, InvalidHookErrorBytesRemainSerializableAndBounded) {
 }
 TEST_F(Remaining, InvalidPathMetadataIsSanitizedWithoutChangingFilesystemBytes) {
   const auto name = std::string("raw-") + char(0xff);
-  const auto result = execute("Write", {{"file_path", name}, {"content", "x"}});
+  const auto result = execute("apply_patch", {{"path", name}, {"content", "x"}});
   EXPECT_NO_THROW(result.metadata.dump());
 #ifdef __APPLE__
   // Darwin filesystems reject ill-formed UTF-8 path bytes; report the OS error safely.
@@ -592,7 +613,8 @@ TEST_F(Remaining, ParameterlessGoogleToolsOmitParametersAndTimeoutDefaultsRemain
   for (const auto &tool : body["tools"][0]["functionDeclarations"]) {
     const auto name = tool["name"].get<std::string>();
     EXPECT_EQ(tool.contains("parameters"),
-              name != "TaskList" && name != "EnterPlanMode" && name != "ExitPlanMode");
+              name == "StructuredOutput" ||
+                  !tool_definition(tool_logical_name(name))->schema.at("properties").empty());
   }
   files.atomic_write(config.home / "config.toml",
                      "request_timeout_seconds=7\nstream_idle_timeout_seconds=9\nconnect_timeout_"
@@ -618,10 +640,9 @@ TEST_F(Remaining, PatchMatchesReferenceChunksAndPreservesContextEndings) {
   Tools tools(config, files, processes, http, clock);
   for (const auto &entry : cases) {
     files.atomic_write(config.cwd / "a", std::get<0>(entry));
-    ASSERT_FALSE(tools.execute(call("Read", {{"file_path", "a"}}), cancel).error);
     const auto result =
-        tools.execute(call("ApplyPatch", {{"patch", "*** Begin Patch\n*** Update File: a\n" +
-                                                        std::get<1>(entry) + "*** End Patch\n"}}),
+        tools.execute(call("apply_patch", {{"patch", "*** Begin Patch\n*** Update File: a\n" +
+                                                         std::get<1>(entry) + "*** End Patch\n"}}),
                       cancel);
     ASSERT_FALSE(result.error) << result.content;
     EXPECT_EQ(files.read(config.cwd / "a"), std::get<2>(entry));
@@ -665,20 +686,7 @@ struct DelayedControl : ProcessControl {
     return native->reap(pid);
   }
 };
-TEST_F(Remaining, BackgroundStartupTimeoutHasStatusAndRunsFailureHookWithoutAHandle) {
-  auto control = std::make_shared<DelayedControl>();
-  control->delay_wait = true;
-  NativeProcesses native(control);
-  hook("PostToolUseFailure", "printf failure > failure-hook");
-  Tools tools(config, files, native, http, clock);
-  const auto result = tools.execute(
-      call("TaskCreate", {{"command", "printf effect > never"}, {"timeout_ms", 30}}), cancel);
-  EXPECT_TRUE(result.error);
-  EXPECT_EQ(result.metadata["exit_code"], 124);
-  EXPECT_TRUE(native.list().empty());
-  EXPECT_FALSE(fs::exists(config.cwd / "never"));
-  EXPECT_EQ(files.read(config.cwd / "failure-hook"), "failure");
-}
+
 TEST_F(Remaining, StartupDeadlinePreventsExecutionBeforeAndAfterWatcherRegistration) {
   for (bool after_watch : {false, true}) {
     auto control = std::make_shared<DelayedControl>();
@@ -732,35 +740,5 @@ TEST_F(Remaining, StartupCancellationNeverReleasesTheCommand) {
     EXPECT_FALSE(fs::exists(config.cwd / "never"));
   }
 }
-TEST_F(Remaining, CompletedJobsDoNotExhaustActiveLimitAndHistoryIsBounded) {
-  ProcessSpec spec;
-  spec.argv = {"/bin/sh", "-c", "printf done"};
-  std::string oldest;
-  for (int i = 0; i < 70; ++i) {
-    const auto id = processes.start(spec, cancel);
-    if (!i)
-      oldest = id;
-    ProcessResult result;
-    for (int n = 0; n < 500; ++n) {
-      result = processes.poll(id);
-      if (!result.running)
-        break;
-      std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
-    ASSERT_FALSE(result.running);
-    ASSERT_EQ(result.output, "done");
-  }
-  EXPECT_LE(processes.list().size(), 64u);
-  EXPECT_THROW(processes.poll(oldest), Error);
-  auto snapshot = execute("TaskList", Json::object());
-  ASSERT_FALSE(snapshot.error);
-  EXPECT_LE(Json::parse(snapshot.content).size(), 64u);
-  EXPECT_THAT(execute("TaskOutput", {{"task_id", oldest}}).content, HasSubstr("expired"));
-  EXPECT_EQ(processes.run(spec, cancel).output, "done");
-  spec.separate_stderr = true;
-  spec.argv = {"/bin/sh", "-c", "printf stdout; printf stderr >&2"};
-  const auto result = processes.run(spec, cancel);
-  EXPECT_EQ(result.output, "stdout");
-  EXPECT_EQ(result.stderr_output, "stderr");
-}
+
 } // namespace

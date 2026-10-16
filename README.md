@@ -2,7 +2,7 @@
 
 Codet is a single-agent terminal coding assistant targeting **Mac OS X 10.4 / PPC32**, with acceptance testing on a **G4 with 512 MB RAM**. It provides a minimal ncurses interface, an editable line REPL, and a Codex-shaped headless CLI.
 
-The modern application retains Anthropic, OpenAI, Google, and Ollama providers and adds imported ChatGPT/Codex subscription credentials with refresh. It includes file editing and patches, PTY/background shell jobs, permission rules, sessions and branching, context compaction, instructions/skills, explicit durable memory, hooks/custom commands, web tools, and text/JSON exports.
+The modern application retains Anthropic, OpenAI, Google, and Ollama providers and adds imported ChatGPT/Codex subscription credentials with refresh. It exposes Codex core tool contracts, yielding shell/PTY sessions, patches, image inputs, asynchronous terminal interaction, and native Tiger computer use through screenshots, accessibility, input events, clipboard and AppleScript. Sessions, memory previews/consolidation, hooks and text/JSON exports remain available.
 
 **Verification boundary:** host fixtures and cross-build/static checks are separate from target execution. Tiger runtime and live provider acceptance must be established using the owner-run test bundle. No build or packaging target executes PPC code.
 
@@ -46,10 +46,11 @@ codet exec resume --last 'continue'
 codet memory consolidate
 ```
 
-State lives under `CODET_HOME` or `~/.codet`. No existing Codex or Claurst files are imported implicitly. Native sign-in is deferred; API-key providers are the explicit fallback if subscription transport cannot be validated. Application permission rules do not provide an OS shell sandbox. Content search uses system `grep` through Bash. Select `--permission-mode bypass` for auto/no-approval operation, or change modes live with `/permissions MODE`. Explicit deny rules retain precedence.
+State lives under `CODET_HOME` or `~/.codet`. No existing Codex or Claurst files are imported implicitly. Native sign-in is deferred; API-key providers are the explicit fallback if subscription transport cannot be validated. Application permission rules do not provide an OS shell sandbox. Content search uses system `grep` through exec_command. Select `--permission-mode bypass` for auto/no-approval operation, or change modes live with `/permissions MODE`. Explicit deny rules retain precedence.
 
 ## Documentation
 
+- [Codex tool contracts and native Tiger computer use](docs/CODEX-TOOLS.md)
 - [Modern build, configuration, CLI and tools](docs/MODERN-AGENT.md)
 - [Modern static analysis and Ubuntu CI](docs/MODERN-ANALYSIS.md)
 - [Feature/reference/test ledger](docs/FEATURE-PORT.md)

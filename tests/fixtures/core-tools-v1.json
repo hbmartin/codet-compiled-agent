@@ -1,0 +1,12 @@
+{
+  "exec_command": ["cmd"],
+  "write_stdin": ["session_id"],
+  "apply_patch": ["patch"],
+  "view_image": ["path"],
+  "update_plan": ["plan"],
+  "request_user_input": ["questions"],
+  "request_user_input_async": ["questions"],
+  "send_message_to_user_async": ["message"],
+  "clock.curr_time": [],
+  "clock.sleep": ["duration_ms"]
+}

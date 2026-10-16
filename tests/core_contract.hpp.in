@@ -1,0 +1,2 @@
+#pragma once
+constexpr const char *core_contract_json=R"contract(@CODET_CORE_CONTRACT@)contract";
