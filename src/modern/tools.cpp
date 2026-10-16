@@ -977,11 +977,13 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
       const auto input = a.value("chars", std::string{});
       authorize(execution_request(call));
       if (it->second.completed) {
-        if (!it->second.exit_code)
+        const auto exit_status = it->second.exit_code;
+        if (!exit_status)
           throw Error("Exec session ended without a collected exit status");
+        const auto exit_code = exit_status.value();
         return {"",
                 false,
-                {{"exit_code", it->second.exit_code.value()},
+                {{"exit_code", exit_code},
                  {"already_completed", true},
                  {"total_output_bytes", 0},
                  {"stdin_closed", true}}};
