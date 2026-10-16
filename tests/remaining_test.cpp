@@ -612,7 +612,8 @@ TEST_F(Remaining, ParameterlessGoogleToolsOmitParametersAndTimeoutDefaultsRemain
   const auto body = Json::parse(request.body);
   for (const auto &tool : body["tools"][0]["functionDeclarations"]) {
     const auto name = tool["name"].get<std::string>();
-    EXPECT_EQ(tool.contains("parameters"),
+    EXPECT_FALSE(tool.contains("parameters"));
+    EXPECT_EQ(tool.contains("parametersJsonSchema"),
               name == "StructuredOutput" ||
                   !tool_definition(tool_logical_name(name))->schema.at("properties").empty());
   }

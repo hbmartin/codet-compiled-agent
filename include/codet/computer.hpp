@@ -24,10 +24,20 @@ public:
   virtual Json capabilities() const = 0;
   virtual DesktopResult invoke(const std::string &, const Json &, const Cancellation &) = 0;
 };
+struct CaptureRect {
+  double x, y, width, height;
+};
+struct CaptureArea {
+  size_t display;
+  CaptureRect bounds;
+};
+CaptureArea capture_area(const std::vector<CaptureRect> &, const Json &,
+                         const std::optional<CaptureRect> &window = std::nullopt);
 std::pair<double, double> desktop_point(double, double, size_t, size_t, double, double, double,
                                         double);
 std::shared_ptr<ImageBackend> native_images();
 std::shared_ptr<ComputerBackend> native_computer();
+fs::path artifact_directory(const Config &);
 ImageArtifact persist_image(const Config &, FileSystem &, const ImageData &, const std::string &);
 std::string image_data_url(const ImageArtifact &, const Config &);
 std::string base64_encode(const std::string &);
