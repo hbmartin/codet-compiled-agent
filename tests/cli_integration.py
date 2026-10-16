@@ -309,11 +309,16 @@ class CliTests(unittest.TestCase):
                 wait_for(b'Responding:')
                 if index==2:p.send_signal(signal.SIGINT)
                 wait_for(finish)
-                # A resize forces curses to repaint the current screen from its state.
-                time.sleep(.1);received=b''
-                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',25+index,121+index,0,0))
-                p.send_signal(signal.SIGWINCH)
-                wait_for(b'Permissions: default')
+                # Streamed final text and older errors can precede turn completion.
+                # Require an idle repaint, allowing bounded worker/terminal scheduling latency.
+                deadline=time.monotonic()+7
+                while time.monotonic()<deadline:
+                    received=b''
+                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',25+index,121+index,0,0))
+                    p.send_signal(signal.SIGWINCH)
+                    wait_for(b'Permissions: default')
+                    if b'Responding:' not in received:break
+                    time.sleep(.02)
                 self.assertNotIn(b'Responding:',received)
             os.write(master,b'/quit\n');deadline=time.monotonic()+5
             while p.poll() is None and time.monotonic()<deadline:
