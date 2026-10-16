@@ -7,7 +7,7 @@ The supplied `../tools` source snapshot defines the reference contract. Codet im
 | Tool | Behavior |
 |---|---|
 | `exec_command` | `cmd`, optional `workdir`, `shell`, `login` (true), `tty` (false), `yield_time_ms` (10000, clamped 250–30000), `max_output_tokens` (10000). Returns `output`, `wall_time_seconds`, `chunk_id`, and either numeric `session_id` or `exit_code`. Nonzero command status is a completed tool result. |
-| `write_stdin` | Numeric `session_id`, optional `chars`, `yield_time_ms`, `max_output_tokens`. Nonempty writes wait 250 ms by default; empty polls wait 5000 ms by default. Returns newly collected output. Empty polls clamp to 5000–300000 ms; writes cap at 30000 ms. |
+| `write_stdin` | Numeric `session_id`, optional `chars`, `yield_time_ms`, `max_output_tokens`. Nonempty writes wait 250 ms by default; empty polls wait 5000 ms by default. Returns newly collected output. Empty polls clamp to 5000–300000 ms; writes cap at 30000 ms. Optional `close_stdin` sends pipe EOF after `chars`; PTYs reject it before input dispatch. |
 | `apply_patch` | Codex patch envelope, including Add/Delete/Update/Move. Raw custom-tool input for the subscription Responses transport; `{patch: ...}` for function-only providers. No mandatory earlier Read call. |
 | `view_image` | Local `path`, `detail` high/original. Sends image pixels to the model and records a private artifact reference. |
 | `update_plan` | Optional `explanation`, `plan` of `{step,status}`. Status is pending/in_progress/completed, with at most one active step. Unavailable in Plan mode. |
@@ -26,13 +26,15 @@ Use shell commands for ordinary reads/searches, patches for edits, and the autom
 
 ## Permissions and execution lifetime
 
-Application rules do not provide OS shell confinement. `sandbox_permissions: use_default` is accepted; escalation, justification and reusable escalation prefixes are rejected explicitly. Deny rules beat allow/bypass. `accept-edits` grants patches. Plan mode rejects shell execution, patches, nonempty stdin writes and desktop mutations, while allowing observation and `read_file` inspection. Headless unresolved approvals fail as tool errors.
+Application rules do not provide OS shell confinement. `sandbox_permissions: use_default` is accepted; escalation, justification and reusable escalation prefixes are rejected explicitly. Deny rules beat allow/bypass. `accept-edits` grants patches. Plan mode rejects shell execution, patches, nonempty stdin writes, closing stdin and desktop mutations, while allowing observation and `read_file` inspection. Headless unresolved approvals fail as tool errors.
 
-Shell hooks use Codex's canonical `Bash` hook identity; patches use `apply_patch`. Hook identities are separate from public permission-rule names. Shell `PreToolUse` receives `{command: ...}` and rewritten commands are reauthorized. `write_stdin` does not repeat the pre-hook; completion produces the matching post-hook.
+Shell hooks use Codex's canonical `Bash` hook identity; patches use `apply_patch`. Hook identities are separate from public permission-rule names. Shell hook input preserves `command` and includes effective canonical `cwd`, `shell`, `login` and `tty`. Command/cwd/shell rewrites are reauthorized. Stdin hook and approval context includes the originating command/cwd/shell, session ID, actual `chars` and `close_stdin`; `write_stdin` does not repeat the pre-hook, and completion produces the matching post-hook. Failure hooks receive effective inputs. Known removed exact tool matchers fail configuration validation; wildcard matchers and the Bash identity remain supported.
 
-Yielding does not terminate a process. Sessions live for the Codet process lifetime, are bounded, and support pipe or PTY input. Cancellation stops the owned process group. Output is bounded per collection and per response; `original_token_count` is an estimate when truncation occurs.
+Outside-root working directories are denied except in bypass mode. Scoped command allows authorize only the default shell (`SHELL`, otherwise `/bin/sh`); a custom shell needs an unscoped exec allow, bypass, or informed approval. Explicit denies still win. Approvals show actual command/cwd/shell and stdin contents. Scoped `write_stdin(...)` rules now match input text rather than the numeric session ID; migrate old session-ID patterns. Exec, stdin, AppleScript and typing retain independent per-tool authorization, without semantic command parsing across tools. Embedded NUL in execution text or computer string arguments is rejected before hooks or dispatch.
 
-The terminal owns input and rendering on the main thread. The agent worker owns tool execution and session writes. Submitted user messages are injected between complete tool batches. `/quit` also works during an active turn. Permission mode changes are made between turns. JSONL retains the existing thread/turn/item envelopes and adds `codet.user_input.requested`, `codet.user_input.received`, `codet.user_message` and `codet.artifact` events.
+Yielding does not terminate a process. Sessions live for the Codet process lifetime, are bounded, and support pipe or PTY input. Pipe sessions support explicit EOF with `close_stdin`; repeated closure is safe while the handle is retained, including after completion, and later nonempty writes fail. Completed retries return the cached exit status without rerunning completion hooks. PTYs continue to use terminal input. Cancellation stops the owned process group. Output is bounded per collection and per response; `original_token_count` is an estimate when truncation occurs.
+
+The terminal owns input and rendering on the main thread. The agent worker owns tool execution and session writes. Submitted user messages are injected between complete tool batches. Input arriving at completion automatically starts the next turn in the same session, in order. Active `/new` is deferred until pending messages finish. Errors and cancellation show unsent pending text without automatically restarting work; quit stops further turns. Queue-limit rejection does not cancel the worker. `/quit` also works during an active turn. Permission mode changes are made between turns. JSONL retains the existing thread/turn/item envelopes and adds `codet.user_input.requested`, `codet.user_input.received`, `codet.user_message` and `codet.artifact` events.
 
 ## Image storage and provider replay
 
@@ -40,14 +42,14 @@ Image input defaults on for Codex/OpenAI/Anthropic/Google and off for Ollama. Ov
 
 ImageIO handles image decoding and PNG encoding. High detail previews fit a 1280-pixel longest edge; original detail preserves dimensions within limits. Individual encoded images are limited to 8 MiB and decoded buffers to 32 MiB. Requests include at most four recent images and 8 MiB of image data. Omitted images remain reloadable through `view_image`.
 
-Images live as immutable, checksummed files under `CODET_HOME/artifacts`, with private directory/file permissions. Messages and journal results contain artifact references, MIME types, dimensions and detail hints; provider requests encode the bytes as the provider's native image parts. Base64 data is not written into JSONL events or the session journal. Missing or changed files produce diagnostics; screenshot actions are never repeated to repair history. Session schema 3 preserves references through recovery/fork and carries references into compaction summaries. Artifact files remain until explicitly removed with their state directory.
+Images live as immutable, checksummed files under `CODET_HOME/artifacts`, with private directory/file permissions. Messages and journal results contain artifact references, MIME types, dimensions and detail hints; provider requests encode the bytes as the provider's native image parts. Base64 data is not written into JSONL events or the session journal. Missing or changed files produce diagnostics; screenshot actions are never repeated to repair history. Session schema 3 preserves references through recovery/fork and carries references into compaction summaries. Artifact files remain until explicitly removed with their state directory. With `--ephemeral`, all automatic image artifacts instead use the private invocation directory, stay replayable while active, and are removed after hooks and process cleanup. Credentials and explicit workspace/memory writes retain their normal lifetime.
 
 ## Native Tiger computer tools
 
 | Functions in `computer` | Interface |
 |---|---|
 | `get_state` | Optional `pid`; returns snapshot ID, applications, focused PID, displays, selected application's windows and accessibility tree. Default application is focused. |
-| `screenshot` | Optional `display_id` (1-based active display index, main display first), `window_id`, or global desktop `x/y/width/height` region; optional detail. Returns pixels, bounds, dimensions and screenshot ID. Window capture is a visible crop. |
+| `screenshot` | Optional `display_id` (1-based active display index, main display first), `window_id`, or global desktop `x/y/width/height` region; optional detail. Returns pixels, bounds, dimensions and screenshot ID. Selectors are mutually exclusive. Window/global-region captures automatically select their sole intersecting display and clip offscreen portions; captures spanning displays fail with guidance to capture each display separately. Window capture is a visible crop. |
 | `move`, `click`, `drag`, `scroll` | Require `screenshot_id`, `x`, `y` in returned-image coordinates. Drag adds `to_x/to_y`; click supports left/right/middle and count 1–2; scroll uses line deltas, positive up/left. |
 | `type_text`, `key` | Unicode `text`, or a named key with command/shift/option/control modifiers. Key chords are atomic. |
 | `perform_action`, `set_value` | Require snapshot/node IDs and an advertised action or settable AXValue. Secure text values are not exposed. |
@@ -68,3 +70,9 @@ Clipboard and AppleScript tools follow their respective backend flags. Remaining
 and native actions stay available under the existing application permissions. Prompts prefer
 screenshots for UI work and describe accessibility/AppleScript as secondary routes. See
 [prompt sources and adaptations](PROMPTS.md) for provenance and context accounting.
+
+## Provider and completion guarantees
+
+Google function declarations use `parametersJsonSchema`; strict local validation remains enabled, including the string/boolean/number accessibility-value union. Image omission notes are transport data, never appended to stored tool envelopes. Each adapter emits accompanying text once and preserves supported reasoning/tool replay.
+
+Completed side effects retain their tool result even if a post-hook or later rendering fails. Fatal failures abort only after the completed result is journaled; recovery does not replay it. Process exhaustion propagates consistently, capture finalization runs after drain failures, and routine cleanup retries do not sleep per job. Live partial UTF-8 is deferred rather than marked omitted; output accumulation scans new bytes incrementally.
