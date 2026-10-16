@@ -85,3 +85,12 @@ In both terminal modes on the G4:
 - Compare 1/2/4 MiB output capture responsiveness and repeat process starts with failed cleanup observations. Record time, peak RSS and disk behavior. Tiny split Unicode output must not create a spill notice.
 
 Host fixtures and PPC compile/link checks do not establish these target results. Record actual execution and any unavailable multi-display setup separately.
+
+For the follow-up runtime changes, also verify:
+
+- A Bash PermissionRequest hook that approves an originating Python command cannot approve later stdin or EOF without `decision.tool: "write_stdin"`. Test exact operation matchers, legacy unscoped allows, explicit denies, headless operation and a valid scoped allow.
+- After a post-hook fails, confirm a completed command remains journaled, uses its requested output limit, and survives invalid text in diagnostics. Resume without repeating its side effect.
+- Send `/memory consolidate` while a Stop hook waits, followed by `/new`; it must remain model steering in the old session. Check interrupted approvals cannot consume the next prompt and error diagnostics appear before the next turn.
+- Run enough screenshot-led TextEdit/browser interactions to compact. Verify the continuation contains no automatic images, inspect the paged index and reload a chosen image with `view_image`. Resume and fork; repeat with `--ephemeral` and confirm indexes disappear with the temporary images.
+- Exercise small context settings and large first prompts; verify actionable fixed/input/summary diagnostics, current task-plan updates and Plan-mode memory inspection guidance.
+- Repeat cleanup with observer/reap fault fixtures, then run new jobs; confirm capacity is recovered without per-job refresh waits. Check invalid display bounds fail before capture arithmetic where a display fixture is available.
