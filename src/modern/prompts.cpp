@@ -3,6 +3,10 @@
 #include <sstream>
 
 namespace codet {
+PromptBudget prompt_budget(const Config &config, const std::string &system, const Json &schemas) {
+  return {config.context_tokens * 3, system.size() + schemas.dump().size() + 256,
+          config.max_output_tokens * 3};
+}
 const PromptEntry *model_prompt(std::string_view model) {
   for (const auto &entry : bundled_prompts::entries)
     if (model == entry.model)
@@ -58,6 +62,7 @@ std::string assemble_prompt(const Config &config, const Json &schemas, const Jso
            "inspection and directory listings. Observation tools remain subject to deny rules.\n";
   else {
     out << "Use exec_command for reads, searches and shell work; use apply_patch for manual edits. "
+           "Every shell command, including reads such as ls or rg, requires shell authorization. "
            "Search with rg when installed, otherwise Tiger's grep and find.\n";
     if (config.permission_mode == "bypass")
       out << "Bypass permits operations without approval unless explicitly denied.\n";
@@ -77,7 +82,8 @@ std::string assemble_prompt(const Config &config, const Json &schemas, const Jso
          "working directories are denied except in bypass mode. Scoped command allows require "
          "the default shell; custom shells need an unscoped exec grant, bypass, or approval. "
          "write_stdin rules match supplied chars, not the session ID. close_stdin sends pipe EOF "
-         "after chars and is a mutation; it is unsupported for PTYs.\n";
+         "after chars and is a mutation; it is unsupported for PTYs. Stdin hook auto-approval "
+         "requires an explicit write_stdin decision; origin command approval does not grant it.\n";
   out << "Available tools:";
   for (const auto &schema : schemas)
     out << ' ' << schema.at("name").get<std::string>();

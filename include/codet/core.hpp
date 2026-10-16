@@ -169,11 +169,12 @@ class NativeProcesses final : public Processes {
   void record_error(const std::string &, Job &, const std::exception_ptr &);
   [[noreturn]] void throw_failure(const Job &) const;
   Job &observe(const std::string &);
+  Job &retained_job(const std::string &);
   ProcessResult publish(Job &, bool render = true);
   ProcessResult consume(const std::string &, bool render);
   static size_t job_bytes(const Job &);
   void advance_cleanup(Job &);
-  void finish(Job &, bool ownership_lost = false);
+  void finish(Job &, bool ownership_lost = false, std::optional<int> collected_status = {});
   void terminate(Job &, int status);
   void refresh();
   void prune();
@@ -215,6 +216,7 @@ struct Message {
   Json replay = Json::array();
   std::string replay_provider = "";
   std::vector<ImageArtifact> images;
+  std::string origin, artifact_index;
 };
 void to_json(Json &, const ToolCall &);
 void from_json(const Json &, ToolCall &);
@@ -350,7 +352,7 @@ class StateStore {
   std::unique_ptr<Impl> impl_;
 
 public:
-  explicit StateStore(const fs::path &);
+  explicit StateStore(const fs::path &, const fs::path &artifact_root = {});
   ~StateStore();
   Session create(const std::string &name = "");
   // Default loads are repaired snapshots, never persistent recovery writes.
@@ -372,6 +374,8 @@ struct PermissionRequest {
   std::optional<fs::path> path;
   bool mutation = false;
   Json context = Json::object();
+  // Set only by trusted read-tool normalization after validating private artifact storage.
+  bool internal_read = false;
 };
 enum class Decision : uint8_t { allow, ask, deny };
 class Permissions {
@@ -451,8 +455,8 @@ class Tools {
   fs::path path(const std::string &) const;
   void authorize(const PermissionRequest &);
   PermissionRequest execution_request(const ToolCall &) const;
-  Json hook_input(const ToolCall &, bool resolve = true) const;
-  ToolResult execute_inner(const ToolCall &, const Cancellation &);
+  Json authored_hook_input(const ToolCall &) const;
+  ToolResult execute_inner(const ToolCall &, const PermissionRequest &, const Cancellation &);
 
 public:
   Tools(const Config &c, FileSystem &f, Processes &p, HttpTransport &h, Clock &clock,
@@ -464,6 +468,8 @@ public:
   void use_session(const std::string &id);
   ToolResult execute(const ToolCall &, const Cancellation &);
   std::string instructions() const;
+  std::string dynamic_context() const;
+  fs::path archive_images(const std::vector<Message> &);
   std::string expand_command(const std::string &) const;
   std::vector<std::string> take_input();
   void begin_input_turn(const std::string &);
@@ -493,7 +499,8 @@ public:
         DiagnosticSink diagnostics = {})
       : config_(c), provider_(p), tools_(t), state_(s), events_(std::move(e)),
         diagnostics_(std::move(diagnostics)) {}
-  RunResult run(Session &, const std::string &, const Cancellation &, const Json &schema = Json());
+  RunResult run(Session &, const std::string &, const Cancellation &, const Json &schema = Json(),
+                bool expand_command = true);
 };
 int cli_main(const std::vector<std::string> &args, Cancellation &);
 } // namespace codet

@@ -9,8 +9,13 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def write_utf8(path, text):
+    with path.open("w", encoding="utf-8", newline="\n") as output:
+        output.write(text)
+
+
 def digest(text):
-    return hashlib.sha256(text.encode()).hexdigest()
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def adapt(text, family):
@@ -34,47 +39,60 @@ def adapt(text, family):
             pattern = re.escape(heading) + r"\n.*?(?=\n#{1," + str(len(heading.split()[0])) + r"} |\Z)"
             for match in list(re.finditer(pattern, text, re.S)):
                 replace(match.group(), "", "Unavailable connector/plugin/inline visualization workflow")
-        for line in list(text.splitlines()):
-            if any(s in line for s in ("functions.exec", "multi_tool_use.parallel", "parallelization over", "parallelize tool calls")):
-                replace(line, "- Group independent read-only work when practical. Tool calls execute "
-                        "sequentially; keep dependencies, mutations and approvals ordered.",
-                        "No JavaScript orchestration or parallel-tool wrapper")
-            elif "Playwright screenshots" in line:
-                replace(line, line.replace("Playwright screenshots and canvas-pixel checks", "available browser screenshots and visual checks"),
-                        "Tiger browser verification")
-            elif "image search, known relevant images, or generated bitmap images" in line:
-                replace(line, line.replace("image search, known relevant images, or generated bitmap images", "available relevant local or user-supplied images"),
-                        "No hosted image-search/generation tool")
-            elif "skills.list" in line or "skills.read" in line:
-                prefix = re.match(r"\s*(?:[-*]|\d\))?\s*", line).group()
-                replace(line, prefix + "Read listed filesystem SKILL.md files completely through "
-                        "exec_command, or read_file in Plan mode. Resolve supporting paths relative "
-                        "to the skill directory; do not invent non-filesystem providers.",
-                        "Filesystem-only skills on Tiger")
+        # Adapt complete known sentences/clauses rather than discarding mixed lines.
+        replace("Batch independent searches and reads in one functions.exec using await Promise.allSettled([...]); inspect every result.",
+                "Batch related searches and reads when practical; execute direct tools sequentially and inspect every result.",
+                "Sequential direct inspection tools")
+        replace("When calling `functions.exec`, parallelize independent tool calls by awaiting Promises. Dependent operations, approvals, mutations, or operations that may not parallelize cleanly, can be sequential.",
+                "Group independent read-only work when practical. Keep dependent operations, approvals and mutations ordered; Codet executes direct tool calls sequentially.",
+                "No JavaScript orchestration")
+        replace("When possible, prefer parallelization over sequential tool calls, as this will help with round-trip latency and let you get work done faster.",
+                "Group related reads when practical; direct tool calls execute sequentially.",
+                "Sequential tool execution")
+        replace("You parallelize tool calls whenever you can, especially file reads such as `cat`, `rg`, `sed`, `ls`, `git show`, `nl`, and `wc`. You use `multi_tool_use.parallel` for that parallelism, and only that.",
+                "Group related file inspections such as `cat`, `rg`, `sed`, `ls`, `git show`, `nl`, and `wc` in direct tool calls; those calls execute sequentially.",
+                "No parallel-tool wrapper; preserve shell-output guidance")
+        replace("Playwright screenshots and canvas-pixel checks", "available browser screenshots and visual checks", "Tiger browser verification")
+        replace("image search, known relevant images, or generated bitmap images", "available relevant local or user-supplied images", "No hosted image-search/generation tool")
+        replace('Open and read the skill according to its location: filesystem skills should be read from the filesystem, environment-owned skills should be access via the corresponding environment, and orchestrator skills should be discovered by calling `skills.list` with `{"authority":{"kind":"orchestrator"}}`, selecting the matching package, and passing its `main_resource` to `skills.read`.',
+                "Open and read listed filesystem SKILL.md files through exec_command, or read_file in Plan mode. Non-filesystem skill providers are unavailable; do not invent local paths for them.",
+                "Filesystem-only skills; retain reread guidance")
+        replace('For a filesystem path, open the file. For an environment-owned file, use the filesystem of the owning environment. For an orchestrator reference, call `skills.list` with `{"authority":{"kind":"orchestrator"}}`, select the matching package, and pass its `main_resource` to `skills.read`. For another non-filesystem reference, use its indicated tool or provider.',
+                "For a filesystem path, read it through exec_command, or read_file in Plan mode. Non-filesystem skill providers are unavailable; do not invent local paths for them.",
+                "Filesystem skills; preserve alias expansion and reading through EOF")
+        replace(" For orchestrator skills, pass the exact referenced resource identifier with the same authority and package to `skills.read`; do not treat `skill://` identifiers as filesystem paths.",
+                " Non-filesystem references cannot be read by Codet; do not treat skill:// identifiers as filesystem paths.",
+                "Preserve relative supporting-resource resolution")
+        replace(" For orchestrator skills, use `skills.read` and the available tools; do not invent a local path.",
+                " Non-filesystem skill readers are unavailable; do not invent a local path.",
+                "Retain preference for provided scripts")
         replace("`functions.request_user_input_async`", "`request_user_input_async`", "Direct tool name")
-        # Codet streams assistant text but has no separate commentary/final message fields.
-        for before in ("You have two channels for staying in conversation with the user:",):
-            replace(before, "You communicate with the user through streamed assistant text:", "Terminal communication surface")
-        for before in ("`commentary` channel", "`commentary`", "commentary channel"):
-            replace(before, "progress updates", "Terminal progress text, not a protocol channel")
-        for before in ("`final` channel", "final channel"):
-            replace(before, "final answer", "Terminal final answer, not a protocol channel")
-        replace("- You share updates in progress updates.", "- Share concise progress updates before tool calls.", "Terminal progress wording")
-        replace("- You share updates in the progress updates.", "- Share concise progress updates before tool calls.", "Terminal progress wording")
         replace("`functions.send_user_message_async` or `request_user_input_async` tool (depending on which is available)",
                 "`request_user_input_async` tool when available", "Direct asynchronous question tool")
-        for before, after in (("in the progress updates", "as progress updates"),
-                              ("in progress updates", "as progress updates"),
-                              ("since they are collapsed after the final answer is shown to users", "alongside the final answer"),
+        # Remove only guardian-specific clauses; retain ordinary permission explanations.
+        replace(", or approval auto-review block", "", "No automatic approval reviewer")
+        for sentence in list(re.findall(r"If you receive an auto-review rejection[^\n]*?summarize the stated reason\.", text)):
+            replace(sentence, "When an application permission rule denies an action, explain the action and reason, continue unrelated authorized work, and do not retry or use another tool to bypass the denial.",
+                    "Application authorization replaces guardian rejection")
+        replace("Put this explanation in a short, separate paragraph at the end of both commentary and final, after any permission question.",
+                "Put this explanation in a short, separate paragraph after any permission question.", "Terminal permission explanation")
+        replace("You have two channels for staying in conversation with the user:",
+                "You communicate through streamed assistant text and a final answer:", "Terminal communication surface")
+        for old in ("Do NOT put a final response in the commentary channel that should be asked in the final channel.",
+                    "Do NOT put a final response (e.g. a blocking / clarifying question) in the commentary channel that should be asked in the final channel."):
+            replace(old, "Use progress updates for ongoing work and put the final response in a self-contained final answer.", "Complete terminal communication sentence")
+        for before, after in (("in the `commentary` channel", "through progress updates"),
+                              ("in `commentary` channel", "through progress updates"),
+                              ("to the `commentary` channel", "as progress updates"),
+                              ("use the `commentary` channel", "provide progress updates"),
+                              ("in the commentary channel", "through progress updates"),
+                              ("to the `final` channel", "as your final answer"),
+                              ("in the final channel", "in the final answer"),
+                              ("in the commentary channel", "through progress updates"),
+                              (", since they are collapsed after the final answer is shown to users", ""),
                               ("but you will see all prior user requests", "but earlier user requests may be represented in the summary"),
                               ("but you will still see all prior user requests", "but earlier user requests may be represented in the summary")):
             replace(before, after, "Terminal communication and compaction capabilities")
-        # The auto-review service is not part of Codet's application authorization.
-        for paragraph in list(text.split("\n\n")):
-            if "auto-review" in paragraph.lower() or "automatic approval review" in paragraph.lower():
-                replace(paragraph, "When an application permission rule denies an action, explain "
-                        "the denial and continue unrelated authorized work. Do not retry or use "
-                        "another tool to bypass the denial.", "No guardian or automatic approval reviewer")
     if family == "mode":
         for line in list(text.splitlines()):
             if "active mode changes only" in line:
@@ -94,9 +112,12 @@ def adapt(text, family):
         replace("for example: `search relevant files`", "for example: inspect files with read_file", "Plan inspection tool")
     if family == "approval" and text:
         replace(text, "Tool authorization is enforced by Codet's application rules, not an OS sandbox. "
-                "An allow rule or application approval is required for mutations unless the selected "
+                "An allow rule or application approval is required for all shell execution and other mutations unless the selected "
                 "permission mode grants them. Explicit deny rules prevail. Do not request shell "
                 "escalation or use another tool to bypass a denial.\n", "Tiger application authorization replaces sandbox escalation")
+    for line in list(text.splitlines()):
+        if line.startswith("Open and read listed filesystem SKILL.md") and line != line.rstrip():
+            replace(line, line.rstrip(), "Normalize adapted skill paragraph whitespace")
     return text, edits
 
 
@@ -114,7 +135,7 @@ def import_bundle(catalog, supporting, modes, destination):
         for sub, name, content in (("upstream", original, text), ("assets", key, adapted)):
             target = destination / sub / (name + ".md")
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content)
+            write_utf8(target, content)
         entry = manifest["assets"].setdefault(key, dict(adapted_sha256=key, origins=[]))
         origin = next((o for o in entry["origins"] if o["upstream_sha256"] == original), None)
         if origin is None:
@@ -123,7 +144,7 @@ def import_bundle(catalog, supporting, modes, destination):
         origin["sources"].append(source)
         return key
 
-    for index, model in enumerate(json.loads(catalog.read_text())["models"]):
+    for index, model in enumerate(json.loads(catalog.read_text(encoding="utf-8"))["models"]):
         slug = model["slug"]
         if not re.fullmatch(r"[a-zA-Z0-9._-]+", slug):
             raise ValueError("Invalid model slug")
@@ -143,9 +164,9 @@ def import_bundle(catalog, supporting, modes, destination):
                   if name in ("default", "plan") else "prompts/" + str(path.relative_to(supporting)))
         manifest["sources"][source] = hashlib.sha256(path.read_bytes()).hexdigest()
         family = "mode" if name in ("default", "plan") else "approval" if name.startswith("approval_") else name
-        manifest["bundled"][name] = asset(path.read_text(), family, source)
+        manifest["bundled"][name] = asset(path.read_text(encoding="utf-8"), family, source)
     destination.mkdir(parents=True, exist_ok=True)
-    (destination / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+    write_utf8(destination / "manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
     retained = {"assets": set(manifest["assets"]), "upstream": {
         o["upstream_sha256"] for a in manifest["assets"].values() for o in a["origins"]}}
     for directory, keys in retained.items():

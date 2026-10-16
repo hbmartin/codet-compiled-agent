@@ -13,6 +13,35 @@ spec.loader.exec_module(importer)
 
 
 class PromptBundle(unittest.TestCase):
+    def test_adaptation_preserves_distinct_skill_steps_and_permission_explanations(self):
+        originals = [(p, p.read_text(encoding="utf-8")) for p in (ROOT / "prompts/upstream").glob("*.md")]
+        for path, original in originals:
+            if not original.startswith("You are Codex,"):
+                continue
+            adapted, _ = importer.adapt(original, "instructions")
+            with self.subTest(asset=path.name):
+                for unavailable in ("functions.exec", "multi_tool_use.parallel", "skills.list", "skills.read",
+                                    "auto-review rejection", "to the final answer", "the progress updates"):
+                    self.assertNotIn(unavailable, adapted)
+                if "If a read is truncated or paginated, continue until EOF." in original:
+                    self.assertIn("If a read is truncated or paginated, continue until EOF.", adapted)
+                    self.assertIn("expand the matching root alias", adapted)
+                    self.assertIn("prefer running or patching provided scripts", adapted)
+                if "Avoid re-reading skills when possible." in original:
+                    self.assertIn("Avoid re-reading skills when possible.", adapted)
+                if "approval auto-review block" in original:
+                    self.assertIn("explicitly explain why you need the confirmation", adapted)
+                    self.assertIn("SKILL.md, AGENTS.md, memory", adapted)
+                if "The final answer must always be fully self-contained" in original:
+                    self.assertIn("The final answer must always be fully self-contained", adapted)
+
+    def test_utf8_bytes_and_newlines_are_deterministic(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "unicode.md"
+            importer.write_utf8(target, "雪🌲é\n")
+            self.assertEqual(target.read_bytes(), "雪🌲é\n".encode("utf-8"))
+            self.assertEqual(importer.digest("雪🌲é\n"), hashlib.sha256(target.read_bytes()).hexdigest())
+
     def test_every_asset_has_complete_replayable_provenance(self):
         bundle = ROOT / "prompts"
         manifest = json.loads((bundle / "manifest.json").read_text())

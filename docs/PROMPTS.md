@@ -35,6 +35,9 @@ instructions are not enabled. Parallel JavaScript orchestration becomes sequenti
 tool use. Skills use filesystem paths. Plan templates retain their conversational workflow
 but use `read_file`: Codet denies every shell command in Plan mode, including tests and reads.
 Sandbox escalation wording is replaced by Codet application-authorization wording.
+Adaptations replace complete known sentences or clauses, preserving surrounding permission
+explanations, distinct skill steps, alias expansion and reading through EOF. Import reads and
+writes UTF-8 with deterministic LF output. Generated headers change only when their content changes.
 
 ## Runtime composition
 
@@ -43,7 +46,8 @@ permissions, available tools, Tiger guidance and existing project/skill/memory c
 `plan` selects Plan instructions; `default`, `accept-edits` and `bypass` select Default.
 Project documents and previews are loaded once per agent run and never passed through the
 upstream adaptation rules. Each provider request refreshes a capability snapshot shared by
-the assembler and schema selection. Runtime facts explicitly qualify general base guidance.
+the assembler and schema selection. Mutable task-plan context refreshes separately on every
+request. Runtime facts explicitly qualify general base guidance.
 
 Desktop capability flags separately gate accessibility actions, framebuffer/image-dependent
 screenshots and pointer tools, clipboard and AppleScript. Without image input or a codec,
@@ -53,19 +57,24 @@ accessibility and installed app scripting remain secondary routes. The foregroun
 is shared with the user. Aqua, Universal Access, expiry, crop and input constraints are
 described in the generated prompt. This does not add modern browser or desktop adapters.
 
-No CLI flags, provider interfaces, tool parameter schemas or session schema were added.
+The prompt assembler adds no CLI flags or provider interfaces. Optional message-origin and
+artifact-index metadata remain backward compatible with existing session JSON.
 Unsupported operations disappear from the available tool list; their registry identities
 remain valid for rules and historical transcripts. Execution still rechecks capabilities
 and permissions. Headless unresolved approvals fail; question answers do not grant tool
 authorization. Deny rules prevail even in bypass mode.
 
 Context accounting retains the existing approximate three-bytes-per-token estimate and now
-includes fixed prompt and tool-schema bytes. Compaction uses the imported instructions and
+includes fixed prompt, tool schemas, request overhead and reserved output. Compaction uses the imported instructions and
 summary prefix, with no tools. It runs only after completed tool batches, preserves the latest
-user message verbatim and deduplicated artifact references, and commits only a smaller
-continuation that fits. Oversized fixed context or an ineffective summary fails with a
-diagnostic recommending a larger context or smaller document/memory limits. Instructions are
-never silently shortened. Image payloads retain their separate provider request budgets.
+human instruction verbatim, excluding synthetic hook feedback from that selection. Image
+references move to a private paged index; no images are attached to the compacted continuation.
+Summary requests reserve output and request only a summary that can fit the continuation.
+Existing adapter output controls apply where supported; Codex subscription requests use the
+prompt bound and returned-size validation without inventing unsupported transport fields.
+Oversized fixed context, human input or summaries produce distinct diagnostics with estimated
+minimum context settings. Defaults remain unchanged; instructions and human input are never
+silently shortened. Image payloads retain their separate provider request budgets.
 
 Host fixtures establish source integrity, composition, schema gates, adapter transport,
 steering and compaction behavior. PPC cross-build verification establishes compile/link

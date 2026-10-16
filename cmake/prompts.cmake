@@ -52,4 +52,4 @@ foreach(_name compact summary_prefix default plan approval_on_request approval_n
 endforeach()
 string(APPEND _header "}\n")
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
-file(WRITE "${CMAKE_BINARY_DIR}/generated/prompts.hpp" "${_header}")
+file(CONFIGURE OUTPUT "${CMAKE_BINARY_DIR}/generated/prompts.hpp" CONTENT "${_header}" @ONLY)

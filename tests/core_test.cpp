@@ -1,5 +1,6 @@
 #include "codet/core.hpp"
 #include "codet/prompt.hpp"
+#include "prompt_support.hpp"
 #include "temp.hpp"
 #include <fstream>
 #include <gmock/gmock.h>
@@ -668,10 +669,7 @@ TEST_F(Fixture, ContextCompactionUsesSameProviderAndRetainsCurrentRequest) {
   Tools tools(config, files, processes, http, clock);
   StrictMock<MockProvider> provider;
   ProviderResult summary;
-  config.context_tokens =
-      (assemble_prompt(config, tools.schemas(), tools.capabilities(), tools.instructions()).size() +
-       tools.schemas().dump().size() + 1200) /
-      3;
+  config.context_tokens = codet::test::context_tokens(tools, config, 1200);
   summary.message.role = "assistant";
   summary.message.text = "preserved summary";
   ProviderResult final;

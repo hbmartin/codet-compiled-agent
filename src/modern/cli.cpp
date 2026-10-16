@@ -1,3 +1,4 @@
+#include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/interaction.hpp"
@@ -650,7 +651,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   // Destroy processes/capture handles before removing the private invocation directory.
   NativeProcesses processes;
   processes.set_diagnostics(diagnostic);
-  StateStore state(state_home);
+  StateStore state(state_home, artifact_directory(config));
   if (o.command == "sessions") {
     std::cout << state.list().dump(2) << '\n';
     return 0;
@@ -808,50 +809,52 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   }
   bool quit_requested = false;
   bool new_requested = false;
-  auto execute_agent = [&](const std::string &text) -> RunResult {
+  auto execute_agent = [&](const std::string &text, bool steering) -> RunResult {
     if (!terminal)
-      return agent.run(session, text, cancel, schema);
+      return agent.run(session, text, cancel, schema, !steering);
     interaction->begin_turn(session.id);
     std::future<RunResult> work;
     std::optional<Json> pending;
-    const auto deliver = [&] {
-      for (const auto &event : interaction->events()) {
-        const auto type = event.value("type", "");
-        if (type == "codet.diagnostic")
-          diagnostics->emit(event.at("text"));
-        else if (type == "codet.approval") {
-          pending = event;
-          terminal->say(event.at("tool").get<std::string>() + ": " +
-                        event.at("target").get<std::string>());
-          if (event.contains("context") && !event.at("context").empty())
-            terminal->say(safe_json(event.at("context")).dump());
-          terminal->say("Approve? [y/N]");
-        } else if (type == "codet.question") {
-          pending = event;
-          terminal->say(event.at("question"));
-          const auto options = event.at("options").get<std::vector<std::string>>();
-          for (size_t i = 0; i < options.size(); ++i)
-            terminal->say(std::to_string(i + 1) + ". " + options[i]);
-          terminal->say("Enter a choice number or a text answer.");
-        } else if (type == "codet.user_input.requested") {
-          for (const auto &q : event.at("questions")) {
-            terminal->say(q.at("title"));
-            size_t i = 0;
-            for (const auto &option : q.value("options", Json::array()))
-              terminal->say(std::to_string(++i) + ". " + option.get<std::string>());
-          }
-        } else if (type == "codet.user_message")
-          terminal->say(event.at("message"));
-        else if (type == "codet.artifact")
-          terminal->say("[Image: " + event.at("artifact").at("path").get<std::string>() + "]");
-        else
-          terminal->progress(event);
-      }
+    const auto deliver = [&](bool recovering = false) {
+      interaction->deliver(
+          [&](const Json &event) {
+            const auto type = event.value("type", "");
+            if (type == "codet.diagnostic")
+              diagnostics->emit(event.at("text"));
+            else if (type == "codet.approval") {
+              terminal->say(event.at("tool").get<std::string>() + ": " +
+                            event.at("target").get<std::string>());
+              if (event.contains("context") && !event.at("context").empty())
+                terminal->say(safe_json(event.at("context")).dump());
+              terminal->say("Approve? [y/N]");
+              pending = event;
+            } else if (type == "codet.question") {
+              terminal->say(event.at("question"));
+              const auto options = event.at("options").get<std::vector<std::string>>();
+              for (size_t i = 0; i < options.size(); ++i)
+                terminal->say(std::to_string(i + 1) + ". " + options[i]);
+              terminal->say("Enter a choice number or a text answer.");
+              pending = event;
+            } else if (type == "codet.user_input.requested") {
+              for (const auto &q : event.at("questions")) {
+                terminal->say(q.at("title"));
+                size_t i = 0;
+                for (const auto &option : q.value("options", Json::array()))
+                  terminal->say(std::to_string(++i) + ". " + option.get<std::string>());
+              }
+            } else if (type == "codet.user_message")
+              terminal->say(event.at("message"));
+            else if (type == "codet.artifact")
+              terminal->say("[Image: " + event.at("artifact").at("path").get<std::string>() + "]");
+            else
+              terminal->progress(event);
+          },
+          diagnostic, recovering);
     };
     try {
       terminal->begin_active();
-      work =
-          std::async(std::launch::async, [&] { return agent.run(session, text, cancel, schema); });
+      work = std::async(std::launch::async,
+                        [&] { return agent.run(session, text, cancel, schema, !steering); });
       while (work.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
         deliver();
         bool closed = false;
@@ -863,7 +866,13 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
             quit_requested = true;
             cancel.requested = true;
           } else if (pending) {
-            interaction->answer(pending->at("request_id"), *line);
+            if (!interaction->answer(pending->at("request_id"), *line)) {
+              try {
+                interaction->submit(*line);
+              } catch (const Error &error) {
+                terminal->say(error.what());
+              }
+            }
             pending.reset();
           } else if (line->rfind("/permissions", 0) == 0)
             terminal->say("Change permission modes after the active turn completes.");
@@ -888,10 +897,16 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       while (work.valid() &&
              work.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready) {
       }
+      pending.reset();
       try {
         terminal->end_active();
       } catch (...) {
         std::fputs("Terminal restoration also failed\n", stderr);
+      }
+      try {
+        deliver(true);
+      } catch (...) {
+        std::fputs("Worker events could not be drained during cleanup\n", stderr);
       }
       if (!quit_requested)
         cancel.requested = false;
@@ -916,9 +931,9 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
         terminal->say("[Pending message not sent: " + text + "]");
     }
   };
-  auto run = [&](const std::string &text) {
+  auto run = [&](const std::string &text, bool steering = false) {
     try {
-      auto result = execute_agent(text);
+      auto result = execute_agent(text, steering);
       pending_input(true);
       const auto answer = result.structured.is_null() ? result.text : result.structured.dump();
       if (!o.output.empty())
@@ -998,6 +1013,8 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     if (!followups.empty()) {
       input = followups.front();
       followups.pop_front();
+      run(*input, true);
+      continue;
     } else if (new_requested) {
       input = "/new";
       new_requested = false;

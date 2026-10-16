@@ -239,7 +239,7 @@ class CliTests(unittest.TestCase):
         r=self.run_cli('exec','--json','x'*20000);self.assertEqual(r.returncode,0,r.stderr)
         body=self.server.requests[-1]['body']
         fixed=len(body['messages'][0]['content'].encode())+len(json.dumps(body['tools'],separators=(',',':')).encode())
-        config=self.home/'config.toml';config.write_text('context_tokens='+str((fixed+8000)//3)+'\n'+config.read_text())
+        config=self.home/'config.toml';config.write_text('context_tokens='+str((fixed+256+8192*3+8000+2)//3)+'\n'+config.read_text())
         session=json.loads(r.stdout.splitlines()[0])['thread_id'];self.server.requests=[]
         r=self.run_cli('exec','resume',session,'continue');self.assertEqual(r.returncode,0,r.stderr)
         self.assertEqual(len(self.server.requests),2)
@@ -527,7 +527,7 @@ class CliTests(unittest.TestCase):
         for prompt,code in [('fixture-capture',0),('fixture-capture-final-error',1),('fixture-capture-background',0)]:
             with self.subTest(prompt=prompt):
                 self.server.requests=[]
-                r=self.run_cli('exec','--ephemeral','--permission-mode','bypass',prompt)
+                r=self.run_cli('exec','--ephemeral','--permission-mode','bypass','-c','context_tokens=65536',prompt)
                 self.assertEqual(r.returncode,code,r.stderr)
                 outcomes=[json.loads(m['content']) for m in self.server.requests[-1]['body']['messages'] if m['role']=='tool']
                 capture=next(x for x in outcomes if 'spill_path' in x)
@@ -720,7 +720,7 @@ class CliTests(unittest.TestCase):
                 if p.poll() is None:p.kill();p.wait()
                 os.close(master);os.close(slave)
 
-    def test_late_steering_runs_before_a_deferred_new_session(self):
+    def test_late_slash_steering_runs_before_a_deferred_new_session(self):
         import pty,select
         config=self.home/'config.toml';base=config.read_text()
         for mode in ['line','curses']:
@@ -742,12 +742,12 @@ class CliTests(unittest.TestCase):
                 while not marker.exists() and time.monotonic()<deadline:
                     if select.select([master],[],[],.01)[0]:received+=os.read(master,65536)
                 self.assertTrue(marker.exists(),repr(received))
-                os.write(master,b'late steering\n/new\n')
+                os.write(master,b'/memory consolidate\n/new\n')
                 wait_for(b'Starting a new session after pending messages are handled.')
                 release.touch();wait_for(b'Started ')
                 self.assertEqual(len(self.server.requests),2)
                 users=[m['content'] for m in self.server.requests[1]['body']['messages'] if m['role']=='user']
-                self.assertEqual(users,['first prompt','late steering'])
+                self.assertEqual(users,['first prompt','/memory consolidate'])
                 received=b'';os.write(master,b'fresh session prompt\n');wait_for(b'fixture done')
                 users=[m['content'] for m in self.server.requests[-1]['body']['messages'] if m['role']=='user']
                 self.assertEqual(users,['fresh session prompt'])

@@ -10,8 +10,8 @@
     "prompts/templates/permissions/approval_policy/never.md": "41c7931bac2391a24046362bd07615d5a3e73dca4672b911516fac99646be8c4"
   },
   "assets": {
-    "38bf6fb049714156ef4cd9a282f379d98fee5c126a1038aef30f4244956e138a": {
-      "adapted_sha256": "38bf6fb049714156ef4cd9a282f379d98fee5c126a1038aef30f4244956e138a",
+    "7e62f4177edcca2c1b30e6e51069bbf25d924adff4d50cc89589f97871bea739": {
+      "adapted_sha256": "7e62f4177edcca2c1b30e6e51069bbf25d924adff4d50cc89589f97871bea739",
       "origins": [
         {
           "upstream_sha256": "35bd51b5f577cb7b24cd5f4629e49e37cb724ab57754ce6f8f202001635bab8a",
@@ -47,27 +47,27 @@
               "count": 1
             },
             {
-              "reason": "No JavaScript orchestration or parallel-tool wrapper",
-              "before": "- Batch independent searches and reads in one functions.exec using await Promise.allSettled([...]); inspect every result. Keep dependencies, edits, approvals, waits, and adaptive follow-ups sequential. Avoid unnecessary output.",
-              "after": "- Group independent read-only work when practical. Tool calls execute sequentially; keep dependencies, mutations and approvals ordered.",
+              "reason": "Sequential direct inspection tools",
+              "before": "Batch independent searches and reads in one functions.exec using await Promise.allSettled([...]); inspect every result.",
+              "after": "Batch related searches and reads when practical; execute direct tools sequentially and inspect every result.",
               "count": 1
             },
             {
-              "reason": "No JavaScript orchestration or parallel-tool wrapper",
-              "before": "- When calling `functions.exec`, parallelize independent tool calls by awaiting Promises. Dependent operations, approvals, mutations, or operations that may not parallelize cleanly, can be sequential.",
-              "after": "- Group independent read-only work when practical. Tool calls execute sequentially; keep dependencies, mutations and approvals ordered.",
+              "reason": "No JavaScript orchestration",
+              "before": "When calling `functions.exec`, parallelize independent tool calls by awaiting Promises. Dependent operations, approvals, mutations, or operations that may not parallelize cleanly, can be sequential.",
+              "after": "Group independent read-only work when practical. Keep dependent operations, approvals and mutations ordered; Codet executes direct tool calls sequentially.",
               "count": 1
             },
             {
-              "reason": "Filesystem-only skills on Tiger",
-              "before": "Open and read the skill according to its location: filesystem skills should be read from the filesystem, environment-owned skills should be access via the corresponding environment, and orchestrator skills should be discovered by calling `skills.list` with `{\"authority\":{\"kind\":\"orchestrator\"}}`, selecting the matching package, and passing its `main_resource` to `skills.read`. Avoid re-reading skills when possible. ",
-              "after": "Read listed filesystem SKILL.md files completely through exec_command, or read_file in Plan mode. Resolve supporting paths relative to the skill directory; do not invent non-filesystem providers.",
+              "reason": "Filesystem-only skills; retain reread guidance",
+              "before": "Open and read the skill according to its location: filesystem skills should be read from the filesystem, environment-owned skills should be access via the corresponding environment, and orchestrator skills should be discovered by calling `skills.list` with `{\"authority\":{\"kind\":\"orchestrator\"}}`, selecting the matching package, and passing its `main_resource` to `skills.read`.",
+              "after": "Open and read listed filesystem SKILL.md files through exec_command, or read_file in Plan mode. Non-filesystem skill providers are unavailable; do not invent local paths for them.",
               "count": 1
             },
             {
-              "reason": "Filesystem-only skills on Tiger",
-              "before": "When a `SKILL.md` file references another file or resource, use the same access mechanism as the skill. Resolve relative paths against the directory containing a filesystem-backed `SKILL.md`. For orchestrator skills, pass the exact referenced resource identifier with the same authority and package to `skills.read`; do not treat `skill://` identifiers as filesystem paths.",
-              "after": "Read listed filesystem SKILL.md files completely through exec_command, or read_file in Plan mode. Resolve supporting paths relative to the skill directory; do not invent non-filesystem providers.",
+              "reason": "Preserve relative supporting-resource resolution",
+              "before": " For orchestrator skills, pass the exact referenced resource identifier with the same authority and package to `skills.read`; do not treat `skill://` identifiers as filesystem paths.",
+              "after": " Non-filesystem references cannot be read by Codet; do not treat skill:// identifiers as filesystem paths.",
               "count": 1
             },
             {
@@ -77,51 +77,63 @@
               "count": 1
             },
             {
-              "reason": "Terminal communication surface",
-              "before": "You have two channels for staying in conversation with the user:",
-              "after": "You communicate with the user through streamed assistant text:",
+              "reason": "No automatic approval reviewer",
+              "before": ", or approval auto-review block",
+              "after": "",
               "count": 1
             },
             {
-              "reason": "Terminal progress text, not a protocol channel",
-              "before": "`commentary` channel",
-              "after": "progress updates",
-              "count": 3
+              "reason": "Application authorization replaces guardian rejection",
+              "before": "If you receive an auto-review rejection and are not able to complete the task in a more safe way, explicitly tell the user that automatic approval review rejected the action, identify the action, and summarize the stated reason.",
+              "after": "When an application permission rule denies an action, explain the action and reason, continue unrelated authorized work, and do not retry or use another tool to bypass the denial.",
+              "count": 1
             },
             {
-              "reason": "Terminal progress text, not a protocol channel",
-              "before": "commentary channel",
-              "after": "progress updates",
+              "reason": "Terminal permission explanation",
+              "before": "Put this explanation in a short, separate paragraph at the end of both commentary and final, after any permission question.",
+              "after": "Put this explanation in a short, separate paragraph after any permission question.",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication surface",
+              "before": "You have two channels for staying in conversation with the user:",
+              "after": "You communicate through streamed assistant text and a final answer:",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "in the `commentary` channel",
+              "after": "through progress updates",
               "count": 2
             },
             {
-              "reason": "Terminal final answer, not a protocol channel",
-              "before": "`final` channel",
-              "after": "final answer",
-              "count": 1
-            },
-            {
-              "reason": "Terminal final answer, not a protocol channel",
-              "before": "final channel",
-              "after": "final answer",
-              "count": 1
-            },
-            {
-              "reason": "Terminal progress wording",
-              "before": "- You share updates in the progress updates.",
-              "after": "- Share concise progress updates before tool calls.",
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "use the `commentary` channel",
+              "after": "provide progress updates",
               "count": 1
             },
             {
               "reason": "Terminal communication and compaction capabilities",
-              "before": "in the progress updates",
-              "after": "as progress updates",
-              "count": 3
+              "before": "in the commentary channel",
+              "after": "through progress updates",
+              "count": 2
             },
             {
               "reason": "Terminal communication and compaction capabilities",
-              "before": "since they are collapsed after the final answer is shown to users",
-              "after": "alongside the final answer",
+              "before": "to the `final` channel",
+              "after": "as your final answer",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "in the final channel",
+              "after": "in the final answer",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": ", since they are collapsed after the final answer is shown to users",
+              "after": "",
               "count": 1
             },
             {
@@ -131,9 +143,9 @@
               "count": 1
             },
             {
-              "reason": "No guardian or automatic approval reviewer",
-              "before": "The user gets very frustrated when you stop and ask for confirmation or permission, so make sure to explicitly explain why you need the confirmation (for example, a SKILL.md, AGENTS.md, memory, or approval auto-review block) and where it came from. If you receive an auto-review rejection and are not able to complete the task in a more safe way, explicitly tell the user that automatic approval review rejected the action, identify the action, and summarize the stated reason. Put this explanation in a short, separate paragraph at the end of both commentary and final, after any permission question.",
-              "after": "When an application permission rule denies an action, explain the denial and continue unrelated authorized work. Do not retry or use another tool to bypass the denial.",
+              "reason": "Normalize adapted skill paragraph whitespace",
+              "before": "Open and read listed filesystem SKILL.md files through exec_command, or read_file in Plan mode. Non-filesystem skill providers are unavailable; do not invent local paths for them. Avoid re-reading skills when possible. ",
+              "after": "Open and read listed filesystem SKILL.md files through exec_command, or read_file in Plan mode. Non-filesystem skill providers are unavailable; do not invent local paths for them. Avoid re-reading skills when possible.",
               "count": 1
             }
           ],
@@ -165,8 +177,8 @@
         }
       ]
     },
-    "b1767fe4586cfc6216c279cc26dda713b52af599f10d1ebcc3206553e664a893": {
-      "adapted_sha256": "b1767fe4586cfc6216c279cc26dda713b52af599f10d1ebcc3206553e664a893",
+    "073d19b1e99e9e2124e318059a3781f5dd845933023eb964294724bdfbd129fc": {
+      "adapted_sha256": "073d19b1e99e9e2124e318059a3781f5dd845933023eb964294724bdfbd129fc",
       "origins": [
         {
           "upstream_sha256": "e1bdd4f8f0df4b20f4a0ffc8a861ce819df45325d8cecdfb92e80379cf8d142e",
@@ -202,27 +214,27 @@
               "count": 1
             },
             {
-              "reason": "No JavaScript orchestration or parallel-tool wrapper",
-              "before": "- Batch independent searches and reads in one functions.exec using await Promise.allSettled([...]); inspect every result. Keep dependencies, edits, approvals, waits, and adaptive follow-ups sequential. Avoid unnecessary output.",
-              "after": "- Group independent read-only work when practical. Tool calls execute sequentially; keep dependencies, mutations and approvals ordered.",
+              "reason": "Sequential direct inspection tools",
+              "before": "Batch independent searches and reads in one functions.exec using await Promise.allSettled([...]); inspect every result.",
+              "after": "Batch related searches and reads when practical; execute direct tools sequentially and inspect every result.",
               "count": 1
             },
             {
-              "reason": "No JavaScript orchestration or parallel-tool wrapper",
-              "before": "- When calling `functions.exec`, parallelize independent tool calls by awaiting Promises. Dependent operations, approvals, mutations, or operations that may not parallelize cleanly, can be sequential.",
-              "after": "- Group independent read-only work when practical. Tool calls execute sequentially; keep dependencies, mutations and approvals ordered.",
+              "reason": "No JavaScript orchestration",
+              "before": "When calling `functions.exec`, parallelize independent tool calls by awaiting Promises. Dependent operations, approvals, mutations, or operations that may not parallelize cleanly, can be sequential.",
+              "after": "Group independent read-only work when practical. Keep dependent operations, approvals and mutations ordered; Codet executes direct tool calls sequentially.",
               "count": 1
             },
             {
-              "reason": "Filesystem-only skills on Tiger",
-              "before": "Open and read the skill according to its location: filesystem skills should be read from the filesystem, environment-owned skills should be access via the corresponding environment, and orchestrator skills should be discovered by calling `skills.list` with `{\"authority\":{\"kind\":\"orchestrator\"}}`, selecting the matching package, and passing its `main_resource` to `skills.read`. Avoid re-reading skills when possible. ",
-              "after": "Read listed filesystem SKILL.md files completely through exec_command, or read_file in Plan mode. Resolve supporting paths relative to the skill directory; do not invent non-filesystem providers.",
+              "reason": "Filesystem-only skills; retain reread guidance",
+              "before": "Open and read the skill according to its location: filesystem skills should be read from the filesystem, environment-owned skills should be access via the corresponding environment, and orchestrator skills should be discovered by calling `skills.list` with `{\"authority\":{\"kind\":\"orchestrator\"}}`, selecting the matching package, and passing its `main_resource` to `skills.read`.",
+              "after": "Open and read listed filesystem SKILL.md files through exec_command, or read_file in Plan mode. Non-filesystem skill providers are unavailable; do not invent local paths for them.",
               "count": 1
             },
             {
-              "reason": "Filesystem-only skills on Tiger",
-              "before": "When a `SKILL.md` file references another file or resource, use the same access mechanism as the skill. Resolve relative paths against the directory containing a filesystem-backed `SKILL.md`. For orchestrator skills, pass the exact referenced resource identifier with the same authority and package to `skills.read`; do not treat `skill://` identifiers as filesystem paths.",
-              "after": "Read listed filesystem SKILL.md files completely through exec_command, or read_file in Plan mode. Resolve supporting paths relative to the skill directory; do not invent non-filesystem providers.",
+              "reason": "Preserve relative supporting-resource resolution",
+              "before": " For orchestrator skills, pass the exact referenced resource identifier with the same authority and package to `skills.read`; do not treat `skill://` identifiers as filesystem paths.",
+              "after": " Non-filesystem references cannot be read by Codet; do not treat skill:// identifiers as filesystem paths.",
               "count": 1
             },
             {
@@ -232,51 +244,63 @@
               "count": 1
             },
             {
-              "reason": "Terminal communication surface",
-              "before": "You have two channels for staying in conversation with the user:",
-              "after": "You communicate with the user through streamed assistant text:",
+              "reason": "No automatic approval reviewer",
+              "before": ", or approval auto-review block",
+              "after": "",
               "count": 1
             },
             {
-              "reason": "Terminal progress text, not a protocol channel",
-              "before": "`commentary` channel",
-              "after": "progress updates",
-              "count": 3
+              "reason": "Application authorization replaces guardian rejection",
+              "before": "If you receive an auto-review rejection and are not able to complete the task in a more safe way, explicitly tell the user that automatic approval review rejected the action, identify the action, and summarize the stated reason.",
+              "after": "When an application permission rule denies an action, explain the action and reason, continue unrelated authorized work, and do not retry or use another tool to bypass the denial.",
+              "count": 1
             },
             {
-              "reason": "Terminal progress text, not a protocol channel",
-              "before": "commentary channel",
-              "after": "progress updates",
+              "reason": "Terminal permission explanation",
+              "before": "Put this explanation in a short, separate paragraph at the end of both commentary and final, after any permission question.",
+              "after": "Put this explanation in a short, separate paragraph after any permission question.",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication surface",
+              "before": "You have two channels for staying in conversation with the user:",
+              "after": "You communicate through streamed assistant text and a final answer:",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "in the `commentary` channel",
+              "after": "through progress updates",
               "count": 2
             },
             {
-              "reason": "Terminal final answer, not a protocol channel",
-              "before": "`final` channel",
-              "after": "final answer",
-              "count": 1
-            },
-            {
-              "reason": "Terminal final answer, not a protocol channel",
-              "before": "final channel",
-              "after": "final answer",
-              "count": 1
-            },
-            {
-              "reason": "Terminal progress wording",
-              "before": "- You share updates in the progress updates.",
-              "after": "- Share concise progress updates before tool calls.",
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "use the `commentary` channel",
+              "after": "provide progress updates",
               "count": 1
             },
             {
               "reason": "Terminal communication and compaction capabilities",
-              "before": "in the progress updates",
-              "after": "as progress updates",
-              "count": 3
+              "before": "in the commentary channel",
+              "after": "through progress updates",
+              "count": 2
             },
             {
               "reason": "Terminal communication and compaction capabilities",
-              "before": "since they are collapsed after the final answer is shown to users",
-              "after": "alongside the final answer",
+              "before": "to the `final` channel",
+              "after": "as your final answer",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "in the final channel",
+              "after": "in the final answer",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": ", since they are collapsed after the final answer is shown to users",
+              "after": "",
               "count": 1
             },
             {
@@ -286,9 +310,9 @@
               "count": 1
             },
             {
-              "reason": "No guardian or automatic approval reviewer",
-              "before": "The user gets very frustrated when you stop and ask for confirmation or permission, so make sure to explicitly explain why you need the confirmation (for example, a SKILL.md, AGENTS.md, memory, or approval auto-review block) and where it came from. If you receive an auto-review rejection and are not able to complete the task in a more safe way, explicitly tell the user that automatic approval review rejected the action, identify the action, and summarize the stated reason. Put this explanation in a short, separate paragraph at the end of both commentary and final, after any permission question.",
-              "after": "When an application permission rule denies an action, explain the denial and continue unrelated authorized work. Do not retry or use another tool to bypass the denial.",
+              "reason": "Normalize adapted skill paragraph whitespace",
+              "before": "Open and read listed filesystem SKILL.md files through exec_command, or read_file in Plan mode. Non-filesystem skill providers are unavailable; do not invent local paths for them. Avoid re-reading skills when possible. ",
+              "after": "Open and read listed filesystem SKILL.md files through exec_command, or read_file in Plan mode. Non-filesystem skill providers are unavailable; do not invent local paths for them. Avoid re-reading skills when possible.",
               "count": 1
             }
           ],
@@ -298,8 +322,8 @@
         }
       ]
     },
-    "32016af23cd09f974d9004bebcd9939ff9425201ba645d1b9c107efe4178c82a": {
-      "adapted_sha256": "32016af23cd09f974d9004bebcd9939ff9425201ba645d1b9c107efe4178c82a",
+    "60f2f8e2c3dafa1d8ea3f5f347457cbf372126e7b608aac63b0b0add4149058b": {
+      "adapted_sha256": "60f2f8e2c3dafa1d8ea3f5f347457cbf372126e7b608aac63b0b0add4149058b",
       "origins": [
         {
           "upstream_sha256": "b1dd8718c037906c53a305c5cbccb4a4be35ccbb7837461ec349bfc495412f0d",
@@ -335,27 +359,27 @@
               "count": 1
             },
             {
-              "reason": "No JavaScript orchestration or parallel-tool wrapper",
-              "before": "- Batch independent searches and reads in one functions.exec using await Promise.allSettled([...]); inspect every result. Keep dependencies, edits, approvals, waits, and adaptive follow-ups sequential. Avoid unnecessary output.",
-              "after": "- Group independent read-only work when practical. Tool calls execute sequentially; keep dependencies, mutations and approvals ordered.",
+              "reason": "Sequential direct inspection tools",
+              "before": "Batch independent searches and reads in one functions.exec using await Promise.allSettled([...]); inspect every result.",
+              "after": "Batch related searches and reads when practical; execute direct tools sequentially and inspect every result.",
               "count": 1
             },
             {
-              "reason": "No JavaScript orchestration or parallel-tool wrapper",
-              "before": "- When calling `functions.exec`, parallelize independent tool calls by awaiting Promises. Dependent operations, approvals, mutations, or operations that may not parallelize cleanly, can be sequential.",
-              "after": "- Group independent read-only work when practical. Tool calls execute sequentially; keep dependencies, mutations and approvals ordered.",
+              "reason": "No JavaScript orchestration",
+              "before": "When calling `functions.exec`, parallelize independent tool calls by awaiting Promises. Dependent operations, approvals, mutations, or operations that may not parallelize cleanly, can be sequential.",
+              "after": "Group independent read-only work when practical. Keep dependent operations, approvals and mutations ordered; Codet executes direct tool calls sequentially.",
               "count": 1
             },
             {
-              "reason": "Filesystem-only skills on Tiger",
-              "before": "Open and read the skill according to its location: filesystem skills should be read from the filesystem, environment-owned skills should be access via the corresponding environment, and orchestrator skills should be discovered by calling `skills.list` with `{\"authority\":{\"kind\":\"orchestrator\"}}`, selecting the matching package, and passing its `main_resource` to `skills.read`. Avoid re-reading skills when possible.",
-              "after": "Read listed filesystem SKILL.md files completely through exec_command, or read_file in Plan mode. Resolve supporting paths relative to the skill directory; do not invent non-filesystem providers.",
+              "reason": "Filesystem-only skills; retain reread guidance",
+              "before": "Open and read the skill according to its location: filesystem skills should be read from the filesystem, environment-owned skills should be access via the corresponding environment, and orchestrator skills should be discovered by calling `skills.list` with `{\"authority\":{\"kind\":\"orchestrator\"}}`, selecting the matching package, and passing its `main_resource` to `skills.read`.",
+              "after": "Open and read listed filesystem SKILL.md files through exec_command, or read_file in Plan mode. Non-filesystem skill providers are unavailable; do not invent local paths for them.",
               "count": 1
             },
             {
-              "reason": "Filesystem-only skills on Tiger",
-              "before": "When a `SKILL.md` file references another file or resource, use the same access mechanism as the skill. Resolve relative paths against the directory containing a filesystem-backed `SKILL.md`. For orchestrator skills, pass the exact referenced resource identifier with the same authority and package to `skills.read`; do not treat `skill://` identifiers as filesystem paths.",
-              "after": "Read listed filesystem SKILL.md files completely through exec_command, or read_file in Plan mode. Resolve supporting paths relative to the skill directory; do not invent non-filesystem providers.",
+              "reason": "Preserve relative supporting-resource resolution",
+              "before": " For orchestrator skills, pass the exact referenced resource identifier with the same authority and package to `skills.read`; do not treat `skill://` identifiers as filesystem paths.",
+              "after": " Non-filesystem references cannot be read by Codet; do not treat skill:// identifiers as filesystem paths.",
               "count": 1
             },
             {
@@ -365,69 +389,69 @@
               "count": 1
             },
             {
-              "reason": "Terminal communication surface",
-              "before": "You have two channels for staying in conversation with the user:",
-              "after": "You communicate with the user through streamed assistant text:",
-              "count": 1
-            },
-            {
-              "reason": "Terminal progress text, not a protocol channel",
-              "before": "`commentary` channel",
-              "after": "progress updates",
-              "count": 3
-            },
-            {
-              "reason": "Terminal progress text, not a protocol channel",
-              "before": "commentary channel",
-              "after": "progress updates",
-              "count": 2
-            },
-            {
-              "reason": "Terminal final answer, not a protocol channel",
-              "before": "`final` channel",
-              "after": "final answer",
-              "count": 1
-            },
-            {
-              "reason": "Terminal final answer, not a protocol channel",
-              "before": "final channel",
-              "after": "final answer",
-              "count": 1
-            },
-            {
-              "reason": "Terminal progress wording",
-              "before": "- You share updates in the progress updates.",
-              "after": "- Share concise progress updates before tool calls.",
-              "count": 1
-            },
-            {
               "reason": "Direct asynchronous question tool",
               "before": "`functions.send_user_message_async` or `request_user_input_async` tool (depending on which is available)",
               "after": "`request_user_input_async` tool when available",
               "count": 1
             },
             {
-              "reason": "Terminal communication and compaction capabilities",
-              "before": "in the progress updates",
-              "after": "as progress updates",
-              "count": 3
+              "reason": "No automatic approval reviewer",
+              "before": ", or approval auto-review block",
+              "after": "",
+              "count": 1
+            },
+            {
+              "reason": "Application authorization replaces guardian rejection",
+              "before": "If you receive an auto-review rejection and are not able to complete the task in a more safe way, explicitly tell the user that automatic approval review rejected the action, identify the action, and summarize the stated reason.",
+              "after": "When an application permission rule denies an action, explain the action and reason, continue unrelated authorized work, and do not retry or use another tool to bypass the denial.",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication surface",
+              "before": "You have two channels for staying in conversation with the user:",
+              "after": "You communicate through streamed assistant text and a final answer:",
+              "count": 1
+            },
+            {
+              "reason": "Complete terminal communication sentence",
+              "before": "Do NOT put a final response in the commentary channel that should be asked in the final channel.",
+              "after": "Use progress updates for ongoing work and put the final response in a self-contained final answer.",
+              "count": 1
             },
             {
               "reason": "Terminal communication and compaction capabilities",
-              "before": "since they are collapsed after the final answer is shown to users",
-              "after": "alongside the final answer",
+              "before": "in the `commentary` channel",
+              "after": "through progress updates",
+              "count": 2
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "use the `commentary` channel",
+              "after": "provide progress updates",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "in the commentary channel",
+              "after": "through progress updates",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "to the `final` channel",
+              "after": "as your final answer",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": ", since they are collapsed after the final answer is shown to users",
+              "after": "",
               "count": 1
             },
             {
               "reason": "Terminal communication and compaction capabilities",
               "before": "but you will still see all prior user requests",
               "after": "but earlier user requests may be represented in the summary",
-              "count": 1
-            },
-            {
-              "reason": "No guardian or automatic approval reviewer",
-              "before": "The user gets very frustrated when you stop and ask for confirmation or permission, so make sure to explicitly explain why you need the confirmation (for example, a SKILL.md, AGENTS.md, memory, or approval auto-review block) and where it came from. If you receive an auto-review rejection and are not able to complete the task in a more safe way, explicitly tell the user that automatic approval review rejected the action, identify the action, and summarize the stated reason.",
-              "after": "When an application permission rule denies an action, explain the denial and continue unrelated authorized work. Do not retry or use another tool to bypass the denial.",
               "count": 1
             }
           ],
@@ -437,8 +461,8 @@
         }
       ]
     },
-    "b02a93ad3d11a57f90241050b92cead453ef677b97e8fd0e6eaa65cab8a50089": {
-      "adapted_sha256": "b02a93ad3d11a57f90241050b92cead453ef677b97e8fd0e6eaa65cab8a50089",
+    "95b93532e099cf8da05d53619fa528348aadf0f87a26115e1d81da56d573c89f": {
+      "adapted_sha256": "95b93532e099cf8da05d53619fa528348aadf0f87a26115e1d81da56d573c89f",
       "origins": [
         {
           "upstream_sha256": "b707476816bfe5e571a1bd2179f130fff2b132da5ab8e61063acdb7fd24daf12",
@@ -474,27 +498,27 @@
               "count": 1
             },
             {
-              "reason": "No JavaScript orchestration or parallel-tool wrapper",
-              "before": "- Batch independent searches and reads in one functions.exec using await Promise.allSettled([...]); inspect every result. Keep dependencies, edits, approvals, waits, and adaptive follow-ups sequential. Avoid unnecessary output.",
-              "after": "- Group independent read-only work when practical. Tool calls execute sequentially; keep dependencies, mutations and approvals ordered.",
+              "reason": "Sequential direct inspection tools",
+              "before": "Batch independent searches and reads in one functions.exec using await Promise.allSettled([...]); inspect every result.",
+              "after": "Batch related searches and reads when practical; execute direct tools sequentially and inspect every result.",
               "count": 1
             },
             {
-              "reason": "No JavaScript orchestration or parallel-tool wrapper",
-              "before": "- When calling `functions.exec`, parallelize independent tool calls by awaiting Promises. Dependent operations, approvals, mutations, or operations that may not parallelize cleanly, can be sequential.",
-              "after": "- Group independent read-only work when practical. Tool calls execute sequentially; keep dependencies, mutations and approvals ordered.",
+              "reason": "No JavaScript orchestration",
+              "before": "When calling `functions.exec`, parallelize independent tool calls by awaiting Promises. Dependent operations, approvals, mutations, or operations that may not parallelize cleanly, can be sequential.",
+              "after": "Group independent read-only work when practical. Keep dependent operations, approvals and mutations ordered; Codet executes direct tool calls sequentially.",
               "count": 1
             },
             {
-              "reason": "Filesystem-only skills on Tiger",
-              "before": "Open and read the skill according to its location: filesystem skills should be read from the filesystem, environment-owned skills should be access via the corresponding environment, and orchestrator skills should be discovered by calling `skills.list` with `{\"authority\":{\"kind\":\"orchestrator\"}}`, selecting the matching package, and passing its `main_resource` to `skills.read`. Avoid re-reading skills when possible.",
-              "after": "Read listed filesystem SKILL.md files completely through exec_command, or read_file in Plan mode. Resolve supporting paths relative to the skill directory; do not invent non-filesystem providers.",
+              "reason": "Filesystem-only skills; retain reread guidance",
+              "before": "Open and read the skill according to its location: filesystem skills should be read from the filesystem, environment-owned skills should be access via the corresponding environment, and orchestrator skills should be discovered by calling `skills.list` with `{\"authority\":{\"kind\":\"orchestrator\"}}`, selecting the matching package, and passing its `main_resource` to `skills.read`.",
+              "after": "Open and read listed filesystem SKILL.md files through exec_command, or read_file in Plan mode. Non-filesystem skill providers are unavailable; do not invent local paths for them.",
               "count": 1
             },
             {
-              "reason": "Filesystem-only skills on Tiger",
-              "before": "When a `SKILL.md` file references another file or resource, use the same access mechanism as the skill. Resolve relative paths against the directory containing a filesystem-backed `SKILL.md`. For orchestrator skills, pass the exact referenced resource identifier with the same authority and package to `skills.read`; do not treat `skill://` identifiers as filesystem paths.",
-              "after": "Read listed filesystem SKILL.md files completely through exec_command, or read_file in Plan mode. Resolve supporting paths relative to the skill directory; do not invent non-filesystem providers.",
+              "reason": "Preserve relative supporting-resource resolution",
+              "before": " For orchestrator skills, pass the exact referenced resource identifier with the same authority and package to `skills.read`; do not treat `skill://` identifiers as filesystem paths.",
+              "after": " Non-filesystem references cannot be read by Codet; do not treat skill:// identifiers as filesystem paths.",
               "count": 1
             },
             {
@@ -504,69 +528,69 @@
               "count": 1
             },
             {
-              "reason": "Terminal communication surface",
-              "before": "You have two channels for staying in conversation with the user:",
-              "after": "You communicate with the user through streamed assistant text:",
-              "count": 1
-            },
-            {
-              "reason": "Terminal progress text, not a protocol channel",
-              "before": "`commentary` channel",
-              "after": "progress updates",
-              "count": 3
-            },
-            {
-              "reason": "Terminal progress text, not a protocol channel",
-              "before": "commentary channel",
-              "after": "progress updates",
-              "count": 2
-            },
-            {
-              "reason": "Terminal final answer, not a protocol channel",
-              "before": "`final` channel",
-              "after": "final answer",
-              "count": 1
-            },
-            {
-              "reason": "Terminal final answer, not a protocol channel",
-              "before": "final channel",
-              "after": "final answer",
-              "count": 1
-            },
-            {
-              "reason": "Terminal progress wording",
-              "before": "- You share updates in the progress updates.",
-              "after": "- Share concise progress updates before tool calls.",
-              "count": 1
-            },
-            {
               "reason": "Direct asynchronous question tool",
               "before": "`functions.send_user_message_async` or `request_user_input_async` tool (depending on which is available)",
               "after": "`request_user_input_async` tool when available",
               "count": 1
             },
             {
-              "reason": "Terminal communication and compaction capabilities",
-              "before": "in the progress updates",
-              "after": "as progress updates",
-              "count": 3
+              "reason": "No automatic approval reviewer",
+              "before": ", or approval auto-review block",
+              "after": "",
+              "count": 1
+            },
+            {
+              "reason": "Application authorization replaces guardian rejection",
+              "before": "If you receive an auto-review rejection and are not able to complete the task in a more safe way, explicitly tell the user that automatic approval review rejected the action, identify the action, and summarize the stated reason.",
+              "after": "When an application permission rule denies an action, explain the action and reason, continue unrelated authorized work, and do not retry or use another tool to bypass the denial.",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication surface",
+              "before": "You have two channels for staying in conversation with the user:",
+              "after": "You communicate through streamed assistant text and a final answer:",
+              "count": 1
+            },
+            {
+              "reason": "Complete terminal communication sentence",
+              "before": "Do NOT put a final response in the commentary channel that should be asked in the final channel.",
+              "after": "Use progress updates for ongoing work and put the final response in a self-contained final answer.",
+              "count": 1
             },
             {
               "reason": "Terminal communication and compaction capabilities",
-              "before": "since they are collapsed after the final answer is shown to users",
-              "after": "alongside the final answer",
+              "before": "in the `commentary` channel",
+              "after": "through progress updates",
+              "count": 2
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "use the `commentary` channel",
+              "after": "provide progress updates",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "in the commentary channel",
+              "after": "through progress updates",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "to the `final` channel",
+              "after": "as your final answer",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": ", since they are collapsed after the final answer is shown to users",
+              "after": "",
               "count": 1
             },
             {
               "reason": "Terminal communication and compaction capabilities",
               "before": "but you will still see all prior user requests",
               "after": "but earlier user requests may be represented in the summary",
-              "count": 1
-            },
-            {
-              "reason": "No guardian or automatic approval reviewer",
-              "before": "The user gets very frustrated when you stop and ask for confirmation or permission, so make sure to explicitly explain why you need the confirmation (for example, a SKILL.md, AGENTS.md, memory, or approval auto-review block) and where it came from. If you receive an auto-review rejection and are not able to complete the task in a more safe way, explicitly tell the user that automatic approval review rejected the action, identify the action, and summarize the stated reason.",
-              "after": "When an application permission rule denies an action, explain the denial and continue unrelated authorized work. Do not retry or use another tool to bypass the denial.",
               "count": 1
             }
           ],
@@ -576,8 +600,8 @@
         }
       ]
     },
-    "f5c4817ce9e716de699151a352b66c24b73f871807f619281c7a35775dc73293": {
-      "adapted_sha256": "f5c4817ce9e716de699151a352b66c24b73f871807f619281c7a35775dc73293",
+    "e0595b562e055186f86ca10b23bb39948fee9259b7fd3b9f2c51a1ad4ca53513": {
+      "adapted_sha256": "e0595b562e055186f86ca10b23bb39948fee9259b7fd3b9f2c51a1ad4ca53513",
       "origins": [
         {
           "upstream_sha256": "a91357a1cd2727a0be06d461248d6e3a7274746e38108f548a3adf2cc2430415",
@@ -601,75 +625,69 @@
               "count": 1
             },
             {
-              "reason": "No JavaScript orchestration or parallel-tool wrapper",
-              "before": "- When possible, prefer parallelization over sequential tool calls, as this will help with round-trip latency and let you get work done faster.",
-              "after": "- Group independent read-only work when practical. Tool calls execute sequentially; keep dependencies, mutations and approvals ordered.",
+              "reason": "Sequential tool execution",
+              "before": "When possible, prefer parallelization over sequential tool calls, as this will help with round-trip latency and let you get work done faster.",
+              "after": "Group related reads when practical; direct tool calls execute sequentially.",
               "count": 1
             },
             {
-              "reason": "Filesystem-only skills on Tiger",
-              "before": "  1) After deciding to use a skill, the main agent must read its `SKILL.md` completely before taking task actions. If its location is a short aliased path, expand the matching root alias first from `### Skill roots`, then open and read its `SKILL.md` completely before taking task actions. For a filesystem path, open the file. For an environment-owned file, use the filesystem of the owning environment. For an orchestrator reference, call `skills.list` with `{\"authority\":{\"kind\":\"orchestrator\"}}`, select the matching package, and pass its `main_resource` to `skills.read`. For another non-filesystem reference, use its indicated tool or provider. If a read is truncated or paginated, continue until EOF.",
-              "after": "  1) Read listed filesystem SKILL.md files completely through exec_command, or read_file in Plan mode. Resolve supporting paths relative to the skill directory; do not invent non-filesystem providers.",
+              "reason": "Filesystem skills; preserve alias expansion and reading through EOF",
+              "before": "For a filesystem path, open the file. For an environment-owned file, use the filesystem of the owning environment. For an orchestrator reference, call `skills.list` with `{\"authority\":{\"kind\":\"orchestrator\"}}`, select the matching package, and pass its `main_resource` to `skills.read`. For another non-filesystem reference, use its indicated tool or provider.",
+              "after": "For a filesystem path, read it through exec_command, or read_file in Plan mode. Non-filesystem skill providers are unavailable; do not invent local paths for them.",
               "count": 1
             },
             {
-              "reason": "Filesystem-only skills on Tiger",
-              "before": "  2) When `SKILL.md` references another file or resource, use the same access mechanism. Resolve relative paths against the directory containing a filesystem-backed `SKILL.md`. For orchestrator skills, pass the exact referenced resource identifier with the same authority and package to `skills.read`; do not treat `skill://` identifiers as filesystem paths.",
-              "after": "  2) Read listed filesystem SKILL.md files completely through exec_command, or read_file in Plan mode. Resolve supporting paths relative to the skill directory; do not invent non-filesystem providers.",
+              "reason": "Preserve relative supporting-resource resolution",
+              "before": " For orchestrator skills, pass the exact referenced resource identifier with the same authority and package to `skills.read`; do not treat `skill://` identifiers as filesystem paths.",
+              "after": " Non-filesystem references cannot be read by Codet; do not treat skill:// identifiers as filesystem paths.",
               "count": 1
             },
             {
-              "reason": "Filesystem-only skills on Tiger",
-              "before": "  4) For filesystem-backed skills (or if `scripts/` exist), prefer running or patching provided scripts instead of retyping large code blocks. For orchestrator skills, use `skills.read` and the available tools; do not invent a local path.",
-              "after": "  4) Read listed filesystem SKILL.md files completely through exec_command, or read_file in Plan mode. Resolve supporting paths relative to the skill directory; do not invent non-filesystem providers.",
+              "reason": "Retain preference for provided scripts",
+              "before": " For orchestrator skills, use `skills.read` and the available tools; do not invent a local path.",
+              "after": " Non-filesystem skill readers are unavailable; do not invent a local path.",
               "count": 1
             },
             {
               "reason": "Terminal communication surface",
               "before": "You have two channels for staying in conversation with the user:",
-              "after": "You communicate with the user through streamed assistant text:",
+              "after": "You communicate through streamed assistant text and a final answer:",
               "count": 1
             },
             {
-              "reason": "Terminal progress text, not a protocol channel",
-              "before": "`commentary` channel",
-              "after": "progress updates",
-              "count": 4
+              "reason": "Complete terminal communication sentence",
+              "before": "Do NOT put a final response (e.g. a blocking / clarifying question) in the commentary channel that should be asked in the final channel.",
+              "after": "Use progress updates for ongoing work and put the final response in a self-contained final answer.",
+              "count": 1
             },
             {
-              "reason": "Terminal progress text, not a protocol channel",
-              "before": "commentary channel",
-              "after": "progress updates",
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "in the `commentary` channel",
+              "after": "through progress updates",
               "count": 3
             },
             {
-              "reason": "Terminal final answer, not a protocol channel",
-              "before": "`final` channel",
-              "after": "final answer",
-              "count": 1
-            },
-            {
-              "reason": "Terminal final answer, not a protocol channel",
-              "before": "final channel",
-              "after": "final answer",
-              "count": 1
-            },
-            {
-              "reason": "Terminal progress wording",
-              "before": "- You share updates in the progress updates.",
-              "after": "- Share concise progress updates before tool calls.",
-              "count": 1
-            },
-            {
               "reason": "Terminal communication and compaction capabilities",
-              "before": "in the progress updates",
+              "before": "to the `commentary` channel",
               "after": "as progress updates",
-              "count": 5
+              "count": 1
             },
             {
               "reason": "Terminal communication and compaction capabilities",
-              "before": "since they are collapsed after the final answer is shown to users",
-              "after": "alongside the final answer",
+              "before": "in the commentary channel",
+              "after": "through progress updates",
+              "count": 2
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "to the `final` channel",
+              "after": "as your final answer",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": ", since they are collapsed after the final answer is shown to users",
+              "after": "",
               "count": 1
             },
             {
@@ -688,8 +706,8 @@
         }
       ]
     },
-    "95b0cadfbaf035d93b57aba082a5c2e4b05de38f80164425bf18e78389708416": {
-      "adapted_sha256": "95b0cadfbaf035d93b57aba082a5c2e4b05de38f80164425bf18e78389708416",
+    "d40cc6958fddf36743e3792be5ed49dffed86f771aad7f3183a223360b153a0f": {
+      "adapted_sha256": "d40cc6958fddf36743e3792be5ed49dffed86f771aad7f3183a223360b153a0f",
       "origins": [
         {
           "upstream_sha256": "ebd0d5854abd07dc38300a71e027204eb028e9fa443c59d18e36fcc24289e818",
@@ -713,75 +731,69 @@
               "count": 1
             },
             {
-              "reason": "No JavaScript orchestration or parallel-tool wrapper",
-              "before": "- When possible, prefer parallelization over sequential tool calls, as this will help with round-trip latency and let you get work done faster.",
-              "after": "- Group independent read-only work when practical. Tool calls execute sequentially; keep dependencies, mutations and approvals ordered.",
+              "reason": "Sequential tool execution",
+              "before": "When possible, prefer parallelization over sequential tool calls, as this will help with round-trip latency and let you get work done faster.",
+              "after": "Group related reads when practical; direct tool calls execute sequentially.",
               "count": 1
             },
             {
-              "reason": "Filesystem-only skills on Tiger",
-              "before": "  1) After deciding to use a skill, the main agent must read its `SKILL.md` completely before taking task actions. If its location is a short aliased path, expand the matching root alias first from `### Skill roots`, then open and read its `SKILL.md` completely before taking task actions. For a filesystem path, open the file. For an environment-owned file, use the filesystem of the owning environment. For an orchestrator reference, call `skills.list` with `{\"authority\":{\"kind\":\"orchestrator\"}}`, select the matching package, and pass its `main_resource` to `skills.read`. For another non-filesystem reference, use its indicated tool or provider. If a read is truncated or paginated, continue until EOF.",
-              "after": "  1) Read listed filesystem SKILL.md files completely through exec_command, or read_file in Plan mode. Resolve supporting paths relative to the skill directory; do not invent non-filesystem providers.",
+              "reason": "Filesystem skills; preserve alias expansion and reading through EOF",
+              "before": "For a filesystem path, open the file. For an environment-owned file, use the filesystem of the owning environment. For an orchestrator reference, call `skills.list` with `{\"authority\":{\"kind\":\"orchestrator\"}}`, select the matching package, and pass its `main_resource` to `skills.read`. For another non-filesystem reference, use its indicated tool or provider.",
+              "after": "For a filesystem path, read it through exec_command, or read_file in Plan mode. Non-filesystem skill providers are unavailable; do not invent local paths for them.",
               "count": 1
             },
             {
-              "reason": "Filesystem-only skills on Tiger",
-              "before": "  2) When `SKILL.md` references another file or resource, use the same access mechanism. Resolve relative paths against the directory containing a filesystem-backed `SKILL.md`. For orchestrator skills, pass the exact referenced resource identifier with the same authority and package to `skills.read`; do not treat `skill://` identifiers as filesystem paths.",
-              "after": "  2) Read listed filesystem SKILL.md files completely through exec_command, or read_file in Plan mode. Resolve supporting paths relative to the skill directory; do not invent non-filesystem providers.",
+              "reason": "Preserve relative supporting-resource resolution",
+              "before": " For orchestrator skills, pass the exact referenced resource identifier with the same authority and package to `skills.read`; do not treat `skill://` identifiers as filesystem paths.",
+              "after": " Non-filesystem references cannot be read by Codet; do not treat skill:// identifiers as filesystem paths.",
               "count": 1
             },
             {
-              "reason": "Filesystem-only skills on Tiger",
-              "before": "  4) For filesystem-backed skills (or if `scripts/` exist), prefer running or patching provided scripts instead of retyping large code blocks. For orchestrator skills, use `skills.read` and the available tools; do not invent a local path.",
-              "after": "  4) Read listed filesystem SKILL.md files completely through exec_command, or read_file in Plan mode. Resolve supporting paths relative to the skill directory; do not invent non-filesystem providers.",
+              "reason": "Retain preference for provided scripts",
+              "before": " For orchestrator skills, use `skills.read` and the available tools; do not invent a local path.",
+              "after": " Non-filesystem skill readers are unavailable; do not invent a local path.",
               "count": 1
             },
             {
               "reason": "Terminal communication surface",
               "before": "You have two channels for staying in conversation with the user:",
-              "after": "You communicate with the user through streamed assistant text:",
+              "after": "You communicate through streamed assistant text and a final answer:",
               "count": 1
             },
             {
-              "reason": "Terminal progress text, not a protocol channel",
-              "before": "`commentary` channel",
-              "after": "progress updates",
-              "count": 4
+              "reason": "Complete terminal communication sentence",
+              "before": "Do NOT put a final response (e.g. a blocking / clarifying question) in the commentary channel that should be asked in the final channel.",
+              "after": "Use progress updates for ongoing work and put the final response in a self-contained final answer.",
+              "count": 1
             },
             {
-              "reason": "Terminal progress text, not a protocol channel",
-              "before": "commentary channel",
-              "after": "progress updates",
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "in the `commentary` channel",
+              "after": "through progress updates",
               "count": 3
             },
             {
-              "reason": "Terminal final answer, not a protocol channel",
-              "before": "`final` channel",
-              "after": "final answer",
-              "count": 1
-            },
-            {
-              "reason": "Terminal final answer, not a protocol channel",
-              "before": "final channel",
-              "after": "final answer",
-              "count": 1
-            },
-            {
-              "reason": "Terminal progress wording",
-              "before": "- You share updates in the progress updates.",
-              "after": "- Share concise progress updates before tool calls.",
-              "count": 1
-            },
-            {
               "reason": "Terminal communication and compaction capabilities",
-              "before": "in the progress updates",
+              "before": "to the `commentary` channel",
               "after": "as progress updates",
-              "count": 5
+              "count": 1
             },
             {
               "reason": "Terminal communication and compaction capabilities",
-              "before": "since they are collapsed after the final answer is shown to users",
-              "after": "alongside the final answer",
+              "before": "in the commentary channel",
+              "after": "through progress updates",
+              "count": 2
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "to the `final` channel",
+              "after": "as your final answer",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": ", since they are collapsed after the final answer is shown to users",
+              "after": "",
               "count": 1
             },
             {
@@ -797,8 +809,8 @@
         }
       ]
     },
-    "0c1933339baccb89ece00b9e1958a9d98cf085850c2c99d61b0cba13848cb70f": {
-      "adapted_sha256": "0c1933339baccb89ece00b9e1958a9d98cf085850c2c99d61b0cba13848cb70f",
+    "966fe87f5f144cc7bef109fb8217a4ef818dc5274d5eff9f728fb16f2519257a": {
+      "adapted_sha256": "966fe87f5f144cc7bef109fb8217a4ef818dc5274d5eff9f728fb16f2519257a",
       "origins": [
         {
           "upstream_sha256": "40a1232c8bd01a87dc2283e5ae3c75f2b054dc2a12cf04e5a279c26e5c541b9b",
@@ -822,75 +834,69 @@
               "count": 1
             },
             {
-              "reason": "No JavaScript orchestration or parallel-tool wrapper",
-              "before": "- When possible, prefer parallelization over sequential tool calls, as this will help with round-trip latency and let you get work done faster.",
-              "after": "- Group independent read-only work when practical. Tool calls execute sequentially; keep dependencies, mutations and approvals ordered.",
+              "reason": "Sequential tool execution",
+              "before": "When possible, prefer parallelization over sequential tool calls, as this will help with round-trip latency and let you get work done faster.",
+              "after": "Group related reads when practical; direct tool calls execute sequentially.",
               "count": 1
             },
             {
-              "reason": "Filesystem-only skills on Tiger",
-              "before": "  1) After deciding to use a skill, the main agent must read its `SKILL.md` completely before taking task actions. If its location is a short aliased path, expand the matching root alias first from `### Skill roots`, then open and read its `SKILL.md` completely before taking task actions. For a filesystem path, open the file. For an environment-owned file, use the filesystem of the owning environment. For an orchestrator reference, call `skills.list` with `{\"authority\":{\"kind\":\"orchestrator\"}}`, select the matching package, and pass its `main_resource` to `skills.read`. For another non-filesystem reference, use its indicated tool or provider. If a read is truncated or paginated, continue until EOF.",
-              "after": "  1) Read listed filesystem SKILL.md files completely through exec_command, or read_file in Plan mode. Resolve supporting paths relative to the skill directory; do not invent non-filesystem providers.",
+              "reason": "Filesystem skills; preserve alias expansion and reading through EOF",
+              "before": "For a filesystem path, open the file. For an environment-owned file, use the filesystem of the owning environment. For an orchestrator reference, call `skills.list` with `{\"authority\":{\"kind\":\"orchestrator\"}}`, select the matching package, and pass its `main_resource` to `skills.read`. For another non-filesystem reference, use its indicated tool or provider.",
+              "after": "For a filesystem path, read it through exec_command, or read_file in Plan mode. Non-filesystem skill providers are unavailable; do not invent local paths for them.",
               "count": 1
             },
             {
-              "reason": "Filesystem-only skills on Tiger",
-              "before": "  2) When `SKILL.md` references another file or resource, use the same access mechanism. Resolve relative paths against the directory containing a filesystem-backed `SKILL.md`. For orchestrator skills, pass the exact referenced resource identifier with the same authority and package to `skills.read`; do not treat `skill://` identifiers as filesystem paths.",
-              "after": "  2) Read listed filesystem SKILL.md files completely through exec_command, or read_file in Plan mode. Resolve supporting paths relative to the skill directory; do not invent non-filesystem providers.",
+              "reason": "Preserve relative supporting-resource resolution",
+              "before": " For orchestrator skills, pass the exact referenced resource identifier with the same authority and package to `skills.read`; do not treat `skill://` identifiers as filesystem paths.",
+              "after": " Non-filesystem references cannot be read by Codet; do not treat skill:// identifiers as filesystem paths.",
               "count": 1
             },
             {
-              "reason": "Filesystem-only skills on Tiger",
-              "before": "  4) For filesystem-backed skills (or if `scripts/` exist), prefer running or patching provided scripts instead of retyping large code blocks. For orchestrator skills, use `skills.read` and the available tools; do not invent a local path.",
-              "after": "  4) Read listed filesystem SKILL.md files completely through exec_command, or read_file in Plan mode. Resolve supporting paths relative to the skill directory; do not invent non-filesystem providers.",
+              "reason": "Retain preference for provided scripts",
+              "before": " For orchestrator skills, use `skills.read` and the available tools; do not invent a local path.",
+              "after": " Non-filesystem skill readers are unavailable; do not invent a local path.",
               "count": 1
             },
             {
               "reason": "Terminal communication surface",
               "before": "You have two channels for staying in conversation with the user:",
-              "after": "You communicate with the user through streamed assistant text:",
+              "after": "You communicate through streamed assistant text and a final answer:",
               "count": 1
             },
             {
-              "reason": "Terminal progress text, not a protocol channel",
-              "before": "`commentary` channel",
-              "after": "progress updates",
-              "count": 4
+              "reason": "Complete terminal communication sentence",
+              "before": "Do NOT put a final response (e.g. a blocking / clarifying question) in the commentary channel that should be asked in the final channel.",
+              "after": "Use progress updates for ongoing work and put the final response in a self-contained final answer.",
+              "count": 1
             },
             {
-              "reason": "Terminal progress text, not a protocol channel",
-              "before": "commentary channel",
-              "after": "progress updates",
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "in the `commentary` channel",
+              "after": "through progress updates",
               "count": 3
             },
             {
-              "reason": "Terminal final answer, not a protocol channel",
-              "before": "`final` channel",
-              "after": "final answer",
-              "count": 1
-            },
-            {
-              "reason": "Terminal final answer, not a protocol channel",
-              "before": "final channel",
-              "after": "final answer",
-              "count": 1
-            },
-            {
-              "reason": "Terminal progress wording",
-              "before": "- You share updates in the progress updates.",
-              "after": "- Share concise progress updates before tool calls.",
-              "count": 1
-            },
-            {
               "reason": "Terminal communication and compaction capabilities",
-              "before": "in the progress updates",
+              "before": "to the `commentary` channel",
               "after": "as progress updates",
-              "count": 5
+              "count": 1
             },
             {
               "reason": "Terminal communication and compaction capabilities",
-              "before": "since they are collapsed after the final answer is shown to users",
-              "after": "alongside the final answer",
+              "before": "in the commentary channel",
+              "after": "through progress updates",
+              "count": 2
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "to the `final` channel",
+              "after": "as your final answer",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": ", since they are collapsed after the final answer is shown to users",
+              "after": "",
               "count": 1
             },
             {
@@ -906,8 +912,8 @@
         }
       ]
     },
-    "c15bdbe297516336184248066e815590540eafde5f40f0a207e6de231958246c": {
-      "adapted_sha256": "c15bdbe297516336184248066e815590540eafde5f40f0a207e6de231958246c",
+    "c1ae889e7fc9057708d2a3dd7b8e80450b587a3c739e1a9860fad934cfd3c1f3": {
+      "adapted_sha256": "c1ae889e7fc9057708d2a3dd7b8e80450b587a3c739e1a9860fad934cfd3c1f3",
       "origins": [
         {
           "upstream_sha256": "2351631dfc5644dc5a45eaaca4139475bd02810ee6cb792d058b551559b3242e",
@@ -919,45 +925,45 @@
               "count": 1
             },
             {
-              "reason": "No JavaScript orchestration or parallel-tool wrapper",
-              "before": "- You parallelize tool calls whenever you can, especially file reads such as `cat`, `rg`, `sed`, `ls`, `git show`, `nl`, and `wc`. You use `multi_tool_use.parallel` for that parallelism, and only that. Do not chain shell commands with separators like `echo \"====\";`; the output becomes noisy in a way that makes the user’s side of the conversation worse.",
-              "after": "- Group independent read-only work when practical. Tool calls execute sequentially; keep dependencies, mutations and approvals ordered.",
-              "count": 1
-            },
-            {
-              "reason": "No hosted image-search/generation tool",
-              "before": "- Websites and games must use visual assets. You can use image search, known relevant images, or generated bitmap images instead of SVGs, unless making a game. Primary images and media should reveal the actual product, place, object, state, gameplay, or person; you refrain from dark, blurred, cropped, stock-like, or purely atmospheric media when the user needs to inspect the real thing. For highly specific game assets you use custom SVG/Three.js/etc.",
-              "after": "- Websites and games must use visual assets. You can use available relevant local or user-supplied images instead of SVGs, unless making a game. Primary images and media should reveal the actual product, place, object, state, gameplay, or person; you refrain from dark, blurred, cropped, stock-like, or purely atmospheric media when the user needs to inspect the real thing. For highly specific game assets you use custom SVG/Three.js/etc.",
+              "reason": "No parallel-tool wrapper; preserve shell-output guidance",
+              "before": "You parallelize tool calls whenever you can, especially file reads such as `cat`, `rg`, `sed`, `ls`, `git show`, `nl`, and `wc`. You use `multi_tool_use.parallel` for that parallelism, and only that.",
+              "after": "Group related file inspections such as `cat`, `rg`, `sed`, `ls`, `git show`, `nl`, and `wc` in direct tool calls; those calls execute sequentially.",
               "count": 1
             },
             {
               "reason": "Tiger browser verification",
-              "before": "- You use Three.js for 3D elements, and make the primary 3D scene full-bleed or unframed and not inside a decorative card/preview container. Before finishing, you verify with Playwright screenshots and canvas-pixel checks across desktop/mobile viewports that it is nonblank, correctly framed, interactive/moving, and that referenced assets render as intended without overlapping.",
-              "after": "- You use Three.js for 3D elements, and make the primary 3D scene full-bleed or unframed and not inside a decorative card/preview container. Before finishing, you verify with available browser screenshots and visual checks across desktop/mobile viewports that it is nonblank, correctly framed, interactive/moving, and that referenced assets render as intended without overlapping.",
+              "before": "Playwright screenshots and canvas-pixel checks",
+              "after": "available browser screenshots and visual checks",
+              "count": 1
+            },
+            {
+              "reason": "No hosted image-search/generation tool",
+              "before": "image search, known relevant images, or generated bitmap images",
+              "after": "available relevant local or user-supplied images",
               "count": 1
             },
             {
               "reason": "Terminal communication surface",
               "before": "You have two channels for staying in conversation with the user:",
-              "after": "You communicate with the user through streamed assistant text:",
+              "after": "You communicate through streamed assistant text and a final answer:",
               "count": 1
             },
             {
-              "reason": "Terminal progress text, not a protocol channel",
-              "before": "`commentary` channel",
-              "after": "progress updates",
-              "count": 2
-            },
-            {
-              "reason": "Terminal final answer, not a protocol channel",
-              "before": "`final` channel",
-              "after": "final answer",
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "in `commentary` channel",
+              "after": "through progress updates",
               "count": 1
             },
             {
-              "reason": "Terminal progress wording",
-              "before": "- You share updates in progress updates.",
-              "after": "- Share concise progress updates before tool calls.",
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "to the `commentary` channel",
+              "after": "as progress updates",
+              "count": 1
+            },
+            {
+              "reason": "Terminal communication and compaction capabilities",
+              "before": "to the `final` channel",
+              "after": "as your final answer",
               "count": 1
             }
           ],
@@ -1065,8 +1071,8 @@
         }
       ]
     },
-    "e2185d0ca221cf8c4f279c0060a12d9d8fbaf6ba2c951b5bfbad8ead6766d3a4": {
-      "adapted_sha256": "e2185d0ca221cf8c4f279c0060a12d9d8fbaf6ba2c951b5bfbad8ead6766d3a4",
+    "aa30e9ba182262d5a6cfcd85e883c28af08fa2d1b9856faca997d176ea5e4503": {
+      "adapted_sha256": "aa30e9ba182262d5a6cfcd85e883c28af08fa2d1b9856faca997d176ea5e4503",
       "origins": [
         {
           "upstream_sha256": "85541a9738741407642b3c39bbe3781fbf8bb42f628d50e562c87738ab192b3a",
@@ -1074,7 +1080,7 @@
             {
               "reason": "Tiger application authorization replaces sandbox escalation",
               "before": "# Escalation Requests\n\nCommands are run outside the sandbox if they are approved by the user, or match an existing rule that allows it to run unrestricted. The command string is split into independent command segments at shell control operators, including but not limited to:\n\n- Pipes: |\n- Logical operators: &&, ||\n- Command separators: ;\n- Subshell boundaries: (...), $(...)\n\nEach resulting segment is evaluated independently for sandbox restrictions and approval requirements.\n\nExample:\n\ngit pull | tee output.txt\n\nThis is treated as two command segments:\n\n[\"git\", \"pull\"]\n\n[\"tee\", \"output.txt\"]\n\nCommands that use more advanced shell features like redirection (>, >>, <), substitutions ($(...), ...), environment variables (FOO=bar), or wildcard patterns (*, ?) will not be evaluated against rules, to limit the scope of what an approved rule allows.\n\n## How to request escalation\n\nIMPORTANT: To request approval to execute a command that will require escalated privileges:\n\n- Provide the `sandbox_permissions` parameter with the value `\"require_escalated\"`\n- Include a short question asking the user if they want to allow the action in `justification` parameter. e.g. \"Do you want to download and install dependencies for this project?\"\n- Optionally suggest a `prefix_rule` - this will be shown to the user with an option to persist the rule approval for future sessions.\n\nIf you run a command that is important to solving the user's query, but it fails because of sandboxing or with a likely sandbox-related network error (for example DNS/host resolution, registry/index access, or dependency download failure), rerun the command with \"require_escalated\". ALWAYS proceed to use the `justification` parameter - do not message the user before requesting approval for the command.\n\n## When to request escalation\n\nWhile commands are running inside the sandbox, here are some scenarios that will require escalation outside the sandbox:\n\n- You need to run a command that writes to a directory that requires it (e.g. running tests that write to /var)\n- You need to run a GUI app (e.g., open/xdg-open/osascript) to open browsers or files.\n- If you run a command that is important to solving the user's query, but it fails because of sandboxing or with a likely sandbox-related network error (for example DNS/host resolution, registry/index access, or dependency download failure), rerun the command with `require_escalated`. ALWAYS proceed to use the `sandbox_permissions` and `justification` parameters. do not message the user before requesting approval for the command.\n- You are about to take a potentially destructive action such as an `rm` or `git reset` that the user did not explicitly ask for.\n- Be judicious with escalating, but if completing the user's request requires it, you should do so - don't try and circumvent approvals by using other tools.\n\n## prefix_rule guidance\n\nWhen choosing a `prefix_rule`, request one that will allow you to fulfill similar requests from the user in the future without re-requesting escalation. It should be categorical and reasonably scoped to similar capabilities. You should rarely pass the entire command into `prefix_rule`.\n\n### Banned prefix_rules \nAvoid requesting overly broad prefixes that the user would be ill-advised to approve. For example, do not request [\"python3\"], [\"python\", \"-\"], or other similar prefixes that would allow arbitrary scripting.\nNEVER provide a prefix_rule argument for destructive commands like rm.\nNEVER provide a prefix_rule if your command uses a heredoc or herestring. \n\n### Examples\nGood examples of prefixes:\n- [\"npm\", \"run\", \"dev\"]\n- [\"gh\", \"pr\", \"check\"]\n- [\"cargo\", \"test\"]\n",
-              "after": "Tool authorization is enforced by Codet's application rules, not an OS sandbox. An allow rule or application approval is required for mutations unless the selected permission mode grants them. Explicit deny rules prevail. Do not request shell escalation or use another tool to bypass a denial.\n",
+              "after": "Tool authorization is enforced by Codet's application rules, not an OS sandbox. An allow rule or application approval is required for all shell execution and other mutations unless the selected permission mode grants them. Explicit deny rules prevail. Do not request shell escalation or use another tool to bypass a denial.\n",
               "count": 1
             }
           ],
@@ -1088,7 +1094,7 @@
             {
               "reason": "Tiger application authorization replaces sandbox escalation",
               "before": "Approval policy is currently never. Do not provide the `sandbox_permissions` for any reason, commands will be rejected.\n",
-              "after": "Tool authorization is enforced by Codet's application rules, not an OS sandbox. An allow rule or application approval is required for mutations unless the selected permission mode grants them. Explicit deny rules prevail. Do not request shell escalation or use another tool to bypass a denial.\n",
+              "after": "Tool authorization is enforced by Codet's application rules, not an OS sandbox. An allow rule or application approval is required for all shell execution and other mutations unless the selected permission mode grants them. Explicit deny rules prevail. Do not request shell escalation or use another tool to bypass a denial.\n",
               "count": 1
             }
           ],
@@ -1101,77 +1107,77 @@
   },
   "models": {
     "gpt-6-astra": {
-      "instructions": "38bf6fb049714156ef4cd9a282f379d98fee5c126a1038aef30f4244956e138a",
+      "instructions": "7e62f4177edcca2c1b30e6e51069bbf25d924adff4d50cc89589f97871bea739",
       "default": "d552bb6b40dd4f01f43593ebb49c4a9e4e0c0df524aa548b15879f29e6301a98",
       "plan": null,
       "approval_on_request": null,
       "approval_never": null
     },
     "gpt-6.1-sol": {
-      "instructions": "b1767fe4586cfc6216c279cc26dda713b52af599f10d1ebcc3206553e664a893",
+      "instructions": "073d19b1e99e9e2124e318059a3781f5dd845933023eb964294724bdfbd129fc",
       "default": "d552bb6b40dd4f01f43593ebb49c4a9e4e0c0df524aa548b15879f29e6301a98",
       "plan": null,
       "approval_on_request": null,
       "approval_never": null
     },
     "gpt-6-sol": {
-      "instructions": "32016af23cd09f974d9004bebcd9939ff9425201ba645d1b9c107efe4178c82a",
+      "instructions": "60f2f8e2c3dafa1d8ea3f5f347457cbf372126e7b608aac63b0b0add4149058b",
       "default": "d552bb6b40dd4f01f43593ebb49c4a9e4e0c0df524aa548b15879f29e6301a98",
       "plan": null,
       "approval_on_request": null,
       "approval_never": null
     },
     "gpt-6-luna": {
-      "instructions": "b02a93ad3d11a57f90241050b92cead453ef677b97e8fd0e6eaa65cab8a50089",
+      "instructions": "95b93532e099cf8da05d53619fa528348aadf0f87a26115e1d81da56d573c89f",
       "default": "d552bb6b40dd4f01f43593ebb49c4a9e4e0c0df524aa548b15879f29e6301a98",
       "plan": null,
       "approval_on_request": null,
       "approval_never": null
     },
     "gpt-5.6-sol": {
-      "instructions": "f5c4817ce9e716de699151a352b66c24b73f871807f619281c7a35775dc73293",
+      "instructions": "e0595b562e055186f86ca10b23bb39948fee9259b7fd3b9f2c51a1ad4ca53513",
       "default": null,
       "plan": null,
       "approval_on_request": null,
       "approval_never": null
     },
     "gpt-5.6-terra": {
-      "instructions": "f5c4817ce9e716de699151a352b66c24b73f871807f619281c7a35775dc73293",
+      "instructions": "e0595b562e055186f86ca10b23bb39948fee9259b7fd3b9f2c51a1ad4ca53513",
       "default": null,
       "plan": null,
       "approval_on_request": null,
       "approval_never": null
     },
     "gpt-5.6-luna": {
-      "instructions": "f5c4817ce9e716de699151a352b66c24b73f871807f619281c7a35775dc73293",
+      "instructions": "e0595b562e055186f86ca10b23bb39948fee9259b7fd3b9f2c51a1ad4ca53513",
       "default": null,
       "plan": null,
       "approval_on_request": null,
       "approval_never": null
     },
     "gpt-daybreak-blue-latest": {
-      "instructions": "95b0cadfbaf035d93b57aba082a5c2e4b05de38f80164425bf18e78389708416",
+      "instructions": "d40cc6958fddf36743e3792be5ed49dffed86f771aad7f3183a223360b153a0f",
       "default": null,
       "plan": null,
       "approval_on_request": null,
       "approval_never": null
     },
     "gpt-daybreak-red-latest": {
-      "instructions": "0c1933339baccb89ece00b9e1958a9d98cf085850c2c99d61b0cba13848cb70f",
+      "instructions": "966fe87f5f144cc7bef109fb8217a4ef818dc5274d5eff9f728fb16f2519257a",
       "default": null,
       "plan": null,
       "approval_on_request": null,
       "approval_never": null
     },
     "gpt-5.5": {
-      "instructions": "c15bdbe297516336184248066e815590540eafde5f40f0a207e6de231958246c",
+      "instructions": "c1ae889e7fc9057708d2a3dd7b8e80450b587a3c739e1a9860fad934cfd3c1f3",
       "default": null,
       "plan": null,
       "approval_on_request": null,
       "approval_never": null
     },
     "codex-auto-review": {
-      "instructions": "f5c4817ce9e716de699151a352b66c24b73f871807f619281c7a35775dc73293",
+      "instructions": "e0595b562e055186f86ca10b23bb39948fee9259b7fd3b9f2c51a1ad4ca53513",
       "default": null,
       "plan": null,
       "approval_on_request": null,
@@ -1183,7 +1189,7 @@
     "summary_prefix": "e9b088e794a6bb9082ac053fcc760bd818d7e720ee4bcdc72c6e480de7b7cb0e",
     "default": "b76e4de9bebedd4c8bd4463d322898ec31a8a63012a7c6273f100d4002269439",
     "plan": "da83de78c5ef6b8d2c5a3e5d33d3dc3099a382f12d2bb1dda95a911e9cef2f14",
-    "approval_on_request": "e2185d0ca221cf8c4f279c0060a12d9d8fbaf6ba2c951b5bfbad8ead6766d3a4",
-    "approval_never": "e2185d0ca221cf8c4f279c0060a12d9d8fbaf6ba2c951b5bfbad8ead6766d3a4"
+    "approval_on_request": "aa30e9ba182262d5a6cfcd85e883c28af08fa2d1b9856faca997d176ea5e4503",
+    "approval_never": "aa30e9ba182262d5a6cfcd85e883c28af08fa2d1b9856faca997d176ea5e4503"
   }
 }

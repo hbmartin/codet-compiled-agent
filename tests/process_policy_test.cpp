@@ -77,7 +77,32 @@ struct BrokenObservation : ProcessControl {
       throw std::runtime_error("ordinary reap failure");
     return native->reap(pid);
   }
+  std::optional<int> try_reap(pid_t pid) override {
+    if (pid == selected)
+      ++selected_reaps;
+    if (pid == selected && reap_failure)
+      throw std::runtime_error("ordinary reap failure");
+    return native->try_reap(pid);
+  }
 };
+TEST_F(Policies, CleanupReapsWithoutAnExitObserverAfterTransientReapFailure) {
+  auto control = std::make_shared<BrokenObservation>();
+  NativeProcesses owned(control);
+  control->failure = BrokenObservation::Failure::normal;
+  control->reap_failure = true;
+  EXPECT_THROW(owned.run(command("sleep 30"), cancel), std::runtime_error);
+  const auto before = control->selected_reaps;
+  control->reap_failure = false;
+  for (int i = 0; i < 100 && control->selected_reaps == before; ++i)
+    EXPECT_TRUE(owned.list().empty());
+  EXPECT_GT(control->selected_reaps, before);
+  // Explicit cleanup must also remain safe after a background fallback collected the status.
+  control->failure = BrokenObservation::Failure::none;
+  owned.shutdown();
+  int status = 0;
+  EXPECT_EQ(::waitpid(control->selected, &status, WNOHANG), -1);
+  EXPECT_EQ(errno, ECHILD);
+}
 TEST_F(Policies, StopAndDestructionTerminateEvenWithPersistentObservationFailure) {
   for (bool destructor : {false, true}) {
     auto control = std::make_shared<BrokenObservation>();

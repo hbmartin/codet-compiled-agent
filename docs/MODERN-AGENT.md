@@ -117,6 +117,17 @@ The agent uses embedded per-model Codex instructions with Tiger-specific capabil
 authorization facts. See [captured prompt provenance, adaptations and compaction](PROMPTS.md).
 Small context settings must accommodate the full fixed prompt and tools; insufficient space
 produces a diagnostic instead of silently truncating instructions or repeatedly compacting.
+Admission includes request overhead and the configured output reserve. Diagnostics distinguish
+fixed context, oversized human input and oversized summaries and show the estimated minimum
+`context_tokens`. Task-plan context refreshes each request without reloading project documents.
+Compaction preserves actual human steering separately from synthetic hook feedback and moves
+image references into a private JSONL index; subsequent image input requires explicit reload.
+
+Active-turn steering retains its classification across completion, so `/memory consolidate`
+accepted as steering remains model text in its follow-up turn. Explicit active `/quit`, `/new`
+and `/permissions` controls retain their behavior. Worker events and approval/question requests
+have turn ownership; error cleanup drains diagnostics and outcomes and expires unanswered
+requests before another turn. An expired request cannot consume the next line of input.
 
 Instructions still load AGENTS.md/CLAUDE.md and bounded includes. Skills are listed with their paths and read using the active inspection tools. Markdown memory previews are bounded separately; explicit memory consolidation uses patches. Session/credential/permission controls remain application controls without an OS shell sandbox.
 

@@ -1,6 +1,7 @@
 #include "codet/computer.hpp"
 #include "codet/interaction.hpp"
 #include "codet/prompt.hpp"
+#include "prompt_support.hpp"
 #include "temp.hpp"
 #include <algorithm>
 #include <gmock/gmock.h>
@@ -14,8 +15,7 @@ struct NoNetwork : HttpTransport {
   }
 };
 struct Desktop : ComputerBackend {
-  Json facts = {{"available", true},   {"backend", "test"}, {"accessibility", true},
-                {"framebuffer", true}, {"clipboard", true}, {"applescript", true}};
+  Json facts = codet::test::desktop_facts();
   Json capabilities() const override {
     return facts;
   }
@@ -54,12 +54,15 @@ struct CountFiles : FileSystem {
   }
 };
 struct Script : Provider {
+  std::vector<size_t> output_limits;
   std::function<ProviderResult(const std::string &, const std::vector<codet::Message> &,
                                const Json &)>
       next;
-  ProviderResult complete(const Config &, const std::string &s,
+  ProviderResult complete(const Config &config, const std::string &s,
                           const std::vector<codet::Message> &m, const Json &t, const Cancellation &,
                           const ChunkSink &) override {
+    EXPECT_LE(Json(m).dump().size(), prompt_budget(config, s, t).available());
+    output_limits.push_back(config.max_output_tokens);
     return next(s, m, t);
   }
 };
@@ -211,10 +214,64 @@ TEST_F(Prompts, RefreshesRuntimeFactsWithoutReloadingProjectDocuments) {
   EXPECT_EQ(agent.run(session, "begin", cancel).text, "done");
   EXPECT_EQ(files.document_reads, 1u);
 }
+TEST_F(Prompts, TaskPlanRefreshesWithoutReloadingProjectDocuments) {
+  files.native.atomic_write(config.cwd / "AGENTS.md", "static document");
+  auto t = tools();
+  StateStore state(config.home);
+  auto session = state.create();
+  Script provider;
+  size_t requests = 0;
+  provider.next = [&](const auto &system, const auto &, const auto &) {
+    if (++requests == 1) {
+      EXPECT_THAT(system, Not(HasSubstr("Current task plan")));
+      auto r = answer("");
+      r.message.calls = {
+          {"plan",
+           "update_plan",
+           {{"plan", Json::array({{{"step", "current step"}, {"status", "in_progress"}}})}}}};
+      return r;
+    }
+    EXPECT_THAT(system, HasSubstr("Current task plan"));
+    EXPECT_THAT(system, HasSubstr("current step"));
+    return answer("done");
+  };
+  Agent agent(config, provider, t, state, {});
+  EXPECT_EQ(agent.run(session, "begin", cancel).text, "done");
+  EXPECT_EQ(files.document_reads, 1u);
+}
+TEST_F(Prompts, HookFeedbackNeverReplacesHumanInstructionDuringCompaction) {
+  config.hooks = {
+      {"Stop", Json::array({{{"command",
+                              "if test ! -f stop-once; then touch stop-once; printf '%s' "
+                              "'{\"decision\":\"block\",\"reason\":\"verify results\"}'; fi"}}})}};
+  auto t = tools();
+  config.context_tokens = codet::test::context_tokens(t, config, 1600);
+  StateStore state(config.home);
+  auto session = state.create();
+  Script provider;
+  size_t requests = 0;
+  provider.next = [&](const auto &, const auto &messages, const auto &schemas) {
+    if (++requests == 1)
+      return answer(std::string(5000, 'x'));
+    if (schemas.empty()) {
+      EXPECT_THAT(messages[0].text,
+                  HasSubstr("Latest user instruction (preserve verbatim):\nreal human objective"));
+      return answer("Keep real human objective and verify results.");
+    }
+    EXPECT_EQ(messages.back().text, "real human objective");
+    EXPECT_EQ(messages.back().origin, "human");
+    return answer("done");
+  };
+  Agent agent(config, provider, t, state, {});
+  EXPECT_EQ(agent.run(session, "real human objective", cancel).text, "done");
+  ASSERT_EQ(provider.output_limits.size(), 3u);
+  EXPECT_LT(provider.output_limits[1], config.max_output_tokens);
+  EXPECT_EQ(provider.output_limits.back(), config.max_output_tokens);
+}
 TEST_F(Prompts, CompactionPreservesAsyncSteeringAfterCompletedToolBatch) {
   auto channel = std::make_shared<Interaction>();
   auto t = tools(channel);
-  config.context_tokens = (prompt(t).size() + t.schemas().dump().size() + 1600) / 3;
+  config.context_tokens = codet::test::context_tokens(t, config, 1600);
   StateStore state(config.home);
   auto session = state.create();
   Script provider;
@@ -261,10 +318,27 @@ TEST_F(Prompts, FixedOverheadAndUnshrinkableSummaryFailWithoutRepeatedRequests) 
   old.text = std::string(3000, 'x');
   session.messages = {old, old};
   state.save(session);
-  config.context_tokens = (prompt(t).size() + t.schemas().dump().size() + 1200) / 3;
+  config.context_tokens = codet::test::context_tokens(t, config, 1200);
   EXPECT_THROW(agent.run(session, "latest", cancel), Error);
   EXPECT_EQ(requests, 1);
   EXPECT_EQ(state.load(session.id).messages.front().text, old.text);
+}
+TEST_F(Prompts, OversizedFirstInputFailsWithItsOwnBudgetDiagnostic) {
+  auto t = tools();
+  config.context_tokens = codet::test::context_tokens(t, config, 1000);
+  StateStore state(config.home);
+  auto session = state.create();
+  Script provider;
+  provider.next = [](const auto &, const auto &, const auto &) {
+    ADD_FAILURE() << "Oversized first input must not reach the provider";
+    return answer("unexpected");
+  };
+  Agent agent(config, provider, t, state, {});
+  const std::string human(3000, 'x');
+  EXPECT_THAT([&] { agent.run(session, human, cancel); },
+              ThrowsMessage<Error>(HasSubstr("Human input cannot fit without truncation")));
+  EXPECT_EQ(state.load_id(session.id).messages.back().text, human);
+  EXPECT_TRUE(provider.output_limits.empty());
 }
 TEST_F(Prompts, AllProviderAdaptersCarryTheComposedInstructions) {
   CredentialStore credentials(config.home, files, clock);

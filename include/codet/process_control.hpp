@@ -2,6 +2,7 @@
 #include <chrono>
 #include <exception>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <sys/types.h>
 
@@ -20,6 +21,10 @@ public:
   virtual bool exited(pid_t, int observer) = 0;
   virtual void signal(pid_t target, int signal) = 0;
   virtual int reap(pid_t) = 0;
+  // Nonblocking fallback when the exit observer is unavailable. Never invent an exit status.
+  virtual std::optional<int> try_reap(pid_t) {
+    return std::nullopt;
+  }
   virtual std::chrono::steady_clock::time_point now() const {
     return std::chrono::steady_clock::now();
   }

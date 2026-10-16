@@ -1,3 +1,4 @@
+#include "codet/artifacts.hpp"
 #include "codet/core.hpp"
 #include <cerrno>
 #include <fcntl.h>
@@ -41,15 +42,17 @@ std::string column(sqlite3_stmt *p, int n) {
 } // namespace
 struct StateStore::Impl {
   sqlite3 *db = nullptr;
-  fs::path home;
+  fs::path home, artifact_root;
   std::map<std::string, std::weak_ptr<void>> owners;
   ~Impl() {
     if (db)
       sqlite3_close(db);
   }
 };
-StateStore::StateStore(const fs::path &home) : impl_(std::make_unique<Impl>()) {
+StateStore::StateStore(const fs::path &home, const fs::path &artifact_root)
+    : impl_(std::make_unique<Impl>()) {
   impl_->home = home;
+  impl_->artifact_root = artifact_root.empty() ? home / "artifacts" : artifact_root;
   if (fs::is_symlink(home))
     throw Error("State directory must not be a symlink");
   fs::create_directories(home);
@@ -313,6 +316,11 @@ Session StateStore::fork(const Session &parent) {
   s.provider = parent.provider;
   s.model = parent.model;
   auto owner = acquire(s.id);
+  NativeFileSystem files;
+  const auto index = archive_image_history(impl_->artifact_root, files, s.id, s.messages);
+  for (auto &message : s.messages)
+    if (!message.artifact_index.empty())
+      message.artifact_index = index.string();
   save(s);
   reconcile(s);
   Statement q(impl_->db, "UPDATE sessions SET parent=? WHERE id=?");
