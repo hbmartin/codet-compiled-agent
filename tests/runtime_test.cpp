@@ -7,6 +7,9 @@
 #include "temp.hpp"
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <future>
+#include <limits>
+#include <thread>
 #include <nlohmann/json-schema.hpp>
 #include <sys/resource.h>
 #include <sys/wait.h>
@@ -38,6 +41,7 @@ struct Recording : Processes {
   std::vector<std::string> writes;
   std::function<ProcessResult(const ProcessSpec &)> hook;
   bool running = false, poll_error = false;
+  std::string output = "done", capture_error;
   size_t closes = 0;
   ProcessResult run(const ProcessSpec &spec, const Cancellation &) override {
     return hook ? hook(spec) : ProcessResult{};
@@ -49,7 +53,10 @@ struct Recording : Processes {
   ProcessResult poll(const std::string &) override {
     if (poll_error)
       throw Error("injected output collection failure");
-    return {0, "done", false, running};
+    ProcessResult result{0, output, false, running};
+    result.capture_error = capture_error;
+    result.total_output_bytes = output.size();
+    return result;
   }
   void stop(const std::string &) override {
     running = false;
@@ -306,6 +313,8 @@ TEST_F(Runtime, CompletedExecRetainsItsOutcomeWhenPostHookExhaustsResources) {
   config.permission_mode = "bypass";
   config.hooks = {{"PostToolUse", Json::array({{{"command", "fatal"}}})}};
   Recording process;
+  process.capture_error = std::string("invalid-") + char(0xff);
+  process.output = std::string(1000, 'x');
   process.hook = [](const ProcessSpec &) -> ProcessResult {
     throw ProcessResourceError("exhausted");
   };
@@ -313,7 +322,7 @@ TEST_F(Runtime, CompletedExecRetainsItsOutcomeWhenPostHookExhaustsResources) {
   StateStore state(config.home);
   auto session = state.create();
   OneCall provider;
-  provider.tool = call("exec_command", {{"cmd", "completed command"}});
+  provider.tool = call("exec_command", {{"cmd", "completed command"}, {"max_output_tokens", 32}});
   Agent agent(config, provider, tools, state, {});
   EXPECT_THROW(agent.run(session, "run once", cancel), Error);
   ASSERT_EQ(process.starts.size(), 1u);
@@ -322,6 +331,81 @@ TEST_F(Runtime, CompletedExecRetainsItsOutcomeWhenPostHookExhaustsResources) {
   EXPECT_TRUE(result.at("metadata").at("action_completed"));
   EXPECT_THAT(result.at("content").get<std::string>(), HasSubstr("Tool completed"));
   EXPECT_THAT(result.dump(), Not(HasSubstr("Tool failed")));
+  const auto envelope = Json::parse(result.at("content").get<std::string>());
+  EXPECT_LE(envelope.at("output").get<std::string>().size(), 128u);
+  EXPECT_EQ(envelope.at("original_token_count"), 250);
+}
+TEST_F(Runtime, StdinHookAllowRequiresExactNestedOperationScopeIncludingEof) {
+  Recording process;
+  process.running = true;
+  config.permission_mode = "bypass";
+  config.approval = "never";
+  Json response = {{"hookSpecificOutput", {{"decision", {{"behavior", "allow"}}}}}};
+  std::vector<Json> observed;
+  process.hook = [&](const ProcessSpec &spec) {
+    observed.push_back(Json::parse(files.read(spec.argv.back())));
+    return ProcessResult{0, response.dump()};
+  };
+  Tools tools(config, files, process, http, clock);
+  const auto start = tools.execute(
+      call("exec_command", {{"cmd", "python3 -i"}, {"yield_time_ms", 250}}), cancel);
+  ASSERT_FALSE(start.error);
+  const auto id = start.metadata.at("session_id");
+  config.permission_mode = "default";
+  config.hooks = {{"PermissionRequest", Json::array({{{"matcher", "Bash"}, {"command", "check"}}})}};
+  auto input = call("write_stdin", {{"session_id", id}, {"chars", "arbitrary input"}, {"yield_time_ms", 1}});
+  for (const auto &invalid : {Json(), Json("exec_command"), Json("write_stdin*"), Json(1)}) {
+    if (invalid.is_null())
+      response["hookSpecificOutput"]["decision"].erase("tool");
+    else
+      response["hookSpecificOutput"]["decision"]["tool"] = invalid;
+    EXPECT_TRUE(tools.execute(input, cancel).error);
+    auto eof = call("write_stdin", {{"session_id", id}, {"close_stdin", true}});
+    EXPECT_TRUE(tools.execute(eof, cancel).error);
+  }
+  EXPECT_TRUE(process.writes.empty());
+  EXPECT_EQ(process.closes, 0u);
+  ASSERT_FALSE(observed.empty());
+  EXPECT_EQ(observed.back().at("tool"), "write_stdin");
+  EXPECT_EQ(observed.back().at("tool_input").at("command"), "python3 -i");
+  response["hookSpecificOutput"]["decision"]["tool"] = "write_stdin";
+  EXPECT_FALSE(tools.execute(input, cancel).error);
+  process.running = false;
+  EXPECT_FALSE(tools.execute(call("write_stdin", {{"session_id", id}, {"close_stdin", true}}), cancel).error);
+  EXPECT_EQ(process.writes.size(), 1u);
+  EXPECT_EQ(process.closes, 1u);
+}
+TEST_F(Runtime, PermissionMatcherAliasesOnlySelectTheirOwnOperationAndDenyAlwaysWins) {
+  Recording process;
+  config.approval = "never";
+  std::vector<std::string> matched;
+  process.hook = [&](const ProcessSpec &spec) {
+    matched.push_back(spec.argv[4]);
+    return ProcessResult{0, R"({"hookSpecificOutput":{"decision":{"behavior":"allow","tool":"exec_command"}}})"};
+  };
+  config.hooks = {{"PermissionRequest", Json::array({
+    {{"matcher", "write_stdin"}, {"command", "stdin-only"}},
+    {{"matcher", "exec_command"}, {"command", "exec-only"}},
+    {{"matcher", "Ba*"}, {"command", "bash-glob"}}})}};
+  Tools tools(config, files, process, http, clock);
+  EXPECT_FALSE(tools.execute(call("exec_command", {{"cmd", "safe"}}), cancel).error);
+  EXPECT_EQ(matched, (std::vector<std::string>{"exec-only", "bash-glob"}));
+  config.hooks["PermissionRequest"].push_back({{"matcher", "Bash"}, {"command", "deny"}});
+  process.hook = [](const ProcessSpec &spec) {
+    return ProcessResult{0, spec.argv[4] == "deny"
+      ? R"({"hookSpecificOutput":{"decision":{"behavior":"deny","message":"blocked"}}})"
+      : R"({"hookSpecificOutput":{"decision":{"behavior":"allow"}}})"};
+  };
+  EXPECT_TRUE(tools.execute(call("exec_command", {{"cmd", "safe"}}), cancel).error);
+}
+TEST_F(Runtime, GlobalOutputLimitStillReportsOriginalTokenCount) {
+  config.permission_mode = "bypass";
+  config.tool_output_limit = 256;
+  Tools tools(config, files, processes, http, clock);
+  const auto result = tools.execute(call("exec_command", {{"cmd", "printf '" + std::string(1000, 'x') + "'"}, {"login", false}}), cancel);
+  ASSERT_FALSE(result.error);
+  EXPECT_TRUE(result.metadata.at("truncated"));
+  EXPECT_EQ(result.metadata.at("original_token_count"), 250);
 }
 TEST_F(Runtime, ScalarSchemasAndObsoleteHookMatchersAreExplicit) {
   nlohmann::json_schema::json_validator validator;
@@ -338,8 +422,35 @@ TEST_F(Runtime, ScalarSchemasAndObsoleteHookMatchersAreExplicit) {
   EXPECT_THROW(validate_hook_matchers({{"PreToolUse", Json::array({{{"matcher", "Read"}}})}}),
                Error);
   EXPECT_NO_THROW(validate_hook_matchers(
-      {{"PreToolUse", Json::array({{{"matcher", "Bash"}}, {{"matcher", "computer.*"}}})}}));
+      {{"PreToolUse", Json::array({{{"matcher", "Bash"}, {"command", "true"}},
+                                   {{"matcher", "computer.*"}, {"command", "true"}}})}}));
 }
+TEST_F(Runtime, MalformedHookEntriesAreConfigurationErrorsForEveryEvent) {
+  for (const auto *event : {"PreToolUse", "Stop", "SessionStart", "PermissionRequest"}) {
+    for (const auto &entry : {Json("echo hi"), Json::object(), Json({{"command", 1}}),
+                              Json({{"command", "true"}, {"matcher", false}}),
+                              Json({{"command", "true"}, {"timeout_ms", "slow"}}),
+                              Json({{"command", "true"}, {"timeout_ms", uint64_t{1} << 40}})}) {
+      try {
+        validate_hook_matchers({{event, Json::array({entry})}});
+        FAIL() << event << entry;
+      } catch (const Error &error) {
+        EXPECT_EQ(error.code, 2);
+      }
+    }
+  }
+  files.atomic_write(config.home / "config.toml", "[hooks]\nPreToolUse=['echo hi']\n");
+  try {
+    load_config(config.home, config.cwd, "", {}, files);
+    FAIL();
+  } catch (const Error &error) {
+    EXPECT_EQ(error.code, 2);
+    EXPECT_THAT(error.what(), HasSubstr("Invalid hook entry"));
+  }
+}
+
+
+
 TEST_F(Runtime, PendingInputCannotLeakAcrossTurnOrSessionBoundaries) {
   Interaction input;
   input.begin_turn("first");

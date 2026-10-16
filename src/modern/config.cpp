@@ -166,6 +166,7 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
     c.set_allow(data.value("allow", c.rules().allow));
     c.set_deny(data.value("deny", c.rules().deny));
     c.hooks = data.value("hooks", Json::object());
+    validate_hook_matchers(c.hooks);
     c.keybindings = data.value("keybindings", Json::object());
     if (data.contains("providers"))
       for (auto it = data["providers"].begin(); it != data["providers"].end(); ++it) {
@@ -204,7 +205,6 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
   c.model = resolved.model;
   validate_tool_rules(c.rules().allow);
   validate_tool_rules(c.rules().deny);
-  validate_hook_matchers(c.hooks);
   return c;
 }
 bool image_input_enabled(const Config &c) {

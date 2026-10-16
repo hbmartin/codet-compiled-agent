@@ -26,6 +26,7 @@ struct ToolDefinition {
 };
 const std::vector<ToolDefinition> &tool_registry();
 const ToolDefinition *tool_definition(const std::string &);
+bool tool_available(const ToolDefinition &, const Config &, const Json &facts);
 std::string tool_wire_name(std::string);
 std::string tool_logical_name(const std::string &);
 void validate_tool_rules(const std::vector<std::string> &);

@@ -59,7 +59,10 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
           event == "SessionStart" ? input.value("source", "startup") : input.value("tool_name", "");
       if (event == "SessionStart" && matcher.empty())
         matcher = "*";
-      if (fnmatch(matcher.c_str(), subject.c_str(), 0))
+      const bool operation_alias = event == "PermissionRequest" &&
+                                   (matcher == "exec_command" || matcher == "write_stdin") &&
+                                   matcher == input.value("tool", "");
+      if (!operation_alias && fnmatch(matcher.c_str(), subject.c_str(), 0))
         continue;
       ProcessSpec spec;
       spec.cwd = config_.cwd;
@@ -184,8 +187,17 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
         auto decision = specific.value("decision", Json::object());
         // Retain Codet's existing spelling as a compatibility alias.
         const auto behavior = decision.value("behavior", specific.value("permissionDecision", ""));
-        if (behavior == "allow")
-          permission = Decision::allow;
+        if (behavior == "allow") {
+          const auto operation = input.value("tool", "");
+          const auto scope = decision.value("tool", "");
+          if ((!scope.empty() && scope != operation) ||
+              (operation == "write_stdin" && scope != "write_stdin"))
+            diagnose("PermissionRequest allow ignored: stdin approval requires "
+                     "hookSpecificOutput.decision.tool = write_stdin; decision scope must "
+                     "match the requested tool");
+          else
+            permission = Decision::allow;
+        }
         else if (behavior == "deny") {
           block = true;
           permission = Decision::deny;

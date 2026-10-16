@@ -19,6 +19,10 @@
 
 namespace codet {
 namespace {
+std::string default_shell() {
+  const auto shell = env("SHELL");
+  return shell.empty() ? "/bin/sh" : shell;
+}
 void reject_nul_strings(const Json &value) {
   if (value.is_string() && value.get_ref<const std::string &>().find('\0') != std::string::npos)
     throw Error("Computer arguments must not contain NUL");
@@ -362,8 +366,8 @@ PermissionRequest Tools::execution_request(const ToolCall &call) const {
   PermissionRequest request{call.name, "", std::nullopt, definition && definition->mutation};
   request.context = a;
   if (call.name == "exec_command") {
-    const auto default_shell = env("SHELL").empty() ? std::string("/bin/sh") : env("SHELL");
-    const auto shell = a.value("shell", default_shell);
+    const auto configured_shell = default_shell();
+    const auto shell = a.value("shell", configured_shell);
     const auto command = a.at("cmd").get<std::string>();
     if (command.empty() || command.size() > size_t{1024} * 1024 ||
         command.find('\0') != std::string::npos)
@@ -382,7 +386,7 @@ PermissionRequest Tools::execution_request(const ToolCall &call) const {
                        {"shell", shell},
                        {"login", a.value("login", true)},
                        {"tty", a.value("tty", false)},
-                       {"custom_shell", shell != default_shell}};
+                       {"custom_shell", shell != configured_shell}};
   } else if (call.name == "write_stdin") {
     const auto id = a.at("session_id").get<int>();
     const auto it = exec_sessions_.find(id);
@@ -414,20 +418,16 @@ PermissionRequest Tools::execution_request(const ToolCall &call) const {
   }
   return request;
 }
-Json Tools::hook_input(const ToolCall &call, bool resolve) const {
-  if (!resolve && call.name == "exec_command" && call.arguments.is_object()) {
+Json Tools::authored_hook_input(const ToolCall &call) const {
+  if (call.name == "exec_command" && call.arguments.is_object()) {
     auto input = call.arguments;
     input["command"] = input.value("cmd", Json());
     input.erase("cmd");
     input["cwd"] = input.value("workdir", Json(config_.cwd.string()));
     input.erase("workdir");
-    input["shell"] = input.value("shell", Json(env("SHELL").empty() ? "/bin/sh" : env("SHELL")));
+    input["shell"] = input.value("shell", Json(default_shell()));
     return input;
   }
-  if (!resolve)
-    return call.arguments;
-  if (call.name == "exec_command" || call.name == "write_stdin")
-    return execution_request(call).context;
   return call.arguments;
 }
 Json Tools::capabilities() const {
@@ -463,38 +463,9 @@ Json Tools::schemas() const {
 }
 Json Tools::schemas(const Json &facts) const {
   Json out = Json::array();
-  const bool planning = config_.permission_mode == "plan";
-  const auto desktop = facts.value("desktop", Json::object());
-  const bool pixels = facts.value("image_input", false) && facts.value("image_codec", false) &&
-                      desktop.value("framebuffer", false);
-  for (const auto &d : tool_registry()) {
-    if (d.availability == "plan" && !planning)
-      continue;
-    if (d.availability == "default" && planning)
-      continue;
-    if (d.availability == "question" && (!planning || !facts.value("questions", false)))
-      continue;
-    if (d.availability == "interactive" && !facts.value("async_input", false))
-      continue;
-    if (d.availability == "image" &&
-        (!facts.value("image_input", false) || !facts.value("image_codec", false)))
-      continue;
-    if (d.availability.rfind("computer", 0) == 0 && !desktop.value("available", false))
-      continue;
-    if ((d.availability == "computer_image" || d.name == "computer.move" ||
-         d.name == "computer.click" || d.name == "computer.drag" || d.name == "computer.scroll") &&
-        !pixels)
-      continue;
-    if ((d.name == "computer.perform_action" || d.name == "computer.set_value") &&
-        !desktop.value("accessibility", false))
-      continue;
-    if ((d.name == "computer.clipboard_read" || d.name == "computer.clipboard_write") &&
-        !desktop.value("clipboard", false))
-      continue;
-    if (d.name == "computer.applescript" && !desktop.value("applescript", false))
-      continue;
-    out.push_back({{"name", d.name}, {"description", d.description}, {"input_schema", d.schema}});
-  }
+  for (const auto &d : tool_registry())
+    if (tool_available(d, config_, facts))
+      out.push_back({{"name", d.name}, {"description", d.description}, {"input_schema", d.schema}});
   return out;
 }
 ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
@@ -511,18 +482,27 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
   std::string invocation_cwd = config_.cwd.string();
   ToolResult completed;
   bool action_completed = false;
+  size_t response_limit = config_.tool_output_limit;
+  const bool exec_output = call.name == "exec_command" || call.name == "write_stdin";
   const auto preserve_completed = [&](const std::exception_ptr &failure,
                                       const std::string &message) {
     completed.error = true;
     completed.metadata["action_completed"] = true;
     completed.metadata["post_action_error"] = safe_text(message);
-    const auto primary = completed.preview
-                             ? render_output(*completed.preview, config_.tool_output_limit).text
-                             : completed.content;
     const auto notice = feedback_text("Tool completed; post-action failure: " + message + "\n",
-                                      config_.tool_output_limit / 3);
-    completed.content = bounded_text(notice + primary, config_.tool_output_limit);
-    if (call.name == "exec_command" || call.name == "write_stdin") {
+                                      response_limit / 3);
+    if (completed.preview) {
+      const auto rendered = annotated(*completed.preview, response_limit, notice, "", "");
+      completed.content = rendered.text;
+      completed.metadata["total_output_bytes"] = completed.preview->total;
+      completed.metadata["omitted_output_bytes"] = rendered.omitted;
+      completed.metadata["truncated"] = rendered.omitted != 0;
+      if (exec_output && rendered.omitted)
+        completed.metadata["original_token_count"] = (completed.preview->total + 3) / 4;
+    } else
+      completed.content = bounded_text(notice + completed.content, response_limit);
+    completed.metadata = safe_json(completed.metadata);
+    if (exec_output) {
       completed.metadata["output"] = completed.content;
       completed.content = completed.metadata.dump();
     }
@@ -537,18 +517,15 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
           "Grep is retired; use exec_command to run system grep, subject to shell permissions");
     if (!call.arguments.is_object())
       throw Error("Tool arguments must be an object");
-    bool known = false;
-    for (const auto &s : schemas())
-      if (s["name"] == call.name)
-        known = true;
-    if (!known)
-      throw Error("Unknown, removed, or unavailable tool: " + call.name);
     const auto *definition = tool_definition(call.name);
+    if (!definition || !tool_available(*definition, config_, capabilities()))
+      throw Error("Unknown, removed, or unavailable tool: " + call.name);
     nlohmann::json_schema::json_validator validator;
     validator.set_root_schema(definition->schema);
-    invocation = hook_input(call, false);
+    invocation = authored_hook_input(call);
     validator.validate(call.arguments);
-    const auto preflight = [&](const ToolCall &candidate) {
+    auto execution = execution_request(call);
+    const auto preflight = [&](const ToolCall &candidate, const PermissionRequest &request) {
       const auto *d = tool_definition(candidate.name);
       auto check = [&](const std::string &value) {
         const auto requested = (config_.cwd / fs::path(value)).lexically_normal();
@@ -563,17 +540,18 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
                {"*** Update File: ", "*** Add File: ", "*** Delete File: ", "*** Move to: "})
             if (line.rfind(prefix, 0) == 0)
               check(line.substr(std::string(prefix).size()));
-      } else if (permissions_.decide(execution_request(candidate)) == Decision::deny)
+      } else if (permissions_.decide(request) == Decision::deny)
         throw Error("Permission denied for " + candidate.name);
     };
-    preflight(call);
-    invocation = hook_input(call);
+    preflight(call, execution);
+    invocation = execution.context;
     invocation_cwd = invocation.value("cwd", config_.cwd.string());
     HookOutcome hook;
     if (call.name != "write_stdin")
       hook = run_hooks("PreToolUse",
                        {{"hook_event_name", "PreToolUse"},
                         {"tool_name", definition->hook_name},
+                        {"tool", call.name},
                         {"tool_input", invocation},
                         {"cwd", invocation_cwd}},
                        cancel);
@@ -591,24 +569,25 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
       } else
         effective.arguments = updated;
     }
-    invocation = hook_input(effective, false);
-    if (invocation.is_object() && invocation.value("cwd", Json()).is_string())
-      invocation_cwd = invocation.at("cwd").get<std::string>();
-    validator.validate(effective.arguments);
-    invocation = hook_input(effective);
-    invocation_cwd = invocation.value("cwd", config_.cwd.string());
-    preflight(effective);
-    completed = execute_inner(effective, cancel);
+    if (hook.updated_input) {
+      invocation = authored_hook_input(effective);
+      if (invocation.is_object() && invocation.value("cwd", Json()).is_string())
+        invocation_cwd = invocation.at("cwd").get<std::string>();
+      validator.validate(effective.arguments);
+      execution = execution_request(effective);
+      invocation = execution.context;
+      invocation_cwd = invocation.value("cwd", config_.cwd.string());
+      preflight(effective, execution);
+    }
+    if (exec_output) {
+      const auto requested = effective.arguments.value("max_output_tokens", 10000);
+      if (requested < 1 || requested > 1000000)
+        throw Error("Invalid max_output_tokens");
+      response_limit = std::min(config_.tool_output_limit, static_cast<size_t>(requested) * 4);
+    }
+    completed = execute_inner(effective, execution, cancel);
     action_completed = true;
     auto &result = completed;
-    const bool exec_output =
-        definition->handler == ToolHandler::exec || definition->handler == ToolHandler::stdin_write;
-    const auto response_limit =
-        exec_output
-            ? std::min(config_.tool_output_limit,
-                       static_cast<size_t>(effective.arguments.value("max_output_tokens", 10000)) *
-                           4)
-            : config_.tool_output_limit;
     const bool process_output = result.metadata.contains("total_output_bytes");
     if (!result.capture) {
       result.capture = std::make_shared<OutputCapture>(capture_store_, response_limit);
@@ -631,6 +610,7 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
         post = run_hooks("PostToolUse",
                          {{"hook_event_name", "PostToolUse"},
                           {"tool_name", definition->hook_name},
+                          {"tool", call.name},
                           {"tool_input", invocation},
                           {"tool_response", result.content},
                           {"cwd", invocation_cwd}},
@@ -694,6 +674,8 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
       result.metadata["total_output_bytes"] = result.preview->total;
       result.metadata["omitted_output_bytes"] = rendered.omitted;
       result.metadata["truncated"] = rendered.omitted != 0;
+      if (exec_output && rendered.omitted)
+        result.metadata["original_token_count"] = (result.preview->total + 3) / 4;
     }
     result.content = std::move(rendered.text);
     result.metadata = safe_json(result.metadata);
@@ -738,7 +720,8 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
     throw;
   }
 }
-ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel) {
+ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &request,
+                                const Cancellation &cancel) {
   const auto &a = call.arguments;
   const auto &name = call.name;
   const auto *definition = tool_definition(name);
@@ -920,34 +903,24 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
 
   if (definition->handler == ToolHandler::exec || definition->handler == ToolHandler::stdin_write) {
     const auto started = std::chrono::steady_clock::now();
-    const auto requested = a.value("max_output_tokens", 10000);
-    if (requested < 1 || requested > 1000000)
-      throw Error("Invalid max_output_tokens");
     int id = 0;
     int wait = 10000;
     if (definition->handler == ToolHandler::exec) {
-      const auto command = a.at("cmd").get<std::string>();
-      if (command.empty() || command.size() > size_t{1024} * 1024)
-        throw Error("Invalid command length");
+      const auto command = request.target;
       if (a.value("sandbox_permissions", "use_default") != "use_default" ||
           a.contains("justification") || a.contains("prefix_rule"))
         throw Error("Sandbox escalation and permission profiles are unavailable on Tiger; use "
                     "application permission configuration");
-      const auto request = execution_request(call);
       authorize(request);
       ProcessSpec spec;
       const auto shell = request.context.at("shell").get<std::string>();
-      if (shell.empty() || shell.front() != '/')
-        throw Error("shell must be an absolute executable path");
       spec.argv = {shell};
-      if (a.value("login", true))
+      if (request.context.at("login").get<bool>())
         spec.argv.push_back("-l");
       spec.argv.push_back("-c");
       spec.argv.push_back(command);
       spec.cwd = request.context.at("cwd").get<std::string>();
-      if (!fs::is_directory(spec.cwd))
-        throw Error("Working directory does not exist");
-      spec.pty = a.value("tty", false);
+      spec.pty = request.context.at("tty").get<bool>();
       spec.interactive_stdin = true;
       spec.timeout_ms = std::numeric_limits<int>::max();
       spec.output_limit = config_.tool_output_limit;
@@ -971,13 +944,11 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
           processes_.start(spec, cancel), command, spec.cwd, shell, spec.pty, false, std::nullopt};
     } else {
       id = a.at("session_id").get<int>();
-      const auto it = exec_sessions_.find(id);
-      if (it == exec_sessions_.end())
-        throw Error("Unknown exec session");
+      auto &session = exec_sessions_.at(id);
       const auto input = a.value("chars", std::string{});
-      authorize(execution_request(call));
-      if (it->second.completed) {
-        const auto exit_status = it->second.exit_code;
+      authorize(request);
+      if (session.completed) {
+        const auto exit_status = session.exit_code;
         if (!exit_status)
           throw Error("Exec session ended without a collected exit status");
         const auto exit_code = exit_status.value();
@@ -989,9 +960,9 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
                  {"stdin_closed", true}}};
       }
       if (!input.empty())
-        processes_.write(it->second.process, input);
+        processes_.write(session.process, input);
       if (a.value("close_stdin", false))
-        processes_.close_stdin(it->second.process);
+        processes_.close_stdin(session.process);
       wait = std::clamp(a.value("yield_time_ms", input.empty() ? 5000 : 250),
                         input.empty() ? 5000 : 1, input.empty() ? 300000 : 30000);
     }
@@ -1032,8 +1003,6 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
       job.completed = true;
       job.exit_code = result.exit_code;
     }
-    if (result.truncated || result.total_output_bytes > static_cast<size_t>(requested) * 4)
-      data["original_token_count"] = (result.total_output_bytes + 3) / 4;
     if (!result.spill_path.empty())
       data["spill_path"] = result.spill_path;
     if (!result.spill_path.empty() || result.spill_truncated || !result.capture_error.empty()) {
@@ -1165,7 +1134,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
          {"interrupted", interrupted}});
   }
   if (definition->handler == ToolHandler::computer) {
-    authorize(execution_request(call));
+    authorize(request);
     auto result = computer_->invoke(name.substr(9), a, cancel);
     auto out = structured(result.data);
     if (result.image) {

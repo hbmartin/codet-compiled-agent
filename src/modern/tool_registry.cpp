@@ -125,26 +125,26 @@ const std::vector<ToolDefinition> &tool_registry() {
         {}, ToolHandler::computer, false, "computer_image");
     const Json point = {{"screenshot_id", str}, {"x", num}, {"y", num}};
     add("computer.move", "Move the pointer using coordinates in an observed screenshot.", point,
-        {"screenshot_id", "x", "y"}, ToolHandler::computer, true, "computer");
+        {"screenshot_id", "x", "y"}, ToolHandler::computer, true, "computer_pointer");
     Json click = point;
     click["button"] = str;
     click["count"] = field("integer");
     add("computer.click",
         "Click at screenshot coordinates. button: left/right/middle; count: 1 or 2. Reports "
         "dispatch, not application success.",
-        click, {"screenshot_id", "x", "y"}, ToolHandler::computer, true, "computer");
+        click, {"screenshot_id", "x", "y"}, ToolHandler::computer, true, "computer_pointer");
     Json drag = point;
     drag["to_x"] = num;
     drag["to_y"] = num;
     add("computer.drag", "Drag with the left mouse button between two screenshot coordinates.",
-        drag, {"screenshot_id", "x", "y", "to_x", "to_y"}, ToolHandler::computer, true, "computer");
+        drag, {"screenshot_id", "x", "y", "to_x", "to_y"}, ToolHandler::computer, true, "computer_pointer");
     Json scroll = point;
     scroll["delta_y"] = field("integer");
     scroll["delta_x"] = field("integer");
     add("computer.scroll",
         "Scroll wheel lines at screenshot coordinates. Positive delta_y scrolls up; positive "
         "delta_x scrolls left.",
-        scroll, {"screenshot_id", "x", "y", "delta_y"}, ToolHandler::computer, true, "computer");
+        scroll, {"screenshot_id", "x", "y", "delta_y"}, ToolHandler::computer, true, "computer_pointer");
     add("computer.type_text",
         "Type Unicode text into the focused application without changing the clipboard.",
         {{"text", str}}, {"text"}, ToolHandler::computer, true, "computer");
@@ -156,14 +156,14 @@ const std::vector<ToolDefinition> &tool_registry() {
     add("computer.perform_action",
         "Perform an advertised accessibility action on an observed node.",
         {{"snapshot_id", str}, {"element_id", str}, {"action", str}},
-        {"snapshot_id", "element_id", "action"}, ToolHandler::computer, true, "computer");
+        {"snapshot_id", "element_id", "action"}, ToolHandler::computer, true, "computer_accessibility");
     add("computer.set_value",
         "Set an advertised settable accessibility attribute (default AXValue).",
         {{"snapshot_id", str},
          {"element_id", str},
          {"attribute", str},
          {"value", {{"anyOf", Json::array({str, field("boolean"), num})}}}},
-        {"snapshot_id", "element_id", "value"}, ToolHandler::computer, true, "computer");
+        {"snapshot_id", "element_id", "value"}, ToolHandler::computer, true, "computer_accessibility");
     add("computer.activate_app", "Activate an observed application by PID.",
         {{"pid", field("integer")}}, {"pid"}, ToolHandler::computer, true, "computer");
     add("computer.open_app", "Open an application bundle by absolute path.", {{"path", str}},
@@ -171,14 +171,14 @@ const std::vector<ToolDefinition> &tool_registry() {
     add("computer.open_url", "Open an HTTP(S) URL in the default browser.", {{"url", str}}, {"url"},
         ToolHandler::computer, true, "computer");
     add("computer.clipboard_read", "Read bounded plain text from the system clipboard.",
-        Json::object(), {}, ToolHandler::computer, false, "computer");
+        Json::object(), {}, ToolHandler::computer, false, "computer_clipboard");
     add("computer.clipboard_write", "Replace the system clipboard with plain text.",
-        {{"text", str}}, {"text"}, ToolHandler::computer, true, "computer");
+        {{"text", str}}, {"text"}, ToolHandler::computer, true, "computer_clipboard");
     add("computer.applescript",
         "Execute AppleScript through osascript with a bounded timeout. Scripts have the user's "
         "application privileges.",
         {{"script", str}, {"timeout_ms", field("integer")}}, {"script"}, ToolHandler::computer,
-        true, "computer");
+        true, "computer_applescript");
     return out;
   }();
   return definitions;
@@ -188,6 +188,26 @@ const ToolDefinition *tool_definition(const std::string &name) {
     if (d.name == name)
       return &d;
   return nullptr;
+}
+bool tool_available(const ToolDefinition &d, const Config &config, const Json &facts) {
+  const bool plan = config.permission_mode == "plan";
+  const auto &tag = d.availability;
+  if ((tag == "plan" && !plan) || (tag == "default" && plan) ||
+      (tag == "question" && (!plan || !facts.value("questions", false))) ||
+      (tag == "interactive" && !facts.value("async_input", false)))
+    return false;
+  const bool images = facts.value("image_input", false) && facts.value("image_codec", false);
+  if (tag == "image")
+    return images;
+  if (tag.rfind("computer", 0) != 0)
+    return true;
+  const auto desktop = facts.value("desktop", Json::object());
+  return desktop.value("available", false) &&
+         ((tag != "computer_image" && tag != "computer_pointer") ||
+          (images && desktop.value("framebuffer", false))) &&
+         (tag != "computer_accessibility" || desktop.value("accessibility", false)) &&
+         (tag != "computer_clipboard" || desktop.value("clipboard", false)) &&
+         (tag != "computer_applescript" || desktop.value("applescript", false));
 }
 std::string tool_wire_name(std::string name) {
   const auto p = name.find('.');
@@ -221,38 +241,36 @@ void validate_tool_rules(const std::vector<std::string> &rules) {
 void validate_hook_matchers(const Json &hooks) {
   if (!hooks.is_object())
     throw Error("hooks must be an object", 2);
-  const std::set<std::string> removed = {"Read",
-                                         "Write",
-                                         "Edit",
-                                         "BatchEdit",
-                                         "Glob",
-                                         "TaskCreate",
-                                         "TaskList",
-                                         "TaskGet",
-                                         "TaskOutput",
-                                         "TaskStop",
-                                         "ApplyPatch",
-                                         "TodoWrite",
-                                         "AskUserQuestion",
-                                         "EnterPlanMode",
-                                         "ExitPlanMode",
-                                         "Sleep",
-                                         "Memory",
-                                         "Skill",
-                                         "WebFetch",
-                                         "WebSearch",
-                                         "Grep"};
   for (auto event = hooks.begin(); event != hooks.end(); ++event) {
     if (!event.value().is_array())
       throw Error("Hook event must be an array: " + event.key(), 2);
-    if (event.key() != "PreToolUse" && event.key() != "PostToolUse" &&
-        event.key() != "PostToolUseFailure" && event.key() != "PermissionRequest")
-      continue;
-    for (const auto &hook : event.value())
-      if (removed.count(hook.value("matcher", "*")))
-        throw Error("Removed tool in hook matcher: " + hook.at("matcher").get<std::string>() +
+    const bool tool_event = event.key() == "PreToolUse" || event.key() == "PostToolUse" ||
+                            event.key() == "PostToolUseFailure" || event.key() == "PermissionRequest";
+    for (const auto &hook : event.value()) {
+      if (!hook.is_object() || !hook.contains("command") || !hook.at("command").is_string() ||
+          (hook.contains("matcher") && !hook.at("matcher").is_string()) ||
+          (hook.contains("timeout_ms") && !hook.at("timeout_ms").is_number_integer()))
+        throw Error("Invalid hook entry for " + event.key() +
+                        ": expected command string, optional matcher string and timeout_ms integer", 2);
+      if (hook.contains("timeout_ms") &&
+          (hook.at("timeout_ms") < 1 || hook.at("timeout_ms") > 120000))
+        throw Error("Hook timeout must be 1..120000 ms", 2);
+      const auto matcher = hook.value("matcher", "*");
+      if (matcher.find('\0') != std::string::npos ||
+          hook.at("command").get_ref<const std::string &>().find('\0') != std::string::npos)
+        throw Error("Hook command and matcher must not contain NUL", 2);
+      if (!tool_event || matcher.find_first_of("*?[") != std::string::npos)
+        continue;
+      const bool known = std::any_of(tool_registry().begin(), tool_registry().end(),
+          [&](const ToolDefinition &d) {
+            return d.hook_name == matcher ||
+                   (event.key() == "PermissionRequest" && d.name == matcher);
+          });
+      if (!known)
+        throw Error("Unknown or removed tool in hook matcher: " + matcher +
                         ". Use Bash for shell hooks, apply_patch, read_file, or computer names.",
                     2);
+    }
   }
 }
 } // namespace codet

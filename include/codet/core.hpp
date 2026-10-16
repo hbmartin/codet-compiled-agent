@@ -451,8 +451,8 @@ class Tools {
   fs::path path(const std::string &) const;
   void authorize(const PermissionRequest &);
   PermissionRequest execution_request(const ToolCall &) const;
-  Json hook_input(const ToolCall &, bool resolve = true) const;
-  ToolResult execute_inner(const ToolCall &, const Cancellation &);
+  Json authored_hook_input(const ToolCall &) const;
+  ToolResult execute_inner(const ToolCall &, const PermissionRequest &, const Cancellation &);
 
 public:
   Tools(const Config &c, FileSystem &f, Processes &p, HttpTransport &h, Clock &clock,
