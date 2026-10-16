@@ -1,6 +1,7 @@
 #include "codet/core.hpp"
 #include "codet/output.hpp"
 #include "codet/process_control.hpp"
+#include "codet/prompt.hpp"
 #include "core_tools.hpp"
 #include "temp.hpp"
 #include <cerrno>
@@ -113,7 +114,6 @@ struct FixtureHttp : HttpTransport {
   }
 };
 TEST_F(Followup, CompactionUsesRealAdaptersWithoutToolsAndRetainsNormalTools) {
-  config.context_tokens = 512;
   config.model = "fixture";
   files.atomic_write(config.home / "token.json", R"({"access_token":"fake"})");
   CredentialStore credentials(config.home, files, clock);
@@ -136,11 +136,18 @@ TEST_F(Followup, CompactionUsesRealAdaptersWithoutToolsAndRetainsNormalTools) {
     transport.provider = name;
     ApiProvider provider(transport, credentials, clock);
     Tools tools(config, files, processes, transport, clock);
+    config.context_tokens =
+        (assemble_prompt(config, tools.schemas(), tools.capabilities(), tools.instructions())
+             .size() +
+         tools.schemas().dump().size() + 1200) /
+        3;
     Agent agent(config, provider, tools, state, {});
     EXPECT_EQ(agent.run(session, "objective", cancel).text, "done") << name;
     ASSERT_EQ(transport.requests.size(), 2u) << name;
     EXPECT_FALSE(transport.requests[0].contains("tools")) << name;
     EXPECT_FALSE(transport.requests[1]["tools"].empty()) << name;
+    EXPECT_THAT(transport.requests[0].dump(), HasSubstr("CONTEXT CHECKPOINT COMPACTION"));
+    EXPECT_THAT(transport.requests[1].dump(), HasSubstr("You are Codet"));
   }
 }
 TEST_F(Followup, ShellSpoolPreservesOutputAndSupportsReadPaging) {

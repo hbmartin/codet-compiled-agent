@@ -236,13 +236,22 @@ class CliTests(unittest.TestCase):
         self.assertEqual([json.loads(x)['hook_event_name'] for x in marker.read_text().splitlines()],['SessionStart','SessionEnd'])
 
     def test_compaction_requests_omit_empty_tools_through_real_adapter(self):
-        config=self.home/'config.toml';config.write_text('context_tokens=512\n'+config.read_text())
-        r=self.run_cli('exec','--json','x'*4000);self.assertEqual(r.returncode,0,r.stderr)
+        r=self.run_cli('exec','--json','x'*20000);self.assertEqual(r.returncode,0,r.stderr)
+        body=self.server.requests[-1]['body']
+        fixed=len(body['messages'][0]['content'].encode())+len(json.dumps(body['tools'],separators=(',',':')).encode())
+        config=self.home/'config.toml';config.write_text('context_tokens='+str((fixed+8000)//3)+'\n'+config.read_text())
         session=json.loads(r.stdout.splitlines()[0])['thread_id'];self.server.requests=[]
         r=self.run_cli('exec','resume',session,'continue');self.assertEqual(r.returncode,0,r.stderr)
         self.assertEqual(len(self.server.requests),2)
         self.assertNotIn('tools',self.server.requests[0]['body'])
         self.assertTrue(self.server.requests[1]['body']['tools'])
+
+    def test_insufficient_fixed_context_fails_before_provider_request(self):
+        config=self.home/'config.toml';config.write_text('context_tokens=512\n'+config.read_text())
+        r=self.run_cli('exec','task')
+        self.assertNotEqual(r.returncode,0)
+        self.assertIn('Increase context_tokens',r.stderr)
+        self.assertEqual(self.server.requests,[])
 
     def test_live_permission_modes_in_both_terminals(self):
         import pty,select

@@ -1,4 +1,5 @@
 #include "codet/core.hpp"
+#include "codet/prompt.hpp"
 #include "temp.hpp"
 #include <fstream>
 #include <gmock/gmock.h>
@@ -655,7 +656,6 @@ TEST_F(Fixture, UniversalDenyRulesCoverUtilityTools) {
 }
 
 TEST_F(Fixture, ContextCompactionUsesSameProviderAndRetainsCurrentRequest) {
-  config.context_tokens = 512;
   StateStore state(config.home);
   auto s = state.create();
   for (int i = 0; i < 3; ++i) {
@@ -668,6 +668,10 @@ TEST_F(Fixture, ContextCompactionUsesSameProviderAndRetainsCurrentRequest) {
   Tools tools(config, files, processes, http, clock);
   StrictMock<MockProvider> provider;
   ProviderResult summary;
+  config.context_tokens =
+      (assemble_prompt(config, tools.schemas(), tools.capabilities(), tools.instructions()).size() +
+       tools.schemas().dump().size() + 1200) /
+      3;
   summary.message.role = "assistant";
   summary.message.text = "preserved summary";
   ProviderResult final;

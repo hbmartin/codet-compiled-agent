@@ -60,3 +60,11 @@ Tiger uses Process Manager/LaunchServices, AXUIElement, CGEvent, CGPostScrollWhe
 Accessibility observation has a two-second traversal budget, 50 ms messaging timeouts, depth 12 and 256 nodes. Snapshots expire after 60 seconds. At most eight screenshot mappings are retained, each expiring after 60 seconds; cropping and resizing map image coordinates back into global display coordinates. Refresh observations after app/layout changes. Desktop mutations use a private per-user interprocess lock and best-effort cleanup of synthesized pressed keys/buttons. Mutation results report dispatch, and the agent must observe application success separately.
 
 A logged-in Aqua console is required. Enable **access for assistive devices** in Tiger's Universal Access preferences for accessibility operations. Pixel input/capture and other capabilities are reported separately when accessibility is unavailable. Safari and other browsers use these same desktop tools and their installed AppleScript support; modern CDP/Playwright behavior is not claimed.
+
+Schema selection and prompt composition share a capability snapshot for each model request.
+Accessibility actions are omitted when accessibility is disabled. Screenshots require framebuffer,
+image-input and codec support; pointer tools are omitted when screenshots cannot be supplied.
+Clipboard and AppleScript tools follow their respective backend flags. Remaining observations
+and native actions stay available under the existing application permissions. Prompts prefer
+screenshots for UI work and describe accessibility/AppleScript as secondary routes. See
+[prompt sources and adaptations](PROMPTS.md) for provenance and context accounting.

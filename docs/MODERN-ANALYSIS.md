@@ -1,7 +1,7 @@
 # Modern host static analysis
 
 `make analyze-modern` runs Clang-Tidy, Cppcheck and Clang Static Analyzer. The shared source
-manifest covers `src/modern/*.cpp` and `src/text_compat.c` (currently sixteen translation units).
+manifest covers `src/modern/*.cpp` and `src/text_compat.c` (currently seventeen translation units).
 Project headers are checked through those sources. Tests, third-party implementations and
 recovered C are excluded as standalone analysis inputs. The legacy analysis targets retain
 their existing report-only policy.

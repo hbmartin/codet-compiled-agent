@@ -43,6 +43,23 @@ The `Policies.*`, `DiagnosticPolicies.*` and `PromptPolicies.*` cases add observ
 
 ## Native computer use
 
+For prompt acceptance, use an image-capable configured model in each terminal interface. Ask it
+to open a disposable TextEdit document, inspect it visually, type a short Unicode sentence,
+and verify the resulting text. Confirm screenshot observation precedes pointer input and that
+the reported result follows a new observation. Repeat against a local browser page; verify it
+uses the native desktop tools and never assumes DOM/CDP or Playwright. Let snapshots expire,
+then verify fresh observation instead of stale coordinates or node IDs. Test cropped capture
+and a focus change between observations. Record the selected model and whether prompts follow
+the intended screenshot-first strategy; scripted host fixtures do not establish model behavior.
+
+Disable assistive-device access and repeat visual observation/input with the user's keyboard
+idle: AX action tools should disappear while pixel tools remain available. Configure
+`image_input = false` and verify screenshots/pointer tools disappear and the agent explains
+its visual limitation. Restore the setting afterward. In Plan mode verify read_file/desktop
+observations work and shell commands, AppleScript and input mutations remain denied. Resume
+after a mode change and confirm the prompt and offered tools reflect it. Measure peak RSS and
+repeated-turn memory growth with the larger embedded prompts on the 512 MB G4.
+
 From a Terminal in the logged-in Aqua session, enable **access for assistive devices** in Universal Access and run:
 
 ```sh
