@@ -149,16 +149,16 @@ std::string framebuffer_rgb(const unsigned char *source, size_t width, size_t he
   for (size_t y = 0; y < height; ++y)
     for (size_t x = 0; x < width; ++x) {
       const auto *p = source + y * stride + x * (bits / 8);
-      auto *dest = &out[(y * width + x) * 3];
+      const auto dest = (y * width + x) * 3;
       if (bits == 32) {
-        dest[0] = static_cast<char>(p[big ? 1 : 2]);
-        dest[1] = static_cast<char>(p[big ? 2 : 1]);
-        dest[2] = static_cast<char>(p[big ? 3 : 0]);
+        out[dest] = static_cast<char>(p[big ? 1 : 2]);
+        out[dest + 1] = static_cast<char>(p[big ? 2 : 1]);
+        out[dest + 2] = static_cast<char>(p[big ? 3 : 0]);
       } else {
         const unsigned value = big ? (unsigned(p[0]) << 8) | p[1] : (unsigned(p[1]) << 8) | p[0];
         for (unsigned c = 0; c < 3; ++c) {
           const unsigned v = (value >> (10 - c * 5)) & 31;
-          dest[c] = static_cast<char>((v * 255 + 15) / 31);
+          out[dest + c] = static_cast<char>((v * 255 + 15) / 31);
         }
       }
     }

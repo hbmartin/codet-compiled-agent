@@ -189,7 +189,7 @@ std::string tool_wire_name(std::string name) {
     name.replace(p, 1, "__");
   return name;
 }
-std::string tool_logical_name(std::string name) {
+std::string tool_logical_name(const std::string &name) {
   for (const auto &d : tool_registry())
     if (tool_wire_name(d.name) == name)
       return d.name;
