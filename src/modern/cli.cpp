@@ -1,14 +1,18 @@
 #include "codet/core.hpp"
 #include "codet/diagnostics.hpp"
+#include "codet/interaction.hpp"
+#include "codet/tool_registry.hpp"
 #include <algorithm>
 #include <curses.h>
 #include <cwchar>
+#include <future>
 #include <histedit.h>
 #include <iostream>
 #include <poll.h>
 #include <sstream>
 #include <sys/stat.h>
 #include <termios.h>
+#include <thread>
 #include <unistd.h>
 
 namespace codet {
@@ -44,7 +48,8 @@ Usage: codet [OPTIONS] [PROMPT]
 
 State: CODET_HOME or ~/.codet. Fresh state; no implicit Codex/Claurst imports.
 Application permission rules are active; OS shell sandboxing is unavailable.
-Native sign-in, multiagent, goals, MCP, ACP, LSP, plugins and media are deferred.
+Native Tiger computer use and image inputs are capability-gated.
+Native sign-in, multiagent, goals, MCP, ACP, LSP and plugins are deferred.
 )";
 struct Options {
   bool exec = false, last = false, json = false, ephemeral = false, key = false;
@@ -212,7 +217,7 @@ class Terminal {
   std::string input_, status_, progress_;
   std::string prompt_;
   std::map<std::string, int> bindings_{{"submit", 10}, {"quit", 4}, {"backspace", 127}};
-  struct termios original_ {};
+  struct termios original_{};
   bool restore_ = false;
   const Cancellation *read_cancel_ = nullptr;
   static int read_character(EditLine *edit, wchar_t *character) {
@@ -223,9 +228,7 @@ class Terminal {
     for (;;) {
       if (terminal && terminal->read_cancel_ && terminal->read_cancel_->requested)
         return 0;
-      struct pollfd descriptor {
-        STDIN_FILENO, POLLIN, 0
-      };
+      struct pollfd descriptor{STDIN_FILENO, POLLIN, 0};
       const int ready = ::poll(&descriptor, 1, 100);
       if (ready < 0) {
         if (errno == EINTR)
@@ -443,6 +446,79 @@ public:
         return options[i];
     return text;
   }
+  void begin_active() {
+    input_.clear();
+    if (!curses_ && restore_) {
+      el_set(edit_, EL_PREP_TERM, 0);
+      auto settings = original_;
+      settings.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO));
+      settings.c_cc[VMIN] = 0;
+      settings.c_cc[VTIME] = 0;
+      if (tcsetattr(STDIN_FILENO, TCSANOW, &settings) != 0)
+        throw Error("Cannot prepare active terminal input");
+    }
+  }
+  void end_active() {
+    if (!curses_ && restore_)
+      (void)tcsetattr(STDIN_FILENO, TCSANOW, &original_);
+    input_.clear();
+    render();
+  }
+  std::optional<std::string> active_input(bool &closed) {
+    int ch = ERR;
+    if (curses_)
+      ch = getch();
+    else {
+      pollfd fd{STDIN_FILENO, POLLIN, 0};
+      const auto ready = ::poll(&fd, 1, 50);
+      if (ready > 0) {
+        unsigned char c = 0;
+        const auto n = ::read(STDIN_FILENO, &c, 1);
+        if (n == 1)
+          ch = c;
+        else if (n == 0)
+          closed = true;
+      }
+    }
+    if (ch == ERR)
+      return {};
+    if (ch == KEY_RESIZE) {
+      render();
+      return {};
+    }
+    if (ch == bindings_["quit"]) {
+      closed = true;
+      return {};
+    }
+    if (ch == bindings_["submit"] || ch == KEY_ENTER || ch == '\r') {
+      auto text = input_;
+      input_.clear();
+      if (!curses_)
+        std::cout << '\n';
+      else
+        say("you> " + text);
+      render();
+      return text;
+    }
+    if (ch == bindings_["backspace"] || ch == KEY_BACKSPACE || ch == 8) {
+      if (!input_.empty()) {
+        do {
+          const auto b = static_cast<unsigned char>(input_.back());
+          input_.pop_back();
+          if ((b & 0xc0) != 0x80)
+            break;
+        } while (!input_.empty());
+        if (!curses_)
+          std::cout << "\b \b" << std::flush;
+      }
+    } else if (ch >= 32 && ch <= 255 && input_.size() < 65536) {
+      input_ += static_cast<char>(ch);
+      if (!curses_)
+        std::cout << static_cast<char>(ch) << std::flush;
+    }
+    render();
+    return {};
+  }
   void progress(const Json &event) {
     if (event.value("type", "") == "item.started" && event.contains("item") &&
         event["item"].contains("tool"))
@@ -472,6 +548,8 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   NativeFileSystem files;
   SystemClock clock;
   CurlTransport http;
+  std::shared_ptr<Interaction> interaction;
+  const auto terminal_thread = std::this_thread::get_id();
   // Keep session ownership until background-process destruction has finished.
   std::shared_ptr<void> lifecycle_owner, current_owner;
   struct Diagnostics {
@@ -494,7 +572,12 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     }
   };
   auto diagnostics = std::make_shared<Diagnostics>();
-  DiagnosticSink diagnostic = [diagnostics](const std::string &text) { diagnostics->emit(text); };
+  DiagnosticSink diagnostic = [&, diagnostics](const std::string &text) {
+    if (interaction && std::this_thread::get_id() != terminal_thread)
+      interaction->post({{"type", "codet.diagnostic"}, {"text", text}});
+    else
+      diagnostics->emit(text);
+  };
   std::string home = env("CODET_HOME");
   if (home.empty()) {
     const auto h = env("HOME");
@@ -525,6 +608,8 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     config.roots.push_back(files.canonical(config.cwd / root));
   if (config.ui != "auto" && config.ui != "line" && config.ui != "curses")
     throw Error("Invalid UI mode", 2);
+  validate_tool_rules(config.rules().allow);
+  validate_tool_rules(config.rules().deny);
   CredentialStore credentials(config.home, files, clock);
   if (o.command == "login") {
     if (o.action == "status") {
@@ -551,6 +636,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     return 0;
   }
   if (o.command == "doctor") {
+    NativeProcesses processes;
     std::cout << Json({{"version", CODET_VERSION},
                        {"pointer_bits", sizeof(void *) * 8},
                        {"provider", config.provider},
@@ -558,7 +644,9 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
                        {"state", config.home.string()},
                        {"os_sandbox", false},
                        {"application_permissions", true},
-                       {"target_runtime_verified", false}})
+                       {"target_runtime_verified", false},
+                       {"capabilities",
+                        Tools(config, files, processes, http, clock).capabilities()}})
                      .dump(2)
               << '\n';
     return 0;
@@ -663,15 +751,21 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     terminal->set_mode(config.permission_mode);
     diagnostics->screen = terminal;
   }
+  interaction = terminal ? std::make_shared<Interaction>() : std::shared_ptr<Interaction>{};
   Approver approver;
   Questioner questioner;
   if (terminal)
-    approver = [&](const PermissionRequest &request) { return terminal->approve(request, cancel); };
+    approver = [&](const PermissionRequest &request) {
+      const auto answer = interaction->request(
+          "codet.approval", {{"tool", request.tool}, {"target", request.target}}, cancel);
+      return answer == "y" || answer == "yes";
+    };
   if (terminal)
     questioner = [&](const std::string &question, const std::vector<std::string> &options) {
-      return terminal->ask(question, options, cancel);
+      return interaction->request("codet.question", {{"question", question}, {"options", options}},
+                                  cancel);
     };
-  Tools tools(config, files, processes, http, clock, approver, questioner, diagnostic);
+  Tools tools(config, files, processes, http, clock, approver, questioner, diagnostic, interaction);
   ApiProvider provider(http, credentials, clock);
   Json schema;
   if (!o.schema.empty()) {
@@ -685,7 +779,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   }
   auto events = [&](const Json &event) {
     if (terminal)
-      terminal->progress(event);
+      interaction->post(event);
     else if (o.format == "jsonl")
       std::cout << event.dump(-1, ' ', false, Json::error_handler_t::replace) << '\n' << std::flush;
     else if (event.value("type", "") == "item.started" && event["item"].contains("tool"))
@@ -743,9 +837,81 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     session.messages.push_back(context);
     state.save(session);
   }
+  bool quit_requested = false;
+  auto execute_agent = [&](const std::string &text) -> RunResult {
+    if (!terminal)
+      return agent.run(session, text, cancel, schema);
+    terminal->begin_active();
+    auto work =
+        std::async(std::launch::async, [&] { return agent.run(session, text, cancel, schema); });
+    std::optional<Json> pending;
+    const auto deliver = [&] {
+      for (const auto &event : interaction->events()) {
+        const auto type = event.value("type", "");
+        if (type == "codet.diagnostic")
+          diagnostics->emit(event.at("text"));
+        else if (type == "codet.approval") {
+          pending = event;
+          terminal->say(event.at("tool").get<std::string>() + ": " +
+                        event.at("target").get<std::string>() + " [y/N]");
+        } else if (type == "codet.question") {
+          pending = event;
+          terminal->say(event.at("question"));
+          const auto options = event.at("options").get<std::vector<std::string>>();
+          for (size_t i = 0; i < options.size(); ++i)
+            terminal->say(std::to_string(i + 1) + ". " + options[i]);
+          terminal->say("Enter a choice number or a text answer.");
+        } else if (type == "codet.user_input.requested") {
+          for (const auto &q : event.at("questions")) {
+            terminal->say(q.at("title"));
+            size_t i = 0;
+            for (const auto &option : q.value("options", Json::array()))
+              terminal->say(std::to_string(++i) + ". " + option.get<std::string>());
+          }
+        } else if (type == "codet.user_message")
+          terminal->say(event.at("message"));
+        else if (type == "codet.artifact")
+          terminal->say("[Image: " + event.at("artifact").at("path").get<std::string>() + "]");
+        else
+          terminal->progress(event);
+      }
+    };
+    try {
+      while (work.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        deliver();
+        bool closed = false;
+        const auto line = terminal->active_input(closed);
+        if (closed)
+          cancel.requested = true;
+        if (line) {
+          if (*line == "/quit" || *line == "/exit") {
+            quit_requested = true;
+            cancel.requested = true;
+          } else if (pending) {
+            interaction->answer(pending->at("request_id"), *line);
+            pending.reset();
+          } else if (line->rfind("/permissions", 0) == 0)
+            terminal->say("Change permission modes after the active turn completes.");
+          else
+            interaction->submit(*line);
+        }
+      }
+      deliver();
+      terminal->end_active();
+      return work.get();
+    } catch (...) {
+      cancel.requested = true;
+      while (work.valid() &&
+             work.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready) {
+      }
+      deliver();
+      terminal->end_active();
+      throw;
+    }
+  };
   auto run = [&](const std::string &text) {
     try {
-      auto result = agent.run(session, text, cancel, schema);
+      auto result = execute_agent(text);
       const auto answer = result.structured.is_null() ? result.text : result.structured.dump();
       if (!o.output.empty())
         files.atomic_write(fs::absolute(o.output), answer + "\n", true);
@@ -788,7 +954,10 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   if (o.command == "memory") {
     if (o.action != "consolidate")
       throw Error("Use memory consolidate", 2);
-    prompt = "Explicit memory consolidation: read durable memory with Memory, consolidate accurate "
+    config.roots.push_back(config.home / "memory");
+    prompt = "Explicit memory consolidation: use the memory preview and apply_patch to consolidate "
+             "Markdown files in the Codet "
+             "memory directory, consolidate accurate "
              "useful project facts and feedback, remove contradictions by updating files, preserve "
              "provenance, and report what changed. Do not perform unrelated work.";
   }
@@ -810,7 +979,9 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   }
   if (!prompt.empty())
     run(prompt);
-  while (!cancel.requested) {
+  if (quit_requested)
+    return 0;
+  while (!cancel.requested && !quit_requested) {
     auto input = terminal->read(cancel);
     if (!input)
       break;
@@ -858,10 +1029,14 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       terminal->say(Json(session.messages).dump(2));
       continue;
     }
-    if (*input == "/memory consolidate")
-      *input = "Explicitly consolidate durable memory using the Memory tool; report changes.";
+    if (*input == "/memory consolidate") {
+      config.roots.push_back(config.home / "memory");
+      *input = "Explicit memory consolidation: use the included memory preview and apply_patch to "
+               "consolidate files in " +
+               (config.home / "memory").string() + "; report changes.";
+    }
     run(*input);
   }
-  return cancel.requested ? 130 : 0;
+  return quit_requested ? 0 : cancel.requested ? 130 : 0;
 }
 } // namespace codet

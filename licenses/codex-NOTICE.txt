@@ -1,6 +1,12 @@
 OpenAI Codex
 Copyright 2025 OpenAI
 
+Captured model instructions, collaboration-mode templates, compaction prompts and
+approval guidance are adapted from the supplied OpenAI Codex source snapshot.
+Original text, source hashes and exact adaptations are recorded in prompts/manifest.json
+and prompts/upstream in the source distribution. Tiger/Codet adaptations and C++
+composition are part of Codet. No guardian, realtime, MCP or plugin runtime is included.
+
 The C++ patch matcher adapts the supplied Codex apply-patch parser, file_update,
 seek_sequence and text_file behavior. C++ translation and integration changes
 are part of Codet. No Ratatui code is included in this port.

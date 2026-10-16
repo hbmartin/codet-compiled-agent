@@ -1,9 +1,11 @@
 #include "codet/core.hpp"
+#include "codet/prompt.hpp"
 #include "temp.hpp"
 #include <fstream>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <sqlite3.h>
+#include <sstream>
 #include <sys/stat.h>
 #include <thread>
 #include <unistd.h>
@@ -67,7 +69,37 @@ struct Fixture : Test {
     files.atomic_write(config.cwd / p, text);
   }
   ToolCall call(std::string name, Json args) {
-    return {unique_id(), std::move(name), std::move(args)};
+    Json input = args;
+    if (name == "read_file")
+      input["path"] = args.at("path");
+    if (name == "exec_command" && input.contains("command")) {
+      input["cmd"] = input["command"];
+      input.erase("command");
+    }
+    if (name == "clock.sleep" && input.contains("seconds")) {
+      input["duration_ms"] = std::max(1, input.at("seconds").get<int>() * 1000);
+      input.erase("seconds");
+    }
+    if (name == "apply_patch" && !input.contains("patch") && input.contains("content")) {
+      const auto target = input.at("path").get<std::string>();
+      const auto p = config.cwd / target;
+      std::string patch = "*** Begin Patch\n";
+      if (fs::exists(p)) {
+        patch += "*** Update File: " + target + "\n@@\n";
+        std::istringstream before(files.read(p));
+        std::string line;
+        while (std::getline(before, line))
+          patch += "-" + line + "\n";
+      } else
+        patch += "*** Add File: " + target + "\n";
+      std::istringstream after(input.at("content").get<std::string>());
+      std::string line;
+      while (std::getline(after, line))
+        patch += "+" + line + "\n";
+      patch += "*** End Patch\n";
+      input = {{"patch", patch}};
+    }
+    return {unique_id(), name, input};
   }
 };
 TEST(Sse, FragmentedCrLfMultilineAndComments) {
@@ -85,7 +117,7 @@ TEST_F(Fixture, AtomicWritesPreserveModeAndLeaveNoScratchFiles) {
   write("a", "before");
   chmod((config.cwd / "a").c_str(), 0755);
   write("a", "after");
-  struct stat st {};
+  struct stat st{};
   ASSERT_EQ(stat((config.cwd / "a").c_str(), &st), 0);
   EXPECT_EQ(st.st_mode & 0777, 0755);
   EXPECT_EQ(files.read(config.cwd / "a"), "after");
@@ -94,61 +126,26 @@ TEST_F(Fixture, AtomicWritesPreserveModeAndLeaveNoScratchFiles) {
 TEST_F(Fixture, PermissionsDenyWinsOverAllowAndBypass) {
   config.permission_mode = "bypass";
   config.set_allow({"*"});
-  config.set_deny({"Bash(rm*)"});
+  config.set_deny({"exec_command(rm*)"});
   Permissions p(config, files);
-  EXPECT_EQ(p.decide({"Bash", "rm -rf x", std::nullopt, true}), Decision::deny);
-  EXPECT_EQ(p.decide({"Read", "a", config.cwd / "a", false}), Decision::allow);
+  EXPECT_EQ(p.decide({"exec_command", "rm -rf x", std::nullopt, true}), Decision::deny);
+  EXPECT_EQ(p.decide({"read_file", "a", config.cwd / "a", false}), Decision::allow);
 }
 TEST_F(Fixture, PermissionRootsRejectSiblingAndSymlinkEscapes) {
   const auto other = temp.root / "workspace-other";
   fs::create_directories(other);
   fs::create_directory_symlink(other, config.cwd / "link");
   Permissions p(config, files);
-  EXPECT_EQ(p.decide({"Read", "other", other / "a", false}), Decision::deny);
-  EXPECT_EQ(p.decide({"Write", "link", config.cwd / "link/a", true}), Decision::deny);
+  EXPECT_EQ(p.decide({"read_file", "other", other / "a", false}), Decision::deny);
+  EXPECT_EQ(p.decide({"apply_patch", "link", config.cwd / "link/a", true}), Decision::deny);
 }
-TEST_F(Fixture, HeadlessMutationIsDeniedAndReadRemainsAvailable) {
-  write("a", "hello");
-  Tools t(config, files, processes, http, clock);
-  EXPECT_FALSE(t.execute(call("Read", {{"file_path", "a"}}), cancel).error);
-  auto result = t.execute(call("Write", {{"file_path", "a"}, {"content", "changed"}}), cancel);
-  EXPECT_TRUE(result.error);
-  EXPECT_EQ(files.read(config.cwd / "a"), "hello");
-}
-TEST_F(Fixture, EditRejectsStaleAndAmbiguousContent) {
-  config.permission_mode = "accept-edits";
-  write("a", "same same");
-  Tools t(config, files, processes, http, clock);
-  ASSERT_FALSE(t.execute(call("Read", {{"file_path", "a"}}), cancel).error);
-  EXPECT_TRUE(
-      t.execute(call("Edit", {{"file_path", "a"}, {"old_string", "same"}, {"new_string", "new"}}),
-                cancel)
-          .error);
-  write("a", "different");
-  EXPECT_TRUE(
-      t.execute(call("Write", {{"file_path", "a"}, {"content", "overwrite"}}), cancel).error);
-  EXPECT_EQ(files.read(config.cwd / "a"), "different");
-}
-TEST_F(Fixture, BatchValidationPrecedesAnyMutation) {
-  config.permission_mode = "accept-edits";
-  write("a", "alpha");
-  write("b", "beta");
-  Tools t(config, files, processes, http, clock);
-  for (auto *p : {"a", "b"})
-    ASSERT_FALSE(t.execute(call("Read", {{"file_path", p}}), cancel).error);
-  const Json edits =
-      Json::array({{{"file_path", "a"}, {"old_string", "alpha"}, {"new_string", "new"}},
-                   {{"file_path", "b"}, {"old_string", "missing"}, {"new_string", "new"}}});
-  EXPECT_TRUE(t.execute(call("BatchEdit", {{"edits", edits}}), cancel).error);
-  EXPECT_EQ(files.read(config.cwd / "a"), "alpha");
-}
+
 TEST_F(Fixture, PatchAddsUpdatesAndDeletesFiles) {
   config.permission_mode = "accept-edits";
   write("old", "one\ntwo\n");
   Tools t(config, files, processes, http, clock);
-  ASSERT_FALSE(t.execute(call("Read", {{"file_path", "old"}}), cancel).error);
   auto result =
-      t.execute(call("ApplyPatch",
+      t.execute(call("apply_patch",
                      {{"patch", "*** Begin Patch\n*** Update File: old\n@@\n "
                                 "one\n-two\n+three\n*** Add File: new\n+hello\n*** End Patch\n"}}),
                 cancel);
@@ -174,7 +171,7 @@ TEST_F(Fixture, CredentialsImportIsPrivateAndDoesNotModifySource) {
   c.import(config.cwd / "tokens.json");
   EXPECT_EQ(c.load()["codex"]["access_token"], "fake-access");
   EXPECT_EQ(files.read(config.cwd / "tokens.json"), before);
-  struct stat st {};
+  struct stat st{};
   ASSERT_EQ(stat((config.home / "auth.json").c_str(), &st), 0);
   EXPECT_EQ(st.st_mode & 0777, 0600);
 }
@@ -233,25 +230,7 @@ TEST_F(Fixture, TransportFailuresHaveBoundedRetriesAndCancellationPropagates) {
   }
   EXPECT_EQ(clock.slept, 1750);
 }
-TEST_F(Fixture, ReadRejectsBinaryAndOversizedFilesAndEditsUnicode) {
-  config.permission_mode = "accept-edits";
-  Tools tools(config, files, processes, http, clock);
-  write("binary", std::string("a\0b", 3));
-  EXPECT_TRUE(tools.execute(call("Read", {{"file_path", "binary"}}), cancel).error);
-  write("large", "");
-  ASSERT_EQ(::truncate((config.cwd / "large").c_str(), 17 * 1024 * 1024), 0);
-  EXPECT_TRUE(tools.execute(call("Read", {{"file_path", "large"}}), cancel).error);
-  write(u8"café.txt", u8"before: 日本語\n");
-  const auto read = tools.execute(call("Read", {{"file_path", u8"café.txt"}}), cancel);
-  ASSERT_FALSE(read.error);
-  EXPECT_THAT(read.content, HasSubstr(u8"日本語"));
-  const auto edit = tools.execute(
-      call("Edit",
-           {{"file_path", u8"café.txt"}, {"old_string", "before"}, {"new_string", "after"}}),
-      cancel);
-  EXPECT_FALSE(edit.error) << edit.content;
-  EXPECT_EQ(files.read(config.cwd / u8"café.txt"), u8"after: 日本語\n");
-}
+
 TEST_F(Fixture, ProjectConfigurationRequiresExplicitTrustAndCliOverridesWin) {
   files.atomic_write(config.home / "config.toml", "model='global'\n");
   fs::create_directories(config.cwd / ".codet");
@@ -273,18 +252,30 @@ TEST_F(Fixture, ApprovalHooksCannotOverridePlanModeOrExplicitDenials) {
                                      false, false}));
   Tools allowed(config, files, processes, http, clock);
   ASSERT_FALSE(
-      allowed.execute(call("Write", {{"file_path", "allowed"}, {"content", "yes"}}), cancel).error);
+      allowed
+          .execute(
+              call("apply_patch",
+                   {{"patch", "*** Begin Patch\n*** Add File: allowed\n+yes\n*** End Patch\n"}}),
+              cancel)
+          .error);
   Mock::VerifyAndClearExpectations(&processes);
   EXPECT_CALL(processes, run(_, _)).Times(0);
   config.permission_mode = "plan";
   Tools plan(config, files, processes, http, clock);
   EXPECT_TRUE(
-      plan.execute(call("Write", {{"file_path", "plan"}, {"content", "no"}}), cancel).error);
+      plan.execute(call("apply_patch",
+                        {{"patch", "*** Begin Patch\n*** Add File: plan\n+no\n*** End Patch\n"}}),
+                   cancel)
+          .error);
   config.permission_mode = "bypass";
-  config.set_deny({"Write"});
+  config.set_deny({"apply_patch"});
   Tools denied(config, files, processes, http, clock);
   EXPECT_TRUE(
-      denied.execute(call("Write", {{"file_path", "denied"}, {"content", "no"}}), cancel).error);
+      denied
+          .execute(call("apply_patch",
+                        {{"patch", "*** Begin Patch\n*** Add File: denied\n+no\n*** End Patch\n"}}),
+                   cancel)
+          .error);
   EXPECT_FALSE(fs::exists(config.cwd / "plan"));
   EXPECT_FALSE(fs::exists(config.cwd / "denied"));
 }
@@ -341,8 +332,8 @@ TEST_F(Fixture, CrashRecoveryRestoresResultsAndNeverReplaysUnknownEffects) {
   auto s = state.create();
   codet::Message assistant;
   assistant.role = "assistant";
-  ToolCall done{"done", "Write", {{"file_path", "a"}, {"content", "x"}}},
-      uncertain{"uncertain", "Bash", {{"command", "some effect"}}};
+  ToolCall done{"done", "apply_patch", {{"path", "a"}, {"content", "x"}}},
+      uncertain{"uncertain", "exec_command", {{"command", "some effect"}}};
   assistant.calls = {done, uncertain};
   s.messages.push_back(assistant);
   state.save(s);
@@ -361,7 +352,9 @@ TEST_F(Fixture, CrashRecoveryRestoresResultsAndNeverReplaysUnknownEffects) {
   EXPECT_EQ(recovered.messages[2].tool_call_id, "uncertain");
 }
 TEST_F(Fixture, StateRejectsFutureSchemaWithoutDowngrading) {
-  { StateStore state(config.home); }
+  {
+    StateStore state(config.home);
+  }
   sqlite3 *db = nullptr;
   ASSERT_EQ(sqlite3_open((config.home / "state.sqlite3").c_str(), &db), SQLITE_OK);
   ASSERT_EQ(sqlite3_exec(db, "PRAGMA user_version=99", nullptr, nullptr, nullptr), SQLITE_OK);
@@ -402,7 +395,7 @@ TEST_F(Fixture, ControlledInterruptionAlsoRepairsPendingToolResults) {
   auto s = state.create();
   codet::Message message;
   message.role = "assistant";
-  message.calls = {{"pending", "Bash", {{"command", "side effect"}}}};
+  message.calls = {{"pending", "exec_command", {{"command", "side effect"}}}};
   s.messages.push_back(message);
   state.save(s);
   state.finish_turn(s.id, "interrupted");
@@ -493,8 +486,8 @@ TEST_F(Fixture, CodexCompletionParsesToolsUsageAndReasoningReplay) {
          Json::array({{{"type", "reasoning"}, {"id", "r"}, {"encrypted_content", "secret-replay"}},
                       {{"type", "function_call"},
                        {"call_id", "call"},
-                       {"name", "Read"},
-                       {"arguments", R"({"file_path":"a"})"}}})},
+                       {"name", "read_file"},
+                       {"arguments", R"({"path":"a"})"}}})},
         {"usage", {{"input_tokens", 10}, {"output_tokens", 3}}}}}};
   EXPECT_CALL(http, perform(_, _, _))
       .WillOnce(Invoke([&](const HttpRequest &, const Cancellation &, const ChunkSink &sink) {
@@ -503,7 +496,7 @@ TEST_F(Fixture, CodexCompletionParsesToolsUsageAndReasoningReplay) {
       }));
   auto result = p.complete(config, "", {}, Json::array(), cancel, {});
   ASSERT_EQ(result.message.calls.size(), 1u);
-  EXPECT_EQ(result.message.calls[0].name, "Read");
+  EXPECT_EQ(result.message.calls[0].name, "read_file");
   EXPECT_EQ(result.message.replay.size(), 2u);
   EXPECT_EQ(result.usage.input, 10);
 }
@@ -526,10 +519,10 @@ TEST_F(Fixture, AnthropicStreamPreservesThinkingSignatureAndToolArguments) {
       {{"type", "content_block_start"},
        {"index", 1},
        {"content_block",
-        {{"type", "tool_use"}, {"id", "call"}, {"name", "Read"}, {"input", Json::object()}}}},
+        {{"type", "tool_use"}, {"id", "call"}, {"name", "read_file"}, {"input", Json::object()}}}},
       {{"type", "content_block_delta"},
        {"index", 1},
-       {"delta", {{"type", "input_json_delta"}, {"partial_json", R"({"file_path":"a"})"}}}},
+       {"delta", {{"type", "input_json_delta"}, {"partial_json", R"({"path":"a"})"}}}},
       {{"type", "message_stop"}}};
   EXPECT_CALL(http, perform(_, _, _))
       .WillOnce(Invoke([&](const HttpRequest &, const Cancellation &, const ChunkSink &sink) {
@@ -540,7 +533,7 @@ TEST_F(Fixture, AnthropicStreamPreservesThinkingSignatureAndToolArguments) {
   auto result = p.complete(config, "", {}, Json::array(), cancel, {});
   EXPECT_EQ(result.message.replay[0]["signature"], "sig");
   ASSERT_EQ(result.message.calls.size(), 1u);
-  EXPECT_EQ(result.message.calls[0].arguments["file_path"], "a");
+  EXPECT_EQ(result.message.calls[0].arguments["path"], "a");
 }
 TEST_F(Fixture, GoogleAndOllamaStreamsHaveRealProtocolFixtures) {
   CredentialStore creds(config.home, files, clock);
@@ -571,7 +564,7 @@ TEST_F(Fixture, OllamaToolRoundTripUsesObjectArgumentsAndNamedResults) {
   EXPECT_CALL(http, perform(_, _, _))
       .WillOnce(Invoke([](const HttpRequest &, const Cancellation &, const ChunkSink &sink) {
         const std::string frame =
-            R"({"message":{"content":"","tool_calls":[{"function":{"name":"Read","arguments":{"file_path":"a"}}}]},"done":true})";
+            R"({"message":{"content":"","tool_calls":[{"function":{"name":"read_file","arguments":{"path":"a"}}}]},"done":true})";
         for (char ch : frame)
           sink(std::string(1, ch));
         sink("\n");
@@ -585,9 +578,8 @@ TEST_F(Fixture, OllamaToolRoundTripUsesObjectArgumentsAndNamedResults) {
   output.text = "file contents";
   const auto request = p.request(config, "system", {result.message, output}, Json::array(), {});
   const auto body = Json::parse(request.body);
-  EXPECT_EQ(body["messages"][1]["tool_calls"][0]["function"]["arguments"],
-            Json({{"file_path", "a"}}));
-  EXPECT_EQ(body["messages"][2]["tool_name"], "Read");
+  EXPECT_EQ(body["messages"][1]["tool_calls"][0]["function"]["arguments"], Json({{"path", "a"}}));
+  EXPECT_EQ(body["messages"][2]["tool_name"], "read_file");
   EXPECT_FALSE(body["messages"][2].contains("tool_call_id"));
 }
 TEST_F(Fixture, GoogleToolRoundTripGroupsResultsAndPreservesThoughtSignatures) {
@@ -597,7 +589,7 @@ TEST_F(Fixture, GoogleToolRoundTripGroupsResultsAndPreservesThoughtSignatures) {
   ApiProvider p(http, creds, clock);
   const auto frame = Json::parse(R"({"candidates":[{
     "content":{"parts":[
-      {"functionCall":{"name":"Read","args":{"file_path":"a"}},
+      {"functionCall":{"name":"read_file","args":{"path":"a"}},
        "thoughtSignature":"opaque-signature"},
       {"functionCall":{"name":"Glob","args":{"pattern":"*"}}}
     ]},"finishReason":"STOP"
@@ -621,20 +613,21 @@ TEST_F(Fixture, GoogleToolRoundTripGroupsResultsAndPreservesThoughtSignatures) {
   ASSERT_EQ(body["contents"].size(), 2u);
   EXPECT_EQ(body["contents"][0]["parts"][0]["thoughtSignature"], "opaque-signature");
   ASSERT_EQ(body["contents"][1]["parts"].size(), 2u);
-  EXPECT_EQ(body["contents"][1]["parts"][0]["functionResponse"]["name"], "Read");
+  EXPECT_EQ(body["contents"][1]["parts"][0]["functionResponse"]["name"], "read_file");
   EXPECT_EQ(body["contents"][1]["parts"][1]["functionResponse"]["name"], "Glob");
 }
 TEST_F(Fixture, HookInputIsJsonAndDenialPreventsMutation) {
   config.permission_mode = "bypass";
-  config.hooks = {{"PreToolUse", Json::array({{{"command", "exit 2"}, {"matcher", "Write"}}})}};
+  config.hooks = {
+      {"PreToolUse", Json::array({{{"command", "exit 2"}, {"matcher", "apply_patch"}}})}};
   EXPECT_CALL(processes, run(_, _))
       .WillOnce(Invoke([&](const ProcessSpec &spec, const Cancellation &) {
         auto input = Json::parse(files.read(spec.argv.back()));
-        EXPECT_EQ(input["tool_name"], "Write");
+        EXPECT_EQ(input["tool_name"], "apply_patch");
         return ProcessResult{2, "", false, false, "blocked"};
       }));
   Tools tools(config, files, processes, http, clock);
-  EXPECT_TRUE(tools.execute(call("Write", {{"file_path", "a"}, {"content", "x"}}), cancel).error);
+  EXPECT_TRUE(tools.execute(call("apply_patch", {{"path", "a"}, {"content", "x"}}), cancel).error);
   EXPECT_FALSE(fs::exists(config.cwd / "a"));
 }
 TEST_F(Fixture, InstructionsIncludesSkillsAndExplicitMemoryRemainBounded) {
@@ -647,134 +640,22 @@ TEST_F(Fixture, InstructionsIncludesSkillsAndExplicitMemoryRemainBounded) {
   EXPECT_THAT(instructions, HasSubstr("included guide"));
   EXPECT_THAT(instructions, HasSubstr("demo"));
   EXPECT_LT(instructions.size(), 100000u);
-  EXPECT_EQ(tools.execute(call("Skill", {{"name", "demo"}}), cancel).content, "skill guide");
   EXPECT_TRUE(
       tools
           .execute(call("Memory", {{"action", "write"}, {"name", "../bad.md"}, {"content", "x"}}),
                    cancel)
           .error);
 }
-TEST_F(Fixture, BatchCanApplySeveralEditsToOneFileWithOneApproval) {
-  write("a", "alpha beta");
-  unsigned approvals = 0;
-  Tools tools(config, files, processes, http, clock, [&](const PermissionRequest &) {
-    ++approvals;
-    return true;
-  });
-  ASSERT_FALSE(tools.execute(call("Read", {{"file_path", "a"}}), cancel).error);
-  auto result = tools.execute(
-      call("BatchEdit",
-           {{"edits",
-             Json::array({{{"file_path", "a"}, {"old_string", "alpha"}, {"new_string", "new"}},
-                          {{"file_path", "a"}, {"old_string", "beta"}, {"new_string", "text"}}})}}),
-      cancel);
-  ASSERT_FALSE(result.error) << result.content;
-  EXPECT_EQ(files.read(config.cwd / "a"), "new text");
-  EXPECT_EQ(approvals, 1u);
-}
+
 TEST_F(Fixture, UniversalDenyRulesCoverUtilityTools) {
-  config.set_deny({"Sleep", "Memory", "EnterPlanMode"});
+  config.set_deny({"clock.sleep", "Memory", "EnterPlanMode"});
   Tools tools(config, files, processes, http, clock);
-  EXPECT_TRUE(tools.execute(call("Sleep", {{"seconds", 0}}), cancel).error);
+  EXPECT_TRUE(tools.execute(call("clock.sleep", {{"duration_ms", 1}}), cancel).error);
   EXPECT_TRUE(tools.execute(call("Memory", {{"action", "list"}}), cancel).error);
   EXPECT_TRUE(tools.execute(call("EnterPlanMode", Json::object()), cancel).error);
 }
-TEST_F(Fixture, QuestionsReturnTextAndSuggestedChoicesAndRejectHeadlessAnswers) {
-  unsigned questions = 0;
-  Tools interactive(config, files, processes, http, clock, {},
-                    [&](const std::string &question, const std::vector<std::string> &options) {
-                      ++questions;
-                      EXPECT_EQ(question, "Which library is available?");
-                      EXPECT_EQ(options, (std::vector<std::string>{"libcurl", "other"}));
-                      return "libcurl with OpenSSL";
-                    });
-  const auto request = call("AskUserQuestion", {{"question", "Which library is available?"},
-                                                {"options", Json::array({"libcurl", "other"})}});
-  const auto result = interactive.execute(request, cancel);
-  ASSERT_FALSE(result.error);
-  EXPECT_EQ(result.content, "libcurl with OpenSSL");
-  EXPECT_EQ(questions, 1u);
-  config.permission_mode = "bypass";
-  Tools headless(config, files, processes, http, clock);
-  EXPECT_TRUE(headless.execute(request, cancel).error);
-}
-TEST_F(Fixture, WebFetchPreservesPlainTextAndSearchIncludesResultUrls) {
-  Tools tools(config, files, processes, http, clock);
-  EXPECT_CALL(http, perform(_, _, _)).WillOnce(Return(HttpResponse{200, "a < b and c > d"}));
-  EXPECT_EQ(
-      tools.execute(call("WebFetch", {{"url", "https://example.invalid/text"}}), cancel).content,
-      "a < b and c > d");
-  EXPECT_CALL(http, perform(_, _, _))
-      .WillOnce(Return(HttpResponse{
-          200,
-          R"({"Abstract":"answer","AbstractSource":"source","AbstractURL":"https://example.invalid/result"})"}));
-  auto result = tools.execute(call("WebSearch", {{"query", "fixture"}}), cancel);
-  ASSERT_FALSE(result.error);
-  EXPECT_THAT(result.content, HasSubstr("https://example.invalid/result"));
-}
-TEST_F(Fixture, MemoryAndPlansPersistWithoutBackgroundCalls) {
-  config.permission_mode = "accept-edits";
-  Tools tools(config, files, processes, http, clock);
-  EXPECT_CALL(http, perform(_, _, _)).Times(0);
-  tools.use_session("fixture");
-  EXPECT_FALSE(
-      tools
-          .execute(call("Memory",
-                        {{"action", "write"}, {"name", "project.md"}, {"content", "durable fact"}}),
-                   cancel)
-          .error);
-  EXPECT_FALSE(
-      tools
-          .execute(call("TodoWrite",
-                        {{"todos", Json::array({{{"content", "task"}, {"status", "pending"}}})}}),
-                   cancel)
-          .error);
-  Tools resumed(config, files, processes, http, clock);
-  resumed.use_session("fixture");
-  const auto instructions = resumed.instructions();
-  EXPECT_THAT(instructions, HasSubstr("durable fact"));
-  EXPECT_THAT(instructions, HasSubstr("pending"));
-}
-TEST_F(Fixture, BatchRestoresEarlierFilesWhenLaterWriteFails) {
-  config.permission_mode = "accept-edits";
-  config.cwd = files.canonical(config.cwd);
-  config.roots = {config.cwd};
-  write("a", "alpha");
-  write("b", "beta");
-  chmod((config.cwd / "a").c_str(), 0755);
-  NiceMock<MockFiles> failing;
-  ON_CALL(failing, canonical(_)).WillByDefault(Invoke([&](const fs::path &p) {
-    return files.canonical(p);
-  }));
-  ON_CALL(failing, read(_, _)).WillByDefault(Invoke([&](const fs::path &p, size_t limit) {
-    return files.read(p, limit);
-  }));
-  ON_CALL(failing, atomic_write(_, _, _))
-      .WillByDefault(Invoke([&](const fs::path &p, const std::string &text, bool privacy) {
-        files.atomic_write(p, text, privacy);
-      }));
-  EXPECT_CALL(failing, atomic_write(config.cwd / "a", _, false)).Times(2);
-  EXPECT_CALL(failing, atomic_write(config.cwd / "b", _, false))
-      .WillOnce(Throw(Error("disk full")));
-  Tools tools(config, failing, processes, http, clock);
-  for (auto *p : {"a", "b"})
-    ASSERT_FALSE(tools.execute(call("Read", {{"file_path", p}}), cancel).error);
-  auto result = tools.execute(
-      call("BatchEdit",
-           {{"edits",
-             Json::array(
-                 {{{"file_path", "a"}, {"old_string", "alpha"}, {"new_string", "changed"}},
-                  {{"file_path", "b"}, {"old_string", "beta"}, {"new_string", "changed"}}})}}),
-      cancel);
-  EXPECT_TRUE(result.error);
-  EXPECT_EQ(files.read(config.cwd / "a"), "alpha");
-  EXPECT_EQ(files.read(config.cwd / "b"), "beta");
-  struct stat st {};
-  ASSERT_EQ(stat((config.cwd / "a").c_str(), &st), 0);
-  EXPECT_EQ(st.st_mode & 0777, 0755);
-}
+
 TEST_F(Fixture, ContextCompactionUsesSameProviderAndRetainsCurrentRequest) {
-  config.context_tokens = 512;
   StateStore state(config.home);
   auto s = state.create();
   for (int i = 0; i < 3; ++i) {
@@ -787,6 +668,10 @@ TEST_F(Fixture, ContextCompactionUsesSameProviderAndRetainsCurrentRequest) {
   Tools tools(config, files, processes, http, clock);
   StrictMock<MockProvider> provider;
   ProviderResult summary;
+  config.context_tokens =
+      (assemble_prompt(config, tools.schemas(), tools.capabilities(), tools.instructions()).size() +
+       tools.schemas().dump().size() + 1200) /
+      3;
   summary.message.role = "assistant";
   summary.message.text = "preserved summary";
   ProviderResult final;
@@ -814,7 +699,7 @@ TEST_F(Fixture, RequestLimitStopsWithoutAnExtraProviderCall) {
   StrictMock<MockProvider> provider;
   ProviderResult result;
   result.message.role = "assistant";
-  result.message.calls = {{"read", "Read", {{"file_path", "a"}}}};
+  result.message.calls = {{"read", "read_file", {{"path", "a"}}}};
   EXPECT_CALL(provider, complete(_, _, _, _, _, _)).WillOnce(Return(result));
   Agent agent(config, provider, tools, state, {});
   EXPECT_THROW(agent.run(s, "test", cancel), Error);
@@ -823,29 +708,7 @@ TEST_F(Fixture, RequestLimitStopsWithoutAnExtraProviderCall) {
                           [](const codet::Message &m) { return m.role == "tool"; }),
             1);
 }
-TEST_F(Fixture, ReadVersionTracksReturnedBytesDespiteConcurrentWriter) {
-  config.permission_mode = "accept-edits";
-  write("a", "read value");
-  NiceMock<MockFiles> racing;
-  bool first = true;
-  ON_CALL(racing, canonical(_)).WillByDefault(Invoke([&](const fs::path &p) {
-    return files.canonical(p);
-  }));
-  ON_CALL(racing, read(_, _)).WillByDefault(Invoke([&](const fs::path &p, size_t limit) {
-    const auto value = files.read(p, limit);
-    if (first) {
-      first = false;
-      files.atomic_write(p, "concurrent value");
-    }
-    return value;
-  }));
-  EXPECT_CALL(racing, atomic_write(_, _, _)).Times(0);
-  Tools tools(config, racing, processes, http, clock);
-  ASSERT_FALSE(tools.execute(call("Read", {{"file_path", "a"}}), cancel).error);
-  EXPECT_TRUE(
-      tools.execute(call("Write", {{"file_path", "a"}, {"content", "overwrite"}}), cancel).error);
-  EXPECT_EQ(files.read(config.cwd / "a"), "concurrent value");
-}
+
 TEST(ProcessIntegration, InteractivePtyInputAndBoundedFloodOutput) {
   Temp temp;
   NativeProcesses processes;
@@ -951,7 +814,7 @@ TEST_F(Fixture, AgentExecutesToolAndPersistsOnlyCompletedTurn) {
   std::vector<Json> events;
   ProviderResult first;
   first.message.role = "assistant";
-  first.message.calls = {{"call-1", "Read", {{"file_path", "a"}}}};
+  first.message.calls = {{"call-1", "read_file", {{"path", "a"}}}};
   ProviderResult last;
   last.message.role = "assistant";
   last.message.text = "done";

@@ -67,7 +67,7 @@ StateStore::StateStore(const fs::path &home) : impl_(std::make_unique<Impl>()) {
   if (sqlite3_step(version.p) != SQLITE_ROW)
     throw Error("Cannot read state schema");
   const int n = sqlite3_column_int(version.p, 0);
-  if (n > 2)
+  if (n > 3)
     throw Error("Session database was created by a newer Codet version");
   sql(impl_->db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;");
   sql(impl_->db,
@@ -80,6 +80,7 @@ StateStore::StateStore(const fs::path &home) : impl_(std::make_unique<Impl>()) {
     sql(impl_->db,
         "BEGIN IMMEDIATE; ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT '';ALTER "
         "TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT '';PRAGMA user_version=2;COMMIT;");
+  if(n<3) sql(impl_->db,"PRAGMA user_version=3;");
 }
 StateStore::~StateStore() = default;
 std::shared_ptr<void> StateStore::acquire(const std::string &id) {

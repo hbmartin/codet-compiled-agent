@@ -1,6 +1,8 @@
 #include "codet/core.hpp"
 #include "codet/output.hpp"
 #include "codet/process_control.hpp"
+#include "codet/prompt.hpp"
+#include "core_tools.hpp"
 #include "temp.hpp"
 #include <cerrno>
 #include <csignal>
@@ -112,7 +114,6 @@ struct FixtureHttp : HttpTransport {
   }
 };
 TEST_F(Followup, CompactionUsesRealAdaptersWithoutToolsAndRetainsNormalTools) {
-  config.context_tokens = 512;
   config.model = "fixture";
   files.atomic_write(config.home / "token.json", R"({"access_token":"fake"})");
   CredentialStore credentials(config.home, files, clock);
@@ -135,11 +136,18 @@ TEST_F(Followup, CompactionUsesRealAdaptersWithoutToolsAndRetainsNormalTools) {
     transport.provider = name;
     ApiProvider provider(transport, credentials, clock);
     Tools tools(config, files, processes, transport, clock);
+    config.context_tokens =
+        (assemble_prompt(config, tools.schemas(), tools.capabilities(), tools.instructions())
+             .size() +
+         tools.schemas().dump().size() + 1200) /
+        3;
     Agent agent(config, provider, tools, state, {});
     EXPECT_EQ(agent.run(session, "objective", cancel).text, "done") << name;
     ASSERT_EQ(transport.requests.size(), 2u) << name;
     EXPECT_FALSE(transport.requests[0].contains("tools")) << name;
     EXPECT_FALSE(transport.requests[1]["tools"].empty()) << name;
+    EXPECT_THAT(transport.requests[0].dump(), HasSubstr("CONTEXT CHECKPOINT COMPACTION"));
+    EXPECT_THAT(transport.requests[1].dump(), HasSubstr("You are Codet"));
   }
 }
 TEST_F(Followup, ShellSpoolPreservesOutputAndSupportsReadPaging) {
@@ -149,7 +157,8 @@ TEST_F(Followup, ShellSpoolPreservesOutputAndSupportsReadPaging) {
   text += "TAIL\n";
   files.atomic_write(config.cwd / "source", text);
   Tools tools(config, files, processes, http, clock);
-  const auto result = tools.execute({"shell", "Bash", {{"command", "cat source"}}}, cancel);
+  const auto result = execute_core(
+      tools, config, {"shell", "exec_command", {{"cmd", "cat source"}, {"login", false}}}, cancel);
   ASSERT_FALSE(result.error) << result.content;
   EXPECT_LE(result.content.size(), config.tool_output_limit);
   EXPECT_THAT(result.content, HasSubstr("HEAD"));
@@ -160,20 +169,25 @@ TEST_F(Followup, ShellSpoolPreservesOutputAndSupportsReadPaging) {
   EXPECT_EQ(result.metadata["total_output_bytes"], text.size());
   EXPECT_EQ(result.metadata["spill_bytes"], text.size());
   EXPECT_EQ(result.metadata["spill_truncated"], false);
-  struct stat status {};
+  struct stat status{};
   ASSERT_EQ(::stat(path.c_str(), &status), 0);
   EXPECT_EQ(status.st_mode & 0777, 0600);
   config.permission_mode = "default";
-  const auto page = tools.execute(
-      {"page", "Read", {{"file_path", path.string()}, {"offset", 290}, {"limit", 5}}}, cancel);
+  const auto page = execute_core(
+      tools, config,
+      {"page", "read_file", {{"path", path.string()}, {"offset", 290}, {"limit", 5}}}, cancel);
   ASSERT_FALSE(page.error) << page.content;
   EXPECT_THAT(page.content, HasSubstr("line-288"));
-  config.set_deny({"Read(*capture-*)"});
-  EXPECT_TRUE(tools.execute({"denied", "Read", {{"file_path", path.string()}}}, cancel).error);
+  config.set_deny({"read_file(*capture-*)"});
+  EXPECT_TRUE(
+      execute_core(tools, config, {"denied", "read_file", {{"path", path.string()}}}, cancel)
+          .error);
 }
 TEST_F(Followup, SmallCommandsDoNotCreateCaptureFiles) {
   Tools tools(config, files, processes, http, clock);
-  const auto result = tools.execute({"small", "Bash", {{"command", "printf approved"}}}, cancel);
+  const auto result = execute_core(
+      tools, config, {"small", "exec_command", {{"cmd", "printf approved"}, {"login", false}}},
+      cancel);
   ASSERT_FALSE(result.error);
   EXPECT_EQ(result.content, "approved");
   EXPECT_FALSE(result.metadata.contains("spill_path"));
@@ -183,7 +197,8 @@ TEST_F(Followup, SmallCommandsDoNotCreateCaptureFiles) {
 TEST_F(Followup, InvalidByteExpansionKeepsOriginalCaptureAndQuotaMetadata) {
   files.atomic_write(config.cwd / "source", std::string(300, '\xff'));
   Tools tools(config, files, processes, http, clock);
-  const auto result = tools.execute({"bytes", "Bash", {{"command", "cat source"}}}, cancel);
+  const auto result = execute_core(
+      tools, config, {"bytes", "exec_command", {{"cmd", "cat source"}, {"login", false}}}, cancel);
   ASSERT_FALSE(result.error);
   EXPECT_LE(result.content.size(), config.tool_output_limit);
   const fs::path path = result.metadata["spill_path"].get<std::string>();
@@ -200,12 +215,12 @@ TEST_F(Followup, PortableShellSearchSkipsGeneratedAndBinaryFiles) {
   files.atomic_write(config.cwd / "unicode-雪.txt", "needle\n");
   files.atomic_write(config.cwd / "binary", std::string("needle\0binary", 13));
   Tools tools(config, files, processes, http, clock);
-  const auto result = tools.execute(
+  const auto result = execute_core(
+      tools, config,
       {"search",
-       "Bash",
-       {{"command",
-         "find . -type d \\( -name .git -o -name build -o -name node_modules \\) -prune -o "
-         "-type f -exec grep -I -n -E -e 'needle|alternative' /dev/null {} +"}}},
+       "exec_command",
+       {{"cmd", "find . -type d \\( -name .git -o -name build -o -name node_modules \\) -prune -o "
+                "-type f -exec grep -I -n -E -e 'needle|alternative' /dev/null {} +"}}},
       cancel);
   ASSERT_FALSE(result.error) << result.content;
   EXPECT_EQ(result.content, "./unicode-雪.txt:1:needle\n");
@@ -227,7 +242,7 @@ TEST_F(Followup, LongLineCaptureUsesEightMiBCapAndPreservesPreviewTail) {
   EXPECT_EQ(page.total_output_bytes, 1024u);
   // Preview bounds are independent of retained bytes.
   EXPECT_EQ(files.read(page.spill_path), std::string(1024, 'x'));
-  struct stat capture {};
+  struct stat capture{};
   ASSERT_EQ(::stat(result.spill_path.c_str(), &capture), 0);
   EXPECT_EQ(capture.st_mode & 0777, 0600);
 }
@@ -298,7 +313,8 @@ TEST_F(Followup, SpoolFailureKeepsExitStatusAndSerializablePreview) {
   fs::create_directory_symlink(config.cwd, config.home / "tool-output");
   files.atomic_write(config.cwd / "source", std::string(3000, '\xff') + "TAIL\n");
   Tools tools(config, files, processes, http, clock);
-  const auto result = tools.execute({"shell", "Bash", {{"command", "cat source"}}}, cancel);
+  const auto result = execute_core(
+      tools, config, {"shell", "exec_command", {{"cmd", "cat source"}, {"login", false}}}, cancel);
   EXPECT_FALSE(result.error);
   EXPECT_EQ(result.metadata["exit_code"], 0);
   EXPECT_TRUE(result.metadata.contains("capture_error"));
@@ -476,8 +492,7 @@ TEST_F(Followup, HandshakeRetriesEintrAndCancellationWinsOverSetupErrors) {
   }
 }
 TEST_F(Followup, CommandsResetInheritedHangupAndSignalMask) {
-  struct sigaction ignored {
-  }, previous{};
+  struct sigaction ignored{}, previous{};
   ignored.sa_handler = SIG_IGN;
   sigemptyset(&ignored.sa_mask);
   ASSERT_EQ(::sigaction(SIGHUP, &ignored, &previous), 0);

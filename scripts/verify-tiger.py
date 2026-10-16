@@ -19,7 +19,7 @@ def main():
         dependencies=output(PREFIX+'otool','-L',str(p))
         for line in dependencies.splitlines()[1:]:
             dep=line.strip().split(' ')[0]
-            if not (dep.startswith('/usr/lib/') or dep.startswith(prefix+'/')):raise SystemExit('Non-target dependency: '+dep)
+            if not (dep.startswith('/usr/lib/') or dep.startswith(prefix+'/') or dep in ['/System/Library/Frameworks/'+f+'.framework/Versions/A/'+f for f in ['ApplicationServices','Carbon','CoreFoundation']]):raise SystemExit('Non-target dependency: '+dep)
         commands=output(PREFIX+'otool','-l',str(p))
         if 'LC_RPATH' in commands:raise SystemExit('Tiger does not support LC_RPATH')
         imports=output(PREFIX+'nm','-u',str(p))

@@ -1,5 +1,6 @@
 #include "codet/core.hpp"
 #include "codet/output.hpp"
+#include "core_tools.hpp"
 #include "temp.hpp"
 #include <cerrno>
 #include <fcntl.h>
@@ -38,7 +39,8 @@ struct OutputReview : Test {
     return s;
   }
   ToolResult shell(Tools &tools, const std::string &text) {
-    return tools.execute({unique_id(), "Bash", {{"command", text}}}, cancel);
+    return execute_core(tools, config,
+                        {unique_id(), "exec_command", {{"cmd", text}, {"login", false}}}, cancel);
   }
   size_t captures(const fs::path &directory) {
     size_t n = 0;
@@ -176,7 +178,8 @@ struct SmallWarning : Processes {
     return "unused";
   }
   ProcessResult poll(const std::string &) override {
-    return {};
+    Cancellation cancel;
+    return run({}, cancel);
   }
   void stop(const std::string &) override {}
 };
@@ -261,7 +264,7 @@ TEST_F(OutputReview, GenericSpillsShareTheManagedQuotaAndNewPerFileLimit) {
   ::close(fd);
   files.atomic_write(config.cwd / "longline", std::string(9 * 1024 * 1024, 'x'));
   Tools tools(config, files, processes, http, clock);
-  const auto r = tools.execute({"read", "Read", {{"file_path", "longline"}}}, cancel);
+  const auto r = execute_core(tools, config, {"read", "read_file", {{"path", "longline"}}}, cancel);
   ASSERT_FALSE(r.error);
   EXPECT_FALSE(fs::exists(legacy));
   const auto path = r.metadata["spill_path"].get<std::string>();
@@ -327,12 +330,13 @@ TEST_F(OutputReview, InvocationCaptureRootAllowsReadPagingButNotWritesOrDeniedRe
   const auto r = shell(tools, "cat source");
   const auto path = r.metadata["spill_path"].get<std::string>();
   config.permission_mode = "accept-edits";
-  EXPECT_FALSE(tools.execute({"page", "Read", {{"file_path", path}}}, cancel).error);
-  EXPECT_TRUE(
-      tools.execute({"write", "Write", {{"file_path", path}, {"content", "changed"}}}, cancel)
-          .error);
-  config.set_deny({"Read(*capture-*)"});
-  EXPECT_TRUE(tools.execute({"denied", "Read", {{"file_path", path}}}, cancel).error);
+  EXPECT_FALSE(execute_core(tools, config, {"page", "read_file", {{"path", path}}}, cancel).error);
+  EXPECT_TRUE(execute_core(tools, config,
+                           {"write", "apply_patch", {{"path", path}, {"content", "changed"}}},
+                           cancel)
+                  .error);
+  config.set_deny({"read_file(*capture-*)"});
+  EXPECT_TRUE(execute_core(tools, config, {"denied", "read_file", {{"path", path}}}, cancel).error);
 }
 TEST_F(OutputReview, ActiveCaptureQuotaCannotBeStolenByAnotherCapture) {
   auto store = std::make_shared<CaptureStore>(config.home / "full", 32, 32, 64);

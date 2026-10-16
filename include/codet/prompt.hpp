@@ -1,6 +1,19 @@
 #pragma once
 #include "codet/core.hpp"
+#include <string_view>
 namespace codet {
+struct PromptEntry {
+  const char *model, *instructions, *default_mode, *plan_mode, *approval_on_request,
+      *approval_never;
+};
+const PromptEntry *model_prompt(std::string_view);
+// Null means absent; an explicitly empty catalog string remains an override.
+std::string_view resolve_prompt(const char *, std::string_view fallback);
+std::string assemble_prompt(const Config &, const Json &schemas, const Json &capabilities,
+                            const std::string &project_context, bool structured_output = false);
+std::string_view summarization_prompt();
+std::string_view summary_prefix();
+
 // Append prepared messages without copying history. Roll back before turn recovery on failure.
 class PromptAppend {
   Session &session_;

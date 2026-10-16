@@ -40,3 +40,34 @@ The `OutputReview.*` cases cover exact original-byte omission counts, UTF-8 and 
 
 
 The `Policies.*`, `DiagnosticPolicies.*` and `PromptPolicies.*` cases add observation-independent termination, private failed foreground ownership/active limits, ordinary exception isolation, resource/cancellation propagation, canonical metacharacter aliases, wildcard-parent normalization, CRLF preflight denial before hooks, full hook channel budgets, accurate diagnostics, bounded omission notices and prompt rollback. In both terminal modes exercise successful, failed and interrupted turns with a live hook diagnostic and SessionEnd warning/error. Curses must show live messages immediately and replay them once only after restoration, before cleanup messages. Flood both diagnostic phases with a small configured limit and verify separate complete omission notices. A successful SessionEnd hook printing large ignored stdout must not report cleanup failure. Repeat a narrow Glob in a large directory and record responsiveness on the G4; host samples do not establish target timing.
+
+## Native computer use
+
+For prompt acceptance, use an image-capable configured model in each terminal interface. Ask it
+to open a disposable TextEdit document, inspect it visually, type a short Unicode sentence,
+and verify the resulting text. Confirm screenshot observation precedes pointer input and that
+the reported result follows a new observation. Repeat against a local browser page; verify it
+uses the native desktop tools and never assumes DOM/CDP or Playwright. Let snapshots expire,
+then verify fresh observation instead of stale coordinates or node IDs. Test cropped capture
+and a focus change between observations. Record the selected model and whether prompts follow
+the intended screenshot-first strategy; scripted host fixtures do not establish model behavior.
+
+Disable assistive-device access and repeat visual observation/input with the user's keyboard
+idle: AX action tools should disappear while pixel tools remain available. Configure
+`image_input = false` and verify screenshots/pointer tools disappear and the agent explains
+its visual limitation. Restore the setting afterward. In Plan mode verify read_file/desktop
+observations work and shell commands, AppleScript and input mutations remain denied. Resume
+after a mode change and confirm the prompt and offered tools reflect it. Measure peak RSS and
+repeated-turn memory growth with the larger embedded prompts on the 512 MB G4.
+
+From a Terminal in the logged-in Aqua session, enable **access for assistive devices** in Universal Access and run:
+
+```sh
+sh ./tiger-acceptance.sh --desktop
+```
+
+This explicit check opens a temporary plain-text fixture in TextEdit, types Unicode using native events, reads it back through AppleScript, records desktop state and a screenshot, tests plain-text clipboard round-trip when readable, activates Finder, and opens the default browser at `http://127.0.0.1/`. No external website or model API is contacted. The fixture closes without saving its synthetic edits; existing text clipboard content is restored. Run it while you can leave the keyboard/mouse idle. Reports include the captured desktop, window/application metadata and peak RSS.
+
+Also verify mouse clicks, a drag, scrolling, right/double click, shortcuts, cropped/window capture, AXPress/set_value on observed controls, stale screenshot/node rejection after expiry, and cancellation while input is active. Test multiple display origins and 16/32-bit display modes when available. Confirm images arrive as pixels in a live image-capable provider round trip. Repeat observation/action cycles and record memory growth, responsiveness and swapping on the 512 MB G4. Both terminal interfaces must accept asynchronous replies while the agent is sleeping or working.
+
+See `CODEX-TOOLS.md` for capability gates and exact compatibility boundaries. Offline fixtures and successful PPC linking do not mark these desktop/runtime checks complete.

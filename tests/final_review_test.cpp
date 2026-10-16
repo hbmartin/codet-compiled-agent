@@ -1,6 +1,7 @@
 #include "codet/core.hpp"
 #include "codet/patch.hpp"
 #include "codet/process_control.hpp"
+#include "core_tools.hpp"
 #include "temp.hpp"
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -43,24 +44,28 @@ TEST_F(FinalReview, LiteralRootsAndAuthoredGlobsRemainDistinctAcrossAliases) {
     config.permission_mode = "default";
     fs::create_directories(config.cwd / "secrets");
     files.atomic_write(config.cwd / "secrets/key.pem", "private");
-    config.set_deny({"Read(secrets/key.pem)"});
+    config.set_deny({"read_file(secrets/key.pem)"});
     Tools tools(config, files, processes, http, clock);
     for (const auto &alias : std::vector<std::string>{"secrets/key.pem", "./secrets/key.pem",
                                                       "secrets/../secrets/key.pem",
                                                       (config.cwd / "secrets/key.pem").string()}) {
-      auto result = tools.execute({unique_id(), "Read", {{"file_path", alias}}}, cancel);
+      auto result =
+          execute_core(tools, config, {unique_id(), "read_file", {{"path", alias}}}, cancel);
       EXPECT_TRUE(result.error) << name << " " << alias;
     }
-    config.set_deny({"Read(" + (config.cwd / "secrets/*").string() + ")"});
-    EXPECT_TRUE(
-        tools.execute({unique_id(), "Read", {{"file_path", "./secrets/key.pem"}}}, cancel).error);
+    config.set_deny({"read_file(" + (config.cwd / "secrets/*").string() + ")"});
+    EXPECT_TRUE(execute_core(tools, config,
+                             {unique_id(), "read_file", {{"path", "./secrets/key.pem"}}}, cancel)
+                    .error);
     config.permission_mode = "bypass";
-    config.set_deny({"Read(*key.pem)"});
-    EXPECT_TRUE(
-        tools.execute({unique_id(), "Read", {{"file_path", "./secrets/key.pem"}}}, cancel).error);
+    config.set_deny({"read_file(*key.pem)"});
+    EXPECT_TRUE(execute_core(tools, config,
+                             {unique_id(), "read_file", {{"path", "./secrets/key.pem"}}}, cancel)
+                    .error);
     config.set_deny({});
-    EXPECT_FALSE(
-        tools.execute({unique_id(), "Read", {{"file_path", "./secrets/key.pem"}}}, cancel).error);
+    EXPECT_FALSE(execute_core(tools, config,
+                              {unique_id(), "read_file", {{"path", "./secrets/key.pem"}}}, cancel)
+                     .error);
   }
 }
 TEST_F(FinalReview, CachedRulesRecheckSymlinkPrefixesAndConfiguration) {
@@ -69,15 +74,16 @@ TEST_F(FinalReview, CachedRulesRecheckSymlinkPrefixesAndConfiguration) {
   files.atomic_write(config.cwd / "one/key", "one");
   files.atomic_write(config.cwd / "two/key", "two");
   fs::create_directory_symlink(config.cwd / "one", config.cwd / "alias");
-  config.set_deny({"Read(alias/*)"});
+  config.set_deny({"read_file(alias/*)"});
   Tools tools(config, files, processes, http, clock);
-  EXPECT_TRUE(tools.execute({"1", "Read", {{"file_path", "one/key"}}}, cancel).error);
+  EXPECT_TRUE(execute_core(tools, config, {"1", "read_file", {{"path", "one/key"}}}, cancel).error);
   fs::remove(config.cwd / "alias");
   fs::create_directory_symlink(config.cwd / "two", config.cwd / "alias");
-  EXPECT_TRUE(tools.execute({"2", "Read", {{"file_path", "two/key"}}}, cancel).error);
-  EXPECT_FALSE(tools.execute({"3", "Read", {{"file_path", "one/key"}}}, cancel).error);
-  config.set_deny({"Read(one/key)"});
-  EXPECT_TRUE(tools.execute({"4", "Read", {{"file_path", "one/key"}}}, cancel).error);
+  EXPECT_TRUE(execute_core(tools, config, {"2", "read_file", {{"path", "two/key"}}}, cancel).error);
+  EXPECT_FALSE(
+      execute_core(tools, config, {"3", "read_file", {{"path", "one/key"}}}, cancel).error);
+  config.set_deny({"read_file(one/key)"});
+  EXPECT_TRUE(execute_core(tools, config, {"4", "read_file", {{"path", "one/key"}}}, cancel).error);
 }
 TEST_F(FinalReview, SeparateHookChannelsCannotStarveControlOutput) {
   std::vector<std::string> diagnostics;
@@ -85,14 +91,14 @@ TEST_F(FinalReview, SeparateHookChannelsCannotStarveControlOutput) {
               [&](const auto &s) { diagnostics.push_back(s); });
   config.hooks["PreToolUse"] =
       Json::array({{{"command", "printf '%01000d' 0; printf blocked >&2; exit 2"}}});
-  const auto blocked = tools.run_hooks("PreToolUse", {{"tool_name", "Read"}}, cancel);
+  const auto blocked = tools.run_hooks("PreToolUse", {{"tool_name", "read_file"}}, cancel);
   EXPECT_TRUE(blocked.blocked);
   EXPECT_EQ(blocked.reason, "blocked");
   EXPECT_THAT(diagnostics, Contains(HasSubstr("stdout capture truncated")));
   config.hooks["PreToolUse"] = Json::array(
       {{{"command",
          "printf '%01000d' 0 >&2; printf '%s' '{\"decision\":\"block\",\"reason\":\"denied\"}'"}}});
-  const auto json = tools.run_hooks("PreToolUse", {{"tool_name", "Read"}}, cancel);
+  const auto json = tools.run_hooks("PreToolUse", {{"tool_name", "read_file"}}, cancel);
   EXPECT_TRUE(json.blocked);
   EXPECT_EQ(json.reason, "denied");
   EXPECT_THAT(diagnostics, Contains(HasSubstr("stderr capture truncated")));
@@ -124,19 +130,20 @@ TEST_F(FinalReview, HookSourceMatchersPreserveInvocationContextOrder) {
 TEST_F(FinalReview, CrLfProtocolNeverChangesFileNamesAndPreservesContentWhitespace) {
   Tools tools(config, files, processes, http, clock);
   auto patch = [&](const std::string &body) {
-    return tools.execute({unique_id(),
-                          "ApplyPatch",
-                          {{"patch", "*** Begin Patch\r\n" + body + "*** End Patch\r\n"}}},
-                         cancel);
+    return execute_core(tools, config,
+                        {unique_id(),
+                         "apply_patch",
+                         {{"patch", "*** Begin Patch\r\n" + body + "*** End Patch\r\n"}}},
+                        cancel);
   };
   ASSERT_FALSE(patch("*** Add File: a\r\n+old  \r\n").error);
   EXPECT_TRUE(fs::exists(config.cwd / "a"));
   EXPECT_FALSE(fs::exists(config.cwd / "a\r"));
   EXPECT_EQ(files.read(config.cwd / "a"), "old  \n");
-  ASSERT_FALSE(tools.execute({"read", "Read", {{"file_path", "a"}}}, cancel).error);
+  ASSERT_FALSE(execute_core(tools, config, {"read", "read_file", {{"path", "a"}}}, cancel).error);
   ASSERT_FALSE(patch("*** Update File: a\r\n*** Move to: b\r\n@@\r\n-old  \r\n+new  \r\n").error);
   EXPECT_EQ(files.read(config.cwd / "b"), "new  \n");
-  ASSERT_FALSE(tools.execute({"read2", "Read", {{"file_path", "b"}}}, cancel).error);
+  ASSERT_FALSE(execute_core(tools, config, {"read2", "read_file", {{"path", "b"}}}, cancel).error);
   ASSERT_FALSE(patch("*** Delete File: b\r\n").error);
   EXPECT_FALSE(fs::exists(config.cwd / "b"));
 }
@@ -386,13 +393,13 @@ TEST_F(FinalReview, LiteralWorkspaceAllowRuleDoesNotGrantMatchingSibling) {
   fs::create_directories(config.cwd);
   fs::create_directories(temp.root / "work1");
   config.roots.push_back(temp.root / "work1");
-  config.set_allow({"Write(" + (config.cwd / "file").string() + ")"});
+  config.set_allow({"apply_patch(" + (config.cwd / "file").string() + ")"});
   Permissions permissions(config, files);
-  EXPECT_EQ(
-      permissions.decide({"Write", (config.cwd / "file").string(), config.cwd / "file", true}),
-      Decision::allow);
+  EXPECT_EQ(permissions.decide(
+                {"apply_patch", (config.cwd / "file").string(), config.cwd / "file", true}),
+            Decision::allow);
   const auto sibling = temp.root / "work1/file";
-  EXPECT_EQ(permissions.decide({"Write", sibling.string(), sibling, true}), Decision::ask);
+  EXPECT_EQ(permissions.decide({"apply_patch", sibling.string(), sibling, true}), Decision::ask);
 }
 TEST_F(FinalReview, GlobFiltersLiteralWorkspaceAndRewrittenReadRemainsDenied) {
   config.cwd = temp.root / "work[*]?\\dir";
@@ -400,18 +407,19 @@ TEST_F(FinalReview, GlobFiltersLiteralWorkspaceAndRewrittenReadRemainsDenied) {
   fs::create_directories(config.cwd / "hidden");
   files.atomic_write(config.cwd / "hidden/secret", "secret");
   files.atomic_write(config.cwd / "public", "public");
-  config.set_deny({"Glob(hidden)", "Read(hidden/secret)"});
+  config.set_deny({"read_file(hidden)", "read_file(hidden/secret)"});
   Tools tools(config, files, processes, http, clock);
-  const auto found = tools.execute({"glob", "Glob", {{"pattern", "*"}}}, cancel);
+  const auto found = execute_core(tools, config, {"glob", "read_file", {{"path", "."}}}, cancel);
   EXPECT_FALSE(found.error);
   EXPECT_THAT(found.content, HasSubstr("public"));
   EXPECT_THAT(found.content, Not(HasSubstr("secret")));
   config.hooks["PreToolUse"] =
-      Json::array({{{"matcher", "Read"},
+      Json::array({{{"matcher", "read_file"},
                     {"command", "printf '%s' "
                                 "'{\"hookSpecificOutput\":{\"permissionDecision\":\"allow\","
-                                "\"updatedInput\":{\"file_path\":\"./hidden/secret\"}}}'"}}});
-  EXPECT_TRUE(tools.execute({"read", "Read", {{"file_path", "public"}}}, cancel).error);
+                                "\"updatedInput\":{\"path\":\"./hidden/secret\"}}}'"}}});
+  EXPECT_TRUE(
+      execute_core(tools, config, {"read", "read_file", {{"path", "public"}}}, cancel).error);
 }
 TEST_F(FinalReview, FailedForegroundCleanupRetainsOwnershipAndRetriesWithoutBlockingOtherWork) {
   auto control = std::make_shared<SelectiveControl>();
@@ -420,10 +428,9 @@ TEST_F(FinalReview, FailedForegroundCleanupRetainsOwnershipAndRetriesWithoutBloc
   EXPECT_THROW(native.run(shell("exit 0"), cancel), Error);
   EXPECT_TRUE(native.list().empty());
   EXPECT_EQ(native.run(shell("printf healthy"), cancel).output, "healthy");
-  Tools tools(config, files, native, http, clock);
-  EXPECT_EQ(tools.execute({"list", "TaskList", Json::object()}, cancel).content, "[]");
-  EXPECT_TRUE(tools.execute({"output", "TaskOutput", {{"task_id", "job-1"}}}, cancel).error);
-  EXPECT_TRUE(tools.execute({"stop", "TaskStop", {{"task_id", "job-1"}}}, cancel).error);
+  EXPECT_TRUE(native.list().empty());
+  EXPECT_THROW(native.poll("job-1"), Error);
+  EXPECT_THROW(native.stop("job-1"), Error);
   control->reap_failure = false;
   EXPECT_TRUE(native.list().empty());
   EXPECT_EQ(native.run(shell("printf recovered"), cancel).output, "recovered");

@@ -31,11 +31,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == '/api/chat':
             data=(json.dumps({'message':{'role':'assistant','content':'fixture done'},'done':True})+'\n').encode()
             self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
-        if 'fixture-progress-failure' in str(body):
-            frames='data: '+json.dumps({'choices':[{'delta':{'content':'partial-progress'},'finish_reason':None}]})+'\n\ndata: {broken\n\n'
-            data=frames.encode();self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
         messages=body['messages']
         prompt=next((m.get('content','') or '' for m in reversed(messages) if m['role']=='user'),'')
+        if 'fixture-progress-failure' in prompt:
+            frames='data: '+json.dumps({'choices':[{'delta':{'content':'partial-progress'},'finish_reason':None}]})+'\n\ndata: {broken\n\n'
+            data=frames.encode();self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
         if 'fixture-error' in prompt:
             data=b'{"error":{"message":"do-not-leak-fake-credential"}}'
             self.send_response(401);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
@@ -47,43 +47,52 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 data=b'{"error":{"message":"fixture failure after capture"}}'
                 self.send_response(401);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
             if not completed:
-                name='TaskCreate' if 'background' in prompt else 'Bash'
+                name='exec_command'
                 command='cat output.txt'
                 if 'wait' in prompt:command+='; printf ready > ready; while test ! -f release; do sleep .02; done'
                 if 'background' in prompt:command='printf ready > ready; cat output.txt; while test ! -f release; do sleep .02; done'
-                args={'command':command}
+                args={'cmd':command,'login':False,'yield_time_ms':250 if 'background' in prompt else 10000}
             elif 'background' in prompt:
-                job=json.loads(completed[0]['content'])['content']
-                name='TaskOutput';args={'task_id':job}
-                if any('spill_path' in json.loads(x['content']).get('metadata',{}) for x in completed[1:]):name=None
+                name=None
             elif len(completed)==1:
-                path=json.loads(completed[0]['content'])['metadata']['spill_path']
-                name='Read';args={'file_path':path,'offset':1,'limit':1}
+                path=json.loads(completed[0]['content'])['spill_path']
+                import shlex
+                name='exec_command';args={'cmd':'head -n 1 '+shlex.quote(path),'login':False}
             else:name=None
             if name:
                 delta={'tool_calls':[{'index':0,'id':'capture-'+str(last_user)+'-'+str(len(completed)),'function':{'name':name,'arguments':json.dumps(args)}}]};reason='tool_calls'
             else:delta={'content':'fixture done'};reason='stop'
+        elif any('fixture-async' in (m.get('content','') or '') for m in messages if m['role']=='user'):
+            all_tools=[m for m in messages if m['role']=='tool']
+            if 'libcurl' in prompt:
+                delta={'content':'async reply received'};reason='stop'
+            elif not all_tools:
+                delta={'tool_calls':[{'index':0,'id':'async-ask','function':{'name':'request_user_input_async','arguments':json.dumps({'questions':[{'title':'Async library choice','options':['Catch2','libcurl']}]})}}]};reason='tool_calls'
+            elif len(all_tools)==1:
+                delta={'tool_calls':[{'index':0,'id':'async-sleep','function':{'name':'clock__sleep','arguments':json.dumps({'duration_ms':10000})}}]};reason='tool_calls'
+            else:
+                delta={'content':'async wait elapsed'};reason='stop'
         elif 'fixture-long-batch' in prompt and not completed:
             commands=['printf begun > begun; while test ! -f release; do sleep .02; done','printf completed > completed']
-            delta={'tool_calls':[{'index':i,'id':'batch-'+str(i),'function':{'name':'Bash','arguments':json.dumps({'command':command})}} for i,command in enumerate(commands)]};reason='tool_calls'
+            delta={'tool_calls':[{'index':i,'id':'batch-'+str(i),'function':{'name':'exec_command','arguments':json.dumps({'cmd':command,'login':False})}} for i,command in enumerate(commands)]};reason='tool_calls'
         elif 'fixture-command' in messages[last_user].get('content','') and not completed:
-            delta={'tool_calls':[{'index':0,'id':'shell-'+str(last_user),'function':{'name':'Bash','arguments':json.dumps({'command':'printf approved'})}}]};reason='tool_calls'
-        elif 'fixture-edit' in prompt and len(completed)<2:
-            name='Read' if not completed else 'Edit'
-            args={'file_path':'sample.txt'} if not completed else {'file_path':'sample.txt','old_string':'before','new_string':'after'}
-            delta={'tool_calls':[{'index':0,'id':'call-'+str(len(completed)),'function':{'name':name,'arguments':json.dumps(args)}}]}
-            reason='tool_calls'
+            delta={'tool_calls':[{'index':0,'id':'shell-'+str(last_user),'function':{'name':'exec_command','arguments':json.dumps({'cmd':'printf approved','login':False})}}]};reason='tool_calls'
+        elif 'fixture-edit' in prompt and not completed:
+            args={'patch':'*** Begin Patch\n*** Update File: sample.txt\n@@\n-before\n+after\n*** End Patch\n'}
+            delta={'tool_calls':[{'index':0,'id':'call-0','function':{'name':'apply_patch','arguments':json.dumps(args)}}]};reason='tool_calls'
         elif 'fixture-schema' in prompt and not completed:
             delta={'tool_calls':[{'index':0,'id':'structured','function':{'name':'StructuredOutput','arguments':'{"answer":42}'}}]};reason='tool_calls'
-        elif 'Explicit memory consolidation:' in prompt and len(completed)<2:
-            args={'action':'read','name':'facts.md'} if not completed else {'action':'write','name':'facts.md','content':'Consolidated facts, from the explicit consolidation fixture.\n'}
-            delta={'tool_calls':[{'index':0,'id':'memory-'+str(len(completed)),'function':{'name':'Memory','arguments':json.dumps(args)}}]};reason='tool_calls'
+        elif 'Explicit memory consolidation:' in prompt and not completed:
+            import re
+            memory=re.search(r'Durable Markdown memory lives in ([^;]+);',messages[0]['content']).group(1)
+            patch='*** Begin Patch\n*** Update File: '+str(pathlib.Path(memory)/'facts.md')+'\n@@\n-Old facts to consolidate.\n+Consolidated facts, from the explicit consolidation fixture.\n*** End Patch\n'
+            delta={'tool_calls':[{'index':0,'id':'memory-0','function':{'name':'apply_patch','arguments':json.dumps({'patch':patch})}}]};reason='tool_calls'
         elif 'fixture-recall' in prompt:
             delta={'content':'memory recovered' if any('Consolidated facts' in m.get('content','') for m in messages if m['role']=='system') else 'memory missing'};reason='stop'
         elif 'fixture-question' in prompt and not completed:
-            delta={'tool_calls':[{'index':0,'id':'question','function':{'name':'AskUserQuestion','arguments':json.dumps({'question':'Which library is available?','options':['Catch2','libcurl']})}}]};reason='tool_calls'
+            delta={'tool_calls':[{'index':0,'id':'question','function':{'name':'request_user_input','arguments':json.dumps({'questions':[{'id':'library','header':'Library','question':'Which library is available?','options':[{'label':'Catch2','description':'test library'},{'label':'libcurl','description':'HTTP library'}]}]})}}]};reason='tool_calls'
         elif 'fixture-question' in prompt:
-            answer=json.loads(completed[-1]['content'])['content']
+            answer=completed[-1]['content']
             delta={'content':'question answered' if 'libcurl' in answer else 'answer missing'};reason='stop'
         else:delta={'content':'fixture done'};reason='stop'
         frame={'choices':[{'delta':delta,'finish_reason':reason}],'usage':{'prompt_tokens':10,'completion_tokens':2}}
@@ -227,13 +236,22 @@ class CliTests(unittest.TestCase):
         self.assertEqual([json.loads(x)['hook_event_name'] for x in marker.read_text().splitlines()],['SessionStart','SessionEnd'])
 
     def test_compaction_requests_omit_empty_tools_through_real_adapter(self):
-        config=self.home/'config.toml';config.write_text('context_tokens=512\n'+config.read_text())
-        r=self.run_cli('exec','--json','x'*4000);self.assertEqual(r.returncode,0,r.stderr)
+        r=self.run_cli('exec','--json','x'*20000);self.assertEqual(r.returncode,0,r.stderr)
+        body=self.server.requests[-1]['body']
+        fixed=len(body['messages'][0]['content'].encode())+len(json.dumps(body['tools'],separators=(',',':')).encode())
+        config=self.home/'config.toml';config.write_text('context_tokens='+str((fixed+8000)//3)+'\n'+config.read_text())
         session=json.loads(r.stdout.splitlines()[0])['thread_id'];self.server.requests=[]
         r=self.run_cli('exec','resume',session,'continue');self.assertEqual(r.returncode,0,r.stderr)
         self.assertEqual(len(self.server.requests),2)
         self.assertNotIn('tools',self.server.requests[0]['body'])
         self.assertTrue(self.server.requests[1]['body']['tools'])
+
+    def test_insufficient_fixed_context_fails_before_provider_request(self):
+        config=self.home/'config.toml';config.write_text('context_tokens=512\n'+config.read_text())
+        r=self.run_cli('exec','task')
+        self.assertNotEqual(r.returncode,0)
+        self.assertIn('Increase context_tokens',r.stderr)
+        self.assertEqual(self.server.requests,[])
 
     def test_live_permission_modes_in_both_terminals(self):
         import pty,select
@@ -254,13 +272,13 @@ class CliTests(unittest.TestCase):
                 os.write(master,b'fixture-command\n');wait_for(b'fixture done')
                 tool=[m for m in self.server.requests[-1]['body']['messages'] if m['role']=='tool'][-1]
                 outcome=json.loads(tool['content'])
-                self.assertFalse(outcome['is_error'],outcome)
-                self.assertEqual(outcome['content'],'approved')
+                self.assertEqual(outcome['exit_code'],0)
+                self.assertEqual(outcome['output'],'approved')
                 os.write(master,b'/permissions invalid\n');wait_for(b'Use /permissions')
                 os.write(master,b'/permissions\n');wait_for(b'Permissions: bypass')
                 os.write(master,b'/permissions plan\n');wait_for(b'Permissions: plan')
                 os.write(master,b'fixture-command\n');wait_for(b'fixture done')
-                self.assertIn('Permission denied',json.dumps(self.server.requests[-1]['body']))
+                self.assertIn('Permission denied for exec_command',json.dumps(self.server.requests[-1]['body']))
                 os.write(master,b'/permissions default\n');wait_for(b'Permissions: default')
                 os.write(master,b'/quit\n');deadline=time.monotonic()+5
                 while p.poll() is None and time.monotonic()<deadline:
@@ -506,12 +524,12 @@ class CliTests(unittest.TestCase):
                 r=self.run_cli('exec','--ephemeral','--permission-mode','bypass',prompt)
                 self.assertEqual(r.returncode,code,r.stderr)
                 outcomes=[json.loads(m['content']) for m in self.server.requests[-1]['body']['messages'] if m['role']=='tool']
-                capture=next(x for x in outcomes if 'spill_path' in x['metadata'])
-                self.assertFalse(capture['is_error']);self.assertTrue(str(capture['metadata']['spill_path']).startswith(str(temporary)))
-                self.assertFalse(pathlib.Path(capture['metadata']['spill_path']).exists())
+                capture=next(x for x in outcomes if 'spill_path' in x)
+                self.assertEqual(capture.get('exit_code',0),0);self.assertTrue(str(capture['spill_path']).startswith(str(temporary)))
+                self.assertFalse(pathlib.Path(capture['spill_path']).exists())
                 self.assertFalse(list(temporary.glob('codet-ephemeral-*')))
                 self.assertFalse((self.home/'tool-output').exists());self.assertFalse((self.home/'state.sqlite3').exists())
-                if 'background' not in prompt:self.assertIn('雪-output',outcomes[-1]['content'])
+                if 'background' not in prompt:self.assertIn('雪-output',outcomes[-1]['output'])
                 self.assertTrue((self.home/'config.toml').exists())
 
     def test_ephemeral_cancellation_closes_captures_before_removing_directory(self):
@@ -555,7 +573,7 @@ class CliTests(unittest.TestCase):
                 if mode=='line':wait_for(b'codet>')
                 received=b'';os.write(master,b'fixture-command\n');wait_for(b'fixture done')
                 tool=[m for m in self.server.requests[-1]['body']['messages'] if m['role']=='tool'][-1]
-                outcome=json.loads(tool['content']);self.assertTrue(outcome['is_error']);self.assertIn('\ufffd',outcome['content'])
+                outcome=tool['content'];self.assertIn('Tool error:',outcome);self.assertIn('\ufffd',outcome)
                 received=b'';os.write(master,b'simple\n');wait_for(b'fixture done')
                 os.write(master,b'/quit\n');deadline=time.monotonic()+6
                 while p.poll() is None and time.monotonic()<deadline:
@@ -654,7 +672,7 @@ class CliTests(unittest.TestCase):
         import pty,select
         for mode,answer in [('line','libcurl with OpenSSL'),('curses','2')]:
             master,slave=pty.openpty()
-            p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode,'fixture-question'],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+            p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode,'--permission-mode','plan','fixture-question'],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
             received=b''
             def wait_text(text):
                 nonlocal received
@@ -665,6 +683,29 @@ class CliTests(unittest.TestCase):
             try:
                 wait_text(b'Which library is available?');os.write(master,(answer+'\n').encode())
                 wait_text(b'question answered');os.write(master,b'/quit\n')
+                deadline=time.monotonic()+5
+                while p.poll() is None and time.monotonic()<deadline:
+                    if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+                self.assertEqual(p.poll(),0,repr(received))
+            finally:
+                if p.poll() is None:p.kill();p.wait()
+                os.close(master);os.close(slave)
+
+    def test_async_questions_and_sleep_wake_in_both_terminal_modes(self):
+        import pty,select
+        for mode,answer in [('line','libcurl'),('curses','libcurl')]:
+            master,slave=pty.openpty()
+            p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode,'fixture-async'],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+            received=b''
+            def wait_text(text):
+                nonlocal received
+                deadline=time.monotonic()+5
+                while text not in received and time.monotonic()<deadline:
+                    if select.select([master],[],[],.1)[0]:received+=os.read(master,65536)
+                self.assertIn(text,received)
+            try:
+                wait_text(b'Async library choice');os.write(master,(answer+'\n').encode())
+                wait_text(b'async reply received');os.write(master,b'/quit\n')
                 deadline=time.monotonic()+5
                 while p.poll() is None and time.monotonic()<deadline:
                     if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
