@@ -435,6 +435,7 @@ public:
         std::shared_ptr<Interaction> interaction = {},
         std::shared_ptr<ComputerBackend> computer = {}, std::shared_ptr<ImageBackend> images = {});
   Json schemas() const;
+  Json schemas(const Json &capabilities) const;
   void use_session(const std::string &id);
   ToolResult execute(const ToolCall &, const Cancellation &);
   std::string instructions() const;

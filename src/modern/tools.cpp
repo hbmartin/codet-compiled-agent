@@ -354,6 +354,9 @@ Json Tools::capabilities() const {
           {"image_input", image_input_enabled(config_)},
           {"image_codec", images_->available()},
           {"interactive", bool(question_ || interaction_)},
+          {"approvals", bool(approve_)},
+          {"questions", bool(question_)},
+          {"async_input", bool(interaction_)},
           {"os_sandbox", false}};
 }
 std::vector<std::string> Tools::take_input() {
@@ -371,23 +374,40 @@ void Tools::cancel_exec() noexcept {
     }
 }
 Json Tools::schemas() const {
+  return schemas(capabilities());
+}
+Json Tools::schemas(const Json &facts) const {
   Json out = Json::array();
   const bool planning = config_.permission_mode == "plan";
+  const auto desktop = facts.value("desktop", Json::object());
+  const bool pixels = facts.value("image_input", false) && facts.value("image_codec", false) &&
+                      desktop.value("framebuffer", false);
   for (const auto &d : tool_registry()) {
     if (d.availability == "plan" && !planning)
       continue;
     if (d.availability == "default" && planning)
       continue;
-    if (d.availability == "question" && (!planning || !question_))
+    if (d.availability == "question" && (!planning || !facts.value("questions", false)))
       continue;
-    if (d.availability == "interactive" && !interaction_)
+    if (d.availability == "interactive" && !facts.value("async_input", false))
       continue;
-    if (d.availability == "image" && (!image_input_enabled(config_) || !images_->available()))
+    if (d.availability == "image" &&
+        (!facts.value("image_input", false) || !facts.value("image_codec", false)))
       continue;
     if (d.availability.rfind("computer", 0) == 0 &&
-        !computer_->capabilities().value("available", false))
+        !desktop.value("available", false))
       continue;
-    if (d.availability == "computer_image" && !image_input_enabled(config_))
+    if ((d.availability == "computer_image" || d.name == "computer.move" ||
+         d.name == "computer.click" || d.name == "computer.drag" || d.name == "computer.scroll") &&
+        !pixels)
+      continue;
+    if ((d.name == "computer.perform_action" || d.name == "computer.set_value") &&
+        !desktop.value("accessibility", false))
+      continue;
+    if ((d.name == "computer.clipboard_read" || d.name == "computer.clipboard_write") &&
+        !desktop.value("clipboard", false))
+      continue;
+    if (d.name == "computer.applescript" && !desktop.value("applescript", false))
       continue;
     out.push_back({{"name", d.name}, {"description", d.description}, {"input_schema", d.schema}});
   }
@@ -1137,7 +1157,8 @@ std::string Tools::instructions() const {
       }
     }
   }
-  out += "\n# Available skills (read SKILL.md through exec_command)\n";
+  out += "\n# Available skills (read SKILL.md through " +
+         std::string(config_.permission_mode == "plan" ? "read_file" : "exec_command") + ")\n";
   count = 0;
   for (const auto &dir :
        std::vector<fs::path>{config_.cwd / ".codet/skills", config_.cwd / ".agents/skills",

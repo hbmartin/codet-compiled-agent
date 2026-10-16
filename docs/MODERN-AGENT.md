@@ -113,6 +113,11 @@ Session IDs are UUIDs. SQLite schema versions migrate forward; newer unknown ver
 
 See [Codex tool contracts and native Tiger computer use](CODEX-TOOLS.md) for the complete interface, permission behavior, image budgets, asynchronous interaction, compatibility break and native APIs. The model-facing surface uses exec_command/write_stdin, apply_patch, view_image, plans/questions and clock tools, plus a capability-gated computer namespace. Plan mode retains read_file inspection. Legacy utility/edit/task names and aliases are removed.
 
+The agent uses embedded per-model Codex instructions with Tiger-specific capabilities and
+authorization facts. See [captured prompt provenance, adaptations and compaction](PROMPTS.md).
+Small context settings must accommodate the full fixed prompt and tools; insufficient space
+produces a diagnostic instead of silently truncating instructions or repeatedly compacting.
+
 Instructions still load AGENTS.md/CLAUDE.md and bounded includes. Skills are listed with their paths and read using the active inspection tools. Markdown memory previews are bounded separately; explicit memory consolidation uses patches. Session/credential/permission controls remain application controls without an OS shell sandbox.
 
 Path rules are tool-specific and match normalized lexical/canonical aliases and rule-authored globs, resolving relative spellings and fixed symlink prefixes. Workspace and canonical filesystem prefixes are literal, including `[`, `*`, `?` and backslashes in workspace names. Parsed rule syntax is cached until allow/deny configuration changes; filesystem resolution is shared within one decision and refreshed for every operation. Leading wildcard rules such as `read_file(*secret*)` also cover matching paths outside the working directory, including added roots and bypass mode. Directory listings check each returned entry; a read_file rule does not restrict an approved exec_command shell command. Denials are checked before hooks and after input rewriting.

@@ -1,6 +1,7 @@
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/interaction.hpp"
+#include "codet/prompt.hpp"
 #include "codet/tool_registry.hpp"
 #include "core_contract.hpp"
 #include <future>
@@ -39,8 +40,10 @@ struct Images : ImageBackend {
 struct Desktop : ComputerBackend {
   std::vector<std::pair<std::string, Json>> calls;
   bool fail = false;
+  Json facts = {{"available", true},     {"backend", "test"}, {"framebuffer", true},
+                {"accessibility", true}, {"clipboard", true}, {"applescript", true}};
   Json capabilities() const override {
-    return {{"available", true}, {"backend", "test"}};
+    return facts;
   }
   DesktopResult invoke(const std::string &name, const Json &args, const Cancellation &c) override {
     c.check();
@@ -483,10 +486,14 @@ TEST_F(Contracts, CompactionRetainsReloadableImageReferences) {
   codet::Message second;
   second.role = "assistant";
   second.text = "earlier response";
+  second.images = {artifact};
   session.messages = {first, second};
   state.save(session);
-  config.context_tokens = 512;
   auto t = tools();
+  config.context_tokens =
+      (assemble_prompt(config, t.schemas(), t.capabilities(), t.instructions()).size() +
+       t.schemas().dump().size() + 1200) /
+      3;
   ScriptProvider provider;
   int summaries = 0;
   provider.next = [&](const auto &, const Json &schemas) {
@@ -503,6 +510,7 @@ TEST_F(Contracts, CompactionRetainsReloadableImageReferences) {
   EXPECT_EQ(agent.run(session, "continue", cancel).text, "done");
   EXPECT_GE(summaries, 1);
   ASSERT_FALSE(session.messages[0].images.empty());
+  EXPECT_EQ(session.messages[0].images.size(), 1u);
   EXPECT_EQ(session.messages[0].images[0].sha256, artifact.sha256);
 }
 struct FailingFiles : FileSystem {

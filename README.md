@@ -51,6 +51,7 @@ State lives under `CODET_HOME` or `~/.codet`. No existing Codex or Claurst files
 ## Documentation
 
 - [Codex tool contracts and native Tiger computer use](docs/CODEX-TOOLS.md)
+- [Captured Codex prompts and Tiger adaptations](docs/PROMPTS.md)
 - [Modern build, configuration, CLI and tools](docs/MODERN-AGENT.md)
 - [Modern static analysis and Ubuntu CI](docs/MODERN-ANALYSIS.md)
 - [Feature/reference/test ledger](docs/FEATURE-PORT.md)
