@@ -151,7 +151,7 @@ Json safe_json(const Json &value) {
   return value;
 }
 void report_diagnostic(const DiagnosticSink &sink, const std::string &message) {
-  const auto text = bounded_text(message, 65536);
+  const auto text = bounded_text(message, size_t{1024} * 1024);
   if (sink) {
     try {
       sink(text);
@@ -416,19 +416,27 @@ fs::path NativeFileSystem::canonical(const fs::path &p) const {
   return fs::weakly_canonical(fs::absolute(p));
 }
 namespace {
+[[noreturn]] void process_error(const char *operation) {
+  const auto code = errno;
+  const auto message = system_error(operation);
+  if (code == ENOMEM || code == EMFILE || code == ENFILE || code == ENOBUFS || code == EAGAIN)
+    throw ProcessResourceError(message);
+  throw Error(message);
+}
 class NativeProcessControl final : public ProcessControl {
 public:
   int watch(pid_t pid) override {
 #ifdef __APPLE__
     const int fd = ::kqueue();
     if (fd < 0)
-      throw Error(system_error("kqueue"));
+      process_error("kqueue");
     struct kevent event;
     EV_SET(&event, pid, EVFILT_PROC, EV_ADD | EV_ENABLE | EV_ONESHOT, NOTE_EXIT, 0, nullptr);
     if (::kevent(fd, &event, 1, nullptr, 0, nullptr) < 0) {
-      const auto message = system_error("register process exit");
+      const auto code = errno;
       ::close(fd);
-      throw Error(message);
+      errno = code;
+      process_error("register process exit");
     }
     (void)::fcntl(fd, F_SETFD, FD_CLOEXEC);
     return fd;
@@ -445,8 +453,12 @@ public:
     const int count = ::kevent(observer, nullptr, 0, &event, 1, &immediate);
     if (count < 0 && errno == EINTR)
       return false;
-    if (count < 0 || (count && (event.flags & EV_ERROR)))
-      throw Error("Cannot observe owned process exit");
+    if (count < 0)
+      process_error("observe owned process exit");
+    if (count && (event.flags & EV_ERROR)) {
+      errno = static_cast<int>(event.data);
+      process_error("observe owned process exit");
+    }
     return count > 0 && (event.fflags & NOTE_EXIT);
 #else
     (void)observer;
@@ -456,7 +468,7 @@ public:
         return false;
       if (errno == ECHILD)
         throw ProcessOwnershipLost(system_error("observe child"));
-      throw Error(system_error("observe child"));
+      process_error("observe child");
     }
     return info.si_pid == pid;
 #endif
@@ -468,7 +480,7 @@ public:
       if (target < 0 && errno == EPERM)
         return;
 #endif
-      throw Error(system_error("signal owned process"));
+      process_error("signal owned process");
     }
   }
   int reap(pid_t pid) override {
@@ -480,7 +492,7 @@ public:
     if (result < 0 && errno == ECHILD)
       throw ProcessOwnershipLost("Owned child is no longer available for reaping");
     if (result != pid)
-      throw Error(system_error("reap child"));
+      process_error("reap child");
     return status;
   }
 };
@@ -496,6 +508,8 @@ struct NativeProcesses::Job {
   ProcessResult result;
   std::chrono::steady_clock::time_point began = std::chrono::steady_clock::now();
   bool done = false, retain = true, exit_observed = false;
+  bool cleanup_required = false;
+  std::exception_ptr failure;
   std::optional<int> termination_status;
   std::string error, reported_error;
   ~Job() {
@@ -517,7 +531,7 @@ NativeProcesses::~NativeProcesses() {
 void NativeProcesses::shutdown() {
   for (auto &j : jobs_) {
     try {
-      stop(j.first);
+      stop_owned(*j.second);
     } catch (...) {
       try {
         std::string detail = "Unknown exception";
@@ -741,7 +755,7 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
     throw;
   }
 }
-void NativeProcesses::collect(Job &job) {
+void NativeProcesses::drain(Job &job) {
   const auto drain = [&](int fd, std::string &output, bool stderr_stream) {
     char buffer[8192];
     size_t drained = 0;
@@ -755,8 +769,7 @@ void NativeProcesses::collect(Job &job) {
       drained += count;
       job.result.total_output_bytes += count;
       if (job.spec.separate_stderr) {
-        const auto stdout_limit = job.spec.output_limit / 2;
-        const auto limit = stderr_stream ? job.spec.output_limit - stdout_limit : stdout_limit;
+        const auto limit = job.spec.output_limit;
         const auto keep = std::min(count, limit - output.size());
         output.append(buffer, keep);
         if (stderr_stream)
@@ -771,6 +784,9 @@ void NativeProcesses::collect(Job &job) {
   };
   drain(job.fd, job.result.output, false);
   drain(job.stderr_fd, job.result.stderr_output, true);
+}
+void NativeProcesses::collect(Job &job) {
+  // Observation is independent of capture: stop_owned can still terminate after either fails.
   if (!job.done) {
     try {
       job.exit_observed = job.exit_observed || control_->exited(job.pid, job.observer);
@@ -781,6 +797,8 @@ void NativeProcesses::collect(Job &job) {
     if (job.exit_observed && !job.done)
       finish(job);
   }
+  if (!job.done)
+    drain(job);
   job.result.running = !job.done;
 }
 size_t NativeProcesses::retained_output_bytes() const {
@@ -818,31 +836,39 @@ void NativeProcesses::prune() {
 }
 void NativeProcesses::refresh() {
   std::vector<std::string> ids;
-  ids.reserve(jobs_.size());
   for (const auto &job : jobs_)
     if (!job.second->done)
       ids.push_back(job.first);
   for (const auto &id : ids) {
+    auto &job = *jobs_.at(id);
     try {
-      (void)observe(id);
-    } catch (const Error &error) {
-      if (error.code == 130)
-        throw;
-      auto &job = *jobs_.at(id);
+      if (job.cleanup_required)
+        stop_owned(job);
+      else
+        (void)observe(id);
+    } catch (const std::exception &) {
+      record_error(id, job, std::current_exception());
       if (job.reported_error != job.error) {
         job.reported_error = job.error;
         report_diagnostic(diagnostics_, job.error);
       }
     }
   }
+  for (auto it = jobs_.begin(); it != jobs_.end();) {
+    if (it->second->done && !it->second->retain)
+      it = jobs_.erase(it);
+    else
+      ++it;
+  }
   prune();
 }
 std::vector<ProcessStatus> NativeProcesses::list() {
   refresh();
   std::vector<ProcessStatus> out;
-  out.reserve(jobs_.size());
   for (const auto &job : jobs_)
-    out.push_back({job.first, !job.second->done, job.second->result.exit_code, job.second->error});
+    if (job.second->retain)
+      out.push_back(
+          {job.first, !job.second->done, job.second->result.exit_code, job.second->error});
   return out;
 }
 void NativeProcesses::finish(Job &job, bool ownership_lost) {
@@ -871,10 +897,16 @@ void NativeProcesses::finish(Job &job, bool ownership_lost) {
                      : job.termination_status.value_or(WIFEXITED(status) ? WEXITSTATUS(status)
                                                                          : 128 + WTERMSIG(status));
   job.result.running = false;
-  collect(job);
-  if (job.result.capture)
-    job.result.capture->finish();
-  else {
+  // Ownership is already invalidated. Capture failure cannot leave descriptors open.
+  std::exception_ptr capture_failure;
+  try {
+    drain(job);
+    if (job.result.capture)
+      job.result.capture->finish();
+  } catch (...) {
+    capture_failure = std::current_exception();
+  }
+  if (!job.result.capture) {
     std::string(job.result.output).swap(job.result.output);
     std::string(job.result.stderr_output).swap(job.result.stderr_output);
   }
@@ -886,16 +918,43 @@ void NativeProcesses::finish(Job &job, bool ownership_lost) {
     ::close(job.stderr_fd);
     job.stderr_fd = -1;
   }
+  if (capture_failure)
+    std::rethrow_exception(capture_failure);
 }
 void NativeProcesses::terminate(Job &job, int status) {
   job.termination_status = status;
   finish(job);
 }
-[[noreturn]] void NativeProcesses::job_error(const std::string &id, Job &job, const Error &error) {
-  if (error.code == 130)
-    throw error;
-  job.error = bounded_text("Job " + id + ": " + error.what(), 2048);
-  throw Error(job.error, error.code);
+void NativeProcesses::clear_error(Job &job) {
+  job.error.clear();
+  job.reported_error.clear();
+  job.failure = nullptr;
+}
+void NativeProcesses::record_error(const std::string &id, Job &job,
+                                   const std::exception_ptr &error) {
+  try {
+    std::rethrow_exception(error);
+  } catch (const std::bad_alloc &) {
+    throw;
+  } catch (const ProcessResourceError &) {
+    throw;
+  } catch (const Error &e) {
+    if (e.code == 130)
+      throw;
+    job.error = bounded_text("Job " + id + ": " + e.what(), 2048);
+  } catch (const std::exception &e) {
+    job.error = bounded_text("Job " + id + ": " + e.what(), 2048);
+  }
+  job.failure = error;
+}
+[[noreturn]] void NativeProcesses::throw_failure(const Job &job) const {
+  try {
+    std::rethrow_exception(job.failure);
+  } catch (const Error &e) {
+    throw Error(job.error, e.code);
+  } catch (const std::exception &) {
+    throw Error(job.error);
+  }
 }
 NativeProcesses::Job &NativeProcesses::observe(const std::string &id) {
   auto it = jobs_.find(id);
@@ -906,10 +965,11 @@ NativeProcesses::Job &NativeProcesses::observe(const std::string &id) {
     collect(job);
     if (!job.done && control_->now() >= job.began + std::chrono::milliseconds(job.spec.timeout_ms))
       terminate(job, 124);
-    job.error.clear();
-    job.reported_error.clear();
-  } catch (const Error &error) {
-    job_error(id, job, error);
+    clear_error(job);
+  } catch (const std::exception &) {
+    record_error(id, job, std::current_exception());
+    // Internal callers retain original exception types; public boundaries add handle context.
+    std::rethrow_exception(job.failure);
   }
   return job;
 }
@@ -926,48 +986,101 @@ ProcessResult NativeProcesses::publish(Job &job) {
   return result;
 }
 ProcessResult NativeProcesses::poll(const std::string &id) {
-  auto result = publish(observe(id));
-  prune();
-  return result;
-}
-void NativeProcesses::stop(const std::string &id) {
-  auto it = jobs_.find(id);
-  if (it == jobs_.end())
+  const auto it = jobs_.find(id);
+  if (it == jobs_.end() || !it->second->retain)
     throw Error("Unknown or expired job: " + id);
-  Job &job = *it->second;
+  try {
+    auto result = publish(observe(id));
+    prune();
+    return result;
+  } catch (const std::exception &) {
+    record_error(id, *it->second, std::current_exception());
+    throw_failure(*it->second);
+  }
+}
+bool NativeProcesses::observe_cleanup(Job &job, std::exception_ptr &failure) {
   try {
     collect(job);
-    job.error.clear();
-    job.reported_error.clear();
-    if (job.done)
-      return;
+  } catch (...) {
+    auto current = std::current_exception();
+    bool propagate = false;
+    try {
+      std::rethrow_exception(current);
+    } catch (const std::bad_alloc &) {
+      propagate = true;
+    } catch (const ProcessResourceError &) {
+      propagate = true;
+    } catch (const Error &e) {
+      propagate = e.code == 130;
+    } catch (const std::exception &) { // Job-local observation failure; preserve the first cause.
+      propagate = false;
+    } catch (...) {
+      propagate = true;
+    }
+    if (!failure || propagate)
+      failure = current;
+  }
+  return job.done;
+}
+void NativeProcesses::stop_owned(Job &job) {
+  if (job.done) {
+    clear_error(job);
+    return;
+  }
+  std::exception_ptr observation_failure;
+  observe_cleanup(job, observation_failure);
+  if (!job.done) {
+    job.cleanup_required = true;
     const auto deadline = job.began + std::chrono::milliseconds(job.spec.timeout_ms);
-    if (control_->now() >= deadline) {
-      terminate(job, 124);
-      return;
-    }
-    control_->signal(-job.pid, SIGTERM);
-    for (int i = 0; i < 10 && !job.done && control_->now() < deadline; ++i) {
-      collect(job);
-      if (!job.done)
+    if (control_->now() < deadline) {
+      control_->signal(-job.pid, SIGTERM);
+      for (int i = 0; i < 10 && !job.done && control_->now() < deadline; ++i) {
+        if (observe_cleanup(job, observation_failure))
+          break;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+      observe_cleanup(job, observation_failure);
     }
-    // A child can exit during the last grace sleep; observe before forcing termination.
-    collect(job);
     if (!job.done) {
       if (control_->now() >= deadline)
         terminate(job, 124);
       else
         finish(job);
     }
-    job.error.clear();
-  } catch (const Error &error) {
-    job_error(id, job, error);
+  }
+  clear_error(job);
+  if (observation_failure) {
+    try {
+      std::rethrow_exception(observation_failure);
+    } catch (const std::bad_alloc &) {
+      throw;
+    } catch (const ProcessResourceError &) {
+      throw;
+    } catch (const Error &e) {
+      if (e.code == 130)
+        throw;
+      report_diagnostic(diagnostics_,
+                        std::string("Process observation during cleanup: ") + e.what());
+    } catch (const std::exception &e) {
+      report_diagnostic(diagnostics_,
+                        std::string("Process observation during cleanup: ") + e.what());
+    }
+  }
+}
+void NativeProcesses::stop(const std::string &id) {
+  auto it = jobs_.find(id);
+  if (it == jobs_.end() || !it->second->retain)
+    throw Error("Unknown or expired job: " + id);
+  try {
+    stop_owned(*it->second);
+  } catch (const std::exception &) {
+    record_error(id, *it->second, std::current_exception());
+    throw_failure(*it->second);
   }
 }
 void NativeProcesses::write(const std::string &id, const std::string &input) {
   const auto it = jobs_.find(id);
-  if (it == jobs_.end() || it->second->done || !it->second->spec.pty)
+  if (it == jobs_.end() || !it->second->retain || it->second->done || !it->second->spec.pty)
     throw Error("Input requires a running PTY job");
   if (input.size() > 65536)
     throw Error("PTY input limit exceeded");
@@ -1006,15 +1119,14 @@ ProcessResult NativeProcesses::run(const ProcessSpec &spec, const Cancellation &
   } catch (...) {
     try {
       if (jobs_.count(id))
-        stop(id);
+        stop_owned(*jobs_.at(id));
     } catch (...) { // NOLINT(bugprone-empty-catch): Preserve the original run failure.
     }
     const auto found = jobs_.find(id);
     if (found != jobs_.end()) {
       if (found->second->done)
         jobs_.erase(found);
-      else
-        found->second->retain = true; // Failed cleanup retains ownership and active capacity.
+      // Failed internal cleanup remains private and owned for subsequent retries.
     }
     throw;
   }

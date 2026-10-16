@@ -2,6 +2,7 @@
 // C++ translation; see licenses/codex-APACHE-2.0.txt and codex-NOTICE.txt.
 #include "codet/patch.hpp"
 #include <algorithm>
+#include <sstream>
 
 namespace codet {
 namespace {
@@ -100,6 +101,17 @@ std::optional<size_t> seek(const std::vector<Line> &source, const std::vector<st
   return {};
 }
 } // namespace
+std::vector<std::string> patch_lines(const std::string &text) {
+  std::istringstream input(text);
+  std::vector<std::string> result;
+  std::string line;
+  while (std::getline(input, line)) {
+    if (!line.empty() && line.back() == '\r')
+      line.pop_back();
+    result.push_back(line);
+  }
+  return result;
+}
 std::string patch_update(const std::string &text, const std::vector<std::string> &patch,
                          size_t &index, const Cancellation &cancel) {
   std::vector<Line> source;

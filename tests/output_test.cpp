@@ -6,6 +6,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <thread>
 #include <unistd.h>
 using namespace codet;
@@ -201,6 +202,8 @@ TEST_F(OutputReview, BadEntriesDoNotDisableHealthyCaptureAndLegacyFilesCount) {
   fs::create_directory(dir / "capture-directory.txt");
   const auto legacy = dir / (unique_id() + ".txt");
   files.atomic_write(legacy, std::string(20, 'l'), true);
+  const timeval old_times[2] = {{1, 0}, {1, 0}};
+  ASSERT_EQ(::utimes(legacy.c_str(), old_times), 0);
   std::vector<std::string> diagnostics;
   auto store = std::make_shared<CaptureStore>(dir, 8, 32, 1,
                                               [&](const auto &s) { diagnostics.push_back(s); });
@@ -328,7 +331,7 @@ TEST_F(OutputReview, InvocationCaptureRootAllowsReadPagingButNotWritesOrDeniedRe
   EXPECT_TRUE(
       tools.execute({"write", "Write", {{"file_path", path}, {"content", "changed"}}}, cancel)
           .error);
-  config.deny = {"Read(*capture-*)"};
+  config.set_deny({"Read(*capture-*)"});
   EXPECT_TRUE(tools.execute({"denied", "Read", {{"file_path", path}}}, cancel).error);
 }
 TEST_F(OutputReview, ActiveCaptureQuotaCannotBeStolenByAnotherCapture) {

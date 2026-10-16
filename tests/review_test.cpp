@@ -40,7 +40,7 @@ struct ReviewFixture : Test {
   }
 };
 TEST_F(ReviewFixture, ScopedShellAllowsRequireLiteralSimpleCommands) {
-  config.allow = {"Bash(git *)", "TaskCreate(git *)"};
+  config.set_allow({"Bash(git *)", "TaskCreate(git *)"});
   Permissions permissions(config, files);
   for (const auto &tool : {"Bash", "TaskCreate"}) {
     EXPECT_EQ(permissions.decide({tool, "git status --short", {}, true}), Decision::allow);
@@ -51,18 +51,18 @@ TEST_F(ReviewFixture, ScopedShellAllowsRequireLiteralSimpleCommands) {
                 Decision::ask)
           << suffix;
   }
-  config.allow = {"Bash(*)"};
+  config.set_allow({"Bash(*)"});
   for (const auto &command : {"if true", "while true", "VAR=value true", "! true", "time true"})
     EXPECT_EQ(permissions.decide({"Bash", command, {}, true}), Decision::ask);
 }
 TEST_F(ReviewFixture, ExplicitGrantsBypassDenialsAndPlanKeepTheirMeanings) {
   Permissions permissions(config, files);
-  config.allow = {"Bash"};
+  config.set_allow({"Bash"});
   EXPECT_EQ(permissions.decide({"Bash", "printf a; printf b", {}, true}), Decision::allow);
-  config.allow.clear();
+  config.set_allow({});
   config.permission_mode = "bypass";
   EXPECT_EQ(permissions.decide({"Bash", "printf a; printf b", {}, true}), Decision::allow);
-  config.deny = {"Bash(printf*)"};
+  config.set_deny({"Bash(printf*)"});
   EXPECT_EQ(permissions.decide({"Bash", "printf a; printf b", {}, true}), Decision::deny);
   config.permission_mode = "plan";
   EXPECT_EQ(permissions.decide({"TaskCreate", "true", {}, true}), Decision::deny);

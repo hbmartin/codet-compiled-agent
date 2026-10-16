@@ -162,8 +162,8 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
     c.stream_idle_timeout = data.value("stream_idle_timeout_seconds", c.stream_idle_timeout);
     c.project_doc_max_bytes = data.value("project_doc_max_bytes", c.project_doc_max_bytes);
     c.memory_context_max_bytes = data.value("memory_context_max_bytes", c.memory_context_max_bytes);
-    c.allow = data.value("allow", c.allow);
-    c.deny = data.value("deny", c.deny);
+    c.set_allow(data.value("allow", c.rules().allow));
+    c.set_deny(data.value("deny", c.rules().deny));
     c.hooks = data.value("hooks", Json::object());
     c.keybindings = data.value("keybindings", Json::object());
     if (data.contains("providers"))

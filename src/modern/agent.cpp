@@ -1,5 +1,6 @@
 #include "codet/core.hpp"
 #include "codet/output.hpp"
+#include "codet/prompt.hpp"
 #include <iostream>
 #include <nlohmann/json-schema.hpp>
 #include <set>
@@ -63,19 +64,21 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
     if (submitted.blocked || submitted.stopped)
       throw Error("Prompt blocked by hook: " + submitted.reason);
     const auto expanded = safe_text(tools_.expand_command(prompt));
-    Session candidate = session;
+    std::vector<Message> additions;
+    additions.reserve(2);
     if (!submitted.additional_context.empty()) {
       Message context;
       context.role = "system";
       context.text = "UserPromptSubmit hook context:\n" + submitted.additional_context;
-      candidate.messages.push_back(context);
+      additions.push_back(std::move(context));
     }
     Message user;
     user.role = "user";
     user.text = expanded;
-    candidate.messages.push_back(user);
-    state_.save(candidate);
-    session = std::move(candidate);
+    additions.push_back(user);
+    PromptAppend pending(session, std::move(additions));
+    state_.save(session);
+    pending.commit();
     const std::string system =
         "You are Codet, a single-agent terminal coding assistant. Complete the user's request "
         "using tools. Read existing files before editing. Respect permission denials; do not retry "

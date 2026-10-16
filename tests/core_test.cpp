@@ -93,8 +93,8 @@ TEST_F(Fixture, AtomicWritesPreserveModeAndLeaveNoScratchFiles) {
 }
 TEST_F(Fixture, PermissionsDenyWinsOverAllowAndBypass) {
   config.permission_mode = "bypass";
-  config.allow = {"*"};
-  config.deny = {"Bash(rm*)"};
+  config.set_allow({"*"});
+  config.set_deny({"Bash(rm*)"});
   Permissions p(config, files);
   EXPECT_EQ(p.decide({"Bash", "rm -rf x", std::nullopt, true}), Decision::deny);
   EXPECT_EQ(p.decide({"Read", "a", config.cwd / "a", false}), Decision::allow);
@@ -281,7 +281,7 @@ TEST_F(Fixture, ApprovalHooksCannotOverridePlanModeOrExplicitDenials) {
   EXPECT_TRUE(
       plan.execute(call("Write", {{"file_path", "plan"}, {"content", "no"}}), cancel).error);
   config.permission_mode = "bypass";
-  config.deny = {"Write"};
+  config.set_deny({"Write"});
   Tools denied(config, files, processes, http, clock);
   EXPECT_TRUE(
       denied.execute(call("Write", {{"file_path", "denied"}, {"content", "no"}}), cancel).error);
@@ -673,7 +673,7 @@ TEST_F(Fixture, BatchCanApplySeveralEditsToOneFileWithOneApproval) {
   EXPECT_EQ(approvals, 1u);
 }
 TEST_F(Fixture, UniversalDenyRulesCoverUtilityTools) {
-  config.deny = {"Sleep", "Memory", "EnterPlanMode"};
+  config.set_deny({"Sleep", "Memory", "EnterPlanMode"});
   Tools tools(config, files, processes, http, clock);
   EXPECT_TRUE(tools.execute(call("Sleep", {{"seconds", 0}}), cancel).error);
   EXPECT_TRUE(tools.execute(call("Memory", {{"action", "list"}}), cancel).error);

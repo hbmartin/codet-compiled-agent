@@ -168,7 +168,7 @@ TEST_F(Followup, ShellSpoolPreservesOutputAndSupportsReadPaging) {
       {"page", "Read", {{"file_path", path.string()}, {"offset", 290}, {"limit", 5}}}, cancel);
   ASSERT_FALSE(page.error) << page.content;
   EXPECT_THAT(page.content, HasSubstr("line-288"));
-  config.deny = {"Read(*capture-*)"};
+  config.set_deny({"Read(*capture-*)"});
   EXPECT_TRUE(tools.execute({"denied", "Read", {{"file_path", path.string()}}}, cancel).error);
 }
 TEST_F(Followup, SmallCommandsDoNotCreateCaptureFiles) {

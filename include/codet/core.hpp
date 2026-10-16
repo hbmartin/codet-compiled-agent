@@ -1,6 +1,7 @@
 #pragma once
 #include <atomic>
 #include <chrono>
+#include <exception>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -148,11 +149,16 @@ class NativeProcesses final : public Processes {
   uint64_t completed_ = 0;
   DiagnosticSink diagnostics_;
   void collect(Job &);
+  void drain(Job &);
+  void stop_owned(Job &);
+  bool observe_cleanup(Job &, std::exception_ptr &);
+  void clear_error(Job &);
+  void record_error(const std::string &, Job &, const std::exception_ptr &);
+  [[noreturn]] void throw_failure(const Job &) const;
   Job &observe(const std::string &);
   ProcessResult publish(Job &);
   void finish(Job &, bool ownership_lost = false);
   void terminate(Job &, int status);
-  [[noreturn]] void job_error(const std::string &, Job &, const Error &);
   void refresh();
   void prune();
 
@@ -201,6 +207,9 @@ struct ProviderConfig {
 struct Selection {
   std::string provider, model;
 };
+struct PermissionRuleSet {
+  std::vector<std::string> allow, deny;
+};
 struct Config {
   fs::path home, cwd, capture_root;
   std::string provider = "codex", model, permission_mode = "default", approval = "on-request";
@@ -210,7 +219,35 @@ struct Config {
   int request_timeout = 0, connect_timeout = 20, stream_idle_timeout = 120;
   size_t project_doc_max_bytes = 32768, memory_context_max_bytes = 8900;
   std::map<std::string, ProviderConfig> providers;
-  std::vector<std::string> allow, deny;
+
+private:
+  std::shared_ptr<const PermissionRuleSet> rules_ = std::make_shared<const PermissionRuleSet>();
+
+public:
+  const PermissionRuleSet &rules() const {
+    return *rules_;
+  }
+  const std::shared_ptr<const PermissionRuleSet> &rule_snapshot() const {
+    return rules_;
+  }
+  void set_allow(std::vector<std::string> values) {
+    rules_ = std::make_shared<const PermissionRuleSet>(
+        PermissionRuleSet{std::move(values), rules_->deny});
+  }
+  void set_deny(std::vector<std::string> values) {
+    rules_ = std::make_shared<const PermissionRuleSet>(
+        PermissionRuleSet{rules_->allow, std::move(values)});
+  }
+  void add_allowed(std::string value) {
+    auto values = rules_->allow;
+    values.push_back(std::move(value));
+    set_allow(std::move(values));
+  }
+  void add_denied(std::string value) {
+    auto values = rules_->deny;
+    values.push_back(std::move(value));
+    set_deny(std::move(values));
+  }
   std::vector<fs::path> roots;
   Json hooks = Json::object(), keybindings = Json::object();
   bool trust_project = false;
@@ -312,7 +349,10 @@ class Permissions {
 
 public:
   Permissions(const Config &c, const FileSystem &f) : config_(c), files_(f) {}
+  struct Context;
+  std::shared_ptr<Context> context() const;
   Decision decide(const PermissionRequest &) const;
+  Decision decide(const PermissionRequest &, const std::shared_ptr<Context> &) const;
   bool has_scoped_denials(const std::string &tool) const;
 };
 using Approver = std::function<bool(const PermissionRequest &)>;
@@ -332,6 +372,7 @@ struct HookOutcome {
   std::optional<Decision> permission;
   std::vector<std::string> diagnostics;
 };
+class DiagnosticBuffer;
 class Tools {
   const Config &config_;
   FileSystem &files_;
@@ -361,7 +402,8 @@ public:
   ToolResult execute(const ToolCall &, const Cancellation &);
   std::string instructions() const;
   std::string expand_command(const std::string &) const;
-  HookOutcome run_hooks(const std::string &, const Json &, const Cancellation &, int budget_ms = 0);
+  HookOutcome run_hooks(const std::string &, const Json &, const Cancellation &, int budget_ms = 0,
+                        DiagnosticBuffer *diagnostics = nullptr);
 };
 using EventSink = std::function<void(const Json &)>;
 struct RunResult {

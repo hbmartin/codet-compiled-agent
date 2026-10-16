@@ -75,6 +75,12 @@ struct RulePaths {
   std::map<fs::path, fs::path> canonical_cache;
   fs::path requested, target;
   std::vector<fs::path> literal_roots;
+  std::map<std::string, std::vector<std::string>> patterns;
+  void reset() {
+    resolved = false;
+    requested.clear();
+    target.clear();
+  }
   bool resolved = false;
   RulePaths(const Config &c, const FileSystem &f) : config(c), files(f) {}
   fs::path canonical(const fs::path &p) {
@@ -101,7 +107,16 @@ struct RulePaths {
     if (!r.path)
       return !fnmatch(rule.pattern.c_str(), r.target.c_str(), 0);
     resolve(r);
-    auto pattern = rule.pattern;
+    const auto cached = patterns.find(rule.pattern);
+    if (cached != patterns.end()) {
+      for (const auto &candidate : cached->second)
+        if (!fnmatch(candidate.c_str(), r.target.c_str(), 0) ||
+            !fnmatch(candidate.c_str(), requested.c_str(), 0) ||
+            !fnmatch(candidate.c_str(), target.c_str(), 0))
+          return true;
+      return false;
+    }
+    auto pattern = fs::path(rule.pattern).lexically_normal().string();
     auto base = fs::absolute(config.cwd).lexically_normal();
     // Configured filesystem roots are literal even when their names contain glob syntax.
     if (literal_roots.empty()) {
@@ -125,12 +140,29 @@ struct RulePaths {
         break;
       }
     }
+    if (!known_prefix && fs::path(pattern).is_absolute()) {
+      // Recognize filesystem-equivalent root aliases literally, including metacharacters.
+      for (auto alias = fs::path(pattern); !alias.empty();) {
+        if (std::any_of(literal_roots.begin(), literal_roots.end(),
+                        [&](const auto &root) { return canonical(alias) == canonical(root); })) {
+          known_prefix = true;
+          base = alias;
+          pattern = pattern.size() == alias.string().size()
+                        ? ""
+                        : pattern.substr(alias.string().size() + 1);
+          break;
+        }
+        auto parent = alias.parent_path();
+        if (parent == alias)
+          break;
+        alias = parent;
+      }
+    }
+    std::vector<std::string> candidates;
     // Unanchored authored globs may match absolute aliases outside cwd. Known filesystem
     // prefixes must never participate in raw glob matching (including allow rules).
-    if (!known_prefix && (!fnmatch(pattern.c_str(), r.target.c_str(), 0) ||
-                          !fnmatch(pattern.c_str(), requested.c_str(), 0) ||
-                          !fnmatch(pattern.c_str(), target.c_str(), 0)))
-      return true;
+    if (!known_prefix)
+      candidates.push_back(pattern);
     const auto wildcard = first_wildcard(pattern);
     fs::path prefix;
     std::string suffix;
@@ -151,10 +183,14 @@ struct RulePaths {
           candidate += '/';
         candidate += suffix;
       }
-      if (!fnmatch(candidate.c_str(), requested.c_str(), 0) ||
+      candidates.push_back(std::move(candidate));
+    }
+    patterns.emplace(rule.pattern, candidates);
+    for (const auto &candidate : candidates)
+      if (!fnmatch(candidate.c_str(), r.target.c_str(), 0) ||
+          !fnmatch(candidate.c_str(), requested.c_str(), 0) ||
           !fnmatch(candidate.c_str(), target.c_str(), 0))
         return true;
-    }
     return false;
   }
 };
@@ -263,18 +299,17 @@ RenderedOutput annotated(const OutputSnapshot &data, size_t limit, const std::st
 }
 } // namespace
 struct Permissions::Rules {
-  std::vector<std::string> allow_source, deny_source;
+  std::shared_ptr<const PermissionRuleSet> source;
   std::vector<ParsedRule> allow, deny;
 };
 void Permissions::refresh_rules() const {
-  if (rules_ && rules_->allow_source == config_.allow && rules_->deny_source == config_.deny)
+  if (rules_ && rules_->source == config_.rule_snapshot())
     return;
   auto next = std::make_shared<Rules>();
-  next->allow_source = config_.allow;
-  next->deny_source = config_.deny;
-  for (const auto &rule : config_.allow)
+  next->source = config_.rule_snapshot();
+  for (const auto &rule : config_.rules().allow)
     next->allow.emplace_back(rule);
-  for (const auto &rule : config_.deny)
+  for (const auto &rule : config_.rules().deny)
     next->deny.emplace_back(rule);
   rules_ = std::move(next);
 }
@@ -283,9 +318,28 @@ bool Permissions::has_scoped_denials(const std::string &tool) const {
   return std::any_of(rules_->deny.begin(), rules_->deny.end(),
                      [&](const auto &rule) { return rule.scoped && rule.applies(tool); });
 }
+struct Permissions::Context {
+  RulePaths paths;
+  std::shared_ptr<const PermissionRuleSet> source;
+  Context(const Config &c, const FileSystem &f) : paths(c, f), source(c.rule_snapshot()) {}
+};
+std::shared_ptr<Permissions::Context> Permissions::context() const {
+  return std::make_shared<Context>(config_, files_);
+}
 Decision Permissions::decide(const PermissionRequest &r) const {
+  return decide(r, context());
+}
+Decision Permissions::decide(const PermissionRequest &r,
+                             const std::shared_ptr<Context> &ctx) const {
   refresh_rules();
-  RulePaths paths(config_, files_);
+  auto &paths = ctx->paths;
+  if (ctx->source != config_.rule_snapshot()) {
+    paths.canonical_cache.clear();
+    paths.literal_roots.clear();
+    paths.patterns.clear();
+    ctx->source = config_.rule_snapshot();
+  }
+  paths.reset();
   for (const auto &rule : rules_->deny)
     if (paths.matches(rule, r))
       return Decision::deny;
@@ -480,7 +534,7 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
         for (const auto &edit : candidate.arguments.at("edits"))
           check(edit.at("file_path"));
       } else if (candidate.name == "ApplyPatch" && candidate.arguments.contains("patch")) {
-        for (const auto &line : lines(candidate.arguments.at("patch")))
+        for (const auto &line : patch_lines(candidate.arguments.at("patch")))
           for (const auto &prefix :
                {"*** Update File: ", "*** Add File: ", "*** Delete File: ", "*** Move to: "})
             if (line.rfind(prefix, 0) == 0)
@@ -705,10 +759,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
         edit(e);
     } else {
       const auto patch = a.at("patch").get<std::string>();
-      auto ls = lines(patch);
-      for (auto &line : ls)
-        if (!line.empty() && line.back() == '\r')
-          line.pop_back();
+      auto ls = patch_lines(patch);
       const auto trim = [](const std::string &line) {
         const auto first = line.find_first_not_of(" \t\r");
         return first == std::string::npos
@@ -867,8 +918,10 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     if (pattern.size() > 4096)
       throw Error("Pattern too large");
     const bool scoped_denials = permissions_.has_scoped_denials(name);
+    const auto context = permissions_.context();
     const auto denied = [&](const fs::path &p) {
-      return scoped_denials && permissions_.decide({name, p.string(), p, false}) == Decision::deny;
+      return scoped_denials &&
+             permissions_.decide({name, p.string(), p, false}, context) == Decision::deny;
     };
     std::vector<fs::path> candidates;
     if (fs::is_regular_file(start))
@@ -903,13 +956,14 @@ ToolResult Tools::execute_inner(const ToolCall &call, const Cancellation &cancel
     std::string out;
     for (const auto &p : candidates) {
       cancel.check();
-      if (permissions_.decide({name, p.string(), p, false}) == Decision::deny)
-        continue;
-      const auto relative = fs::relative(p, config_.cwd).string();
+      const auto relative = p.lexically_relative(config_.cwd).string();
       if (fnmatch(pattern.c_str(), relative.c_str(), 0) == 0 ||
           (pattern.rfind("**/", 0) == 0 &&
            fnmatch(pattern.substr(3).c_str(), relative.c_str(), 0) == 0))
-        out += relative + "\n";
+        if (!fs::is_symlink(p) && within(p, start) &&
+            (!scoped_denials ||
+             permissions_.decide({name, p.string(), p, false}, context) != Decision::deny))
+          out += relative + "\n";
       if (out.size() > config_.tool_output_limit * 2)
         break;
     }
