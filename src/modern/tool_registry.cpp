@@ -42,9 +42,10 @@ const std::vector<ToolDefinition> &tool_registry() {
     add("write_stdin",
         "Writes characters to an existing unified exec session and returns recent output. Empty "
         "chars polls. Nonempty input waits 250 ms by default; empty polls wait at least 5000 ms; "
-        "cap 300000 ms.",
+        "cap 300000 ms. close_stdin sends EOF to pipe sessions after chars; unsupported for PTYs.",
         {{"session_id", field("number")},
          {"chars", field("string")},
+         {"close_stdin", field("boolean")},
          {"yield_time_ms", field("number")},
          {"max_output_tokens", field("number")}},
         {"session_id"}, ToolHandler::stdin_write, false, "", "Bash", "command_execution");
@@ -110,7 +111,9 @@ const std::vector<ToolDefinition> &tool_registry() {
         "belong to the returned snapshot_id.",
         {{"pid", field("integer")}}, {}, ToolHandler::computer, false, "computer");
     add("computer.screenshot",
-        "Capture a display or visible region. Returns pixels and a screenshot_id. Coordinates for "
+        "Capture a display or visible region. Choose display_id, window_id, or global region. "
+        "Window/region selects one display automatically; spans across displays are rejected. "
+        "Returns pixels and a screenshot_id. Coordinates for "
         "pointer tools refer to the returned image.",
         {{"display_id", field("integer")},
          {"window_id", str},
@@ -156,7 +159,10 @@ const std::vector<ToolDefinition> &tool_registry() {
         {"snapshot_id", "element_id", "action"}, ToolHandler::computer, true, "computer");
     add("computer.set_value",
         "Set an advertised settable accessibility attribute (default AXValue).",
-        {{"snapshot_id", str}, {"element_id", str}, {"attribute", str}, {"value", Json::object()}},
+        {{"snapshot_id", str},
+         {"element_id", str},
+         {"attribute", str},
+         {"value", {{"anyOf", Json::array({str, field("boolean"), num})}}}},
         {"snapshot_id", "element_id", "value"}, ToolHandler::computer, true, "computer");
     add("computer.activate_app", "Activate an observed application by PID.",
         {{"pid", field("integer")}}, {"pid"}, ToolHandler::computer, true, "computer");
@@ -210,6 +216,43 @@ void validate_tool_rules(const std::vector<std::string> &rules) {
           "Unknown or removed tool in permission rule: " + name +
               ". Use exec_command, apply_patch, read_file, or qualified computer/clock names.",
           2);
+  }
+}
+void validate_hook_matchers(const Json &hooks) {
+  if (!hooks.is_object())
+    throw Error("hooks must be an object", 2);
+  const std::set<std::string> removed = {"Read",
+                                         "Write",
+                                         "Edit",
+                                         "BatchEdit",
+                                         "Glob",
+                                         "TaskCreate",
+                                         "TaskList",
+                                         "TaskGet",
+                                         "TaskOutput",
+                                         "TaskStop",
+                                         "ApplyPatch",
+                                         "TodoWrite",
+                                         "AskUserQuestion",
+                                         "EnterPlanMode",
+                                         "ExitPlanMode",
+                                         "Sleep",
+                                         "Memory",
+                                         "Skill",
+                                         "WebFetch",
+                                         "WebSearch",
+                                         "Grep"};
+  for (auto event = hooks.begin(); event != hooks.end(); ++event) {
+    if (!event.value().is_array())
+      throw Error("Hook event must be an array: " + event.key(), 2);
+    if (event.key() != "PreToolUse" && event.key() != "PostToolUse" &&
+        event.key() != "PostToolUseFailure" && event.key() != "PermissionRequest")
+      continue;
+    for (const auto &hook : event.value())
+      if (removed.count(hook.value("matcher", "*")))
+        throw Error("Removed tool in hook matcher: " + hook.at("matcher").get<std::string>() +
+                        ". Use Bash for shell hooks, apply_patch, read_file, or computer names.",
+                    2);
   }
 }
 } // namespace codet

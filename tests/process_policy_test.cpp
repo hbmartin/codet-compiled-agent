@@ -46,6 +46,7 @@ struct BrokenObservation : ProcessControl {
   Failure failure = Failure::none;
   pid_t selected = -1;
   bool reap_failure = false;
+  size_t selected_reaps = 0;
   std::vector<std::pair<pid_t, int>> signals;
   int watch(pid_t pid) override {
     if (selected < 0)
@@ -70,6 +71,8 @@ struct BrokenObservation : ProcessControl {
     native->signal(pid, sig);
   }
   int reap(pid_t pid) override {
+    if (pid == selected)
+      ++selected_reaps;
     if (pid == selected && reap_failure)
       throw std::runtime_error("ordinary reap failure");
     return native->reap(pid);
@@ -169,6 +172,20 @@ TEST_F(Policies, FailedInternalCleanupIsPrivateAndConsumesCapacityUntilReaped) {
   for (const auto &id : public_jobs)
     owned.stop(id);
   EXPECT_EQ(owned.list().size(), 63u);
+}
+TEST_F(Policies, RoutineRefreshRetriesFailedCleanupWithoutAStopGraceLoop) {
+  auto control = std::make_shared<BrokenObservation>();
+  NativeProcesses owned(control);
+  control->reap_failure = true;
+  EXPECT_THROW(owned.run(command("exit 0"), cancel), std::runtime_error);
+  auto before = control->selected_reaps;
+  EXPECT_TRUE(owned.list().empty());
+  EXPECT_LE(control->selected_reaps - before, 2u);
+  before = control->selected_reaps;
+  const auto healthy = owned.start(command("sleep 30"), cancel);
+  EXPECT_LE(control->selected_reaps - before, 2u);
+  control->reap_failure = false;
+  owned.stop(healthy);
 }
 TEST_F(Policies, ForegroundFailureRetainsOriginalStandardException) {
   auto control = std::make_shared<BrokenObservation>();

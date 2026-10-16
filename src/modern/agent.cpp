@@ -17,6 +17,13 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
   session.provider = config_.provider;
   session.model = config_.model;
   tools_.use_session(session.id);
+  tools_.begin_input_turn(session.id);
+  struct InputTurn {
+    Tools &tools;
+    ~InputTurn() {
+      tools.end_input_turn();
+    }
+  } input_turn{tools_};
   state_.reconcile(session);
   std::unique_ptr<nlohmann::json_schema::json_validator> validator;
   if (!schema.is_null()) {
@@ -86,14 +93,16 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
     size_t requests = 0;
     while (requests < config_.max_turns) {
       cancel.check();
-      for (const auto &text : tools_.take_input()) {
+      const auto incoming_input = tools_.take_input();
+      for (const auto &text : incoming_input) {
         Message incoming;
         incoming.role = "user";
         incoming.text = text;
         session.messages.push_back(incoming);
         emit({{"type", "codet.user_input.received"}, {"text", text}});
       }
-      state_.save(session);
+      if (!incoming_input.empty())
+        state_.save(session);
       const auto capabilities = tools_.capabilities();
       Json schemas = tools_.schemas(capabilities);
       if (validator)
@@ -294,12 +303,16 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         state_.tool_finished(session.id, call, Json(tool));
         session.messages.push_back(tool);
         state_.save(session);
-        item["status"] = result.error ? "failed" : "completed";
+        item["status"] = result.error && !result.metadata.value("action_completed", false)
+                             ? "failed"
+                             : "completed";
         item["output"] = result.content;
         item["metadata"] = result.metadata;
         for (const auto &image : result.images)
           emit({{"type", "codet.artifact"}, {"call_id", call.id}, {"artifact", image}});
         emit({{"type", "item.completed"}, {"item", item}});
+        if (result.failure_after_completion)
+          std::rethrow_exception(result.failure_after_completion);
         if (result.metadata.contains("hook_stop"))
           throw Error("Stopped by PostToolUse hook: " +
                       result.metadata.at("hook_stop").get<std::string>());

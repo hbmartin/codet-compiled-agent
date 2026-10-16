@@ -204,6 +204,7 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
   c.model = resolved.model;
   validate_tool_rules(c.rules().allow);
   validate_tool_rules(c.rules().deny);
+  validate_hook_matchers(c.hooks);
   return c;
 }
 bool image_input_enabled(const Config &c) {

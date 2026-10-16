@@ -96,10 +96,7 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
         }
       }
       cancel.check();
-      if (dynamic_cast<const std::bad_alloc *>(&error) ||
-          dynamic_cast<const ProcessResourceError *>(&error))
-        throw;
-      if (const auto *e = dynamic_cast<const Error *>(&error); e && e->code == 130)
+      if (fatal(std::current_exception()))
         throw;
       diagnose(event + ": " + error.what(), DiagnosticLevel::error);
       continue;
@@ -134,7 +131,7 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
       diagnostic += stderr_text;
       diagnose(diagnostic);
     }
-    if (event == "SessionEnd" || event == "PostToolUseFailure" || !nonempty(stdout_text))
+    if (!reads_stdout || !nonempty(stdout_text))
       continue;
     const auto first = stdout_text.find_first_not_of(" \t\r\n");
     const bool json_like = stdout_text[first] == '{' || stdout_text[first] == '[';
@@ -218,6 +215,8 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
       if (!context.empty() && event != "PreCompact")
         append(out.additional_context, context);
     } catch (const std::exception &e) {
+      if (fatal(std::current_exception()))
+        throw;
       diagnose(event + ": " + e.what());
     }
     out.additional_context = bounded_text(out.additional_context, config_.tool_output_limit);

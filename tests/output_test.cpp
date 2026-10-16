@@ -396,12 +396,15 @@ TEST_F(OutputReview, SyncFailureKeepsCompleteBytesAndDoesNotInventMissingOutput)
   EXPECT_EQ(files.read(r.spill_path), std::string(1000, 'x'));
 }
 TEST_F(OutputReview, IncompleteUtf8PublicationDoesNotRepairACharacterSplitAcrossReads) {
-  OutputCapture capture(std::make_shared<CaptureStore>(config.home / "boundary"), 512);
-  capture.append(std::string(511, 'a') + "\xf0");
+  auto store = std::make_shared<CaptureStore>(config.home / "boundary");
+  OutputCapture capture(store, 512);
+  capture.append(std::string(511, 'a') + "\xf0\x9f");
   const auto partial = capture.render(512);
-  EXPECT_GE(partial.omitted, 1u);
+  EXPECT_EQ(partial.omitted, 0u);
+  capture.flush();
+  EXPECT_EQ(store->metrics.files, 0u);
   EXPECT_THAT(partial.text, Not(HasSubstr("\xef\xbf\xbd")));
-  capture.append("\x9f\x8c\xb2");
+  capture.append("\x8c\xb2");
   capture.finish();
   const auto complete = capture.render(512);
   EXPECT_THAT(complete.text, HasSubstr("🌲"));

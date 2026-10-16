@@ -4,7 +4,7 @@
 
 namespace codet {
 struct CaptureMetrics {
-  size_t scans = 0, batches = 0, syncs = 0, files = 0, renders = 0;
+  size_t scans = 0, batches = 0, syncs = 0, files = 0, renders = 0, display_bytes = 0;
 };
 struct CaptureIo {
   virtual ~CaptureIo() = default;
@@ -74,7 +74,6 @@ struct RenderedOutput {
   uint64_t omitted = 0;
 };
 RenderedOutput render_output(const OutputSnapshot &, size_t limit);
-std::string head_tail_text(const std::string &, const std::string &, uint64_t, size_t);
 fs::path capture_directory(const Config &);
 // Owns raw windows and the optional lazy capture through process and tool lifetimes.
 class OutputCapture {
@@ -83,6 +82,8 @@ class OutputCapture {
   OutputSnapshot data_;
   std::unique_ptr<OutputSpool> spool_;
   bool finished_ = false;
+  size_t display_bytes_ = 0;
+  std::string pending_utf8_;
 
 public:
   OutputCapture(std::shared_ptr<CaptureStore>, size_t limit);

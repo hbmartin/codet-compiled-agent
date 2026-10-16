@@ -1,5 +1,6 @@
 #pragma once
 #include <chrono>
+#include <exception>
 #include <memory>
 #include <stdexcept>
 #include <sys/types.h>
@@ -26,6 +27,9 @@ public:
   virtual int wait_ready(int fd, int timeout_ms);
   virtual int read_setup(int fd, int &setup_error);
   virtual int release(int fd);
+  virtual ssize_t read_output(int fd, void *buffer, size_t count);
 };
 std::shared_ptr<ProcessControl> native_process_control();
+// Unknown exception types are fatal; ordinary job-local exceptions remain recoverable.
+bool fatal(const std::exception_ptr &);
 } // namespace codet

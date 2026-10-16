@@ -50,7 +50,7 @@ add_library(codet_text STATIC src/text_compat.c)
 target_include_directories(codet_text PUBLIC include)
 include(cmake/prompts.cmake)
 add_library(codet_core STATIC
-  src/modern/platform.cpp src/modern/config.cpp src/modern/provider.cpp
+  src/modern/platform.cpp src/modern/failure.cpp src/modern/support.cpp src/modern/config.cpp src/modern/provider.cpp
   src/modern/state.cpp src/modern/output.cpp src/modern/hooks.cpp src/modern/patch.cpp src/modern/tools.cpp
   src/modern/tool_registry.cpp src/modern/interaction.cpp src/modern/images.cpp
   src/modern/computer.cpp src/modern/prompts.cpp src/modern/agent.cpp src/modern/cli.cpp)
