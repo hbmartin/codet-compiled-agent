@@ -1,25 +1,43 @@
 #include "codet/core.hpp"
+#include "codet/diagnostics.hpp"
+#include "codet/process_control.hpp"
 #include <fnmatch.h>
 #include <iostream>
 
 namespace codet {
 HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
-                             const Cancellation &cancel, int budget_ms) {
+                             const Cancellation &cancel, int budget_ms,
+                             DiagnosticBuffer *external) {
   const auto began = std::chrono::steady_clock::now();
   HookOutcome out;
-  size_t diagnostic_bytes = 0;
+  DiagnosticBuffer local(config_.tool_output_limit);
+  auto &collector = external ? *external : local;
+  struct Notice {
+    DiagnosticBuffer &buffer;
+    const DiagnosticSink &sink;
+    bool active;
+    Notice(DiagnosticBuffer &b, const DiagnosticSink &s, bool enabled)
+        : buffer(b), sink(s), active(enabled) {}
+    ~Notice() {
+      if (active && buffer.omitted()) {
+        try {
+          report_diagnostic(sink, DiagnosticBuffer::notice());
+        } catch (...) { // NOLINT(bugprone-empty-catch): Preserve the original hook result during
+                        // diagnostic cleanup.
+        }
+      }
+    }
+  } notice{collector, diagnostics_, !external};
   const auto append = [&](std::string &target, const std::string &text) {
     target = bounded_text(target + (target.empty() ? "" : "\n") + text, config_.tool_output_limit);
   };
-  const auto diagnose = [&](const std::string &text) {
-    if (diagnostic_bytes >= config_.tool_output_limit)
-      return;
-    const auto message = bounded_text(text, config_.tool_output_limit - diagnostic_bytes);
-    diagnostic_bytes += message.size();
-    out.diagnostics.push_back(message);
-    report_diagnostic(diagnostics_,
-                      (event == "SessionEnd" ? "SessionEnd hook cleanup failed: " : "Hook: ") +
-                          message);
+  const auto diagnose = [&](const std::string &text,
+                            DiagnosticLevel level = DiagnosticLevel::warning) {
+    if (auto accepted = collector.add(hook_diagnostic(event, level, text))) {
+      out.diagnostics.push_back(*accepted);
+      if (!external)
+        report_diagnostic(diagnostics_, *accepted);
+    }
   };
   if (!config_.hooks.contains(event))
     return out;
@@ -30,7 +48,7 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
     cancel.check();
     if (budget_ms > 0 &&
         std::chrono::steady_clock::now() - began >= std::chrono::milliseconds(budget_ms)) {
-      diagnose("Hook cleanup budget exhausted");
+      diagnose("Hook cleanup budget exhausted", DiagnosticLevel::error);
       break;
     }
     fs::path file;
@@ -78,14 +96,16 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
         }
       }
       cancel.check();
-      if (dynamic_cast<const std::bad_alloc *>(&error))
+      if (dynamic_cast<const std::bad_alloc *>(&error) ||
+          dynamic_cast<const ProcessResourceError *>(&error))
         throw;
       if (const auto *e = dynamic_cast<const Error *>(&error); e && e->code == 130)
         throw;
-      diagnose(event + ": " + error.what());
+      diagnose(event + ": " + error.what(), DiagnosticLevel::error);
       continue;
     }
-    if (result.stdout_truncated)
+    const bool reads_stdout = event != "SessionEnd" && event != "PostToolUseFailure";
+    if (result.stdout_truncated && reads_stdout)
       diagnose(event + " stdout capture truncated");
     if (result.stderr_truncated)
       diagnose(event + " stderr capture truncated");
@@ -104,7 +124,8 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
           out.permission = Decision::deny;
       } else
         diagnose(event + " exited with code " + std::to_string(result.exit_code) +
-                 (stderr_text.empty() ? "" : ": " + stderr_text));
+                     (stderr_text.empty() ? "" : ": " + stderr_text),
+                 DiagnosticLevel::error);
       continue;
     }
     if (nonempty(stderr_text)) {
@@ -135,7 +156,8 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
         throw Error("hookSpecificOutput must be an object");
       const auto context = specific.value("additionalContext", "");
       if (value.contains("systemMessage"))
-        diagnose(event + ": " + value.at("systemMessage").get<std::string>());
+        diagnose(event + ": " + value.at("systemMessage").get<std::string>(),
+                 DiagnosticLevel::info);
       bool block = false, stop = false;
       std::string reason = value.value("reason", "");
       std::optional<Decision> permission;
@@ -201,6 +223,8 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
     out.additional_context = bounded_text(out.additional_context, config_.tool_output_limit);
     out.reason = bounded_text(out.reason, config_.tool_output_limit);
   }
+  if (!external && collector.omitted())
+    out.diagnostics.push_back(DiagnosticBuffer::notice());
   return out;
 }
 } // namespace codet

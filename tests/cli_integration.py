@@ -42,7 +42,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if 'fixture-wait' in prompt:time.sleep(2)
         last_user=max((i for i,m in enumerate(messages) if m['role']=='user'),default=0)
         completed=[m for m in messages[last_user:] if m['role']=='tool']
-        if 'fixture-long-batch' in prompt and not completed:
+        if 'fixture-capture' in prompt:
+            if 'final-error' in prompt and len(completed)>=2:
+                data=b'{"error":{"message":"fixture failure after capture"}}'
+                self.send_response(401);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+            if not completed:
+                name='TaskCreate' if 'background' in prompt else 'Bash'
+                command='cat output.txt'
+                if 'wait' in prompt:command+='; printf ready > ready; while test ! -f release; do sleep .02; done'
+                if 'background' in prompt:command='printf ready > ready; cat output.txt; while test ! -f release; do sleep .02; done'
+                args={'command':command}
+            elif 'background' in prompt:
+                job=json.loads(completed[0]['content'])['content']
+                name='TaskOutput';args={'task_id':job}
+                if any('spill_path' in json.loads(x['content']).get('metadata',{}) for x in completed[1:]):name=None
+            elif len(completed)==1:
+                path=json.loads(completed[0]['content'])['metadata']['spill_path']
+                name='Read';args={'file_path':path,'offset':1,'limit':1}
+            else:name=None
+            if name:
+                delta={'tool_calls':[{'index':0,'id':'capture-'+str(last_user)+'-'+str(len(completed)),'function':{'name':name,'arguments':json.dumps(args)}}]};reason='tool_calls'
+            else:delta={'content':'fixture done'};reason='stop'
+        elif 'fixture-long-batch' in prompt and not completed:
             commands=['printf begun > begun; while test ! -f release; do sleep .02; done','printf completed > completed']
             delta={'tool_calls':[{'index':i,'id':'batch-'+str(i),'function':{'name':'Bash','arguments':json.dumps({'command':command})}} for i,command in enumerate(commands)]};reason='tool_calls'
         elif 'fixture-command' in messages[last_user].get('content','') and not completed:
@@ -401,6 +422,7 @@ class CliTests(unittest.TestCase):
                     time.sleep(.05);received=b''
                     fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',41,141,0,0));p.send_signal(signal.SIGWINCH)
                     wait_for(b'hook-visible')
+                    self.assertFalse(select.select([p.stderr],[],[],0)[0], 'diagnostic escaped during curses operation')
                 messages=self.server.requests[-1]['body']['messages']
                 self.assertEqual(sum(m.get('content','').startswith('UserPromptSubmit hook context:') for m in messages),1)
                 os.write(master,b'/quit\n')
@@ -409,11 +431,105 @@ class CliTests(unittest.TestCase):
                     if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
                 self.assertEqual(p.poll(),0,repr(received))
                 stderr=p.stderr.read()
-                if mode=='curses':self.assertEqual(stderr,b'')
+                if mode=='curses':self.assertEqual(stderr.count(b'hook-visible'),1)
                 else:self.assertIn(b'hook-visible',stderr)
             finally:
                 if p.poll() is None:p.kill();p.wait()
                 p.stderr.close();os.close(master);os.close(slave)
+
+    def test_curses_replay_and_cleanup_are_ordered_after_success_error_and_interrupt(self):
+        import pty,select
+        config=self.home/'config.toml';base=config.read_text()
+        config.write_text(base+'\n[hooks]\nSessionStart=[{command="printf live-before >&2"}]\nSessionEnd=[{command="printf end-warning >&2"},{command="printf end-error >&2; exit 3"}]\n')
+        for prompt,outcome in [('simple',b'fixture done'),('fixture-error',b'Error:'),('fixture-wait',b'Interrupted')]:
+            with self.subTest(prompt=prompt):
+                master,slave=pty.openpty();self.server.requests=[]
+                p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','curses'],stdin=slave,stdout=slave,stderr=subprocess.PIPE,env=dict(self.env,TERM='xterm'))
+                received=b''
+                def wait_for(text):
+                    nonlocal received
+                    deadline=time.monotonic()+7
+                    while text not in received and time.monotonic()<deadline:
+                        if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+                    self.assertIn(text,received)
+                try:
+                    wait_for(b'codet>');self.assertFalse(select.select([p.stderr],[],[],0)[0])
+                    received=b'';os.write(master,prompt.encode()+b'\n')
+                    if prompt=='fixture-wait':
+                        deadline=time.monotonic()+5
+                        while not self.server.requests and time.monotonic()<deadline:time.sleep(.01)
+                        self.assertTrue(self.server.requests);p.send_signal(signal.SIGINT)
+                    wait_for(outcome);self.assertFalse(select.select([p.stderr],[],[],0)[0])
+                    os.write(master,b'/quit\n');deadline=time.monotonic()+7
+                    while p.poll() is None and time.monotonic()<deadline:
+                        if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+                    self.assertEqual(p.poll(),0,repr(received));stderr=p.stderr.read()
+                    for marker in [b'live-before',b'end-warning',b'end-error']:self.assertEqual(stderr.count(marker),1)
+                    self.assertLess(stderr.index(b'live-before'),stderr.index(b'end-warning'));self.assertLess(stderr.index(b'end-warning'),stderr.index(b'end-error'))
+                    self.assertIn(b'SessionEnd hook warning:',stderr);self.assertIn(b'SessionEnd hook cleanup failed:',stderr)
+                finally:
+                    if p.poll() is None:p.kill();p.wait()
+                    p.stderr.close();os.close(master);os.close(slave)
+
+    def test_curses_replay_and_cleanup_have_independent_budgets_and_omission_notices(self):
+        import pty,select
+        config=self.home/'config.toml'
+        start=[{'command':"printf 'live-"+str(i)+"-"+('x'*150)+"' >&2"} for i in range(12)]
+        end=[{'command':"printf 'end-"+str(i)+"-"+('y'*150)+"' >&2"} for i in range(12)]
+        def toml_hooks(items):return '['+','.join('{command='+json.dumps(x['command'])+'}' for x in items)+']'
+        config.write_text(config.read_text()+'\n[hooks]\nSessionStart='+toml_hooks(start)+'\nSessionEnd='+toml_hooks(end)+'\n')
+        master,slave=pty.openpty()
+        p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','curses','-c','tool_output_limit=512'],stdin=slave,stdout=slave,stderr=subprocess.PIPE,env=dict(self.env,TERM='xterm'))
+        received=b''
+        try:
+            deadline=time.monotonic()+7
+            while b'live-' not in received and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+            self.assertIn(b'live-',received);self.assertFalse(select.select([p.stderr],[],[],0)[0])
+            os.write(master,b'/quit\n')
+            while p.poll() is None and time.monotonic()<deadline+7:
+                if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+            self.assertEqual(p.poll(),0,repr(received));stderr=p.stderr.read()
+            self.assertIn(b'live-0',stderr);self.assertIn(b'end-0',stderr)
+            self.assertEqual(stderr.count(b'[Additional diagnostics omitted or truncated]'),2)
+            self.assertLessEqual(len(stderr),1024)
+        finally:
+            if p.poll() is None:p.kill();p.wait()
+            p.stderr.close();os.close(master);os.close(slave)
+
+    def test_ephemeral_capture_is_pageable_and_removed_after_success_or_error(self):
+        (self.workspace/'output.txt').write_text('雪-output\n'*20000)
+        temporary=self.root/'temporary';temporary.mkdir();self.env['TMPDIR']=str(temporary)
+        for prompt,code in [('fixture-capture',0),('fixture-capture-final-error',1),('fixture-capture-background',0)]:
+            with self.subTest(prompt=prompt):
+                self.server.requests=[]
+                r=self.run_cli('exec','--ephemeral','--permission-mode','bypass',prompt)
+                self.assertEqual(r.returncode,code,r.stderr)
+                outcomes=[json.loads(m['content']) for m in self.server.requests[-1]['body']['messages'] if m['role']=='tool']
+                capture=next(x for x in outcomes if 'spill_path' in x['metadata'])
+                self.assertFalse(capture['is_error']);self.assertTrue(str(capture['metadata']['spill_path']).startswith(str(temporary)))
+                self.assertFalse(pathlib.Path(capture['metadata']['spill_path']).exists())
+                self.assertFalse(list(temporary.glob('codet-ephemeral-*')))
+                self.assertFalse((self.home/'tool-output').exists());self.assertFalse((self.home/'state.sqlite3').exists())
+                if 'background' not in prompt:self.assertIn('雪-output',outcomes[-1]['content'])
+                self.assertTrue((self.home/'config.toml').exists())
+
+    def test_ephemeral_cancellation_closes_captures_before_removing_directory(self):
+        (self.workspace/'output.txt').write_text('capture-data\n'*20000)
+        temporary=self.root/'temporary';temporary.mkdir();self.env['TMPDIR']=str(temporary)
+        p=subprocess.Popen([BIN,'-C',str(self.workspace),'exec','--ephemeral','--permission-mode','bypass','fixture-capture-wait'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=self.env)
+        try:
+            deadline=time.monotonic()+7
+            while not (self.workspace/'ready').exists() and time.monotonic()<deadline:time.sleep(.01)
+            self.assertTrue((self.workspace/'ready').exists())
+            self.assertTrue(list(temporary.glob('codet-ephemeral-*/tool-output/capture-*.txt')))
+            p.send_signal(signal.SIGINT);stdout,stderr=p.communicate(timeout=7)
+            self.assertEqual(p.returncode,130,stderr)
+            self.assertFalse(list(temporary.glob('codet-ephemeral-*')))
+            self.assertFalse((self.home/'tool-output').exists())
+        finally:
+            if p.poll() is None:p.kill();p.wait()
+            p.stdout.close();p.stderr.close()
 
     def test_new_session_lifecycle_and_invalid_hook_bytes_in_both_terminals(self):
         import pty,select

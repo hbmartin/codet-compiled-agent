@@ -125,7 +125,9 @@ TEST_F(Followup, CompactionUsesRealAdaptersWithoutToolsAndRetainsNormalTools) {
     for (int i = 0; i < 3; ++i) {
       codet::Message message;
       message.role = i % 2 ? "assistant" : "user";
-      message.text = std::string(2000, 'x');
+      message.text = std::string(17 + i, 'x');
+      for (int j = 0; j < 400; ++j)
+        message.text += "雪🌲e\xcc\x81";
       session.messages.push_back(message);
     }
     state.save(session);
@@ -166,17 +168,17 @@ TEST_F(Followup, ShellSpoolPreservesOutputAndSupportsReadPaging) {
       {"page", "Read", {{"file_path", path.string()}, {"offset", 290}, {"limit", 5}}}, cancel);
   ASSERT_FALSE(page.error) << page.content;
   EXPECT_THAT(page.content, HasSubstr("line-288"));
-  config.deny = {"Read(*capture-*)"};
+  config.set_deny({"Read(*capture-*)"});
   EXPECT_TRUE(tools.execute({"denied", "Read", {{"file_path", path.string()}}}, cancel).error);
 }
-TEST_F(Followup, SmallCommandsRetainPrivateOutputWithoutChangingContent) {
+TEST_F(Followup, SmallCommandsDoNotCreateCaptureFiles) {
   Tools tools(config, files, processes, http, clock);
   const auto result = tools.execute({"small", "Bash", {{"command", "printf approved"}}}, cancel);
   ASSERT_FALSE(result.error);
   EXPECT_EQ(result.content, "approved");
-  ASSERT_TRUE(result.metadata.contains("spill_path"));
-  EXPECT_EQ(files.read(result.metadata["spill_path"].get<std::string>()), "approved");
-  EXPECT_EQ(result.metadata["spill_bytes"], 8);
+  EXPECT_FALSE(result.metadata.contains("spill_path"));
+  EXPECT_FALSE(fs::exists(config.home / "tool-output"));
+  EXPECT_EQ(result.metadata["omitted_output_bytes"], 0);
 }
 TEST_F(Followup, InvalidByteExpansionKeepsOriginalCaptureAndQuotaMetadata) {
   files.atomic_write(config.cwd / "source", std::string(300, '\xff'));
@@ -233,14 +235,17 @@ TEST_F(Followup, ActiveCapturesAreProtectedAndCompletedFilesEvict) {
   const auto dir = config.home / "tool-output";
   OutputSpool first(dir, 16, 16, 1);
   first.append("1234567890");
+  first.flush();
   OutputSpool second(dir, 16, 16, 1);
   second.append("abcdefghij");
+  second.flush();
   EXPECT_EQ(second.bytes(), 6u);
   EXPECT_TRUE(second.truncated());
   EXPECT_TRUE(fs::exists(first.path()));
   first.close();
   OutputSpool third(dir, 16, 16, 1);
   third.append("new");
+  third.flush();
   EXPECT_FALSE(fs::exists(first.path()));
   EXPECT_TRUE(fs::exists(second.path()));
   second.close();
@@ -265,6 +270,7 @@ TEST_F(Followup, CaptureOwnershipCoordinatesAcrossProcesses) {
     ::close(release[1]);
     OutputSpool active(config.home / "tool-output", 8, 8, 64);
     active.append("123456");
+    active.flush();
     char token = active.bytes() == 6 ? 'y' : 'n';
     (void)::write(ready[1], &token, 1);
     (void)::read(release[0], &token, 1);
@@ -278,6 +284,7 @@ TEST_F(Followup, CaptureOwnershipCoordinatesAcrossProcesses) {
   EXPECT_EQ(token, 'y');
   OutputSpool other(config.home / "tool-output", 8, 8, 64);
   other.append("abcd");
+  other.flush();
   EXPECT_EQ(other.bytes(), 2u);
   EXPECT_TRUE(other.truncated());
   (void)::write(release[1], &token, 1);

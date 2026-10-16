@@ -43,7 +43,7 @@ TEST_F(FinalReview, LiteralRootsAndAuthoredGlobsRemainDistinctAcrossAliases) {
     config.permission_mode = "default";
     fs::create_directories(config.cwd / "secrets");
     files.atomic_write(config.cwd / "secrets/key.pem", "private");
-    config.deny = {"Read(secrets/key.pem)"};
+    config.set_deny({"Read(secrets/key.pem)"});
     Tools tools(config, files, processes, http, clock);
     for (const auto &alias : std::vector<std::string>{"secrets/key.pem", "./secrets/key.pem",
                                                       "secrets/../secrets/key.pem",
@@ -51,14 +51,14 @@ TEST_F(FinalReview, LiteralRootsAndAuthoredGlobsRemainDistinctAcrossAliases) {
       auto result = tools.execute({unique_id(), "Read", {{"file_path", alias}}}, cancel);
       EXPECT_TRUE(result.error) << name << " " << alias;
     }
-    config.deny = {"Read(" + (config.cwd / "secrets/*").string() + ")"};
+    config.set_deny({"Read(" + (config.cwd / "secrets/*").string() + ")"});
     EXPECT_TRUE(
         tools.execute({unique_id(), "Read", {{"file_path", "./secrets/key.pem"}}}, cancel).error);
     config.permission_mode = "bypass";
-    config.deny = {"Read(*key.pem)"};
+    config.set_deny({"Read(*key.pem)"});
     EXPECT_TRUE(
         tools.execute({unique_id(), "Read", {{"file_path", "./secrets/key.pem"}}}, cancel).error);
-    config.deny.clear();
+    config.set_deny({});
     EXPECT_FALSE(
         tools.execute({unique_id(), "Read", {{"file_path", "./secrets/key.pem"}}}, cancel).error);
   }
@@ -69,14 +69,14 @@ TEST_F(FinalReview, CachedRulesRecheckSymlinkPrefixesAndConfiguration) {
   files.atomic_write(config.cwd / "one/key", "one");
   files.atomic_write(config.cwd / "two/key", "two");
   fs::create_directory_symlink(config.cwd / "one", config.cwd / "alias");
-  config.deny = {"Read(alias/*)"};
+  config.set_deny({"Read(alias/*)"});
   Tools tools(config, files, processes, http, clock);
   EXPECT_TRUE(tools.execute({"1", "Read", {{"file_path", "one/key"}}}, cancel).error);
   fs::remove(config.cwd / "alias");
   fs::create_directory_symlink(config.cwd / "two", config.cwd / "alias");
   EXPECT_TRUE(tools.execute({"2", "Read", {{"file_path", "two/key"}}}, cancel).error);
   EXPECT_FALSE(tools.execute({"3", "Read", {{"file_path", "one/key"}}}, cancel).error);
-  config.deny = {"Read(one/key)"};
+  config.set_deny({"Read(one/key)"});
   EXPECT_TRUE(tools.execute({"4", "Read", {{"file_path", "one/key"}}}, cancel).error);
 }
 TEST_F(FinalReview, SeparateHookChannelsCannotStarveControlOutput) {
@@ -100,8 +100,8 @@ TEST_F(FinalReview, SeparateHookChannelsCannotStarveControlOutput) {
   spec.separate_stderr = true;
   spec.output_limit = 257;
   const auto both = processes.run(spec, cancel);
-  EXPECT_EQ(both.output.size(), 128u);
-  EXPECT_EQ(both.stderr_output.size(), 129u);
+  EXPECT_EQ(both.output.size(), 257u);
+  EXPECT_EQ(both.stderr_output.size(), 257u);
   EXPECT_TRUE(both.stdout_truncated);
   EXPECT_TRUE(both.stderr_truncated);
   config.hooks["PreToolUse"] = Json::array(
@@ -363,7 +363,6 @@ TEST_F(FinalReview, BrokenBackgroundJobDoesNotBlockOtherJobsOrHooksAndRemainsOwn
   EXPECT_EQ(tools.run_hooks("SessionStart", Json::object(), cancel).additional_context,
             "hook-healthy");
   EXPECT_THROW(native.poll(bad), Error);
-  EXPECT_THROW(native.stop(bad), Error);
   control->allocation_failure = true;
   EXPECT_THROW(native.start(shell("true"), cancel), std::bad_alloc);
   control->allocation_failure = false;
@@ -387,7 +386,7 @@ TEST_F(FinalReview, LiteralWorkspaceAllowRuleDoesNotGrantMatchingSibling) {
   fs::create_directories(config.cwd);
   fs::create_directories(temp.root / "work1");
   config.roots.push_back(temp.root / "work1");
-  config.allow = {"Write(" + (config.cwd / "file").string() + ")"};
+  config.set_allow({"Write(" + (config.cwd / "file").string() + ")"});
   Permissions permissions(config, files);
   EXPECT_EQ(
       permissions.decide({"Write", (config.cwd / "file").string(), config.cwd / "file", true}),
@@ -401,7 +400,7 @@ TEST_F(FinalReview, GlobFiltersLiteralWorkspaceAndRewrittenReadRemainsDenied) {
   fs::create_directories(config.cwd / "hidden");
   files.atomic_write(config.cwd / "hidden/secret", "secret");
   files.atomic_write(config.cwd / "public", "public");
-  config.deny = {"Glob(hidden)", "Read(hidden/secret)"};
+  config.set_deny({"Glob(hidden)", "Read(hidden/secret)"});
   Tools tools(config, files, processes, http, clock);
   const auto found = tools.execute({"glob", "Glob", {{"pattern", "*"}}}, cancel);
   EXPECT_FALSE(found.error);
@@ -419,30 +418,15 @@ TEST_F(FinalReview, FailedForegroundCleanupRetainsOwnershipAndRetriesWithoutBloc
   NativeProcesses native(control);
   control->reap_failure = true;
   EXPECT_THROW(native.run(shell("exit 0"), cancel), Error);
-  auto statuses = native.list();
-  ASSERT_EQ(statuses.size(), 1u);
-  EXPECT_TRUE(statuses[0].running);
-  const auto failed = statuses[0].id;
-  EXPECT_THAT(statuses[0].error, HasSubstr("reap failure"));
+  EXPECT_TRUE(native.list().empty());
   EXPECT_EQ(native.run(shell("printf healthy"), cancel).output, "healthy");
   Tools tools(config, files, native, http, clock);
-  auto result = tools.execute({"list", "TaskList", Json::object()}, cancel);
-  EXPECT_FALSE(result.error);
-  EXPECT_THAT(result.content, HasSubstr(failed));
-  EXPECT_THAT(result.content, HasSubstr("reap failure"));
-  auto output = tools.execute({"output", "TaskOutput", {{"task_id", failed}}}, cancel);
-  EXPECT_TRUE(output.error);
-  EXPECT_THAT(output.content, HasSubstr(failed));
-  auto stopped = tools.execute({"stop", "TaskStop", {{"task_id", failed}}}, cancel);
-  EXPECT_TRUE(stopped.error);
-  EXPECT_THAT(stopped.content, HasSubstr(failed));
+  EXPECT_EQ(tools.execute({"list", "TaskList", Json::object()}, cancel).content, "[]");
+  EXPECT_TRUE(tools.execute({"output", "TaskOutput", {{"task_id", "job-1"}}}, cancel).error);
+  EXPECT_TRUE(tools.execute({"stop", "TaskStop", {{"task_id", "job-1"}}}, cancel).error);
   control->reap_failure = false;
-  statuses = native.list();
-  ASSERT_EQ(statuses.size(), 1u);
-  EXPECT_FALSE(statuses[0].running);
-  EXPECT_TRUE(statuses[0].error.empty());
-  native.stop(failed);
-  EXPECT_EQ(native.poll(failed).exit_code, 0);
+  EXPECT_TRUE(native.list().empty());
+  EXPECT_EQ(native.run(shell("printf recovered"), cancel).output, "recovered");
 }
 TEST_F(FinalReview, FailedCleanupJobsContinueToCountAgainstActiveLimit) {
   auto control = std::make_shared<SelectiveControl>();

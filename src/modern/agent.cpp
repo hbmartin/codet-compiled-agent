@@ -1,4 +1,6 @@
 #include "codet/core.hpp"
+#include "codet/output.hpp"
+#include "codet/prompt.hpp"
 #include <iostream>
 #include <nlohmann/json-schema.hpp>
 #include <set>
@@ -62,19 +64,21 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
     if (submitted.blocked || submitted.stopped)
       throw Error("Prompt blocked by hook: " + submitted.reason);
     const auto expanded = safe_text(tools_.expand_command(prompt));
-    Session candidate = session;
+    std::vector<Message> additions;
+    additions.reserve(2);
     if (!submitted.additional_context.empty()) {
       Message context;
       context.role = "system";
       context.text = "UserPromptSubmit hook context:\n" + submitted.additional_context;
-      candidate.messages.push_back(context);
+      additions.push_back(std::move(context));
     }
     Message user;
     user.role = "user";
     user.text = expanded;
-    candidate.messages.push_back(user);
-    state_.save(candidate);
-    session = std::move(candidate);
+    additions.push_back(user);
+    PromptAppend pending(session, std::move(additions));
+    state_.save(session);
+    pending.commit();
     const std::string system =
         "You are Codet, a single-agent terminal coding assistant. Complete the user's request "
         "using tools. Read existing files before editing. Respect permission denials; do not retry "
@@ -120,12 +124,8 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
           throw Error(compact_hook.reason);
         std::string bounded = transcript;
         const auto limit = std::max(size_t{512}, config_.context_tokens * 2);
-        if (bounded.size() > limit) {
-          const auto tail = bounded.substr(bounded.size() - limit / 2);
-          bounded.resize(limit / 2);
-          bounded += "\n[older transcript omitted]\n";
-          bounded += tail;
-        }
+        if (bounded.size() > limit)
+          bounded = render_output({transcript, "", transcript.size(), true}, limit).text;
         Message request;
         request.role = "user";
         request.text = "Summarize this completed conversation for continuation. Preserve the "

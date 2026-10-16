@@ -1,4 +1,5 @@
 #include "codet/core.hpp"
+#include "codet/diagnostics.hpp"
 #include <algorithm>
 #include <curses.h>
 #include <cwchar>
@@ -36,7 +37,7 @@ Usage: codet [OPTIONS] [PROMPT]
       --add-dir DIR             Additional authorized root
       --ui MODE                 auto, curses, line
       --max-turns N             Model request limit
-      --ephemeral               Do not retain the session database
+      --ephemeral               Temporary sessions and automatic output captures
       --last                    Select most recent session
       --color auto|always|never  Terminal color policy
       --version / --help
@@ -323,6 +324,9 @@ public:
     if (restore_)
       (void)tcsetattr(STDIN_FILENO, TCSANOW, &original_);
   }
+  bool fullscreen() const {
+    return curses_;
+  }
   void diagnostic(const std::string &text) {
     if (curses_)
       say(text);
@@ -473,31 +477,24 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   struct Diagnostics {
     std::weak_ptr<Terminal> screen;
     bool buffering = false;
-    size_t limit = 65536, used = 0;
-    std::vector<std::string> pending;
+    DiagnosticBuffer live{65536}, cleanup{65536};
     void emit(const std::string &text) {
-      if (buffering) {
-        if (used < limit) {
-          auto message = bounded_text(text, limit - used);
-          used += message.size();
-          pending.push_back(std::move(message));
-        }
-      } else if (auto terminal = screen.lock())
+      if (buffering)
+        cleanup.add(text);
+      else if (auto terminal = screen.lock()) {
         terminal->diagnostic(text);
-      else
+        if (terminal->fullscreen())
+          live.add(text);
+      } else
         std::cerr << text << '\n';
     }
     void flush() {
-      for (const auto &text : pending)
-        std::cerr << text << '\n';
-      pending.clear();
-      used = 0;
+      live.flush(std::cerr);
+      cleanup.flush(std::cerr);
     }
   };
   auto diagnostics = std::make_shared<Diagnostics>();
   DiagnosticSink diagnostic = [diagnostics](const std::string &text) { diagnostics->emit(text); };
-  NativeProcesses processes;
-  processes.set_diagnostics(diagnostic);
   std::string home = env("CODET_HOME");
   if (home.empty()) {
     const auto h = env("HOME");
@@ -520,8 +517,10 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   setting("permission_mode", o.mode);
   setting("approval_policy", o.approval);
   Config config = load_config(home, o.cwd, o.profile, overrides, files);
-  config.allow.insert(config.allow.end(), o.allow.begin(), o.allow.end());
-  config.deny.insert(config.deny.end(), o.deny.begin(), o.deny.end());
+  for (const auto &rule : o.allow)
+    config.add_allowed(rule);
+  for (const auto &rule : o.deny)
+    config.add_denied(rule);
   for (const auto &root : o.roots)
     config.roots.push_back(files.canonical(config.cwd / root));
   if (config.ui != "auto" && config.ui != "line" && config.ui != "curses")
@@ -567,13 +566,21 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   fs::path state_home = config.home;
   struct Cleanup {
     fs::path p;
+    DiagnosticSink diagnostics;
     ~Cleanup() {
       if (!p.empty()) {
         std::error_code e;
         fs::remove_all(p, e);
+        if (e) {
+          try {
+            report_diagnostic(diagnostics, "Ephemeral cleanup: " + e.message());
+          } catch (...) { // NOLINT(bugprone-empty-catch): Cleanup diagnostics must preserve the
+                          // invocation result.
+          }
+        }
       }
     }
-  } cleanup;
+  } cleanup{{}, diagnostic};
   if (o.ephemeral) {
     std::string pattern = (fs::temp_directory_path() / "codet-ephemeral-XXXXXX").string();
     std::vector<char> buf(pattern.begin(), pattern.end());
@@ -583,7 +590,11 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       throw Error("Cannot create ephemeral state");
     state_home = p;
     cleanup.p = p;
+    config.capture_root = fs::path(p) / "tool-output";
   }
+  // Destroy processes/capture handles before removing the private invocation directory.
+  NativeProcesses processes;
+  processes.set_diagnostics(diagnostic);
   StateStore state(state_home);
   if (o.command == "sessions") {
     std::cout << state.list().dump(2) << '\n';
@@ -634,6 +645,19 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   state.save(session);
   const bool interactive = !o.exec && isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
   std::shared_ptr<Terminal> terminal;
+  diagnostics->live = DiagnosticBuffer(config.tool_output_limit);
+  diagnostics->cleanup = DiagnosticBuffer(config.tool_output_limit);
+  struct RestoreDiagnostics {
+    std::shared_ptr<Terminal> &terminal;
+    std::shared_ptr<Diagnostics> diagnostics;
+    RestoreDiagnostics(std::shared_ptr<Terminal> &t, std::shared_ptr<Diagnostics> d)
+        : terminal(t), diagnostics(std::move(d)) {}
+    ~RestoreDiagnostics() {
+      terminal.reset();
+      diagnostics->buffering = false;
+      diagnostics->flush();
+    }
+  } restore_diagnostics{terminal, diagnostics};
   if (interactive) {
     terminal = std::make_shared<Terminal>(config, o.color);
     terminal->set_mode(config.permission_mode);
@@ -681,7 +705,6 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     }
   } session_end{[&, started_id = session.id] {
     diagnostics->buffering = true;
-    diagnostics->limit = config.tool_output_limit;
     struct RestoreTerminal {
       std::shared_ptr<Terminal> &terminal;
       Diagnostics &diagnostics;
@@ -696,7 +719,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     try {
       Cancellation cleanup_cancel;
       tools.run_hooks("SessionEnd", {{"hook_event_name", "SessionEnd"}, {"session_id", started_id}},
-                      cleanup_cancel, 10000);
+                      cleanup_cancel, 10000, &diagnostics->cleanup);
     } catch (const std::exception &error) {
       report_diagnostic(diagnostic, "SessionEnd hook cleanup failed: " + std::string(error.what()));
     } catch (...) {

@@ -106,3 +106,73 @@ Host-only Release measurement of serialization within a representative 100-messa
 - The checkout credential setting is verified through parsed workflow YAML; triggers, permissions and dependency pins stay unchanged. GitHub CI is not dispatched and no push or PR modification is performed.
 
 Full reports remain under ignored `build/remaining-native-analysis`, `build/followup-linux/modern-checks/analysis` and `build/review-final-*`. Current condensed evidence is [validation/remaining-review.json](validation/remaining-review.json). The earlier Cppcheck 2.13 evidence remains invalid; the earlier follow-up JSON is retained only as its original source snapshot.
+
+
+## Output capture and compaction review (base `36b67c4`)
+
+These dispositions cover the 15 new findings; repeated earlier findings retain their R1–R17 dispositions above. C++17, PPC750, dependency pins, authorization, process ownership and JSONL compatibility remain unchanged.
+
+| Item | Disposition | Implementation / regression evidence |
+|---|---|---|
+| N1 Double-cut preview / false omission count | Fixed | Structured original-byte snapshots survive process conversion and hooks; one final rendering pass budgets annotations and counts original omitted bytes. Megabyte shell fixture checks exact counts and original capture contents. |
+| N2 Capture warning truncates complete output | Fixed | Storage warnings remain independent metadata/diagnostics; complete short output keeps `truncated=false`, status and exact content. |
+| N3 One bad entry disables capture | Fixed | Diagnose individual nonregular/unreadable entries; no symlink following or recursive directory deletion. Conservative regular-file accounting, healthy captures and full-store behavior tested. |
+| N4 Compaction splits UTF-8 | Fixed | Shared UTF-8-safe head/tail selection includes marker in budget. Actual request builders for every retained adapter compact non-ASCII transcripts and continue using loopback/fake transports. |
+| N5 Trivial outputs evict large captures / ephemeral files persist | Fixed | Lazy activation, temporary invocation capture root, Read paging and ordered cleanup. More than 64 trivial commands leave a large capture intact; ephemeral success, error, cancellation and background cases remove temporary captures. |
+| N6 Broken UTF-8 / clipped spill notice | Fixed | Repair source units without splitting characters; budget complete notices, with metadata reference for long paths. Source-byte counts, malformed bytes and chunk/window boundaries tested. |
+| N7 Locationless clang-tidy error escapes gate | Rejected; unchanged | Existing `first_party` treats absent/empty paths as first-party; locationless diagnostic regressions already gate errors. |
+| N8 Codex `parallel_tool_calls` without tools | Deferred unconfirmed concern | No verified Codex endpoint failure; keep current request contract. Chat Completions behavior alone does not establish the subscription endpoint's rules. |
+| N9 Cppcheck cache hash attribute | Rejected; unchanged | Pinned 2.22.0 emits a `<hash>` child, verified against its source and actual cache artifacts. Existing completion/canary checks remain. |
+| N10 Per-chunk scans / I/O | Fixed | Bounded 64 KiB staged writes, per-flush coordination, one completion sync. Deterministic counters and host-only allocation/time sample; no timing threshold. |
+| N11 Internal polling formats / uncounted completed buffers | Fixed | Internal observation and explicit publication separated. Completed raw-window/staging capacities count toward 4 MiB; no redundant formatted cache. Counter and retention tests. |
+| N12 Non-shell UUID spills bypass quota | Fixed | One managed capture path for shell and non-shell results; adopt existing UUID files without rewriting or renaming, count full legacy sizes and evict normally. |
+| N13 Duplicate result conversion | Fixed | Bash, TaskOutput and TaskStop share conversion while preserving running/exit semantics. Existing foreground, PTY, background and lifecycle fixtures retained. |
+| N14 Dead initial head/tail transfer | Fixed | Remove obsolete eager-spool branch; lazy capture transfers the buffered prefix once. Exact capture contents checked across chunk boundaries and hook-triggered activation. |
+| N15 Decision ABI comment | Already fixed | Existing comment describes scoped enum serialization; retained unchanged. |
+
+Current source-hashed evidence is [validation/output-capture.json](validation/output-capture.json). Earlier JSON reports remain evidence of their original snapshots; Cppcheck 2.13 coverage remains invalid. Tiger runtime and G4/512 MB memory/performance acceptance require owner results. No push or PR changes are part of delivery.
+
+
+### Output capture measurement and validation
+
+The host-only Release benchmark adds a 1 MiB capture received in 128 chunks of 8 KiB, with a 64 KiB preview. One sample took 1.96 ms, made 381 C++ `new` allocations (2,178,448 cumulative allocated bytes), retained 65,550 bytes of completed window capacity, and recorded 16 flush batches, 17 store scans, one sync and one explicit render. Cumulative allocation is not peak resident memory; this benchmark includes capture I/O but does not measure Tiger/HDD performance. Reproduce with the existing `codet_sanitization_bench` target. Timing is recorded evidence, never a test threshold.
+
+The final macOS and Linux host/sanitizer suites register 149 C++ cases and run 30 loopback/PTY integration cases. The opt-in live TLS case remains skipped; the unreadable-file case additionally skips for root in the Linux image and executes on macOS. Analyzer-runner tests, semantic/fatal canaries, all three Linux analyzers, native Cppcheck/Clang Static Analyzer, and PPC architecture/import/install-path checks are recorded in the current source-hashed evidence. The acceptance archive carries these cases and updated owner-run instructions. No PPC executable is run on the build host.
+
+
+## Process, permission and diagnostic review (base `4b51b4e`)
+
+| Item | Disposition | Implementation / regression evidence |
+|---|---|---|
+| P1 Observation failure prevents stop | Fixed | Best-effort observation is separate from termination. Persistent observer failures still send TERM/KILL and reap the real child; shutdown continues across jobs. Existing reserved-PID ordering and ownership-loss regressions remain. |
+| P2 Half-budget hook denial truncated | Revised policy, fixed within new limit | Each channel receives the full tool limit, default 64 KiB each. A 40 KiB JSON denial is accepted; beyond-budget JSON remains diagnostic-only. Exit-2 stderr protection and full draining remain. |
+| P3 CRLF patch preflight differs | Fixed | One protocol-line parser before hooks, after input rewrite and at execution. Denied Add/Update/Delete/Move fixtures run no rewriting hook. |
+| P4 Canonical workspace loses literal alias | Fixed | Recognize equivalent root prefixes literally, including production-loaded canonical paths and `/tmp` aliases with metacharacters. Host-specific macOS and portable symlink fixtures. |
+| P5 Wildcard-parent normalization | Fixed | Lexical rule normalization restores parent-component handling after wildcards without glob expansion. Leading wildcards, literal prefixes and existing alias fixtures retained. |
+| P6 Exceptions escape refresh / ownership example | Fixed ordinary-exception gap; ownership example rejected | Preserve original exception pointers, isolate job-local standard failures, classify confirmed ownership loss before wrapping. Allocation, resource and interruption failures propagate normally. Existing ownership-loss catch paths were already present. |
+| P7 Internal processes become public tasks | Revised interface | Keep private owned cleanup records, active-limit accounting and retries. Task tools reject private handles; completed internal records are removed. Original foreground errors preserved. |
+| P8 Curses diagnostics disappear | Revised interface | Bounded live replay after terminal restoration, followed by a separately budgeted cleanup stream. Tests cover success/error/interruption, no live stderr corruption, chronological replay and single emission. |
+| P9 Added CR removed / CRLF impossible | Intentional contract; claim overstated | CRLF protocol normalization remains. New files use LF, existing CRLF updates preserve CRLF; exact new-file bytes use Write. Existing fixtures retained. |
+| P10 Ignored stdout reports cleanup failure | Fixed | No successful ignored-stdout truncation diagnostic. Separate warning/info/error classification prevents successful stderr from being labeled cleanup failure. |
+| P11 Double cap silently drops diagnostics | Fixed | Budget formatted cleanup messages once in the shared collector, reserve a complete omission notice, and bound live replay independently. UTF-8 and collector fixtures. |
+| P12 Glob checks every nonmatch | Fixed | Pattern matching precedes file authorization; skip scoped-denial work when inapplicable, preserve root/symlink protection, and share prefixes within a traversal. Tightened deterministic counters and actual-tool benchmark. |
+| P13 Cache compares complete rule lists | Fixed | Immutable configuration snapshots replace mutable public lists; parsed cache compares snapshot identity. Mutation, snapshot isolation and repeated decision regressions. TOML/CLI unchanged. |
+| P14 Full session copied per prompt | Fixed | Prepared messages append under an allocation-free rollback guard. Injection after the first append and actual SQLite save failure preserve history; subsequent turns succeed without false recovery diagnostics. Host-only preparation benchmark excludes persistence I/O. |
+| P15 Repeated error clearing | Fixed | One successful-state clearing helper shared by observation and cleanup. |
+
+The source-hashed current evidence is [validation/process-permissions.json](validation/process-permissions.json); earlier reports describe their original source snapshots. The Linux legacy-eviction fixture now assigns an explicit old timestamp rather than relying on host/container timestamp ordering. No runtime dependency, database migration, paid request or new raw-export interface is introduced. Tiger runtime and G4/512 MB performance remain pending owner results. Delivery is a local commit only, with no push or GitHub changes.
+
+
+### Process/permission measurements and verification
+
+The host-only Release benchmark exercises a 100-message transcript (about 824 KiB), comparing the previous full-session candidate copy with the actual append/rollback helper. It excludes SQLite, hooks, provider calls and recovery. C++ `new` interception records cumulative allocations, not peak RSS. The actual Glob tool sample traverses 1,000 files with no pattern matches and unrelated Read denials. Timings describe this development host and are never test thresholds.
+
+| Sample | Iterations | Time (ms) | Allocations | Cumulative allocated bytes |
+|---|---:|---:|---:|---:|
+| Previous prompt copy | 2000 | 50.000 | 408,000 | 1,726,496,000 |
+| Append/rollback preparation | 2000 | 0.356 | 10,000 | 736,000 |
+| Glob, 1,000 nonmatches | 1 | 2.621 | 4,881 | 463,736 |
+
+Glob records 5 canonicalization calls; these are interface calls, not OS syscall counts. Regression counters also distinguish file targets and shared rule prefixes. Admission checks before hooks, after rewriting and at root authorization remain fresh, while each traversal shares its own cache. Reproduce through the existing `codet_sanitization_bench` Release target.
+
+Final validation registers 161 C++ cases and runs 32 loopback/PTY integration cases on macOS/Linux host and ASan/UBSan builds. Live TLS remains opt-in and skipped; the unreadable-file fixture additionally skips as root in the Linux image. All 33 analyzer-runner cases, three Linux analyzers, detection self-checks, Cppcheck actual-header/fatal canaries and native Cppcheck/Clang Static Analyzer are recorded in the source-hashed evidence. GCC 14.2 PPC cross-build and Tiger architecture/import/install-path checks pass; the acceptance bundle carries updated executables, dispositions and evidence. No PPC code is executed here. Target runtime, TLS/account access and G4 memory/performance remain pending owner reports.

@@ -1,6 +1,7 @@
 #pragma once
 #include <atomic>
 #include <chrono>
+#include <exception>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -83,6 +84,9 @@ struct NativeFileSystem final : FileSystem {
   void remove(const fs::path &) override;
   fs::path canonical(const fs::path &) const override;
 };
+class CaptureStore;
+class OutputCapture;
+struct OutputSnapshot;
 struct ProcessSpec {
   std::vector<std::string> argv;
   fs::path cwd;
@@ -91,6 +95,7 @@ struct ProcessSpec {
   size_t output_limit = 65536;
   bool pty = false, separate_stderr = false;
   fs::path spool_directory;
+  std::shared_ptr<CaptureStore> capture_store;
   size_t spool_limit = size_t{8} * 1024 * 1024, spool_quota = size_t{64} * 1024 * 1024;
   size_t spool_records = 64;
 };
@@ -104,6 +109,8 @@ struct ProcessResult {
   size_t spill_bytes = 0;
   bool spill_truncated = false;
   bool stdout_truncated = false, stderr_truncated = false;
+  std::shared_ptr<const OutputSnapshot> preview;
+  std::shared_ptr<OutputCapture> capture;
   ProcessResult() = default;
   ProcessResult(int code, std::string text, bool cut = false, bool active = false,
                 std::string errors = {})
@@ -142,9 +149,16 @@ class NativeProcesses final : public Processes {
   uint64_t completed_ = 0;
   DiagnosticSink diagnostics_;
   void collect(Job &);
+  void drain(Job &);
+  void stop_owned(Job &);
+  bool observe_cleanup(Job &, std::exception_ptr &);
+  void clear_error(Job &);
+  void record_error(const std::string &, Job &, const std::exception_ptr &);
+  [[noreturn]] void throw_failure(const Job &) const;
+  Job &observe(const std::string &);
+  ProcessResult publish(Job &);
   void finish(Job &, bool ownership_lost = false);
   void terminate(Job &, int status);
-  [[noreturn]] void job_error(const std::string &, Job &, const Error &);
   void refresh();
   void prune();
 
@@ -155,6 +169,8 @@ public:
     diagnostics_ = std::move(sink);
   }
   ~NativeProcesses() override;
+  void shutdown();
+  size_t retained_output_bytes() const;
   ProcessResult run(const ProcessSpec &, const Cancellation &) override;
   std::string start(const ProcessSpec &) override;
   std::string start(const ProcessSpec &, const Cancellation &) override;
@@ -191,8 +207,11 @@ struct ProviderConfig {
 struct Selection {
   std::string provider, model;
 };
+struct PermissionRuleSet {
+  std::vector<std::string> allow, deny;
+};
 struct Config {
-  fs::path home, cwd;
+  fs::path home, cwd, capture_root;
   std::string provider = "codex", model, permission_mode = "default", approval = "on-request";
   std::string ui = "auto", theme = "default", effort;
   size_t max_turns = 100, max_output_tokens = 8192, context_tokens = 32768;
@@ -200,7 +219,35 @@ struct Config {
   int request_timeout = 0, connect_timeout = 20, stream_idle_timeout = 120;
   size_t project_doc_max_bytes = 32768, memory_context_max_bytes = 8900;
   std::map<std::string, ProviderConfig> providers;
-  std::vector<std::string> allow, deny;
+
+private:
+  std::shared_ptr<const PermissionRuleSet> rules_ = std::make_shared<const PermissionRuleSet>();
+
+public:
+  const PermissionRuleSet &rules() const {
+    return *rules_;
+  }
+  const std::shared_ptr<const PermissionRuleSet> &rule_snapshot() const {
+    return rules_;
+  }
+  void set_allow(std::vector<std::string> values) {
+    rules_ = std::make_shared<const PermissionRuleSet>(
+        PermissionRuleSet{std::move(values), rules_->deny});
+  }
+  void set_deny(std::vector<std::string> values) {
+    rules_ = std::make_shared<const PermissionRuleSet>(
+        PermissionRuleSet{rules_->allow, std::move(values)});
+  }
+  void add_allowed(std::string value) {
+    auto values = rules_->allow;
+    values.push_back(std::move(value));
+    set_allow(std::move(values));
+  }
+  void add_denied(std::string value) {
+    auto values = rules_->deny;
+    values.push_back(std::move(value));
+    set_deny(std::move(values));
+  }
   std::vector<fs::path> roots;
   Json hooks = Json::object(), keybindings = Json::object();
   bool trust_project = false;
@@ -302,7 +349,10 @@ class Permissions {
 
 public:
   Permissions(const Config &c, const FileSystem &f) : config_(c), files_(f) {}
+  struct Context;
+  std::shared_ptr<Context> context() const;
   Decision decide(const PermissionRequest &) const;
+  Decision decide(const PermissionRequest &, const std::shared_ptr<Context> &) const;
   bool has_scoped_denials(const std::string &tool) const;
 };
 using Approver = std::function<bool(const PermissionRequest &)>;
@@ -312,6 +362,8 @@ struct ToolResult {
   std::string content;
   bool error = false;
   Json metadata = Json::object();
+  std::shared_ptr<const OutputSnapshot> preview = {};
+  std::shared_ptr<OutputCapture> capture = {};
 };
 struct HookOutcome {
   bool blocked = false, stopped = false;
@@ -320,6 +372,7 @@ struct HookOutcome {
   std::optional<Decision> permission;
   std::vector<std::string> diagnostics;
 };
+class DiagnosticBuffer;
 class Tools {
   const Config &config_;
   FileSystem &files_;
@@ -330,6 +383,7 @@ class Tools {
   Approver approve_;
   Questioner question_;
   DiagnosticSink diagnostics_;
+  std::shared_ptr<CaptureStore> capture_store_;
   std::map<fs::path, std::string> read_versions_;
   Json todos_ = Json::array();
   bool plan_ = false;
@@ -342,15 +396,14 @@ class Tools {
 
 public:
   Tools(const Config &c, FileSystem &f, Processes &p, HttpTransport &h, Clock &clock,
-        Approver a = {}, Questioner q = {}, DiagnosticSink diagnostics = {})
-      : config_(c), files_(f), processes_(p), http_(h), clock_(clock), permissions_(c, f),
-        approve_(std::move(a)), question_(std::move(q)), diagnostics_(std::move(diagnostics)) {}
+        Approver a = {}, Questioner q = {}, DiagnosticSink diagnostics = {});
   Json schemas() const;
   void use_session(const std::string &id);
   ToolResult execute(const ToolCall &, const Cancellation &);
   std::string instructions() const;
   std::string expand_command(const std::string &) const;
-  HookOutcome run_hooks(const std::string &, const Json &, const Cancellation &, int budget_ms = 0);
+  HookOutcome run_hooks(const std::string &, const Json &, const Cancellation &, int budget_ms = 0,
+                        DiagnosticBuffer *diagnostics = nullptr);
 };
 using EventSink = std::function<void(const Json &)>;
 struct RunResult {

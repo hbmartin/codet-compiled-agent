@@ -154,7 +154,7 @@ TEST_F(Remaining, BoundedToolOutputRetainsItsSpillNoticeAndFullContent) {
   const auto result = execute("Read", {{"file_path", "long"}});
   ASSERT_FALSE(result.error) << result.content;
   EXPECT_LE(result.content.size(), 256u);
-  EXPECT_THAT(result.content, HasSubstr("Output truncated"));
+  EXPECT_THAT(result.content, HasSubstr("bytes omitted"));
   ASSERT_TRUE(result.metadata.contains("spill_path"));
   EXPECT_GT(files.read(result.metadata["spill_path"].get<std::string>()).size(), 2000u);
   EXPECT_NO_THROW(Json(result.content).dump());
@@ -328,7 +328,7 @@ TEST_F(Remaining, PathDenialsCoverAliasesCanonicalTargetsAndWildcardPrefixes) {
   fs::create_directory_symlink(config.cwd / "secrets", config.cwd / "alias");
   for (const auto &rule :
        {"Read(secrets/key)", "Read(./secrets/key)", "Read(secrets/*)", "Read(alias/*)"}) {
-    config.deny = {rule};
+    config.set_deny({rule});
     for (const auto &path : {"secrets/key", "./secrets/key", "alias/key", "alias/../secrets/key"})
       EXPECT_TRUE(execute("Read", {{"file_path", path}}).error) << rule << " " << path;
   }
@@ -340,7 +340,7 @@ TEST_F(Remaining, WildcardPathDenialsCoverAdditionalRootsAndBypass) {
   files.atomic_write(extra / ".env", "original");
   files.atomic_write(extra / "public", "public");
   config.roots.push_back(extra);
-  config.deny = {"Read(*secret*)", "Write(*.env)", "Glob(*secret*)"};
+  config.set_deny({"Read(*secret*)", "Write(*.env)", "Glob(*secret*)"});
   for (const auto &mode : {"default", "bypass"}) {
     config.permission_mode = mode;
     for (const auto &path : {(extra / "secret.txt").string(), std::string("../extra/secret.txt")}) {
@@ -363,7 +363,7 @@ TEST_F(Remaining, WildcardPathDenialsCoverAdditionalRootsAndBypass) {
 TEST_F(Remaining, DeniedPathsPreventHooksAndRewrittenInputsAreRechecked) {
   files.atomic_write(config.cwd / "public", "public");
   files.atomic_write(config.cwd / "secret", "secret");
-  config.deny = {"Read(secret)"};
+  config.set_deny({"Read(secret)"});
   hook("PreToolUse", "printf ran > hook-ran");
   EXPECT_TRUE(execute("Read", {{"file_path", "./secret"}}).error);
   EXPECT_FALSE(fs::exists(config.cwd / "hook-ran"));
@@ -371,7 +371,7 @@ TEST_F(Remaining, DeniedPathsPreventHooksAndRewrittenInputsAreRechecked) {
                      "'{\"hookSpecificOutput\":{\"permissionDecision\":\"allow\",\"updatedInput\":{"
                      "\"file_path\":\"./secret\"}}}'");
   EXPECT_TRUE(execute("Read", {{"file_path", "public"}}).error);
-  config.deny = {"ApplyPatch(secret)", "BatchEdit(secret)"};
+  config.set_deny({"ApplyPatch(secret)", "BatchEdit(secret)"});
   EXPECT_TRUE(execute("ApplyPatch",
                       {{"patch", "*** Begin Patch\n*** Add File: ./secret\n+x\n*** End Patch\n"}})
                   .error);
@@ -384,18 +384,19 @@ TEST_F(Remaining, GlobFiltersItsOwnDeniedFilesAndSubtreesOnly) {
   fs::create_directories(config.cwd / "hidden");
   files.atomic_write(config.cwd / "hidden/key", "secret");
   files.atomic_write(config.cwd / "public", "public");
-  config.deny = {"Glob(hidden)", "Read(public)"};
+  config.set_deny({"Glob(hidden)", "Read(public)"});
   auto result = execute("Glob", {{"pattern", "*"}});
   EXPECT_FALSE(result.error);
   EXPECT_THAT(result.content, HasSubstr("public"));
   EXPECT_THAT(result.content, Not(HasSubstr("hidden")));
-  config.deny = {"Glob(hidden/*)"};
+  config.set_deny({"Glob(hidden/*)"});
   result = execute("Glob", {{"pattern", "*"}});
   EXPECT_THAT(result.content, Not(HasSubstr("hidden/key")));
 }
 struct CountingFiles : FileSystem {
   NativeFileSystem native;
   mutable size_t canonical_calls = 0;
+  mutable std::map<std::string, size_t> canonical_paths;
   std::string read(const fs::path &p, size_t cap) const override {
     return native.read(p, cap);
   }
@@ -410,6 +411,10 @@ struct CountingFiles : FileSystem {
   }
   fs::path canonical(const fs::path &p) const override {
     ++canonical_calls;
+    auto key = p.lexically_normal().string();
+    while (key.size() > 1 && key.back() == '/')
+      key.pop_back();
+    ++canonical_paths[key];
     return native.canonical(p);
   }
 };
@@ -418,35 +423,50 @@ TEST_F(Remaining, PermissionDecisionSharesCanonicalPrefixesAcrossRules) {
   files.atomic_write(config.cwd / "shared/public", "public");
   config.permission_mode = "default";
   for (int i = 0; i < 50; ++i)
-    config.deny.push_back("Read(shared/secret-" + std::to_string(i) + "*)");
+    config.add_denied("Read(shared/secret-" + std::to_string(i) + "*)");
   CountingFiles counted;
   Permissions permissions(config, counted);
   const auto target = config.cwd / "shared/public";
   EXPECT_EQ(permissions.decide({"Read", target.string(), target, false}), Decision::allow);
   // Target, cwd and shared prefix each resolve once; fifty rules must not multiply IO.
   EXPECT_LE(counted.canonical_calls, 4u);
+  EXPECT_EQ(counted.canonical_paths[(config.cwd / "shared").string()], 1u);
   counted.canonical_calls = 0;
-  config.deny.push_back("Read(shared/public)");
+  config.add_denied("Read(shared/public)");
   EXPECT_EQ(permissions.decide({"Read", target.string(), target, false}), Decision::deny);
   EXPECT_LE(counted.canonical_calls, 4u);
 }
 TEST_F(Remaining, GlobChecksEachResultOnceAndCachesCanonicalPrefixes) {
   config.permission_mode = "default";
-  config.deny = {"Read(secret*)"};
+  config.set_deny({"Read(secret*)"});
   for (int i = 0; i < 100; ++i)
     files.atomic_write(config.cwd / ("file-" + std::to_string(i)), "x");
   CountingFiles counted;
   Tools tools(config, counted, processes, http, clock);
   const auto result = tools.execute(call("Glob", {{"pattern", "*"}}), cancel);
   ASSERT_FALSE(result.error);
-  EXPECT_LT(counted.canonical_calls, 310u);
+  EXPECT_LT(counted.canonical_calls, 20u);
+  for (int i = 0; i < 100; ++i)
+    EXPECT_EQ(counted.canonical_paths[(config.cwd / ("file-" + std::to_string(i))).string()], 0u);
   EXPECT_THAT(result.content, HasSubstr("file-99"));
-  config.deny = {"Glob(file-99)"};
   counted.canonical_calls = 0;
+  const auto missing = tools.execute(call("Glob", {{"pattern", "does-not-match"}}), cancel);
+  EXPECT_TRUE(missing.content.empty());
+  EXPECT_LT(counted.canonical_calls, 20u);
+  config.set_deny({"Glob(file-99)"});
+  counted.canonical_calls = 0;
+  counted.canonical_paths.clear();
   const auto filtered = tools.execute(call("Glob", {{"pattern", "*"}}), cancel);
   EXPECT_FALSE(filtered.error);
   EXPECT_THAT(filtered.content, Not(HasSubstr("file-99")));
-  EXPECT_LT(counted.canonical_calls, 410u);
+  EXPECT_LT(counted.canonical_calls, 110u);
+  // file-99 is also the rule's literal prefix: three fresh authorization stages
+  // (before hooks, after rewrite, and root authorization), then once in the traversal.
+  for (int i = 0; i < 100; ++i)
+    EXPECT_EQ(counted.canonical_paths[(config.cwd / ("file-" + std::to_string(i))).string()],
+              i == 99 ? 4u : 1u)
+        << i;
+  EXPECT_LE(counted.canonical_paths[config.cwd.string()], 6u);
 }
 TEST_F(Remaining, HookFailurePlaintextStderrAndExplicitDenialsFollowEventSemantics) {
   Tools tools(config, files, processes, http, clock);

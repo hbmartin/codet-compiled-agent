@@ -5,6 +5,9 @@
 #include <sys/types.h>
 
 namespace codet {
+struct ProcessResourceError : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
 struct ProcessOwnershipLost : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
