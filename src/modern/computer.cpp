@@ -22,15 +22,17 @@ CaptureArea capture_area(const std::vector<CaptureRect> &displays, const Json &a
     throw Error("Choose one screenshot selector: display_id, window_id, or a global region");
   if (displays.empty())
     throw Error("No active displays");
-  for (const auto &display : displays)
-    if (!std::isfinite(display.x) || !std::isfinite(display.y) || !std::isfinite(display.width) ||
-        !std::isfinite(display.height) || !std::isfinite(display.x + display.width) ||
-        !std::isfinite(display.y + display.height) || display.width <= 0 || display.height <= 0)
-      throw Error("Invalid display bounds; refresh computer.get_state");
+  const auto valid = [](const CaptureRect &display) {
+    return std::isfinite(display.x) && std::isfinite(display.y) && std::isfinite(display.width) &&
+           std::isfinite(display.height) && std::isfinite(display.x + display.width) &&
+           std::isfinite(display.y + display.height) && display.width > 0 && display.height > 0;
+  };
   if (!region && !args.contains("window_id")) {
     const auto id = args.value("display_id", size_t{1});
     if (!id || id > displays.size())
       throw Error("Invalid display ID; use get_state display IDs");
+    if (!valid(displays[id - 1]))
+      throw Error("Invalid display bounds; refresh computer.get_state");
     return {id - 1, displays[id - 1]};
   }
   CaptureRect requested{};
@@ -51,8 +53,14 @@ CaptureArea capture_area(const std::vector<CaptureRect> &displays, const Json &a
       requested.height <= 0)
     throw Error("Invalid capture region");
   std::optional<CaptureArea> result;
+  std::vector<std::string> warnings;
   for (size_t i = 0; i < displays.size(); ++i) {
     const auto &display = displays[i];
+    if (!valid(display)) {
+      warnings.push_back("Skipped invalid display " + std::to_string(i + 1) +
+                         "; refresh computer.get_state");
+      continue;
+    }
     const double x = std::max(requested.x, display.x), y = std::max(requested.y, display.y);
     const double right = std::min(requested.x + requested.width, display.x + display.width);
     const double bottom = std::min(requested.y + requested.height, display.y + display.height);
@@ -65,6 +73,7 @@ CaptureArea capture_area(const std::vector<CaptureRect> &displays, const Json &a
   }
   if (!result)
     throw Error("Capture is outside active displays");
+  result->warnings = std::move(warnings);
   return *result;
 }
 std::pair<double, double> desktop_point(double x, double y, size_t width, size_t height,
@@ -417,6 +426,7 @@ class TigerComputer final : public ComputerBackend {
     shots_[id] = {rect, image.width, image.height, std::chrono::steady_clock::now()};
     return {{{"screenshot_id", id},
              {"display_id", display_id},
+             {"warnings", area.warnings},
              {"bounds", rectangle(rect)},
              {"width", image.width},
              {"height", image.height}},

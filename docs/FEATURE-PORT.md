@@ -7,7 +7,7 @@ The modern application now uses the supplied `../tools` Codex snapshot as its co
 | Canonical tools, schemas, hooks and availability | tool_registry.cpp, tools.cpp | Frozen required-field fixture, mode and legacy-name rejection tests |
 | Yielding shell, pipes and PTYs | platform.cpp, tools.cpp | Numeric sessions, incremental output, stdin, exit status, cancellation and process ownership regressions |
 | Codex patches | patch.cpp, tools.cpp | No prior read, parser/reference chunks, prevalidation, rollback and permissions |
-| Plan-only inspection | read_file | Numbered lines, directory listing, root/symlink/per-entry denials |
+| Scoped inspection | read_file | Private context in all modes; workspace in Plan; streaming line/byte pages and fresh handle validation |
 | Plans, blocking and async questions | tools.cpp, interaction.cpp, cli.cpp | Persistence, question IDs, queued replies, wake-on-input sleep, both terminal modes |
 | Native image inputs | images.cpp, provider.cpp | Encoding, bounds, private checksummed artifacts, all provider wire fixtures and missing-file diagnostics |
 | Native Tiger desktop | computer.cpp | Injected dispatch/permissions, framebuffer conversion and coordinate tests; PPC compile/link checks; opt-in target execution |

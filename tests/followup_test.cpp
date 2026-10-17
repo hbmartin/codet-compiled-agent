@@ -140,7 +140,7 @@ TEST_F(Followup, CompactionUsesRealAdaptersWithoutToolsAndRetainsNormalTools) {
     transport.provider = name;
     ApiProvider provider(transport, credentials, clock);
     Tools tools(config, files, processes, transport, clock);
-    config.context_tokens = codet::test::context_tokens(tools, config, 1200);
+    config.context_tokens = codet::test::context_tokens(tools, config, 5000);
     Agent agent(config, provider, tools, state, {});
     EXPECT_EQ(agent.run(session, "objective", cancel).text, "done") << name;
     ASSERT_EQ(transport.requests.size(), 2u) << name;

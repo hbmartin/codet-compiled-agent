@@ -245,35 +245,40 @@ TEST_F(Prompts, HookFeedbackNeverReplacesHumanInstructionDuringCompaction) {
                               "if test ! -f stop-once; then touch stop-once; printf '%s' "
                               "'{\"decision\":\"block\",\"reason\":\"verify results\"}'; fi"}}})}};
   auto t = tools();
-  config.context_tokens = codet::test::context_tokens(t, config, 1600);
+  config.context_tokens = codet::test::context_tokens(t, config, 5000);
   StateStore state(config.home);
   auto session = state.create();
   Script provider;
   size_t requests = 0;
   provider.next = [&](const auto &, const auto &messages, const auto &schemas) {
     if (++requests == 1)
-      return answer(std::string(5000, 'x'));
+      return answer(std::string(12000, 'x'));
     if (schemas.empty()) {
       EXPECT_THAT(messages[0].text,
                   HasSubstr("Latest user instruction (preserve verbatim):\nreal human objective"));
       return answer("Keep real human objective and verify results.");
     }
-    EXPECT_EQ(messages.back().text, "real human objective");
-    EXPECT_EQ(messages.back().origin, "human");
+    EXPECT_EQ(messages[1].text, "real human objective");
+    EXPECT_EQ(messages[1].origin, "human");
     return answer("done");
   };
   Agent agent(config, provider, t, state, {});
   EXPECT_EQ(agent.run(session, "real human objective", cancel).text, "done");
   ASSERT_EQ(provider.output_limits.size(), 3u);
-  EXPECT_LT(provider.output_limits[1], config.max_output_tokens);
+  EXPECT_EQ(provider.output_limits[1], config.max_output_tokens);
   EXPECT_EQ(provider.output_limits.back(), config.max_output_tokens);
 }
 TEST_F(Prompts, CompactionPreservesAsyncSteeringAfterCompletedToolBatch) {
   auto channel = std::make_shared<Interaction>();
   auto t = tools(channel);
-  config.context_tokens = codet::test::context_tokens(t, config, 1600);
+  config.context_tokens = codet::test::context_tokens(t, config, 9000);
   StateStore state(config.home);
   auto session = state.create();
+  codet::Message old;
+  old.role = "system";
+  old.text = std::string(3500, 'x');
+  session.messages = {old, old};
+  state.save(session);
   Script provider;
   int requests = 0;
   provider.next = [&](const auto &system, const auto &messages, const auto &schemas) {
@@ -285,7 +290,7 @@ TEST_F(Prompts, CompactionPreservesAsyncSteeringAfterCompletedToolBatch) {
     }
     if (schemas.empty()) {
       EXPECT_THAT(system, HasSubstr("CONTEXT CHECKPOINT COMPACTION"));
-      EXPECT_THAT(messages[0].text, HasSubstr("finished-time"));
+      EXPECT_THAT(messages[0].text, Not(HasSubstr("finished-time")));
       EXPECT_THAT(messages[0].text, HasSubstr("revised objective: preserve me verbatim"));
       return answer("Original task and completed clock observation; user revised the objective.");
     }
@@ -315,10 +320,10 @@ TEST_F(Prompts, FixedOverheadAndUnshrinkableSummaryFailWithoutRepeatedRequests) 
   session = state.create();
   codet::Message old;
   old.role = "user";
-  old.text = std::string(3000, 'x');
+  old.text = std::string(9000, 'x');
   session.messages = {old, old};
   state.save(session);
-  config.context_tokens = codet::test::context_tokens(t, config, 1200);
+  config.context_tokens = codet::test::context_tokens(t, config, 5000);
   EXPECT_THROW(agent.run(session, "latest", cancel), Error);
   EXPECT_EQ(requests, 1);
   EXPECT_EQ(state.load(session.id).messages.front().text, old.text);

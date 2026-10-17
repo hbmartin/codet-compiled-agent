@@ -1633,7 +1633,8 @@ void Tools::use_session(const std::string &id) {
     return;
   const auto root = artifact_directory(config_);
   if (fs::exists(artifact_index_path(root, id))) {
-    if (!private_anchor(root)) throw Error("Artifact storage changed before session inspection");
+    if (!private_anchor(root))
+      throw Error("Artifact storage changed before session inspection");
     archive_image_history(root, files_, id, {});
   }
   session_id_ = id;

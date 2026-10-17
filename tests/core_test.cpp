@@ -669,7 +669,7 @@ TEST_F(Fixture, ContextCompactionUsesSameProviderAndRetainsCurrentRequest) {
   Tools tools(config, files, processes, http, clock);
   StrictMock<MockProvider> provider;
   ProviderResult summary;
-  config.context_tokens = codet::test::context_tokens(tools, config, 1200);
+  config.context_tokens = codet::test::context_tokens(tools, config, 4800);
   summary.message.role = "assistant";
   summary.message.text = "preserved summary";
   ProviderResult final;

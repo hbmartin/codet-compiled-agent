@@ -39,13 +39,16 @@ void check_index(const fs::path &root, const fs::path &target) {
 }
 bool current_index(const FileSystem &files, const fs::path &target) {
   auto input = files.open_read(target);
-  if (input->path() != files.canonical(target)) throw Error("Artifact index changed while opening");
+  if (input->path() != files.canonical(target))
+    throw Error("Artifact index changed while opening");
   char buffer[512];
   const auto count = input->read(buffer, sizeof buffer);
   const std::string prefix(buffer, count);
   const auto first = Json::parse(prefix.substr(0, prefix.find('\n')), nullptr, false);
-  if (!first.is_object() || first.value("kind", "") != "header") return false;
-  if (first.value("version", 0) != 2) throw Error("Unsupported artifact index version; use a compatible Codet version");
+  if (!first.is_object() || first.value("kind", "") != "header")
+    return false;
+  if (first.value("version", 0) != 2)
+    throw Error("Unsupported artifact index version; use a compatible Codet version");
   return true;
 }
 } // namespace

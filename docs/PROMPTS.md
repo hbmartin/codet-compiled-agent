@@ -67,13 +67,13 @@ authorization. Deny rules prevail even in bypass mode.
 Context accounting retains the existing approximate three-bytes-per-token estimate and now
 includes fixed prompt, tool schemas, request overhead and reserved output. Compaction uses the imported instructions and
 summary prefix, with no tools. It runs only after completed tool batches, preserves the latest
-human instruction verbatim, excluding synthetic hook feedback from that selection. Image
+human instruction verbatim, excluding newly tagged synthetic hook feedback from that selection. Legacy origin-less messages keep their historical role-based interpretation. The newest completed assistant/tool batch and subsequent feedback are also protected, with complete call/result pairing. Image
 references move to a private paged index; no images are attached to the compacted continuation.
-Summary requests reserve output and request only a summary that can fit the continuation.
+Summary requests reserve the configured generation allowance separately from their visible prose target (at most 8 KiB). Conservative JSON escaping headroom reduces that target to fit the protected continuation; fewer than 512 usable bytes fails before requesting a summary. Empty, exhausted or oversized summaries leave durable history intact.
 Existing adapter output controls apply where supported; Codex subscription requests use the
 prompt bound and returned-size validation without inventing unsupported transport fields.
 Oversized fixed context, human input or summaries produce distinct diagnostics with estimated
-minimum context settings. Defaults remain unchanged; instructions and human input are never
+minimum context settings. The default context_tokens is now 65536; max_output_tokens=8192, tool_output_limit=65536, output reservation and the three-bytes-per-token estimate remain unchanged. Instructions and human input are never
 silently shortened. Image payloads retain their separate provider request budgets.
 
 Host fixtures establish source integrity, composition, schema gates, adapter transport,
