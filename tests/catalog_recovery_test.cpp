@@ -203,7 +203,9 @@ TEST_F(CatalogRecovery, AtCapacityClosesDoNotScanAndAbandonedFlagsAreReclaimed) 
       EXPECT_EQ(bounded->metrics.scans, before);
     }
     Database db(temp.root / std::to_string(retained) / "catalog.sqlite3");
-    db.exec("UPDATE captures SET active=1");
+    // Force real byte pressure even in the 40-file case. Below capacity, abandoned flags
+    // intentionally remain conservative until their space is needed.
+    db.exec("UPDATE captures SET active=1,bytes=67108864");
     OutputSpool next(bounded);
     next.append("after abandoned writer");
     next.flush();
