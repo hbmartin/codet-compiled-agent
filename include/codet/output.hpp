@@ -11,7 +11,15 @@ struct CaptureIo {
   virtual ssize_t write(int, const char *, size_t);
   virtual int sync(int);
 };
+class OutputSpool;
 class CaptureStore {
+  struct Catalog;
+  std::shared_ptr<Catalog> catalog_;
+  void prepare_catalog();
+  void rebuild_catalog();
+  size_t reserve(OutputSpool &, size_t);
+  size_t account_reservation(OutputSpool &, size_t);
+  void account_closed(OutputSpool &);
   fs::path directory_;
   size_t limit_, quota_, records_;
   DiagnosticSink diagnostics_;
@@ -20,6 +28,7 @@ class CaptureStore {
   friend class OutputSpool;
 
 public:
+  ~CaptureStore();
   CaptureMetrics metrics;
   explicit CaptureStore(fs::path, size_t limit = size_t{8} * 1024 * 1024,
                         size_t quota = size_t{64} * 1024 * 1024, size_t records = 64,
@@ -28,6 +37,7 @@ public:
 };
 // Disk capture is byte-preserving. A bounded staging buffer is flushed at publication/close.
 class OutputSpool {
+  friend class CaptureStore;
   std::shared_ptr<CaptureStore> store_;
   fs::path path_;
   size_t bytes_ = 0, pending_size_ = 0;

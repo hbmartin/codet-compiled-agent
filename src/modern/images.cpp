@@ -211,7 +211,7 @@ void from_json(const Json &j, ImageArtifact &a) {
   a.height = j.at("height");
 }
 fs::path artifact_directory(const Config &c) {
-  return c.artifact_root.empty() ? c.home / "artifacts" : c.artifact_root;
+  return c.artifact_root.empty() ? invocation_directory(c) / "artifacts" : c.artifact_root;
 }
 ImageArtifact persist_image(const Config &c, FileSystem &files, const ImageData &image,
                             const std::string &detail) {

@@ -22,6 +22,15 @@ struct Error : std::runtime_error {
   explicit Error(const std::string &message, int c = 1)
       : std::runtime_error(safe_text(message)), code(c) {}
 };
+struct HookFailure : Error {
+  explicit HookFailure(const std::string &message) : Error(message) {}
+};
+struct ProviderError : Error {
+  int http_status;
+  std::string body;
+  ProviderError(const std::string &, int, std::string);
+  Json details() const;
+};
 struct ProcessTimeout : Error {
   ProcessTimeout() : Error("Command timed out during startup") {}
 };
@@ -257,6 +266,7 @@ struct ProviderResult {
 };
 struct ProviderConfig {
   std::string api_key, base_url, model;
+  std::string wire_api = "auto";
   std::optional<bool> image_input;
 };
 struct Selection {
@@ -266,7 +276,8 @@ struct PermissionRuleSet {
   std::vector<std::string> allow, deny;
 };
 struct Config {
-  fs::path home, cwd, capture_root, artifact_root;
+  fs::path home, cwd, capture_root, artifact_root, state_root;
+  std::string durability = "durable";
   std::string provider = "codex", model, permission_mode = "default", approval = "on-request";
   std::string ui = "auto", theme = "default", effort;
   size_t max_turns = 100, max_output_tokens = 8192, context_tokens = 65536;
@@ -316,6 +327,9 @@ public:
 };
 Config load_config(const fs::path &home, const fs::path &cwd, const std::string &profile,
                    const std::vector<std::string> &overrides, FileSystem &);
+fs::path invocation_directory(const Config &);
+std::string semantic_transcript(const std::vector<Message> &);
+bool uses_responses(const Config &);
 std::string default_model(const Config &, const std::string &provider);
 Selection resolve_selection(const Config &, const std::optional<Selection> &saved = std::nullopt);
 bool image_input_enabled(const Config &);
@@ -341,6 +355,10 @@ using ItemSink = std::function<void(const Json &)>;
 size_t provider_history_bytes(const Config &, const std::vector<Message> &);
 struct Provider {
   virtual ~Provider() = default;
+  virtual void restore_conversation(const Json &) {}
+  virtual Json conversation_state() const {
+    return nullptr;
+  }
   virtual ProviderResult complete(const Config &, const std::string &system,
                                   const std::vector<Message> &, const Json &tools,
                                   const Cancellation &, const ChunkSink &,
@@ -361,8 +379,15 @@ class ApiProvider final : public Provider {
   HttpTransport &http_;
   CredentialStore &credentials_;
   Clock &clock_;
+  mutable Json conversation_ = nullptr;
 
 public:
+  void restore_conversation(const Json &state) override {
+    conversation_ = state;
+  }
+  Json conversation_state() const override {
+    return conversation_;
+  }
   ApiProvider(HttpTransport &h, CredentialStore &c, Clock &clock)
       : http_(h), credentials_(c), clock_(clock) {}
   HttpRequest request(const Config &, const std::string &, const std::vector<Message> &,
@@ -376,13 +401,15 @@ struct Session {
   std::vector<Message> messages;
   std::string provider = "", model = "";
   std::optional<std::string> effort = std::nullopt;
+  Json provider_state = nullptr;
 };
 class StateStore {
   struct Impl;
   std::unique_ptr<Impl> impl_;
 
 public:
-  explicit StateStore(const fs::path &, const fs::path &artifact_root = {});
+  explicit StateStore(const fs::path &, const fs::path &artifact_root = {},
+                      const std::string &durability = "durable");
   ~StateStore();
   Session create(const std::string &name = "");
   // Default loads are repaired snapshots, never persistent recovery writes.
@@ -393,6 +420,14 @@ public:
   Session last(bool repair = true);
   Session fork(const Session &);
   void save(const Session &);
+  void update_metadata(const Session &);
+  void append_messages(const Session &, size_t first, bool provider_state = false);
+  void revise_messages(const Session &, const std::vector<size_t> &);
+  void replace_history(const Session &);
+  void complete_tool(Session &, const ToolCall &, Message);
+  void save_provider_state(const Session &);
+  void sync();
+  uint64_t serialized_bytes() const;
   void remember_references(const std::string &, const std::vector<Message> &);
   std::vector<std::string> references(const std::string &);
   Json list();
@@ -475,6 +510,7 @@ class Tools {
   mutable std::vector<fs::path> skill_directories_;
   mutable std::map<fs::path, fs::path> skill_anchors_;
   bool large_plan_ = false;
+  bool damaged_plan_ = false;
   std::optional<size_t> inspection_budget_;
   mutable std::map<fs::path, fs::path> private_anchors_;
   mutable std::set<std::string> warnings_;
