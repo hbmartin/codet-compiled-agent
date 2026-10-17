@@ -64,6 +64,14 @@ struct HttpTransport {
 struct CurlTransport final : HttpTransport {
   HttpResponse perform(const HttpRequest &, const Cancellation &, const ChunkSink & = {}) override;
 };
+class ReadHandle {
+public:
+  virtual ~ReadHandle() = default;
+  virtual fs::path path() const = 0;
+  virtual uint64_t size() const = 0;
+  virtual size_t read(char *, size_t) = 0;
+  virtual void seek(uint64_t) = 0;
+};
 struct FileSystem {
   virtual ~FileSystem() = default;
   virtual std::string read(const fs::path &,
@@ -74,15 +82,22 @@ struct FileSystem {
     return text;
   }
   virtual void atomic_write(const fs::path &, const std::string &, bool private_file = false) = 0;
+  using Writer = std::function<void(const std::string &)>;
+  virtual void atomic_stream(const fs::path &, const std::function<void(const Writer &)> &,
+                             bool private_file = false);
   virtual void remove(const fs::path &) = 0;
   virtual fs::path canonical(const fs::path &) const = 0;
+  virtual std::unique_ptr<ReadHandle> open_read(const fs::path &) const;
 };
 struct NativeFileSystem final : FileSystem {
   std::string read(const fs::path &, size_t = size_t{16} * size_t{1024} * 1024) const override;
   std::string read_prefix(const fs::path &, size_t, bool &) const override;
   void atomic_write(const fs::path &, const std::string &, bool = false) override;
+  void atomic_stream(const fs::path &, const std::function<void(const Writer &)> &,
+                     bool = false) override;
   void remove(const fs::path &) override;
   fs::path canonical(const fs::path &) const override;
+  std::unique_ptr<ReadHandle> open_read(const fs::path &) const override;
 };
 class CaptureStore;
 class OutputCapture;
@@ -217,6 +232,8 @@ struct Message {
   std::string replay_provider = "";
   std::vector<ImageArtifact> images;
   std::string origin, artifact_index;
+  std::string message_id, result_file;
+  bool images_archived = false;
 };
 void to_json(Json &, const ToolCall &);
 void from_json(const Json &, ToolCall &);
@@ -244,7 +261,7 @@ struct Config {
   fs::path home, cwd, capture_root, artifact_root;
   std::string provider = "codex", model, permission_mode = "default", approval = "on-request";
   std::string ui = "auto", theme = "default", effort;
-  size_t max_turns = 100, max_output_tokens = 8192, context_tokens = 32768;
+  size_t max_turns = 100, max_output_tokens = 8192, context_tokens = 65536;
   size_t tool_output_limit = 65536;
   int request_timeout = 0, connect_timeout = 20, stream_idle_timeout = 120;
   size_t project_doc_max_bytes = 32768, memory_context_max_bytes = 8900;
@@ -438,6 +455,11 @@ class Tools {
   std::shared_ptr<CaptureStore> capture_store_;
   Json todos_ = Json::array();
   std::string session_id_;
+  std::set<fs::path> referenced_results_;
+  mutable std::vector<fs::path> skill_directories_;
+  bool large_plan_ = false;
+  std::optional<size_t> inspection_budget_;
+  std::map<fs::path, fs::path> private_anchors_;
   mutable std::set<std::string> warnings_;
   const Cancellation *active_cancel_ = nullptr;
   std::shared_ptr<Interaction> interaction_;
@@ -455,6 +477,8 @@ class Tools {
   fs::path path(const std::string &) const;
   void authorize(const PermissionRequest &);
   PermissionRequest execution_request(const ToolCall &) const;
+  bool private_read(const fs::path &) const;
+  bool private_anchor(const fs::path &) const;
   Json authored_hook_input(const ToolCall &) const;
   ToolResult execute_inner(const ToolCall &, const PermissionRequest &, const Cancellation &);
 
@@ -466,6 +490,12 @@ public:
   Json schemas() const;
   Json schemas(const Json &capabilities) const;
   void use_session(const std::string &id);
+  void reference_results(const std::vector<Message> &);
+  std::string retain_result(Message &);
+  void inspection_budget(size_t bytes) {
+    inspection_budget_ = bytes;
+  }
+  std::string result_reference(const Message &) const;
   ToolResult execute(const ToolCall &, const Cancellation &);
   std::string instructions() const;
   std::string dynamic_context() const;

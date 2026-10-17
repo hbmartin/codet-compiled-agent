@@ -53,7 +53,7 @@ add_library(codet_core STATIC
   src/modern/platform.cpp src/modern/failure.cpp src/modern/support.cpp src/modern/config.cpp src/modern/provider.cpp
   src/modern/state.cpp src/modern/output.cpp src/modern/hooks.cpp src/modern/patch.cpp src/modern/tools.cpp
   src/modern/tool_registry.cpp src/modern/interaction.cpp src/modern/images.cpp
-  src/modern/computer.cpp src/modern/artifacts.cpp src/modern/prompts.cpp src/modern/agent.cpp src/modern/cli.cpp)
+  src/modern/computer.cpp src/modern/artifacts.cpp src/modern/context.cpp src/modern/inspection.cpp src/modern/prompts.cpp src/modern/agent.cpp src/modern/cli.cpp)
 target_include_directories(codet_core PUBLIC include PRIVATE "${CMAKE_BINARY_DIR}/generated" ${CURSES_INCLUDE_DIRS} ${EDIT_INCLUDE_DIR})
 target_link_libraries(codet_core PUBLIC nlohmann_json::nlohmann_json tomlplusplus::tomlplusplus
   nlohmann_json_schema_validator::validator CURL::libcurl OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB ${CODET_SQLITE_TARGET} Threads::Threads

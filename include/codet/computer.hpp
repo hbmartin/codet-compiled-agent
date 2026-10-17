@@ -13,6 +13,9 @@ public:
   virtual ~ImageBackend() = default;
   virtual bool available() const = 0;
   virtual ImageData load(const fs::path &, const std::string &detail) = 0;
+  virtual ImageData load_bytes(const std::string &, const std::string &) {
+    throw Error("Image backend does not support decoding validated bytes");
+  }
 };
 struct DesktopResult {
   Json data = Json::object();
@@ -28,8 +31,9 @@ struct CaptureRect {
   double x, y, width, height;
 };
 struct CaptureArea {
-  size_t display;
-  CaptureRect bounds;
+  size_t display = 0;
+  CaptureRect bounds{};
+  std::vector<std::string> warnings = {};
 };
 CaptureArea capture_area(const std::vector<CaptureRect> &, const Json &,
                          const std::optional<CaptureRect> &window = std::nullopt);

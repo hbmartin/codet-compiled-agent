@@ -121,6 +121,12 @@ std::pair<size_t, size_t> suffix_bytes(const std::string &text, size_t budget, s
   return {at, end};
 }
 } // namespace
+bool capture_name(const fs::path &path) {
+  auto name = path.filename().string();
+  if (name.rfind("capture-", 0) == 0)
+    name.erase(0, 8);
+  return uuid_name(name);
+}
 ssize_t CaptureIo::write(int fd, const char *bytes, size_t count) {
   return ::write(fd, bytes, count);
 }

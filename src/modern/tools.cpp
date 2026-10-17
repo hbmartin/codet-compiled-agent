@@ -432,6 +432,52 @@ PermissionRequest Tools::execution_request(const ToolCall &call) const {
   }
   return request;
 }
+void Tools::reference_results(const std::vector<Message> &messages) {
+  const auto accept = [&](const std::string &value) {
+    const fs::path p(value);
+    if (!capture_name(p))
+      return;
+    const auto expected =
+        fs::absolute(capture_directory(config_) / p.filename()).lexically_normal();
+    if (p.is_absolute() || p == p.filename())
+      referenced_results_.insert(expected);
+  };
+  for (const auto &message : messages) {
+    if (message.role != "tool")
+      continue;
+    if (!message.result_file.empty())
+      accept(message.result_file);
+    const auto envelope = Json::parse(message.text, nullptr, false);
+    if (!envelope.is_object())
+      continue;
+    const auto metadata = envelope.value("metadata", Json::object());
+    if (metadata.is_object() && metadata.value("spill_path", Json()).is_string())
+      accept(metadata.at("spill_path"));
+  }
+}
+std::string Tools::result_reference(const Message &message) const {
+  return (capture_directory(config_) / (message.result_file.empty()
+                                            ? "capture-00000000-0000-0000-0000-000000000000.txt"
+                                            : fs::path(message.result_file).filename().string()))
+      .string();
+}
+std::string Tools::retain_result(Message &message) {
+  if (message.result_file.empty()) {
+    OutputCapture capture(capture_store_, 1);
+    const auto payload = safe_json(Json(message)).dump();
+    capture.append(payload);
+    capture.retain();
+    capture.finish();
+    ProcessResult stored;
+    capture.metadata(stored, payload.size());
+    if (stored.spill_path.empty() || stored.spill_truncated || !stored.capture_error.empty())
+      throw Error("Cannot retain full tool result for paging: " + stored.capture_error);
+    message.result_file = fs::path(stored.spill_path).filename().string();
+  }
+  const auto path = result_reference(message);
+  referenced_results_.insert(fs::absolute(path).lexically_normal());
+  return path;
+}
 Json Tools::authored_hook_input(const ToolCall &call) const {
   if (call.name == "exec_command" && call.arguments.is_object()) {
     auto input = call.arguments;
@@ -698,6 +744,10 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
       result.metadata["output"] = result.content;
       result.content = result.metadata.dump();
     }
+    Message reference;
+    reference.role = "tool";
+    reference.text = Json({{"metadata", result.metadata}}).dump();
+    reference_results({reference});
     return result;
   } catch (const Error &e) {
     if (action_completed)
@@ -1050,11 +1100,15 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
         ++active;
     if (active > 1)
       throw Error("At most one step may be in_progress");
-    todos_ = plan;
+    const auto serialized = plan.dump();
+    if (serialized.size() > 1048576)
+      throw Error("Plan exceeds 1 MiB; saved plan unchanged");
     if (!session_id_.empty()) {
       fs::create_directories(config_.home / "plans");
-      files_.atomic_write(config_.home / "plans" / (session_id_ + ".json"), plan.dump(), true);
+      files_.atomic_write(config_.home / "plans" / (session_id_ + ".json"), serialized, true);
     }
+    todos_ = plan;
+    large_plan_ = false;
     return {"Plan updated"};
   }
   if (definition->handler == ToolHandler::question) {
@@ -1292,15 +1346,37 @@ std::string Tools::instructions() const {
 }
 std::string Tools::dynamic_context() const {
   std::string out;
-  if (!todos_.empty())
-    out = "\n# Current task plan\n" + todos_.dump();
+  if (!todos_.empty() || large_plan_) {
+    out = "\n# Current task plan (bounded view; original step numbers)\n";
+    out += "Full saved plan: " + (config_.home / "plans" / (session_id_ + ".json")).string() +
+           "; inspect with read_file.\n";
+    if (large_plan_)
+      out += "Saved plan is too large to preview; inspect it in pages before changing it.\n";
+    for (const auto *status : {"in_progress", "pending", "completed"})
+      for (size_t i = 0; i < todos_.size(); ++i) {
+        const auto &step = todos_[i];
+        if (step.at("status") != status)
+          continue;
+        const auto &label = step.at("step").get_ref<const std::string &>();
+        const auto line = std::to_string(i + 1) + ". [" + status + "] " +
+                          bounded_text(label.substr(0, 132), 128) +
+                          (label.size() > 128 ? " [see full plan]" : "") + "\n";
+        if (out.size() + line.size() + 100 > 8192) {
+          out += "Additional steps omitted; read the full saved plan.\n";
+          break;
+        }
+        out += line;
+      }
+  }
   if (!session_id_.empty()) {
     const auto index = artifact_index_path(artifact_directory(config_), session_id_);
     if (fs::exists(index))
-      out += "\n# Historical image index\n" + index.string() +
-             "\nCompacted images are text references only. Page this JSONL index through " +
-             (config_.permission_mode == "plan" ? "read_file" : "exec_command") +
-             "; explicitly reload needed artifacts with view_image when available.\n";
+      out += "\n# Historical image index\n" + index.string() + "\nPosition: " +
+             image_history_position(artifact_directory(config_), files_, session_id_).dump() +
+             "\nArtifact root: " + artifact_directory(config_).string() +
+             "\nPage this JSONL observation index with read_file in any mode. Resolve relative "
+             "image paths under the artifact root and reload selected images with view_image. "
+             "Compaction removes every attachment.\n";
   }
   return out;
 }
@@ -1311,10 +1387,16 @@ void Tools::use_session(const std::string &id) {
   if (id == session_id_)
     return;
   session_id_ = id;
+  referenced_results_.clear();
+  large_plan_ = false;
   todos_ = Json::array();
   const auto p = config_.home / "plans" / (id + ".json");
   if (fs::exists(p)) {
-    todos_ = Json::parse(files_.read(p, 65536), nullptr, false);
+    if (fs::file_size(p) > 1048576) {
+      large_plan_ = true;
+      return;
+    }
+    todos_ = Json::parse(files_.read(p, 1048576), nullptr, false);
     if (!todos_.is_array())
       throw Error("Invalid saved task plan");
   }
