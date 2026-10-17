@@ -941,6 +941,31 @@ class CliTests(unittest.TestCase):
         self.assertIn('Consolidated facts',(memory/'facts.md').read_text())
         r=self.run_cli('exec','fixture-recall')
         self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(r.stdout,'memory recovered\n')
+    def test_migration_wait_can_be_interrupted(self):
+        import fcntl, sqlite3
+        db=sqlite3.connect(self.home/'state.sqlite3')
+        db.executescript("CREATE TABLE sessions(id TEXT PRIMARY KEY,name TEXT NOT NULL,parent TEXT,updated INTEGER NOT NULL,messages TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'idle',provider TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',reasoning_effort TEXT);CREATE TABLE tools(session TEXT,call_id TEXT,name TEXT,args TEXT,result TEXT,status TEXT,PRIMARY KEY(session,call_id));CREATE TABLE session_references(session TEXT,kind TEXT,path TEXT,PRIMARY KEY(session,kind,path));PRAGMA user_version=5;")
+        db.close()
+        with (self.home/'.migration.lock').open('w') as lease:
+            fcntl.flock(lease,fcntl.LOCK_EX)
+            p=subprocess.Popen([BIN,'-C',str(self.workspace),'sessions'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=self.env)
+            try:
+                time.sleep(.3);self.assertIsNone(p.poll());p.send_signal(signal.SIGINT)
+                out,err=p.communicate(timeout=5)
+                self.assertEqual(p.returncode,130,err)
+                self.assertIn('Interrupted waiting for database migration',err)
+            finally:
+                if p.poll() is None:p.kill();p.communicate()
+
+    def test_memory_consolidation_preserves_piped_and_positional_input(self):
+        memory=self.home/'memory';memory.mkdir();(memory/'facts.md').write_text('Old facts to consolidate.\n')
+        r=self.run_cli('memory','consolidate','--permission-mode','accept-edits','retain positional context',input='retain piped context')
+        self.assertEqual(r.returncode,0,r.stderr)
+        prompt=self.server.requests[-1]['body']['messages']
+        users=[m['content'] for m in prompt if m['role']=='user']
+        self.assertTrue(any('retain positional context' in m and 'retain piped context' in m for m in users))
+        self.assertTrue(any('Explicit memory consolidation:' in m for m in users))
+
     def test_interrupt_has_exit_130_and_terminal_event(self):
         for sig in (signal.SIGINT, signal.SIGTERM):
             with self.subTest(signal=sig):
