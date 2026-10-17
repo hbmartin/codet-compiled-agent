@@ -1,0 +1,58 @@
+# Reliability, persistence and providers
+
+Codet is an unofficial C++17 adaptation of the official Codex CLI. Historical reconstruction notes and attribution describe the separate recovered C target and remain preserved. Codex is the subscription-first default, with its existing model selection unchanged. Its imported-token transport uses private ChatGPT endpoints and Codex-compatible OAuth/header conventions; it is an unofficial compatibility integration, with no claim of guaranteed support or a proven terms violation.
+
+## Behavior changes
+
+Control hooks default to stopping the current turn on execution failure, timeout, invalid decisions or truncated interpreted output. Set `on_error="warn"` on an individual hook to retain diagnostic behavior. Exit 2 and valid vetoes always block, with a fallback explanation. SessionEnd and PostToolUseFailure remain diagnostic-only. A completed effect stays completed even if its PostToolUse hook fails; the result is committed before remaining calls are stopped.
+
+Provider failures expose the entire captured HTTP body and raw streaming error payload, including JSON fields, HTML and multiline data. Transport size limits and retry rules are unchanged. Human output includes raw bytes. Structured errors contain `http_status` and `body`, with ordinary JSON escaping; invalid UTF-8 uses `body_base64` and `body_encoding="base64"`. This deliberately preserves provider diagnostic content without redaction.
+
+Compaction receives an explicit projection of human steering, visible assistant text, calls, outcomes, recovery facts and artifact references. Encrypted reasoning, thinking signatures, image encodings and storage metadata are excluded. Required archives precede the atomic history replacement; failed publication retains the previous generation.
+
+Configuration, credentials and memory remain in Codet home. Invocation state includes plans, hook input, locks, SQLite sidecars, captures and generated artifacts. With `--ephemeral`, all automatic invocation state lives in the temporary directory and is removed after success, error or orderly interruption. Deterministic argument/configuration/prompt/credential checks precede new persistent session rows. Accepted prompts and useful failure/recovery records remain available, and reusable lock files are retained.
+
+A syntactically or structurally invalid saved plan warns and resumes with no active plan. The original stays in place until an update is published, when it moves to a private unique `SESSION.corrupt-UUID.json` recovery file. Security and filesystem failures remain errors.
+
+## API selection and signed history
+
+New API fallback defaults are `gpt-6.1-sol`, `claude-sonnet-5-5` and `gemini-3.8-flash`. OpenAI Responses and Sonnet 5.5 use medium effort when none is selected. Saved model selections and explicit overrides take precedence.
+
+```toml
+[providers.openai]
+wire_api = "auto" # auto | responses | chat_completions
+```
+
+Auto selects public Responses for the built-in OpenAI endpoint and Chat Completions for custom bases. Select Responses explicitly for compatible custom endpoints. Known Responses-only tool-calling models reject Chat Completions with an actionable preflight error. Responses shares wire encoding/decoding with Codex, while API authentication, URLs and private headers stay separate.
+
+Sonnet 5.5 stores immutable transmitted message prefixes, including empty thinking blocks and signatures. Changing instructions append supported system messages. Account, model, tool-schema or history-projection changes start a fresh epoch at a completed tool boundary, using semantic completed context and preserving image/recovery references. Signed blocks are not replayed against edited prefixes. Provider conversation state survives resume; a fork can safely start a fresh epoch.
+
+Protocol references: [OpenAI model and Responses support](https://developers.openai.com/api/docs/models/gpt-6.1-sol), [Sonnet signed-history migration](https://platform.claude.com/docs/en/models/sonnet-5-5/migration-guide), and [Gemini Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash).
+
+## Schema 6 and restore
+
+Schema 6 stores ordered messages separately from metadata, tool journals and provider conversation parts. Append operations serialize changed messages only. Tool completion, its transcript result and associated references commit together. Compaction replaces the history generation atomically after archives exist.
+
+Before migrating an older database, stop active sessions. Codet checks session ownership and creates a private consistent SQLite backup named `state.sqlite3.pre-v6-UUID`. Valid legacy sessions migrate independently in one transaction. Malformed legacy transcript bytes remain untouched and report an error only when that session is loaded. Migration failures roll back. Older binaries reject schema 6.
+
+To restore, stop every Codet process, copy the current database and its `-wal`/`-shm` files aside, remove those current files, then copy the selected pre-v6 backup to `state.sqlite3` with mode 0600. Keep the artifact and capture directories alongside it. Run the older binary only after restoring its compatible schema. A restore discards sessions and changes newer than the chosen backup; keep the displaced database for recovery.
+
+```toml
+durability = "durable" # durable | fast
+```
+
+`--durability durable|fast` has the highest configuration precedence. `/status` and `doctor` report the effective mode. Both use [SQLite WAL](https://www.sqlite.org/wal.html). Durable uses FULL synchronization. Fast uses NORMAL for ordinary transcript/result commits, FULL for tool starts and a FULL write barrier at normal turn completion and orderly shutdown. Fast can lose recent completions on power failure. Missing completions are uncertain and never automatically re-executed.
+
+## Capture and build accounting
+
+Each capture store has a rebuildable SQLite catalog under the existing store lock. It records identity, accounted bytes, active/completed state and eviction order. Bytes are reserved before writes; partial or abandoned reservations reconcile conservatively. Ordinary 64 KiB flushes update the active capture without opening every retained file. Startup, namespace changes, catalog damage and capacity reclamation trigger reconciliation. Eviction revalidates identity and ownership locks. The existing 8 MiB per-capture, 64 MiB total and completed-file limits remain, including active-file protection, legacy adoption and symlink defenses.
+
+Dependencies build from freshly extracted, hash-verified archives. A recipe/lock/toolchain fingerprint selects a clean stage, and only a completed build replaces the published sysroot. Its manifest records archive, patch, source-tree, recipe and output hashes. Mach-O verification requires all expected libraries, PPC architecture and a resolvable transitive dependency closure under the stage or approved system paths.
+
+Tests use private homes, controlled environments and explicit non-login `/bin/sh` commands; recording fakes cover shell defaults. CTest limits are 300 seconds for units, 180 for integration and 60 for smaller suites. Required provider acceptance uses fixtures, including loopback HTTP, without paid requests.
+
+## Measurement and owner acceptance
+
+Run `make benchmark` for growing transcript appends in both durability modes and repeated capture flushes. The executable asserts serialized append work scales with new messages and ordinary capture flushes do not scan the store. It records wall time, peak RSS and process I/O block counters. These host observations do not establish G4 performance.
+
+The Tiger bundle includes the same benchmark executable. `tiger-acceptance.sh` records both durability runs, capture flushes, `/usr/bin/time -l`, runtime tests and machine details. G4 execution, power-loss testing and live account/provider acceptance remain owner-run checks. See [Tiger acceptance](TIGER-ACCEPTANCE.md) and the validation evidence accompanying this change.

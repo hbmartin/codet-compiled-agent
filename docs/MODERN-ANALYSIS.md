@@ -1,10 +1,9 @@
 # Modern host static analysis
 
 `make analyze-modern` runs Clang-Tidy, Cppcheck and Clang Static Analyzer. The shared source
-manifest covers `src/modern/*.cpp` and `src/text_compat.c` (currently seventeen translation units).
+manifest covers `src/modern/*.cpp` and `src/text_compat.c` (including the reliability and capture-catalog sources).
 Project headers are checked through those sources. Tests, third-party implementations and
-recovered C are excluded as standalone analysis inputs. The legacy analysis targets retain
-their existing report-only policy.
+recovered C are excluded as standalone analysis inputs. Historical recovered-C findings remain in [ANALYSIS.md](ANALYSIS.md); its retired local harness is separate from these current checks.
 
 ## Setup and commands
 
@@ -34,10 +33,11 @@ dependencies. Defaults use `clang` and `clang++`; `CLANG_TIDY` and `CPPCHECK` se
 Analyzer targets only configure their dedicated compilation database. They do not build the application or GoogleTest. `modern-analysis-host` is the explicit build stage. Fetching analysis tools is separate from offline analysis; application dependency pins are unchanged. Build the complete developer image from the repository root:
 
 ```sh
-docker build --platform linux/amd64 -f cmake/Dockerfile.host-tests -t codet-host-tests:local .
+make toolchain-image  # Requires Docker and the pinned base toolchain image
+docker build --no-cache --platform linux/amd64 -f cmake/Dockerfile.host-tests -t codet-host-tests:local .
 ```
 
-Its network-enabled provisioning installs Clang/Tidy 18, Python/PyYAML and checksum-pinned Cppcheck. The image builds Cppcheck with networking disabled. Analysis and tests can then run with `--network none`.
+Run this from the repository root; Docker must support linux/amd64 emulation on Apple Silicon and have network access during provisioning. The base `codet-tiger-build:gcc14` must exist locally. Its network-enabled provisioning installs Clang/Tidy 18, Python/PyYAML and checksum-pinned Cppcheck. The image builds Cppcheck with networking disabled. Analysis and tests can then run with `--network none`.
 
 Individual targets are `analyze-modern-clang-tidy`, `analyze-modern-cppcheck`, and
 `analyze-modern-clang-analyzer`. Configuration variables:

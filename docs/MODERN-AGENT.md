@@ -124,13 +124,13 @@ Tool previews are bounded once per batch and persisted; later requests keep alre
 
 Automatic compaction is considered at 80% of the usable history budget after fixed instructions, tools and output reserves. This trigger is independent of preview sizing: new previews use the hard allowance. Text accounting shares provider message shaping and counts assistant text/items/replay once as transmitted, excluding storage-only fields; image encoding retains its separate budgets. It retires older history when possible; if the newest completed batch alone cannot fit, the whole call/result group and associated replay are replaced with a bounded checkpoint. Latest human steering, unresolved recovery outcomes and execution-session IDs remain explicit. Full records are archived and indexed before publication; cancellation, provider errors and failed publication retain durable history. Already-compacted continuations may use the remaining hard budget without repeated compaction. Ordinary optional summary failures produce a diagnostic and permit continuation only after a fresh hard-capacity check; optional compaction is not retried in that turn. Explicit PreCompact stops, cancellation, storage failures and hard overflow still stop safely. Execution facts are coalesced and only currently owned live handles are reported as running. Recovery sets exceeding 2 KiB use a registered paged archive; optional checkpoint_state message metadata carries unresolved facts across later compactions, fork and relocation. Archives are immutable by message identity and validated publications are reused across retries with a bounded 256-entry process-local cache.
 
-Development-only measurement: build `codet_persistence_bench` with `cmake --build build/host --target codet_persistence_bench`, then run it with `512`, `4096`, or `inspection`. Save cases report increasing transcript counts, cumulative bytes processed, save time and peak RSS while deliberately bypassing Agent compaction. Inspection reports bounded rescan/canonicalization work, peak RSS and archive publication counts across retries. Directory work remains proportional to pages times the scanned subset; SQLite still serializes/writes the whole transcript. This pass makes no claim of linear cumulative persistence cost or verified Tiger memory use.
+Development measurement: `make benchmark` reports append serialization, database/WAL size, timing, peak RSS and I/O block counters for growing transcripts in both durability modes, plus repeated capture flushes. It asserts linear serialized append bytes and zero whole-store scans during ordinary flushes. `codet_persistence_bench inspection` retains directory rescan and archive-publication measurements. Directory work remains proportional to pages times the scanned subset. Host results do not establish G4 performance.
 
 Summary generation retains the configured output allowance and an 8 KiB visible-prose maximum. The conservative escaping-derived target is advisory: summaries are accepted using actual serialized continuation size. A genuinely oversized summary gets one smaller-target retry, counted in usage and request limits, with one PreCompact hook invocation. Empty or exhausted responses fail without replacing history. Manual compaction shares these rules and does nothing when no history can be reduced.
 
-SQLite schema 5 keeps the existing transcript row and adds a per-session registry of portable capture/result references. Legacy structured transcripts and journal results backfill it; summary prose never grants access. Forks inherit references, and active storage roots resolve them after relocation. A paged indexes/SESSION.results.jsonl view is rebuilt from SQLite and exposed through read_file in every mode. Normal capture eviction remains effective. Ordinary saves no longer copy and normalize the entire history; whole-transcript serialization and SQLite writes remain, so cumulative save work is not claimed to be linear. The optional codet_persistence_bench target measures 100/200/300-result histories with configurable payload size.
+SQLite schema 6 stores ordered message rows, session metadata, tool journals and provider conversation parts separately. Append and revision operations serialize changed messages only. Tool completion, its transcript result and associated references commit atomically; compaction publishes a replacement history generation after required archives exist. The portable capture/result registry, fork inheritance, relocation behavior and paged indexes/SESSION.results.jsonl inspection remain. See [migration and restore instructions](RELIABILITY-MODERNIZATION.md#schema-6-and-restore).
 
-Every image occurrence is archived in a versioned JSONL observation ledger before history replacement; compacted continuations are text-only, including the newest screenshot. Subsequent image input requires explicit reload.
+Retired image occurrences are archived in a versioned JSONL observation ledger before history replacement. Checkpoints retain references; protected images that have not yet been delivered survive compaction until their first request. Later image input can be explicitly reloaded.
 
 Schema-5 reference backfill skips malformed JSON and incompatible message shapes one row at
 a time, leaving the original transcript/journal bytes untouched. Other sessions can open;
@@ -154,22 +154,22 @@ Custom prompt commands live in global `commands/NAME.md` or trusted project `.co
 
 `request_user_input` provides synchronous Plan-mode questions. Both terminal interfaces also accept asynchronous questions and incoming messages while the agent works; headless tools requiring answers are unavailable. See `CODEX-TOOLS.md` for the question IDs, answer structure and delivery boundaries.
 
-Hooks are trusted executable configuration. Supported events: `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `PreCompact`, and `Stop`. Each event remains an array of entries with `command`, optional glob `matcher`, and `timeout_ms`. Input is JSON on stdin. Hook capture gives stdout and stderr each `tool_output_limit` bytes (64 KiB each by default, 128 KiB combined retained prefixes). Both channels are fully drained and keep independent truncation flags. Successful stdout truncation is ignored for SessionEnd and PostToolUseFailure because those events do not interpret stdout; stderr truncation remains a warning. Truncated JSON stdout is a hook failure diagnostic and cannot supply a decision. Retained nonempty stderr from exit 2 can still block supported events. Ordinary shell and PTY output remains combined.
+Hooks are trusted executable configuration. Supported events: `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `PreCompact`, and `Stop`. Each event remains an array of entries with `command`, optional glob `matcher`, `timeout_ms`, and `on_error="stop"|"warn"`. Input is JSON on stdin. Hook capture gives stdout and stderr each `tool_output_limit` bytes (64 KiB each by default, 128 KiB combined retained prefixes). Both channels are fully drained and keep independent truncation flags. Successful stdout truncation is ignored for SessionEnd and PostToolUseFailure because those events do not interpret stdout; stderr truncation remains a warning. Truncated interpreted stdout is a hook failure. Exit 2 always vetoes control events, with a fallback reason when stderr is empty. Ordinary shell and PTY output remains combined.
 
 Hook interpretation follows the supplied Codex CLI behavior within this event subset:
 
 | Event | Successful output and explicit control |
 |---|---|
 | SessionStart | Plain stdout or `hookSpecificOutput.additionalContext` becomes persisted context; JSON `continue=false` stops startup. |
-| UserPromptSubmit | Plain stdout/context becomes persisted context; `decision="block"` with a reason or `continue=false` stops the prompt. |
-| PreToolUse | Plain stdout is ignored. A reasoned deny blocks; an allow may supply object `updatedInput`, which is reauthorized. |
+| UserPromptSubmit | Plain stdout/context becomes persisted context; `decision="block"` or `continue=false` stops the prompt. |
+| PreToolUse | Plain stdout is ignored. A deny blocks; an allow may supply object `updatedInput`, which is reauthorized. |
 | PermissionRequest | A valid `hookSpecificOutput.decision` with `behavior="allow"` or `"deny"` answers approval; Codet’s previous `permissionDecision` spelling remains an alias. Failures never grant approval. |
 | PostToolUse | Context and explicit blocking feedback are returned with the completed action; `action_completed=true` prevents confusing hook feedback with an unexecuted action. `continue=false` journals that outcome, halts the turn and reconciles remaining calls. |
-| Stop | Reasoned blocking feedback returns to the agent loop, with the existing three-block guard; `continue=false` ends processing without another model request. |
-| PreCompact | JSON `continue=false` stops the turn; ordinary exit errors are diagnostics. |
+| Stop | Blocking feedback returns to the agent loop, with the existing three-block guard; `continue=false` ends processing without another model request. |
+| PreCompact | JSON `continue=false` stops the turn; execution errors stop the turn by default. |
 | SessionEnd / PostToolUseFailure | Diagnostic-only; no control effects. |
 
-Exit 2 with nonempty stderr blocks only PreToolUse, PermissionRequest, PostToolUse, UserPromptSubmit and Stop. Other failures, timeouts, and malformed JSON-looking stdout produce bounded stderr diagnostics and no implicit blocking decision. SessionStart/UserPromptSubmit plaintext is accepted; malformed JSON-looking text is not injected as instructions. Cancellation still interrupts. Denials and plan/root restrictions cannot be overridden.
+Control hooks default to `on_error="stop"`: execution failures, timeouts, malformed decisions and truncated interpreted output stop the current turn. `on_error="warn"` makes these failures diagnostic-only. A successful empty response is neutral. Valid vetoes and exit 2 always block even in warn mode, with a fallback explanation for reasonless vetoes. SessionEnd and PostToolUseFailure remain diagnostic-only. Post-action failures retain `action_completed=true`; the affected result is journaled before remaining calls are reconciled. Cancellation and resource failures retain their existing propagation. Invalid configuration is rejected before session creation.
 
 SessionStart input includes `source`: `startup`, `resume` or `fork`. Only SessionStart matches a nonempty glob `matcher` against that source; absent/empty matchers select every start. Tool-event matchers still select tool names. Each invocation appends its newly accepted context in order, even when identical to earlier context; resume/fork inherit history without redispatching its original startup hook.
 
@@ -266,14 +266,14 @@ Other providers retain the single untagged-message path. Phases alone never forc
 request. Tool batches, pending user input and response completion retain their existing
 follow-up behavior. Full provider replay remains intact.
 
-SQLite schema 5 includes nullable per-session reasoning effort and retained-result references; schema 1–4 migrate forward.
+SQLite schema 6 retains nullable per-session reasoning effort and result references alongside ordered messages and provider conversation parts; schemas 1–5 migrate forward after a private backup and ownership checks.
 Resume/fork keep explicitly saved effort for the same provider/model. Explicit CLI/profile effort wins;
 a changed provider/model falls back to configured effort. Inherited defaults remain NULL in SQLite
 and follow later configuration changes. Legacy empty saved values load as inherited; nonempty
 legacy selections remain pinned because their provenance is unavailable. Agent turns and /new
 preserve this distinction. Migrations acquire a write transaction and reread the schema version
 before DDL; concurrent upgraders serialize and recheck, with all steps rolled back on database errors. Older messages without
-`assistant_items` remain readable. Earlier binaries reject schema 5, so use the new binary
+`assistant_items` remain readable. Earlier binaries reject schema 6, so use the new binary
 after migration. No credentials or configuration locations change.
 
 See [reference fingerprints](validation/core-alignment-reference.json) and the
@@ -281,3 +281,5 @@ See [reference fingerprints](validation/core-alignment-reference.json) and the
 The [PR #13 follow-up evidence](validation/pr13-followup.json) pins the recovery,
 discovery, paging and phase fixes plus development-only Semgrep checks to their tested
 source hashes. Tiger/HFS+ runtime and the 512 MB G4 acceptance remain owner-run.
+
+See [reliability and provider modernization](RELIABILITY-MODERNIZATION.md) for schema 6, durability, raw error output, semantic compaction, API defaults and signed conversation epochs.
