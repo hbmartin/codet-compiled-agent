@@ -283,31 +283,35 @@ TEST_F(Modernization, HookFailuresStopButWarnNeverWeakensVetoes) {
                Error);
 }
 TEST_F(Modernization, CorruptPlanResumesAndQuarantinesBeforeReplacement) {
-  const auto path = config.state_root / "plans/session.json";
-  fs::create_directories(path.parent_path());
-  files.atomic_write(path, "{broken", true);
-  Tools tools(config, files, processes, http, clock);
-  EXPECT_NO_THROW(tools.use_session("session"));
-  EXPECT_EQ(files.read(path), "{broken");
-  auto result =
-      tools.execute({"plan",
-                     "update_plan",
-                     {{"plan", Json::array({{{"step", "repair"}, {"status", "pending"}}})}}},
-                    cancel);
-  ASSERT_FALSE(result.error) << result.content;
-  EXPECT_TRUE(Json::parse(files.read(path)).is_array());
-  size_t recovered = 0;
-  for (const auto &entry : fs::directory_iterator(path.parent_path()))
-    if (entry.path() != path) {
-      ++recovered;
-      EXPECT_EQ(files.read(entry.path()), "{broken");
-      struct stat st {};
-      ASSERT_EQ(::stat(entry.path().c_str(), &st), 0);
-      EXPECT_EQ(st.st_mode & 0777, 0600);
-    }
-  EXPECT_EQ(recovered, 1u);
-  EXPECT_FALSE(fs::exists(config.home / "plans"));
+  for (const auto &damaged : {std::string("{broken"), std::string("[]\0opaque", 9)}) {
+    const auto id = unique_id();
+    const auto path = config.state_root / "plans" / (id + ".json");
+    fs::create_directories(path.parent_path());
+    files.atomic_write(path, damaged, true);
+    Tools tools(config, files, processes, http, clock);
+    EXPECT_NO_THROW(tools.use_session(id));
+    EXPECT_EQ(files.read(path), damaged);
+    const auto result =
+        tools.execute({"plan",
+                       "update_plan",
+                       {{"plan", Json::array({{{"step", "repair"}, {"status", "pending"}}})}}},
+                      cancel);
+    ASSERT_FALSE(result.error) << result.content;
+    EXPECT_TRUE(Json::parse(files.read(path)).is_array());
+    size_t recovered = 0;
+    for (const auto &entry : fs::directory_iterator(path.parent_path()))
+      if (entry.path().filename().string().rfind(id + ".corrupt-", 0) == 0) {
+        ++recovered;
+        EXPECT_EQ(files.read(entry.path()), damaged);
+        struct stat st {};
+        ASSERT_EQ(::stat(entry.path().c_str(), &st), 0);
+        EXPECT_EQ(st.st_mode & 0777, 0600);
+      }
+    EXPECT_EQ(recovered, 1u);
+    EXPECT_FALSE(fs::exists(config.home / "plans"));
+  }
 }
+
 TEST_F(Modernization, IncrementalWritesAndCompletionRollbackInBothDurabilityModes) {
   for (const auto *mode : {"durable", "fast"}) {
     const auto root = config.state_root / mode;

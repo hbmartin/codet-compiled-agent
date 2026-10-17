@@ -1729,7 +1729,8 @@ void Tools::use_session(const std::string &id) {
                                           "; resuming without an active plan");
       return;
     }
-    todos_ = Json::parse(files_.read(p, 1048576), nullptr, false);
+    const auto bytes = files_.read(p, 1048576);
+    todos_ = bytes.find('\0') == std::string::npos ? Json::parse(bytes, nullptr, false) : Json();
     bool valid = todos_.is_array() && todos_.size() <= 100;
     size_t active = 0;
     if (valid)
