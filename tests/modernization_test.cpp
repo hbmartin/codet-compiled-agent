@@ -1,3 +1,4 @@
+#include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/output.hpp"
 #include "temp.hpp"
@@ -131,6 +132,24 @@ TEST_F(Modernization, PublicResponsesSharesReplayWithoutPrivateHeaders) {
   EXPECT_EQ(body["reasoning"]["effort"], "medium");
   EXPECT_THAT(body["input"].dump(), HasSubstr("function_call_output"));
   EXPECT_EQ(body["tools"][0]["type"], "function");
+  auto imported = assistant;
+  imported.replay_provider = "codex";
+  imported.calls = {{"call", "apply_patch", {{"patch", "*** Begin Patch\n*** End Patch"}}}};
+  imported.replay = Json::array({{{"type", "custom_tool_call"},
+                                  {"call_id", "call"},
+                                  {"name", "apply_patch"},
+                                  {"input", "*** Begin Patch\n*** End Patch"}}});
+  const auto migrated =
+      Json::parse(provider.request(config, "", {user, imported, result}, schemas).body);
+  EXPECT_THAT(migrated["input"].dump(), Not(HasSubstr("custom_tool_call")));
+  Config subscription = config;
+  subscription.provider = "codex";
+  imported.replay_provider = "openai";
+  const auto private_body = Json::parse(provider
+                                            .request(subscription, "", {user, imported, result},
+                                                     schemas, {{"access_token", "fixture"}})
+                                            .body);
+  EXPECT_THAT(private_body["input"].dump(), HasSubstr("custom_tool_call_output"));
   config.providers["openai"].base_url = "http://127.0.0.1:1/v1";
   EXPECT_FALSE(uses_responses(config));
   EXPECT_THROW(provider.request(config, "", {}, schemas), Error);
@@ -159,6 +178,8 @@ TEST_F(Modernization, SignedPrefixesPersistAndEpochChangesDiscardSignatures) {
   codet::Message user;
   user.role = "user";
   user.text = "start";
+  user.images = {
+      persist_image(config, files, {std::string(225000, 'p'), "image/png", 1, 1}, "high")};
   http.status = 200;
   http.stream = "event: content_block_start\ndata: "
                 "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":"
@@ -192,11 +213,17 @@ TEST_F(Modernization, SignedPrefixesPersistAndEpochChangesDiscardSignatures) {
   EXPECT_EQ(body["messages"][2]["content"][0]["type"], "tool_result");
   EXPECT_EQ(body["messages"].back()["role"], "system");
   EXPECT_EQ(body["output_config"]["effort"], "medium");
+  EXPECT_THAT(body["messages"][0]["content"].dump(), HasSubstr("image/png"));
   config.providers["anthropic"].api_key = "another-account";
   body = Json::parse(provider.request(config, "new epoch", history, Json::array()).body);
   EXPECT_THAT(body.dump(), Not(HasSubstr("signed-empty")));
   EXPECT_THAT(body.dump(), HasSubstr("completed"));
   EXPECT_THROW(provider.request(config, "", {user, answer.message}, Json::array()), Error);
+  provider.restore_conversation(state);
+  config.model = "claude-sonnet-4-5";
+  body = Json::parse(provider.request(config, "changed model", history, Json::array()).body);
+  EXPECT_THAT(body.dump(), Not(HasSubstr("signed-empty")));
+  EXPECT_THAT(body.dump(), HasSubstr("completed"));
 }
 TEST_F(Modernization, SemanticProjectionOmitsReplayAndKeepsRecoveryAndReferences) {
   codet::Message m;
@@ -418,6 +445,11 @@ TEST_F(Modernization, LegacyMigrationBacksUpAndPreservesMalformedBytesIndependen
           "{'); PRAGMA user_version=5;",
           nullptr, nullptr, nullptr),
       SQLITE_OK);
+  ASSERT_EQ(sqlite3_exec(db,
+                         "INSERT INTO sessions(id,name,updated,messages) "
+                         "VALUES('nul','nul',1,CAST(X'5b5d006f7061717565' AS TEXT))",
+                         nullptr, nullptr, nullptr),
+            SQLITE_OK);
   sqlite3_close(db);
   const int fd =
       ::open((config.state_root / "session-locks/good.lock").c_str(), O_CREAT | O_RDWR, 0600);
@@ -428,6 +460,7 @@ TEST_F(Modernization, LegacyMigrationBacksUpAndPreservesMalformedBytesIndependen
   StateStore store(config.state_root);
   EXPECT_EQ(store.load_id("good", false).messages.front().text, "preserved");
   EXPECT_THROW(store.load_id("bad", false), Error);
+  EXPECT_THROW(store.load_id("nul", false), Error);
   size_t backups = 0;
   for (const auto &entry : fs::directory_iterator(config.state_root))
     if (entry.path().filename().string().rfind("state.sqlite3.pre-v6-", 0) == 0) {
@@ -444,6 +477,13 @@ TEST_F(Modernization, LegacyMigrationBacksUpAndPreservesMalformedBytesIndependen
             SQLITE_OK);
   ASSERT_EQ(sqlite3_step(q), SQLITE_ROW);
   EXPECT_STREQ(reinterpret_cast<const char *>(sqlite3_column_text(q, 0)), "[{");
+  EXPECT_EQ(sqlite3_column_int(q, 1), 0);
+  sqlite3_finalize(q);
+  ASSERT_EQ(sqlite3_prepare_v2(db, "SELECT messages,message_format FROM sessions WHERE id='nul'",
+                               -1, &q, nullptr),
+            SQLITE_OK);
+  ASSERT_EQ(sqlite3_step(q), SQLITE_ROW);
+  EXPECT_EQ(sqlite3_column_bytes(q, 0), 9);
   EXPECT_EQ(sqlite3_column_int(q, 1), 0);
   sqlite3_finalize(q);
   sqlite3_close(db);

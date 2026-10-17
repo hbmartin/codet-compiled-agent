@@ -13,6 +13,12 @@
 
 namespace codet {
 namespace {
+Json stored_json(const std::string &bytes) {
+  // The JSON lexer treats NUL as EOF even when the string has trailing bytes.
+  if (bytes.find('\0') != std::string::npos)
+    throw Error("Stored JSON contains an embedded NUL");
+  return Json::parse(bytes);
+}
 struct Statement {
   sqlite3_stmt *p = nullptr;
   Statement(sqlite3 *db, const char *sql) {
@@ -172,7 +178,9 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
       while ((status = sqlite3_step(sessions.p)) == SQLITE_ROW) {
         std::vector<Message> parsed;
         try {
-          parsed = Json::parse(column(sessions.p, 1)).get<std::vector<Message>>();
+          parsed = stored_json(column(sessions.p, 1)).get<std::vector<Message>>();
+        } catch (const Error &) {
+          continue;
         } catch (const Json::exception &) {
           continue; // Loading this session still reports its corrupt transcript.
         }
@@ -185,7 +193,9 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
       while ((status = sqlite3_step(journal.p)) == SQLITE_ROW) {
         Message parsed;
         try {
-          parsed = Json::parse(column(journal.p, 1)).get<Message>();
+          parsed = stored_json(column(journal.p, 1)).get<Message>();
+        } catch (const Error &) {
+          continue;
         } catch (const Json::exception &) {
           continue; // Reconciliation retains its existing corrupt-record handling.
         }
@@ -211,7 +221,9 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
     while ((status = sqlite3_step(sessions.p)) == SQLITE_ROW) {
       std::vector<Message> messages;
       try {
-        messages = Json::parse(column(sessions.p, 1)).get<std::vector<Message>>();
+        messages = stored_json(column(sessions.p, 1)).get<std::vector<Message>>();
+      } catch (const Error &) {
+        continue;
       } catch (const Json::exception &) {
         continue;
       }
@@ -333,7 +345,7 @@ Session StateStore::load_id(const std::string &id, bool repair) {
     s.effort = column(q.p, 6);
   try {
     if (sqlite3_column_int(q.p, 7) == 0)
-      s.messages = Json::parse(column(q.p, 2)).get<std::vector<Message>>();
+      s.messages = stored_json(column(q.p, 2)).get<std::vector<Message>>();
     else {
       Statement rows(
           impl_->db,
@@ -343,7 +355,7 @@ Session StateStore::load_id(const std::string &id, bool repair) {
       while ((status = sqlite3_step(rows.p)) == SQLITE_ROW) {
         if (sqlite3_column_int64(rows.p, 0) != static_cast<sqlite3_int64>(s.messages.size()))
           throw Error("Noncontiguous session messages");
-        s.messages.push_back(Json::parse(column(rows.p, 1)).get<Message>());
+        s.messages.push_back(stored_json(column(rows.p, 1)).get<Message>());
       }
       if (status != SQLITE_DONE)
         throw Error("Cannot load session messages");
@@ -358,9 +370,9 @@ Session StateStore::load_id(const std::string &id, bool repair) {
     int status;
     while ((status = sqlite3_step(parts.p)) == SQLITE_ROW) {
       if (sqlite3_column_int64(parts.p, 0) == 0)
-        s.provider_state = Json::parse(column(parts.p, 1));
+        s.provider_state = stored_json(column(parts.p, 1));
       else
-        s.provider_state["messages"].push_back(Json::parse(column(parts.p, 1)));
+        s.provider_state["messages"].push_back(stored_json(column(parts.p, 1)));
     }
     if (status != SQLITE_DONE)
       throw Error("Cannot load provider conversation");
@@ -435,7 +447,7 @@ void StateStore::reconcile(Session &session, bool persist) {
         if (recorded) {
           try {
             if (column(record.p, 2) != call.name ||
-                Json::parse(column(record.p, 3)) != call.arguments)
+                stored_json(column(record.p, 3)) != call.arguments)
               throw Error("Ambiguous journaled tool call id");
           } catch (const Json::exception &) {
             throw Error("Corrupt journaled tool arguments");
@@ -444,7 +456,7 @@ void StateStore::reconcile(Session &session, bool persist) {
         Message result;
         if (recorded && status == "complete") {
           try {
-            result = Json::parse(column(record.p, 0)).get<Message>();
+            result = stored_json(column(record.p, 0)).get<Message>();
             if (result.role != "tool" || result.tool_call_id != call.id)
               throw Error("Mismatched completed tool record");
           } catch (const std::exception &) {
@@ -452,7 +464,7 @@ void StateStore::reconcile(Session &session, bool persist) {
           }
         } else if (recorded && (status == "uncertain" || status == "not_started")) {
           try {
-            result = Json::parse(column(record.p, 0)).get<Message>();
+            result = stored_json(column(record.p, 0)).get<Message>();
             if (result.role != "tool" || result.tool_call_id != call.id)
               throw Error("Mismatched recovery record");
           } catch (const std::exception &) {

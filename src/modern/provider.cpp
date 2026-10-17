@@ -213,21 +213,21 @@ Json wire_history(const Config &c, const std::string &system, const std::vector<
       tool_names[call.id] = call.name;
   if (uses_responses(c)) {
     Json input = Json::array({{{"role", "developer"}, {"content", system}}});
+    std::map<std::string, bool> custom_calls;
     for (const auto &m : messages) {
       if (m.role == "assistant" && !clean_replay(m).empty() &&
           (m.replay_provider.empty() || m.replay_provider == c.provider)) {
-        for (const auto &item : clean_replay(m))
+        for (const auto &item : clean_replay(m)) {
           input.push_back(item);
+          if (item.contains("call_id") && item["call_id"].is_string())
+            custom_calls[item["call_id"].get<std::string>()] =
+                item.value("type", "") == "custom_tool_call";
+        }
         continue;
       }
       if (m.role == "tool") {
-        // Custom apply_patch results must retain their wire type during replay.
-        bool custom = false;
-        for (const auto &old : messages)
-          for (const auto &item : old.replay)
-            if (item.value("type", "") == "custom_tool_call" &&
-                item.value("call_id", "") == m.tool_call_id)
-              custom = true;
+        // Match the call type actually emitted for this provider, including provider changes.
+        const bool custom = custom_calls[m.tool_call_id];
         input.push_back({{"type", custom ? "custom_tool_call_output" : "function_call_output"},
                          {"call_id", m.tool_call_id},
                          {"output", tool_text(m, c, tool_names)}});
@@ -248,11 +248,22 @@ Json wire_history(const Config &c, const std::string &system, const std::vector<
                 {{"type", "input_image"}, {"image_url", image.at("url")}, {"detail", "high"}});
           input.push_back({{"role", "user"}, {"content", content}});
         }
-        for (const auto &t : m.calls)
-          input.push_back({{"type", "function_call"},
-                           {"call_id", t.id},
-                           {"name", tool_wire_name(t.name)},
-                           {"arguments", t.arguments.dump()}});
+        for (const auto &t : m.calls) {
+          const bool custom = c.provider == "codex" && t.name == "apply_patch";
+          custom_calls[t.id] = custom;
+          if (custom) {
+            const auto patch = t.arguments.value("patch", Json());
+            input.push_back(
+                {{"type", "custom_tool_call"},
+                 {"call_id", t.id},
+                 {"name", "apply_patch"},
+                 {"input", patch.is_string() ? patch.get<std::string>() : t.arguments.dump()}});
+          } else
+            input.push_back({{"type", "function_call"},
+                             {"call_id", t.id},
+                             {"name", tool_wire_name(t.name)},
+                             {"arguments", t.arguments.dump()}});
+        }
         for (auto &item : input)
           if (c.provider == "codex" && item.value("type", "") == "function_call" &&
               item.contains("name")) {
@@ -400,6 +411,24 @@ void append_calls(Message &m, const Json &calls) {
                                                 : f["arguments"];
     m.calls.push_back(std::move(call));
   }
+}
+size_t anthropic_image_bytes(const Json &content) {
+  if (!content.is_array())
+    return 0;
+  size_t bytes = 0;
+  for (const auto &block : content) {
+    if (!block.is_object())
+      continue;
+    if (block.value("type", Json()) == "tool_result" && block.contains("content"))
+      bytes += anthropic_image_bytes(block.at("content"));
+    else if (block.value("type", Json()) == "image" && block.contains("source")) {
+      const auto &source = block.at("source");
+      if (source.is_object() && source.value("type", Json()) == "base64" &&
+          source.contains("data") && source.at("data").is_string())
+        bytes += source.at("data").get_ref<const std::string &>().size();
+    }
+  }
+  return bytes;
 }
 std::string source_hash(const Message &m) {
   Json value = {
@@ -663,7 +692,10 @@ eof_line: "*** End of File" LF
       const auto capacity = static_cast<uint64_t>(c.context_tokens) * 3;
       const auto reserve = static_cast<uint64_t>(c.max_output_tokens) * 3;
       const auto fits = [&] {
-        return reserve < capacity && body.dump().size() <= capacity - reserve;
+        auto text_bytes = body.dump().size();
+        for (const auto &message : body.at("messages"))
+          text_bytes -= anthropic_image_bytes(message.at("content"));
+        return reserve < capacity && text_bytes <= capacity - reserve;
       };
       if (!fits()) {
         conversation_ = nullptr;
