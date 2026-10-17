@@ -31,13 +31,15 @@ struct ReviewFixture : Test {
     config.provider = "openai";
     config.model = "fixture";
     config.providers["openai"].api_key = "fake";
+    config.providers["openai"].wire_api = "chat_completions";
   }
 
   ToolResult shell(const std::string &command, int timeout = 5000) {
     (void)timeout;
     Tools tools(config, files, processes, http, clock);
-    auto result =
-        tools.execute({"shell", "exec_command", {{"cmd", command}, {"login", false}}}, cancel);
+    auto result = tools.execute(
+        {"shell", "exec_command", {{"cmd", command}, {"login", false}, {"shell", "/bin/sh"}}},
+        cancel);
     if (!result.error) {
       const auto data = Json::parse(result.content);
       result.content = data.at("output");
@@ -262,7 +264,7 @@ TEST_F(ReviewFixture, NormalExitCleansUpTermIgnoringDescendants) {
 }
 TEST(ProcessOwnership, ChildResetsIgnoredSigpipeAndBlockedSignalMask) {
   struct Restore {
-    struct sigaction action{};
+    struct sigaction action {};
     sigset_t mask;
     Restore() {
       sigaction(SIGPIPE, nullptr, &action);

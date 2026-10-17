@@ -66,6 +66,7 @@ TEST_F(Followup, EveryAdapterOmitsEmptyToolsAndKeepsNonemptyDeclarations) {
   for (const auto &name : {"codex", "anthropic", "google", "openai", "ollama"}) {
     config.provider = name;
     config.providers[name].api_key = "fixture";
+    config.providers[name].wire_api = "chat_completions";
     config.providers[name].image_input = true;
     const auto empty = Json::parse(
         provider.request(config, "system", {}, Json::array(), {{"access_token", "fake"}}).body);
@@ -124,6 +125,7 @@ TEST_F(Followup, CompactionUsesRealAdaptersWithoutToolsAndRetainsNormalTools) {
   for (const auto &name : {"codex", "anthropic", "google", "openai", "ollama"}) {
     config.provider = name;
     config.providers[name].api_key = "fixture";
+    config.providers[name].wire_api = "chat_completions";
     config.providers[name].image_input = true;
     StateStore state(config.home);
     auto session = state.create();
@@ -162,7 +164,9 @@ TEST_F(Followup, ShellSpoolPreservesOutputAndSupportsReadPaging) {
   files.atomic_write(config.cwd / "source", text);
   Tools tools(config, files, processes, http, clock);
   const auto result = execute_core(
-      tools, config, {"shell", "exec_command", {{"cmd", "cat source"}, {"login", false}}}, cancel);
+      tools, config,
+      {"shell", "exec_command", {{"cmd", "cat source"}, {"login", false}, {"shell", "/bin/sh"}}},
+      cancel);
   ASSERT_FALSE(result.error) << result.content;
   EXPECT_LE(result.content.size(), config.tool_output_limit);
   EXPECT_THAT(result.content, HasSubstr("HEAD"));
@@ -189,9 +193,12 @@ TEST_F(Followup, ShellSpoolPreservesOutputAndSupportsReadPaging) {
 }
 TEST_F(Followup, SmallCommandsDoNotCreateCaptureFiles) {
   Tools tools(config, files, processes, http, clock);
-  const auto result = execute_core(
-      tools, config, {"small", "exec_command", {{"cmd", "printf approved"}, {"login", false}}},
-      cancel);
+  const auto result =
+      execute_core(tools, config,
+                   {"small",
+                    "exec_command",
+                    {{"cmd", "printf approved"}, {"login", false}, {"shell", "/bin/sh"}}},
+                   cancel);
   ASSERT_FALSE(result.error);
   EXPECT_EQ(result.content, "approved");
   EXPECT_FALSE(result.metadata.contains("spill_path"));
@@ -202,7 +209,9 @@ TEST_F(Followup, InvalidByteExpansionKeepsOriginalCaptureAndQuotaMetadata) {
   files.atomic_write(config.cwd / "source", std::string(300, '\xff'));
   Tools tools(config, files, processes, http, clock);
   const auto result = execute_core(
-      tools, config, {"bytes", "exec_command", {{"cmd", "cat source"}, {"login", false}}}, cancel);
+      tools, config,
+      {"bytes", "exec_command", {{"cmd", "cat source"}, {"login", false}, {"shell", "/bin/sh"}}},
+      cancel);
   ASSERT_FALSE(result.error);
   EXPECT_LE(result.content.size(), config.tool_output_limit);
   const fs::path path = result.metadata["spill_path"].get<std::string>();
@@ -224,7 +233,9 @@ TEST_F(Followup, PortableShellSearchSkipsGeneratedAndBinaryFiles) {
       {"search",
        "exec_command",
        {{"cmd", "find . -type d \\( -name .git -o -name build -o -name node_modules \\) -prune -o "
-                "-type f -exec grep -I -n -E -e 'needle|alternative' /dev/null {} +"}}},
+                "-type f -exec grep -I -n -E -e 'needle|alternative' /dev/null {} +"},
+        {"login", false},
+        {"shell", "/bin/sh"}}},
       cancel);
   ASSERT_FALSE(result.error) << result.content;
   EXPECT_EQ(result.content, "./unicode-雪.txt:1:needle\n");
@@ -318,7 +329,9 @@ TEST_F(Followup, SpoolFailureKeepsExitStatusAndSerializablePreview) {
   files.atomic_write(config.cwd / "source", std::string(3000, '\xff') + "TAIL\n");
   Tools tools(config, files, processes, http, clock);
   const auto result = execute_core(
-      tools, config, {"shell", "exec_command", {{"cmd", "cat source"}, {"login", false}}}, cancel);
+      tools, config,
+      {"shell", "exec_command", {{"cmd", "cat source"}, {"login", false}, {"shell", "/bin/sh"}}},
+      cancel);
   EXPECT_FALSE(result.error);
   EXPECT_EQ(result.metadata["exit_code"], 0);
   EXPECT_TRUE(result.metadata.contains("capture_error"));

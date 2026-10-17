@@ -12,7 +12,14 @@ inline ToolResult execute_core(Tools &tools, Config &config, const ToolCall &cal
   } restore{config, config.permission_mode};
   if (call.name == "read_file")
     config.permission_mode = "plan";
-  auto result = tools.execute(call, cancel);
+  auto controlled = call;
+  if (controlled.name == "exec_command") {
+    if (!controlled.arguments.contains("shell"))
+      controlled.arguments["shell"] = "/bin/sh";
+    if (!controlled.arguments.contains("login"))
+      controlled.arguments["login"] = false;
+  }
+  auto result = tools.execute(controlled, cancel);
   if ((call.name == "exec_command" || call.name == "write_stdin") && !result.error)
     result.content = result.metadata.at("output");
   return result;

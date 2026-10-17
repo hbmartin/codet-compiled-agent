@@ -83,6 +83,7 @@ struct Contracts : Test {
     config.provider = "openai";
     config.model = "fixture";
     config.providers["openai"].api_key = "fixture";
+    config.providers["openai"].wire_api = "chat_completions";
   }
   void TearDown() override {
     fs::remove_all(root);
@@ -121,7 +122,10 @@ TEST_F(Contracts, RegistryNamesRequiredFieldsAndModeGatesMatchFrozenContract) {
     seen.insert(s.at("name"));
   EXPECT_TRUE(seen.count("read_file"));
   EXPECT_FALSE(seen.count("update_plan"));
-  EXPECT_TRUE(t.execute(call("exec_command", {{"cmd", "touch denied"}}), cancel).error);
+  EXPECT_TRUE(t.execute(call("exec_command",
+                             {{"cmd", "touch denied"}, {"login", false}, {"shell", "/bin/sh"}}),
+                        cancel)
+                  .error);
   EXPECT_FALSE(fs::exists(config.cwd / "denied"));
 }
 TEST_F(Contracts, LegacyCallsAndPermissionRulesFailExplicitly) {
@@ -174,7 +178,8 @@ TEST_F(Contracts, ExecYieldsNumericSessionAndReadsOnlyNewOutputThroughPipes) {
   auto first = t.execute(
       call("exec_command", {{"cmd", "printf first; read answer; printf 'second:%s' \"$answer\""},
                             {"login", false},
-                            {"yield_time_ms", 250}}),
+                            {"yield_time_ms", 250},
+                            {"shell", "/bin/sh"}}),
       cancel);
   ASSERT_FALSE(first.error) << first.content;
   auto data = Json::parse(first.content);
@@ -195,7 +200,8 @@ TEST_F(Contracts, IncrementalCollectionsPreserveSplitUnicodeAndStructuredSmallBu
   const auto first = t.execute(
       call("exec_command", {{"cmd", "printf '\\342'; read answer; printf '\\202\\254TAIL'"},
                             {"login", false},
-                            {"yield_time_ms", 250}}),
+                            {"yield_time_ms", 250},
+                            {"shell", "/bin/sh"}}),
       cancel);
   ASSERT_FALSE(first.error) << first.content;
   const auto pending = Json::parse(first.content);
@@ -206,7 +212,8 @@ TEST_F(Contracts, IncrementalCollectionsPreserveSplitUnicodeAndStructuredSmallBu
   EXPECT_EQ(Json::parse(next.content).at("output"), "€TAIL");
   const auto small = t.execute(call("exec_command", {{"cmd", "printf abcdefghijklmnopqrstuvwxyz"},
                                                      {"login", false},
-                                                     {"max_output_tokens", 1}}),
+                                                     {"max_output_tokens", 1},
+                                                     {"shell", "/bin/sh"}}),
                                cancel);
   ASSERT_FALSE(small.error) << small.content;
   EXPECT_TRUE(Json::accept(small.content));
@@ -219,7 +226,8 @@ TEST_F(Contracts, ExecSupportsWorkdirTtyAndNonzeroStatusWithoutToolFailure) {
   auto result = t.execute(call("exec_command", {{"cmd", "pwd; test -t 0; exit 7"},
                                                 {"workdir", "nested"},
                                                 {"tty", true},
-                                                {"login", false}}),
+                                                {"login", false},
+                                                {"shell", "/bin/sh"}}),
                           cancel);
   ASSERT_FALSE(result.error) << result.content;
   const auto data = Json::parse(result.content);
@@ -229,11 +237,16 @@ TEST_F(Contracts, ExecSupportsWorkdirTtyAndNonzeroStatusWithoutToolFailure) {
 TEST_F(Contracts, InvalidBudgetsAndEscalationDoNotStartCommands) {
   config.permission_mode = "bypass";
   auto t = tools();
-  EXPECT_TRUE(
-      t.execute(call("exec_command", {{"cmd", "touch effect"}, {"max_output_tokens", 0}}), cancel)
-          .error);
   EXPECT_TRUE(t.execute(call("exec_command", {{"cmd", "touch effect"},
-                                              {"sandbox_permissions", "require_escalated"}}),
+                                              {"max_output_tokens", 0},
+                                              {"login", false},
+                                              {"shell", "/bin/sh"}}),
+                        cancel)
+                  .error);
+  EXPECT_TRUE(t.execute(call("exec_command", {{"cmd", "touch effect"},
+                                              {"sandbox_permissions", "require_escalated"},
+                                              {"login", false},
+                                              {"shell", "/bin/sh"}}),
                         cancel)
                   .error);
   EXPECT_FALSE(fs::exists(config.cwd / "effect"));
@@ -243,8 +256,9 @@ TEST_F(Contracts, CancellingYieldWaitTerminatesOwnedGroup) {
   auto t = tools();
   auto work = std::async(std::launch::async, [&] {
     try {
-      t.execute(call("exec_command",
-                     {{"cmd", "touch started; while :; do sleep .1; done"}, {"login", false}}),
+      t.execute(call("exec_command", {{"cmd", "touch started; while :; do sleep .1; done"},
+                                      {"login", false},
+                                      {"shell", "/bin/sh"}}),
                 cancel);
       return 0;
     } catch (const Error &e) {
@@ -681,7 +695,8 @@ TEST_F(Contracts, SeparateToolLifetimesUseIndependentSessionIdentities) {
   config.permission_mode = "bypass";
   auto first = tools();
   auto second = tools();
-  const auto command = Json({{"cmd", "read answer"}, {"login", false}, {"yield_time_ms", 250}});
+  const auto command = Json(
+      {{"cmd", "read answer"}, {"login", false}, {"yield_time_ms", 250}, {"shell", "/bin/sh"}});
   const auto a = first.execute(call("exec_command", command), cancel);
   const auto b = second.execute(call("exec_command", command), cancel);
   ASSERT_FALSE(a.error) << a.content;

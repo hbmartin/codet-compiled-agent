@@ -15,6 +15,20 @@
 using namespace codet;
 using namespace testing;
 namespace {
+// Recreate the legacy transcript layout before exercising an older migration.
+void legacy_layout(sqlite3 *db) {
+  ASSERT_EQ(
+      sqlite3_exec(
+          db,
+          "UPDATE sessions SET messages=(SELECT COALESCE(json_group_array(json(payload)),'[]') "
+          "FROM (SELECT payload FROM session_messages WHERE session=sessions.id ORDER BY "
+          "position));"
+          "DROP TABLE session_messages; DROP TABLE provider_parts;"
+          "ALTER TABLE sessions DROP COLUMN message_format;",
+          nullptr, nullptr, nullptr),
+      SQLITE_OK)
+      << sqlite3_errmsg(db);
+}
 struct Offline : HttpTransport {
   HttpResponse perform(const HttpRequest &, const Cancellation &, const ChunkSink &) override {
     throw Error("Unexpected network");
@@ -237,19 +251,30 @@ TEST_F(History, DefaultBudgetProjectsLargeBatchesWithoutRerunningOrLosingDurable
     EXPECT_FALSE(schemas.empty()); // No compaction for a single ordinary output.
     if (++calls == 1) {
       auto out = text_result("");
-      out.message.calls = {
-          {"one",
-           "exec_command",
-           {{"cmd", "cat source"}, {"login", false}, {"max_output_tokens", 20000}}},
-          {"two",
-           "exec_command",
-           {{"cmd", "cat source"}, {"login", false}, {"max_output_tokens", 20000}}},
-          {"three",
-           "exec_command",
-           {{"cmd", "cat source"}, {"login", false}, {"max_output_tokens", 20000}}},
-          {"four",
-           "exec_command",
-           {{"cmd", "cat source"}, {"login", false}, {"max_output_tokens", 20000}}}};
+      out.message.calls = {{"one",
+                            "exec_command",
+                            {{"cmd", "cat source"},
+                             {"login", false},
+                             {"max_output_tokens", 20000},
+                             {"shell", "/bin/sh"}}},
+                           {"two",
+                            "exec_command",
+                            {{"cmd", "cat source"},
+                             {"login", false},
+                             {"max_output_tokens", 20000},
+                             {"shell", "/bin/sh"}}},
+                           {"three",
+                            "exec_command",
+                            {{"cmd", "cat source"},
+                             {"login", false},
+                             {"max_output_tokens", 20000},
+                             {"shell", "/bin/sh"}}},
+                           {"four",
+                            "exec_command",
+                            {{"cmd", "cat source"},
+                             {"login", false},
+                             {"max_output_tokens", 20000},
+                             {"shell", "/bin/sh"}}}};
       return out;
     }
     size_t references = 0;
@@ -516,8 +541,11 @@ TEST_F(History, ImpossibleToolArgumentsFailBeforeDispatchAndRemainNeverStarted) 
   Scripted provider;
   provider.script = [&](const Config &, const std::string &, const auto &, const Json &) {
     auto result = text_result("");
-    result.message.calls = {
-        {"effect", "exec_command", {{"cmd", "touch never-run; #" + std::string(6000, 'x')}}}};
+    result.message.calls = {{"effect",
+                             "exec_command",
+                             {{"cmd", "touch never-run; #" + std::string(6000, 'x')},
+                              {"login", false},
+                              {"shell", "/bin/sh"}}}};
     return result;
   };
   Agent agent(config, provider, t, state, {});
@@ -541,8 +569,8 @@ TEST_F(History, FailedCompactionPublicationPreservesHistoryAndRetryDoesNotDuplic
   sqlite3 *db = nullptr;
   ASSERT_EQ(sqlite3_open((config.home / "state.sqlite3").c_str(), &db), SQLITE_OK);
   ASSERT_EQ(sqlite3_exec(db,
-                         "CREATE TRIGGER fail_compact BEFORE UPDATE OF messages ON sessions WHEN "
-                         "instr(NEW.messages,'compaction')>0 BEGIN SELECT RAISE(FAIL,'injected "
+                         "CREATE TRIGGER fail_compact BEFORE INSERT ON session_messages WHEN "
+                         "instr(NEW.payload,'compaction')>0 BEGIN SELECT RAISE(FAIL,'injected "
                          "compact persistence'); END;",
                          nullptr, nullptr, nullptr),
             SQLITE_OK);
@@ -566,7 +594,10 @@ TEST_F(History, FailureHookCarriesCanonicalIdentityAndPublicOperation) {
   config.hooks["PostToolUseFailure"] =
       Json::array({{{"matcher", "Bash"}, {"command", "cat > failure.json"}}});
   Tools t(config, files, processes, http, clock);
-  EXPECT_TRUE(t.execute({"bad", "exec_command", {{"cmd", ""}}}, cancel).error);
+  EXPECT_TRUE(
+      t.execute({"bad", "exec_command", {{"cmd", ""}, {"login", false}, {"shell", "/bin/sh"}}},
+                cancel)
+          .error);
   const auto input = Json::parse(files.native.read(config.cwd / "failure.json"));
   EXPECT_EQ(input["tool"], "exec_command");
   EXPECT_EQ(input["tool_name"], "Bash");
@@ -714,7 +745,9 @@ TEST_F(History, FailedResultArchivePersistenceDoesNotReplayCompletedEffects) {
     if (++requests == 1) {
       auto out = text_result("");
       out.message.calls = {
-          {"once", "exec_command", {{"cmd", "printf x >> effect; cat source"}, {"login", false}}}};
+          {"once",
+           "exec_command",
+           {{"cmd", "printf x >> effect; cat source"}, {"login", false}, {"shell", "/bin/sh"}}}};
       return out;
     }
     return text_result("done");
@@ -968,7 +1001,8 @@ TEST_F(History, StablePreviewsPreserveRawJournalAndCaptureReferencesAcrossCompac
   codet::Message assistant;
   assistant.role = "assistant";
   assistant.message_id = unique_id();
-  assistant.calls = {{"output", "exec_command", {{"cmd", "test"}}}};
+  assistant.calls = {
+      {"output", "exec_command", {{"cmd", "test"}, {"login", false}, {"shell", "/bin/sh"}}}};
   const std::string capture = "01234567-1234-1234-1234-0123456789ab.txt";
   put(config.home / "tool-output" / capture, "complete raw capture");
   codet::Message result;
@@ -1151,7 +1185,8 @@ TEST_F(History, SchemaFourBackfillsJournalReferencesEvenWhenTranscriptWasCompact
     StateStore state(config.home);
     auto session = state.create();
     id = session.id;
-    ToolCall call{"old-output", "exec_command", {{"cmd", "test"}}};
+    ToolCall call{
+        "old-output", "exec_command", {{"cmd", "test"}, {"login", false}, {"shell", "/bin/sh"}}};
     state.tool_started(id, call);
     codet::Message result;
     result.role = "tool";
@@ -1163,6 +1198,7 @@ TEST_F(History, SchemaFourBackfillsJournalReferencesEvenWhenTranscriptWasCompact
   }
   sqlite3 *db = nullptr;
   ASSERT_EQ(sqlite3_open((config.home / "state.sqlite3").c_str(), &db), SQLITE_OK);
+  legacy_layout(db);
   ASSERT_EQ(sqlite3_exec(db, "DROP TABLE session_references; PRAGMA user_version=4;", nullptr,
                          nullptr, nullptr),
             SQLITE_OK);
@@ -1251,7 +1287,8 @@ TEST_F(History, SchemaFiveSkipsCorruptRowsWithoutChangingThemOrLosingValidRefere
     user.result_file = "results/valid/message.json";
     session.messages = {user};
     state.save(session);
-    ToolCall call{"valid-journal", "exec_command", {{"cmd", "test"}}};
+    ToolCall call{
+        "valid-journal", "exec_command", {{"cmd", "test"}, {"login", false}, {"shell", "/bin/sh"}}};
     state.tool_started(good, call);
     codet::Message result;
     result.role = "tool";
@@ -1264,6 +1301,7 @@ TEST_F(History, SchemaFiveSkipsCorruptRowsWithoutChangingThemOrLosingValidRefere
   const auto exec = [&](const char *sql) {
     EXPECT_EQ(sqlite3_exec(db, sql, nullptr, nullptr, nullptr), SQLITE_OK) << sqlite3_errmsg(db);
   };
+  legacy_layout(db);
   exec("DROP TABLE session_references; PRAGMA user_version=4;"
        "INSERT INTO sessions(id,name,updated,messages) "
        "VALUES('syntax','syntax',1,'[{'),('shape','shape',1,'{}'),('journal','journal',1,'[]');"
@@ -1303,6 +1341,7 @@ TEST_F(History, SchemaFiveDatabaseFailureRollsBackAndCanRetry) {
   { StateStore initial(config.home); }
   sqlite3 *db = nullptr;
   ASSERT_EQ(sqlite3_open((config.home / "state.sqlite3").c_str(), &db), SQLITE_OK);
+  legacy_layout(db);
   // An orphan journal row injects a real foreign-key failure during reference publication.
   ASSERT_EQ(sqlite3_exec(db,
                          "DROP TABLE session_references; PRAGMA user_version=4;"
@@ -1536,6 +1575,7 @@ TEST_F(History, ConcurrentSchemaUpgradesSerializeAndRecheckVersion) {
           "PRAGMA user_version=3; BEGIN IMMEDIATE;",
           nullptr, nullptr, nullptr),
       SQLITE_OK);
+  sqlite3_busy_timeout(db, 5000); // A backup reader may briefly overlap the writer commit.
   auto open = [&] {
     StateStore state(config.home);
     return state.list().size();
@@ -1553,7 +1593,9 @@ TEST_F(History, LiveExecutionStateRetiresTheTerminalPoll) {
   config.permission_mode = "bypass";
   Tools tools(config, files, processes, http, clock);
   const auto running = tools.execute(
-      {"start", "exec_command", {{"cmd", "sleep .6"}, {"login", false}, {"yield_time_ms", 250}}},
+      {"start",
+       "exec_command",
+       {{"cmd", "sleep .6"}, {"login", false}, {"yield_time_ms", 250}, {"shell", "/bin/sh"}}},
       cancel);
   ASSERT_FALSE(running.error);
   ASSERT_TRUE(running.metadata.contains("session_id"));

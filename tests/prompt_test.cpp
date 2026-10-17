@@ -355,15 +355,17 @@ TEST_F(Prompts, AllProviderAdaptersCarryTheComposedInstructions) {
   for (const auto &name : {"codex", "openai", "anthropic", "google", "ollama"}) {
     config.provider = name;
     config.providers[name].api_key = "fixture";
+    config.providers[name].wire_api = "auto";
     const auto system = prompt(t);
     const auto body = Json::parse(
         provider.request(config, system, {}, t.schemas(), {{"access_token", "fixture"}}).body);
-    const auto carried =
-        std::string(name) == "codex"       ? body["input"][0]["content"].get<std::string>()
-        : std::string(name) == "anthropic" ? body["system"][0]["text"].get<std::string>()
-        : std::string(name) == "google"
-            ? body["systemInstruction"]["parts"][0]["text"].get<std::string>()
-            : body["messages"][0]["content"].get<std::string>();
+    const auto carried = (std::string(name) == "codex" || std::string(name) == "openai")
+                             ? body["input"][0]["content"].get<std::string>()
+                         : std::string(name) == "anthropic"
+                             ? body["system"][0]["text"].get<std::string>()
+                         : std::string(name) == "google"
+                             ? body["systemInstruction"]["parts"][0]["text"].get<std::string>()
+                             : body["messages"][0]["content"].get<std::string>();
     EXPECT_EQ(carried, system) << name;
   }
 }

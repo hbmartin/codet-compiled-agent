@@ -40,8 +40,10 @@ struct OutputReview : Test {
     return s;
   }
   ToolResult shell(Tools &tools, const std::string &text) {
-    return execute_core(tools, config,
-                        {unique_id(), "exec_command", {{"cmd", text}, {"login", false}}}, cancel);
+    return execute_core(
+        tools, config,
+        {unique_id(), "exec_command", {{"cmd", text}, {"login", false}, {"shell", "/bin/sh"}}},
+        cancel);
   }
   size_t captures(const fs::path &directory) {
     size_t n = 0;
@@ -325,8 +327,10 @@ TEST_F(OutputReview, CompletedRetentionCountsActualWindowAndStagingCapacities) {
   spec.output_limit = 65536;
   for (int i = 0; i < 70; ++i) {
     const auto id = processes.start(spec, cancel);
-    while (processes.poll(id).running)
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (processes.poll(id).running && std::chrono::steady_clock::now() < deadline)
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    ASSERT_FALSE(processes.poll(id).running);
     EXPECT_LE(processes.retained_output_bytes(), 4u * 1024 * 1024);
   }
   EXPECT_LE(processes.list().size(), 64u);

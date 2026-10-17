@@ -68,6 +68,7 @@ struct SmallCore : Test {
     config.provider = "openai";
     config.model = "fixture";
     config.providers["openai"].api_key = "fake";
+    config.providers["openai"].wire_api = "chat_completions";
     config.approval = "never";
     fs::create_directories(config.home);
     fs::create_directories(config.cwd);
