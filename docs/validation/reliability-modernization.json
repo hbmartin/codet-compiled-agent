@@ -1,7 +1,7 @@
 {
-  "recorded_utc": "2026-10-17T20:09:02.828548+00:00",
+  "recorded_utc": "2026-10-17T20:11:21.848469+00:00",
   "baseline": "376cf4239b8afa359e68af57fa7853005e308e46",
-  "source_commit": "8b87f3bcfff1b040a1f4d287ea027aaea416e989",
+  "source_commit": "6846db66eaead44e697d00d3a4ecd071ab3db7d5",
   "sources": {
     "CMakeLists.txt": "7f7c45ad1011805823f7a2d19655bf5ca21df878437403617ce2637ae642a97a",
     "Makefile": "a193841be49e3bb4e0f7ea3ee10b3ddff46c512b0c0af08c9292a0e0dc2c2c9d",
