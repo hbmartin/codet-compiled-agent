@@ -73,7 +73,45 @@ fs::path resolve_image(const fs::path &root, const ImageArtifact &image) {
     throw Error("Invalid generated image reference");
   return root / fs::path(image.path).filename();
 }
-void portable_messages(std::vector<Message> &messages, const std::string &session) {
+bool result_name(const fs::path &ref) {
+  const auto parts = std::vector<fs::path>(ref.begin(), ref.end());
+  const auto identity = [](const std::string &value) {
+    return !value.empty() && value.size() <= 128 &&
+           value.find_first_not_of(
+               "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-") ==
+               std::string::npos;
+  };
+  return !ref.is_absolute() && parts.size() == 3 && parts[0] == "results" &&
+         identity(parts[1].string()) && parts[2].extension() == ".json" &&
+         identity(parts[2].stem().string());
+}
+std::set<std::string> message_references(const std::vector<Message> &messages) {
+  std::set<std::string> out;
+  const auto accept = [&](const std::string &value) {
+    if (result_name(value))
+      out.insert(value);
+    else if (capture_name(value))
+      out.insert(fs::path(value).filename().string());
+  };
+  for (const auto &m : messages) {
+    accept(m.result_file);
+    if (m.role != "tool")
+      continue;
+    const auto envelope = Json::parse(m.text, nullptr, false);
+    if (!envelope.is_object())
+      continue;
+    const auto metadata = envelope.value("metadata", Json::object());
+    if (metadata.is_object() && metadata.value("spill_path", Json()).is_string())
+      accept(metadata.at("spill_path").get<std::string>());
+  }
+  return out;
+}
+void portable_messages(std::vector<Message> &messages, const std::string &session,
+                       const std::string &tool) {
+  std::map<std::string, std::string> names;
+  for (const auto &message : messages)
+    for (const auto &call : message.calls)
+      names[call.id] = call.name;
   for (auto &message : messages) {
     for (auto &image : message.images)
       image = portable_image(std::move(image));
@@ -97,9 +135,16 @@ void portable_messages(std::vector<Message> &messages, const std::string &sessio
         }
       };
       if (envelope.is_object()) {
-        if (envelope.contains("metadata"))
+        if (envelope.contains("metadata")) {
           normalize(envelope["metadata"]);
-        if (envelope.value("content", Json()).is_string()) {
+          if (result_name(message.result_file) && envelope["metadata"].is_object() &&
+              envelope["metadata"].contains("result_path"))
+            envelope["metadata"]["result_path"] = message.result_file;
+        }
+        const auto name = tool.empty() ? names[message.tool_call_id] : tool;
+        const bool owned = name == "exec_command" || name == "write_stdin" ||
+                           name == "view_image" || name.rfind("computer.", 0) == 0;
+        if (owned && envelope.value("content", Json()).is_string()) {
           auto content = Json::parse(envelope.at("content").get<std::string>(), nullptr, false);
           if (content.is_object()) {
             normalize(content);

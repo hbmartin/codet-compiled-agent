@@ -120,7 +120,13 @@ produces a diagnostic instead of silently truncating instructions or repeatedly 
 Admission includes request overhead and the configured output reserve. Diagnostics distinguish
 fixed context, oversized human input and oversized summaries and show the estimated minimum
 `context_tokens`. The default is now 65536; max_output_tokens remains 8192 and tool_output_limit remains 65536. Task-plan context refreshes each request without reloading project documents. The view is at most 8 KiB, prioritizes active then pending then completed steps, retains original step numbers and names the full saved file. New serialized plans above 1 MiB are rejected before state changes; larger legacy plans remain available through paging.
-Model requests use bounded projections of completed tool results, while journals retain the completed payload and captures retain raw output under existing quotas. Complete-result archives use private artifacts/results/SESSION/MESSAGE.json files, independently of the raw capture cap; stored references remain relative to the active artifact root. Projections keep status, critical metadata, omission counts and a private result reference. Space is shared deterministically across a batch, carrying unused space forward; arguments and minimal envelopes must fit before dispatch. Compaction protects the latest human instruction verbatim, the newest assistant/tool batch and subsequent feedback, with complete call/result pairs. Older history alone is summarized. Summary generation keeps the configured output allowance; visible prose is limited to 8 KiB and reduced using conservative JSON escaping headroom. Fewer than 512 usable bytes, empty/exhausted responses and oversized summaries produce actionable errors without replacing durable history. No automatic summary retry is added.
+Tool previews are bounded once per batch and persisted; later requests keep already-sent previews unchanged until compaction. Full outcomes remain in the tool journal, with complete private archives under artifacts/results/SESSION/MESSAGE.json before reduction. File reads can be projected like other results. Projections retain direct capture references, action/recovery status, paging controls and bounded capture/post-action diagnostics.
+
+Automatic compaction starts at 80% of the usable history budget after fixed instructions, tools and output reserves. It retires older history when possible; if the newest completed batch alone cannot fit, the whole call/result group and associated replay are replaced with a bounded checkpoint. Latest human steering, unresolved recovery outcomes and execution-session IDs remain explicit. Full records are archived and indexed before publication; cancellation, provider errors and failed publication retain durable history. Already-compacted continuations may use the remaining hard budget without repeated compaction.
+
+Summary generation retains the configured output allowance and an 8 KiB visible-prose maximum. The conservative escaping-derived target is advisory: summaries are accepted using actual serialized continuation size. A genuinely oversized summary gets one smaller-target retry, counted in usage and request limits, with one PreCompact hook invocation. Empty or exhausted responses fail without replacing history. Manual compaction shares these rules and does nothing when no history can be reduced.
+
+SQLite schema 5 keeps the existing transcript row and adds a per-session registry of portable capture/result references. Legacy structured transcripts and journal results backfill it; summary prose never grants access. Forks inherit references, and active storage roots resolve them after relocation. A paged indexes/SESSION.results.jsonl view is rebuilt from SQLite and exposed through read_file in every mode. Normal capture eviction remains effective. Ordinary saves no longer copy and normalize the entire history; whole-transcript serialization and SQLite writes remain, so cumulative save work is not claimed to be linear. The optional codet_persistence_bench target measures 100/200/300-result histories with configurable payload size.
 
 Every image occurrence is archived in a versioned JSONL observation ledger before history replacement; compacted continuations are text-only, including the newest screenshot. Subsequent image input requires explicit reload.
 
@@ -130,11 +136,11 @@ and `/permissions` controls retain their behavior. Worker events and approval/qu
 have turn ownership; error cleanup drains diagnostics and outcomes and expires unanswered
 requests before another turn. An expired request cannot consume the next line of input.
 
-Instructions still load AGENTS.md/CLAUDE.md and bounded includes. Skills are listed with their paths and read using the active inspection tools. Markdown memory previews are bounded separately; explicit memory consolidation uses patches. Session/credential/permission controls remain application controls without an OS shell sandbox.
+Instructions select AGENTS.override.md, AGENTS.md, or fallback CLAUDE.md per directory, retaining bounded includes. Skills list names, descriptions and exact SKILL.md paths for lazy inspection. Markdown memory previews are bounded separately; explicit memory consolidation uses patches. Session/credential/permission controls remain application controls without an OS shell sandbox.
 
 Path rules are tool-specific and match normalized lexical/canonical aliases and rule-authored globs, resolving relative spellings and fixed symlink prefixes. Workspace and canonical filesystem prefixes are literal, including `[`, `*`, `?` and backslashes in workspace names. Parsed rule syntax is cached until allow/deny configuration changes; filesystem resolution is shared within one decision and refreshed for every operation. Leading wildcard rules such as `read_file(*secret*)` also cover matching paths outside the working directory, including added roots and bypass mode. Directory listings check each returned entry; a read_file rule does not restrict an approved exec_command shell command. Denials are checked before hooks and after input rewriting.
 
-Instructions load from `AGENTS.md` and `CLAUDE.md`, from repository root to working directory, with bounded/cycle-safe `@include path` and `@path`. Includes stay inside the repository or Codet home. The complete Codet instruction chain (global/project/includes) uses `project_doc_max_bytes`, default 32 KiB, with UTF-8-safe truncation and stderr diagnostics rather than failing on oversized files. Automatic memory previews use a separate 8,900-byte default budget, deterministic file order and at most 200 files; source paths allow explicit retrieval through the active inspection tools. Both budgets allow 0 to disable loading and values up to 1 MiB. read_file streams bounded pages; byte_offset/byte_limit support long lines without loading the whole file. Source files are never truncated or changed. Skills are discovered in `.codet/skills`, `.agents/skills`, `.claude/skills`, and Codet home's `skills`. Advertised skills and their support files, memory Markdown, the active saved plan, the active image index and referenced captures/results can be inspected with read_file in every mode, including headless runs without shell approval. Other workspace read_file operations remain Plan-only, even in bypass mode. The private exceptions never override explicit denies. Fresh path classification follows hooks and callbacks; canonical containment and symlink checks are repeated immediately before reading through the validated open handle. Durable Markdown memory uses read_file and patches; consolidation runs only through an explicit request.
+Instructions load Codet-home guidance first, then repository root to working directory. Each directory selects one file in order: `AGENTS.override.md`, `AGENTS.md`, `CLAUDE.md`. This replaces combined AGENTS/CLAUDE loading. Documents retain with bounded/cycle-safe `@include path` and `@path`. Includes stay inside the repository or Codet home. The complete Codet instruction chain (global/project/includes) uses `project_doc_max_bytes`, default 32 KiB, with UTF-8-safe truncation and stderr diagnostics rather than failing on oversized files. Automatic memory previews use a separate 8,900-byte default budget, deterministic file order and at most 200 files; source paths allow explicit retrieval through the active inspection tools. Both budgets allow 0 to disable loading and values up to 1 MiB. read_file streams bounded pages; byte_offset/byte_limit support long lines without loading the whole file. Source files are never truncated or changed. Skills are discovered in `.codet/skills`, `.agents/skills`, and `.claude/skills` from the working directory back to the repository root, then Codet home's `skills` and user `~/.agents/skills`. Nearest project names win; within a directory Codet precedes agents, then Claude. Entries are sorted, canonical paths deduplicated, and symlink roots/entries/files excluded. There is no recursive crawl. Discovery examines at most 100 skill documents with an 8 KiB metadata-read limit each and a separate 16 KiB catalog budget. Plain, quoted and literal/folded scalar frontmatter names/descriptions are supported; unsupported metadata falls back to the directory name with a diagnostic. Only the catalog is automatically included; bodies and support files load lazily. Advertised skills and their support files, memory Markdown, the active saved plan, the active image index and referenced captures/results can be inspected with read_file in every mode, including headless runs without shell approval. Other workspace read_file operations remain Plan-only, even in bypass mode. The private exceptions never override explicit denies. Fresh path classification follows hooks and callbacks; canonical containment and symlink checks are repeated immediately before reading through the validated open handle. Durable Markdown memory uses read_file and patches; consolidation runs only through an explicit request.
 
 Custom prompt commands live in global `commands/NAME.md` or trusted project `.codet/commands/NAME.md`; `$ARGUMENTS` is textual substitution, never shell evaluation. Interactive built-ins include `/help`, `/quit`, `/sessions`, `/new`, `/name`, `/export`, `/permissions [MODE]`, and `/memory consolidate`. `/permissions` shows the active mode; `/permissions default|plan|accept-edits|bypass` changes it immediately for the current invocation. It does not write configuration. Both terminal modes keep the permission mode visible separately from progress. Streaming progress clears on success, failure and interruption.
 
@@ -190,7 +196,7 @@ Previews select UTF-8-safe head/tail windows from original bytes after hooks, bu
 
 If capacity or storage fails, Codet keeps draining and preserves the real command status. Warnings use metadata and the diagnostic callback, without shortening a complete primary result or encouraging command replay. An omitted result includes a complete capture notice or an unavailable-capture notice. Compaction uses the same bounded UTF-8-safe selection, including its omission marker in the request budget; malformed provider JSON is still rejected.
 
-Use read_file in every mode for referenced retained text. Line offset/limit are one-based; optional byte_offset/byte_limit are zero-based and mutually exclusive with line paging. Responses include next_byte_offset for the original bytes actually returned, total_bytes and eof. Resume at that offset for partial long lines; incomplete UTF-8 sequences remain for the next page, while malformed bytes retain existing display repair. Reads stream through bounded buffers and never spill a duplicate of the source. File storage does not grant shell authorization.
+Use read_file in every mode for referenced retained text. File contents stay verbatim through save/resume/fork even when they contain complete JSON objects. Provider adapters render page text followed by a compact <codet_result> metadata trailer instead of JSON-escaping the full page. Line offset/limit are one-based; optional byte_offset/byte_limit are zero-based and mutually exclusive with line paging. Responses include next_byte_offset for the original bytes actually returned, total_bytes and eof. Resume at that offset for partial long lines; incomplete UTF-8 sequences remain for the next page, while malformed bytes retain existing display repair. Reads stream through bounded buffers and never spill a duplicate of the source. File pages adapt to actual encoded output/context allowance; byte_limit requests default to 64 KiB with a 1 MiB maximum and may return less. Directories use one-based offset/limit entry pages, sorted names, next_entry_offset/eof and a 10,000-entry scan ceiling. File storage does not grant shell authorization.
 
 Search through exec_command requires its usual approval even for reads. Neither plan mode nor headless operation gains a search exemption. Use explicit exclusions with portable `find` and `grep`, rather than relying on GNU-specific recursive flags:
 
@@ -209,3 +215,48 @@ Permission rules normalize lexical path components, including `..` after authore
 Prompt expansion and hook/user additions are prepared before mutation. A bounded append transaction reserves space and moves only new messages, rolling back appended messages without allocation if insertion or persistence fails. Recovery therefore sees the original transcript on failed admission; existing conversation history is not duplicated for every prompt. apply_patch creates new files with LF; exact new-file CRLF bytes require an authorized shell command. Updates retain the target's existing recognized ending style.
 
 Reviewed runtime corrections and contract changes are described in [CODEX-TOOLS.md](CODEX-TOOLS.md). They preserve captured prompt provenance and existing per-tool permissions. Host regressions include root `/` aliases, informed command/stdin approvals, durable completed-action failures, explicit pipe EOF, bounded cleanup refresh, provider schemas/images, late steering and display selection.
+
+## Small-core Codex alignment
+
+`/model` shows the current selection and, for the Codex provider, the bundled reference
+catalog. `/model MODEL [EFFORT]` changes the current provider's selection between turns.
+Omitted effort selects the known Codex model's captured default, or leaves effort unspecified
+for other/unknown models. Known Codex effort combinations are validated before saving;
+unknown model IDs remain valid. Catalog entries do not establish account availability.
+No runtime catalog request is made. Provider defaults and the 65,536-token context default
+remain unchanged.
+
+`/status` shows session identity, provider/model/effort, permissions and context limit.
+`last_turn_usage_this_invocation` is null until a turn completes; it is not lifetime usage.
+`/compact` uses the same budgeted compaction implementation as automatic compaction and
+runs `PreCompact` with `trigger=manual`. It preserves the latest human message, its following
+answer, protected tool outcomes and artifact references. A conversation with no older
+history is a no-op. Cancellation, provider failure and failed persistence retain the prior
+history. These commands report that they require an idle turn when entered during work;
+they are never sent to the model as prompts.
+
+Repeat `-i/--image PATH` for up to four initial attachments on fresh/resume/fork invocations.
+Image-only input is valid. Relative paths are resolved from the invoking directory.
+Attachments are consumed by the first submitted turn, use the existing high-detail encoder,
+private artifact storage and combined 8 MiB request limit, and never authorize other files.
+Explicit view_image deny rules remain effective. Missing/invalid/disabled images fail before
+a model call. Non-Apple builds retain their unavailable native-codec diagnostic.
+
+Codex Responses preserves ordered assistant text items and optional `commentary`,
+`partial_answer`, and `final_answer` phases. Streaming and completed item events share IDs.
+Headless text/JSON results and `-o` contain the last nonempty assistant message rather than
+concatenated progress. Progress appears once in the terminal or on headless stderr.
+JSONL adds optional `phase` and `final_result` fields without changing existing required
+fields; `final_result` prevents a terminal answer from also being printed as progress.
+Other providers retain the single untagged-message path. Phases alone never force another
+request. Tool batches, pending user input and response completion retain their existing
+follow-up behavior. Full provider replay remains intact.
+
+SQLite schema 5 includes nullable per-session reasoning effort and retained-result references; schema 1–4 migrate forward.
+Resume/fork keep saved effort for the same provider/model. Explicit CLI/profile effort wins;
+a changed provider/model falls back to configured effort. Older messages without
+`assistant_items` remain readable. Earlier binaries reject schema 5, so use the new binary
+after migration. No credentials or configuration locations change.
+
+See [reference fingerprints](validation/core-alignment-reference.json) and the
+[compatibility ledger](FEATURE-PORT.md) for the selected upstream source snapshot.

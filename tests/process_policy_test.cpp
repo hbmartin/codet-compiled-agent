@@ -252,6 +252,7 @@ TEST_F(Policies, CanonicalLoadedWorkspaceAndEquivalentAliasDenyLiteralMetacharac
 #endif
 }
 TEST_F(Policies, WildcardParentsNormalizeWithoutExpandingGlobsAndSnapshotChangesInvalidateRules) {
+  config.permission_mode = "plan";
   files.atomic_write(config.cwd / "secret", "private");
   Permissions permissions(config, files);
   for (const auto &pattern : {"*/../secret", "**/../secret", "a/*/../../secret", "./secret"}) {

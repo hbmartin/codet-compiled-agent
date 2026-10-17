@@ -1191,5 +1191,123 @@
     "plan": "da83de78c5ef6b8d2c5a3e5d33d3dc3099a382f12d2bb1dda95a911e9cef2f14",
     "approval_on_request": "aa30e9ba182262d5a6cfcd85e883c28af08fa2d1b9856faca997d176ea5e4503",
     "approval_never": "aa30e9ba182262d5a6cfcd85e883c28af08fa2d1b9856faca997d176ea5e4503"
+  },
+  "catalog": {
+    "gpt-6-astra": {
+      "default_effort": "low",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    },
+    "gpt-6.1-sol": {
+      "default_effort": "low",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    },
+    "gpt-6-sol": {
+      "default_effort": "medium",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    },
+    "gpt-6-luna": {
+      "default_effort": "medium",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "gpt-5.6-sol": {
+      "default_effort": "low",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    },
+    "gpt-5.6-terra": {
+      "default_effort": "medium",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    },
+    "gpt-5.6-luna": {
+      "default_effort": "medium",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "gpt-daybreak-blue-latest": {
+      "default_effort": "low",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    },
+    "gpt-daybreak-red-latest": {
+      "default_effort": "medium",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    },
+    "gpt-5.5": {
+      "default_effort": "medium",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    "codex-auto-review": {
+      "default_effort": "medium",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    }
   }
 }

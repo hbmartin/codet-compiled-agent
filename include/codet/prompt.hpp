@@ -7,6 +7,9 @@ struct PromptEntry {
       *approval_never;
 };
 const PromptEntry *model_prompt(std::string_view);
+Json model_catalog();
+void validate_effort(const Config &);
+std::string resolve_effort(const Config &, const Session *saved = nullptr);
 // Null means absent; an explicitly empty catalog string remains an override.
 std::string_view resolve_prompt(const char *, std::string_view fallback);
 std::string assemble_prompt(const Config &, const Json &schemas, const Json &capabilities,

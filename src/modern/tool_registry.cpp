@@ -56,9 +56,10 @@ const std::vector<ToolDefinition> &tool_registry() {
         "file_change");
     add("read_file",
         "Read numbered lines or directory entries in Plan mode; in other modes only advertised "
-        "private context is readable. offset is one-based; limit defaults to 2000. Alternatively "
+        "private context is readable. offset is one-based for lines or sorted directory entries; "
+        "limit defaults to 2000. Pages adapt to output/context budgets. Alternatively "
         "use zero-based byte_offset and byte_limit for long lines. Continue using "
-        "next_byte_offset.",
+        "next_byte_offset, or next_entry_offset for directories.",
         {{"path", field("string")},
          {"offset", field("integer")},
          {"limit", field("integer")},

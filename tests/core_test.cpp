@@ -118,7 +118,7 @@ TEST_F(Fixture, AtomicWritesPreserveModeAndLeaveNoScratchFiles) {
   write("a", "before");
   chmod((config.cwd / "a").c_str(), 0755);
   write("a", "after");
-  struct stat st{};
+  struct stat st {};
   ASSERT_EQ(stat((config.cwd / "a").c_str(), &st), 0);
   EXPECT_EQ(st.st_mode & 0777, 0755);
   EXPECT_EQ(files.read(config.cwd / "a"), "after");
@@ -130,7 +130,7 @@ TEST_F(Fixture, PermissionsDenyWinsOverAllowAndBypass) {
   config.set_deny({"exec_command(rm*)"});
   Permissions p(config, files);
   EXPECT_EQ(p.decide({"exec_command", "rm -rf x", std::nullopt, true}), Decision::deny);
-  EXPECT_EQ(p.decide({"read_file", "a", config.cwd / "a", false}), Decision::allow);
+  EXPECT_EQ(p.decide({"read_file", "a", config.cwd / "a", false}), Decision::deny);
 }
 TEST_F(Fixture, PermissionRootsRejectSiblingAndSymlinkEscapes) {
   const auto other = temp.root / "workspace-other";
@@ -172,7 +172,7 @@ TEST_F(Fixture, CredentialsImportIsPrivateAndDoesNotModifySource) {
   c.import(config.cwd / "tokens.json");
   EXPECT_EQ(c.load()["codex"]["access_token"], "fake-access");
   EXPECT_EQ(files.read(config.cwd / "tokens.json"), before);
-  struct stat st{};
+  struct stat st {};
   ASSERT_EQ(stat((config.home / "auth.json").c_str(), &st), 0);
   EXPECT_EQ(st.st_mode & 0777, 0600);
 }
@@ -353,9 +353,7 @@ TEST_F(Fixture, CrashRecoveryRestoresResultsAndNeverReplaysUnknownEffects) {
   EXPECT_EQ(recovered.messages[2].tool_call_id, "uncertain");
 }
 TEST_F(Fixture, StateRejectsFutureSchemaWithoutDowngrading) {
-  {
-    StateStore state(config.home);
-  }
+  { StateStore state(config.home); }
   sqlite3 *db = nullptr;
   ASSERT_EQ(sqlite3_open((config.home / "state.sqlite3").c_str(), &db), SQLITE_OK);
   ASSERT_EQ(sqlite3_exec(db, "PRAGMA user_version=99", nullptr, nullptr, nullptr), SQLITE_OK);

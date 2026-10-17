@@ -5,7 +5,9 @@ fs::path artifact_index_path(const fs::path &, const std::string &);
 std::string artifact_index_reference(const std::string &);
 ImageArtifact portable_image(ImageArtifact);
 fs::path resolve_image(const fs::path &, const ImageArtifact &);
-void portable_messages(std::vector<Message> &, const std::string &);
+void portable_messages(std::vector<Message> &, const std::string &, const std::string &tool = "");
+bool result_name(const fs::path &);
+std::set<std::string> message_references(const std::vector<Message> &);
 fs::path archive_image_history(const fs::path &, FileSystem &, const std::string &,
                                const std::vector<Message> &);
 void copy_image_history(const fs::path &, FileSystem &, const std::string &, const std::string &);

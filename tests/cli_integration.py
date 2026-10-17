@@ -31,6 +31,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == '/api/chat':
             data=(json.dumps({'message':{'role':'assistant','content':'fixture done'},'done':True})+'\n').encode()
             self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+        if self.path == '/codex':
+            prompt=next((m.get('content','') for m in reversed(body['input']) if m.get('role')=='user'),'')
+            items=[{'type':'message','id':'progress-'+str(len(self.server.requests)),'phase':'commentary','role':'assistant','content':[{'type':'output_text','text':'Checking fixture'}]}]
+            if prompt!='commentary-only':
+                items.append({'type':'message','id':'final-'+str(len(self.server.requests)),'phase':'final_answer','role':'assistant','content':[{'type':'output_text','text':'Final fixture answer'}]})
+            frames=[]
+            for index,item in enumerate(items):
+                frames.extend([{'type':'response.output_item.added','output_index':index,'item':item},
+                               {'type':'response.output_text.delta','output_index':index,'item_id':item['id'],'delta':item['content'][0]['text']}])
+            frames.append({'type':'response.completed','response':{'status':'completed','output':items}})
+            data=''.join('data: '+json.dumps(frame)+'\n\n' for frame in frames).encode()
+            self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers()
+            for at in range(0,len(data),7):self.wfile.write(data[at:at+7]);self.wfile.flush()
+            return
         messages=body['messages']
         prompt=next((m.get('content','') or '' for m in reversed(messages) if m['role']=='user'),'')
         if 'fixture-progress-failure' in prompt:
@@ -252,6 +266,148 @@ class CliTests(unittest.TestCase):
         self.assertNotEqual(r.returncode,0)
         self.assertIn('Increase context_tokens',r.stderr)
         self.assertEqual(self.server.requests,[])
+
+    def test_codex_message_boundaries_final_only_output_and_progress_once(self):
+        (self.home/'auth.json').write_text(json.dumps({'codex':{'access_token':'fixture'}}))
+        flags=['--provider','codex','-c',f"providers.codex.base_url='http://127.0.0.1:{self.server.server_port}/codex'"]
+        output=self.root/'last.txt'
+        result=self.run_cli('exec',*flags,'-o',str(output),'inspect')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout,'Final fixture answer\n')
+        self.assertEqual(output.read_text(),'Final fixture answer\n')
+        self.assertEqual(result.stderr.count('Checking fixture'),1)
+        result=self.run_cli('exec',*flags,'--json','inspect')
+        self.assertEqual(result.returncode,0,result.stderr)
+        events=[json.loads(line) for line in result.stdout.splitlines()]
+        messages=[event['item'] for event in events if event['type']=='item.completed']
+        self.assertEqual([item['phase'] for item in messages],['commentary','final_answer'])
+        for item in messages:
+            related=[event for event in events if event.get('item',{}).get('id')==item['id']]
+            self.assertEqual([event['type'] for event in related],['item.started','item.updated','item.completed'])
+        result=self.run_cli('exec',*flags,'commentary-only')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout,'Checking fixture\n')
+        self.assertNotIn('Checking fixture',result.stderr)
+
+    def test_idle_commands_during_work_do_not_enter_the_model_prompt(self):
+        import pty,select
+        master,slave=pty.openpty()
+        p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','line'],stdin=slave,stdout=slave,stderr=slave,env=self.env)
+        received=b''
+        def wait_for(text):
+            nonlocal received
+            deadline=time.monotonic()+7
+            while text not in received and time.monotonic()<deadline:
+                if select.select([master],[],[],.03)[0]:received+=os.read(master,65536)
+            self.assertIn(text,received);received=b''
+        try:
+            wait_for(b'codet>')
+            os.write(master,b'fixture-wait\n')
+            deadline=time.monotonic()+5
+            while not self.server.requests and time.monotonic()<deadline:time.sleep(.01)
+            for command in [b'/model other',b'/status',b'/compact']:
+                os.write(master,command+b'\n');wait_for(b'after the active turn completes.')
+            wait_for(b'fixture done')
+            self.assertEqual(len(self.server.requests),1)
+            self.assertNotIn('/model',json.dumps(self.server.requests))
+            os.write(master,b'/quit\n')
+            deadline=time.monotonic()+5
+            while p.poll() is None and time.monotonic()<deadline:
+                if select.select([master],[],[],.03)[0]:received+=os.read(master,65536)
+            self.assertEqual(p.poll(),0,repr(received))
+        finally:
+            if p.poll() is None:p.kill();p.wait()
+            os.close(master);os.close(slave)
+
+    def test_small_core_commands_in_both_terminals_and_effort_resume(self):
+        import fcntl,pty,select,struct,termios
+        for mode in ['line','curses']:
+            master,slave=pty.openpty()
+            fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',40,120,0,0))
+            p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+            received=b''
+            def wait_for(text):
+                nonlocal received
+                deadline=time.monotonic()+7
+                while text not in received and time.monotonic()<deadline:
+                    if select.select([master],[],[],.03)[0]:received+=os.read(master,65536)
+                self.assertIn(text,received)
+                received=b''
+            try:
+                wait_for(b'codet>')
+                os.write(master,b'/compact\n');wait_for(b'No older history to compact.')
+                count=len(self.server.requests)
+                os.write(master,b'/model changed high\n');wait_for(b'Model: changed; effort: high')
+                os.write(master,b'/status\n');wait_for(b'"context_tokens": 65536')
+                self.assertEqual(len(self.server.requests),count)
+                os.write(master,b'fixture\n');wait_for(b'fixture done')
+                self.assertEqual(self.server.requests[-1]['body']['reasoning_effort'],'high')
+                os.write(master,b'/status\n');wait_for(b'last_turn_usage_this_invocation')
+                os.write(master,b'/new\n');wait_for(b'Started ')
+                os.write(master,b'/status\n');wait_for(b'"last_turn_usage_this_invocation": null')
+                os.write(master,b'/quit\n')
+                deadline=time.monotonic()+5
+                while p.poll() is None and time.monotonic()<deadline:
+                    if select.select([master],[],[],.03)[0]:received+=os.read(master,65536)
+                self.assertEqual(p.poll(),0,repr(received))
+            finally:
+                if p.poll() is None:p.kill();p.wait()
+                os.close(master);os.close(slave)
+            resumed=self.run_cli('exec','resume','--last','--json','fixture')
+            self.assertEqual(resumed.returncode,0,resumed.stderr)
+            self.assertEqual(self.server.requests[-1]['body']['model'],'changed')
+            self.assertEqual(self.server.requests[-1]['body']['reasoning_effort'],'high')
+            changed=self.run_cli('exec','resume','--last','--model','other','fixture')
+            self.assertEqual(changed.returncode,0,changed.stderr)
+            self.assertNotIn('reasoning_effort',self.server.requests[-1]['body'])
+
+    def test_invalid_known_model_effort_leaves_saved_selection_unchanged(self):
+        import pty,select,sqlite3
+        master,slave=pty.openpty()
+        p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','line','--provider','codex'],stdin=slave,stdout=slave,stderr=slave,env=self.env)
+        received=b''
+        def wait_for(text):
+            nonlocal received
+            deadline=time.monotonic()+5
+            while text not in received and time.monotonic()<deadline:
+                if select.select([master],[],[],.03)[0]:received+=os.read(master,65536)
+            self.assertIn(text,received);received=b''
+        try:
+            wait_for(b'codet>')
+            os.write(master,b'/model gpt-6.1-sol high\n');wait_for(b'Model: gpt-6.1-sol; effort: high')
+            os.write(master,b'/model gpt-6.1-sol invalid\n');wait_for(b'Unsupported reasoning effort')
+            with sqlite3.connect(self.home/'state.sqlite3') as db:
+                self.assertEqual(db.execute('SELECT model,reasoning_effort FROM sessions ORDER BY rowid DESC LIMIT 1').fetchone(),('gpt-6.1-sol','high'))
+            os.write(master,b'/quit\n')
+            deadline=time.monotonic()+5
+            while p.poll() is None and time.monotonic()<deadline:
+                if select.select([master],[],[],.03)[0]:received+=os.read(master,65536)
+            self.assertEqual(p.poll(),0,repr(received))
+        finally:
+            if p.poll() is None:p.kill();p.wait()
+            os.close(master);os.close(slave)
+
+    def test_image_arguments_validate_before_provider_and_allow_image_only(self):
+        import base64
+        image=self.root/'input.png'
+        image.write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX6kAAAAASUVORK5CYII='))
+        before=len(self.server.requests)
+        result=self.run_cli('exec','-i',str(image),'-i',str(image),'--json')
+        # Linux intentionally has no native codec. Its early rejection is part of the contract.
+        if sys.platform!='darwin':
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('image codec',result.stderr)
+            self.assertEqual(len(self.server.requests),before)
+        else:
+            self.assertEqual(result.returncode,0,result.stderr)
+            body=self.server.requests[-1]['body']
+            parts=[part for message in body['messages'] if isinstance(message.get('content'),list) for part in message['content']]
+            self.assertEqual(sum(part.get('type')=='image_url' for part in parts),2)
+        denied=self.run_cli('exec','--deny','view_image','-i',str(image),'fixture')
+        self.assertNotEqual(denied.returncode,0)
+        self.assertEqual(len(self.server.requests),before+(sys.platform=='darwin'))
+        invalid=self.run_cli('doctor','-i',str(image))
+        self.assertEqual(invalid.returncode,2)
 
     def test_live_permission_modes_in_both_terminals(self):
         import pty,select
@@ -531,7 +687,8 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(r.returncode,code,r.stderr)
                 outcomes=[json.loads(m['content']) for m in self.server.requests[-1]['body']['messages'] if m['role']=='tool']
                 capture=next(x for x in outcomes if 'spill_path' in x)
-                self.assertEqual(capture.get('exit_code',0),0);self.assertTrue(str(capture['spill_path']).startswith(str(temporary)))
+                self.assertEqual(capture.get('exit_code',0),0)
+                self.assertTrue(str(capture['spill_path']).startswith(str(temporary)))
                 self.assertFalse(pathlib.Path(capture['spill_path']).exists())
                 self.assertFalse(list(temporary.glob('codet-ephemeral-*')))
                 self.assertFalse((self.home/'tool-output').exists());self.assertFalse((self.home/'state.sqlite3').exists())

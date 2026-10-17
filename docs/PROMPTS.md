@@ -24,7 +24,7 @@ python3 scripts/import-prompts.py \
 
 `prompts/upstream` retains deduplicated original UTF-8 text. `prompts/assets` contains adapted
 text. The manifest records full source hashes, JSON pointers, original/adapted content hashes,
-and ordered exact before/after edits with occurrence counts and reasons. Multiple originals
+and ordered exact before/after edits with occurrence counts and reasons. The separate `catalog` section captures only model slugs and default/supported reasoning efforts for local selection; adapted prompt assets are unchanged. Multiple originals
 can map to one adapted asset. The importer prunes obsolete hash-named files from its managed
 asset directories. Review the manifest and asset diffs together. `codet.prompts` verifies that
 every edit log replays exactly; CMake verifies adapted checksums before embedding.
@@ -57,7 +57,7 @@ accessibility and installed app scripting remain secondary routes. The foregroun
 is shared with the user. Aqua, Universal Access, expiry, crop and input constraints are
 described in the generated prompt. This does not add modern browser or desktop adapters.
 
-The prompt assembler adds no CLI flags or provider interfaces. Optional message-origin and
+The prompt assembler itself adds no CLI flags or provider interfaces; the small-core workflows are documented in MODERN-AGENT.md. Optional message-origin and
 artifact-index metadata remain backward compatible with existing session JSON.
 Unsupported operations disappear from the available tool list; their registry identities
 remain valid for rules and historical transcripts. Execution still rechecks capabilities

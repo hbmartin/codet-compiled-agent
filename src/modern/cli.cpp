@@ -2,6 +2,7 @@
 #include "codet/core.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/interaction.hpp"
+#include "codet/prompt.hpp"
 #include "codet/tool_registry.hpp"
 #include <algorithm>
 #include <curses.h>
@@ -27,6 +28,7 @@ Usage: codet [OPTIONS] [PROMPT]
        codet sessions | export SESSION | doctor
        codet memory consolidate
 
+  -i, --image PATH              Attach an image (repeatable, up to four)
   -m, --model MODEL             Select model
       --provider NAME           codex, openai, anthropic, google, ollama
   -C, --cd DIR                  Working directory
@@ -59,7 +61,7 @@ struct Options {
                                                                   approval, color = "auto";
   fs::path cwd = fs::current_path(), schema, output, import;
   std::vector<std::string> overrides, allow, deny;
-  std::vector<fs::path> roots;
+  std::vector<fs::path> roots, images;
   std::vector<std::string> positionals;
 };
 std::string stdin_text() {
@@ -125,6 +127,8 @@ Options parse(const std::vector<std::string> &args) {
           o.key = true;
         else if (a == "--model" || a == "-m")
           o.model = value();
+        else if (a == "--image" || a == "-i")
+          o.images.push_back(fs::absolute(value()));
         else if (a == "--provider")
           o.provider = value();
         else if (a == "--cd" || a == "-C")
@@ -491,6 +495,13 @@ public:
         event["item"].contains("tool"))
       say("[" + event["item"]["tool"].get<std::string>() + "]");
     const auto type = event.value("type", "");
+    if (type == "item.completed" && event.contains("item")) {
+      const auto &item = event.at("item");
+      const auto phase = item.value("phase", "");
+      if ((phase == "commentary" || phase == "partial_answer") &&
+          !item.value("final_result", false) && !item.value("text", "").empty())
+        say(item.at("text").get<std::string>());
+    }
     if (type == "turn.completed" || type == "turn.failed") {
       progress_.clear();
       render();
@@ -512,6 +523,9 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     std::cout << "codet " CODET_VERSION "\n";
     return 0;
   }
+  if (!o.images.empty() && !o.command.empty() && o.command != "exec" && o.command != "resume" &&
+      o.command != "fork")
+    throw Error("--image requires a conversation invocation", 2);
   NativeFileSystem files;
   SystemClock clock;
   CurlTransport http;
@@ -696,6 +710,10 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
                                     : std::nullopt);
   config.provider = resolved.provider;
   config.model = resolved.model;
+  config.effort =
+      resolve_effort(config, o.command == "resume" || o.command == "fork" ? &session : nullptr);
+  validate_effort(config);
+  session.effort = config.effort;
   session.model = config.model;
   session.provider = config.provider;
   state.save(session);
@@ -737,6 +755,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     };
   Tools tools(config, files, processes, http, clock, approver, questioner, diagnostic, interaction);
   ApiProvider provider(http, credentials, clock);
+  auto pending_images = input_images(config, files, *native_images(), o.images, cancel);
   Json schema;
   if (!o.schema.empty()) {
     try {
@@ -752,6 +771,11 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       interaction->post(event);
     else if (o.format == "jsonl")
       std::cout << event.dump(-1, ' ', false, Json::error_handler_t::replace) << '\n' << std::flush;
+    else if (event.value("type", "") == "item.completed" &&
+             !event["item"].value("final_result", false) &&
+             (event["item"].value("phase", "") == "commentary" ||
+              event["item"].value("phase", "") == "partial_answer"))
+      std::cerr << event["item"].value("text", "") << '\n';
     else if (event.value("type", "") == "item.started" && event["item"].contains("tool"))
       std::cerr << "[" << event["item"]["tool"].get<std::string>() << "]\n";
   };
@@ -808,10 +832,12 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     state.save(session);
   }
   bool quit_requested = false;
-  bool new_requested = false;
+  bool new_requested = false, compacting = false;
+  std::optional<Usage> last_usage;
   auto execute_agent = [&](const std::string &text, bool steering) -> RunResult {
     if (!terminal)
-      return agent.run(session, text, cancel, schema, !steering);
+      return compacting ? agent.compact(session, cancel)
+                        : agent.run(session, text, cancel, schema, !steering, pending_images);
     interaction->begin_turn(session.id);
     std::future<RunResult> work;
     std::optional<Json> pending;
@@ -853,8 +879,10 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     };
     try {
       terminal->begin_active();
-      work = std::async(std::launch::async,
-                        [&] { return agent.run(session, text, cancel, schema, !steering); });
+      work = std::async(std::launch::async, [&] {
+        return compacting ? agent.compact(session, cancel)
+                          : agent.run(session, text, cancel, schema, !steering, pending_images);
+      });
       while (work.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
         deliver();
         bool closed = false;
@@ -865,6 +893,9 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
           if (*line == "/quit" || *line == "/exit") {
             quit_requested = true;
             cancel.requested = true;
+          } else if (*line == "/model" || line->rfind("/model ", 0) == 0 || *line == "/status" ||
+                     *line == "/compact") {
+            terminal->say("Use /model, /status and /compact after the active turn completes.");
           } else if (pending) {
             if (!interaction->answer(pending->at("request_id"), *line)) {
               try {
@@ -932,11 +963,21 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     }
   };
   auto run = [&](const std::string &text, bool steering = false) {
+    struct ClearImages {
+      std::vector<ImageArtifact> &images;
+      bool clear;
+      ~ClearImages() {
+        if (clear)
+          images.clear();
+      }
+    } clear_images{pending_images, !compacting};
     try {
       auto result = execute_agent(text, steering);
       pending_input(true);
+      if (!compacting)
+        last_usage = result.usage;
       const auto answer = result.structured.is_null() ? result.text : result.structured.dump();
-      if (!o.output.empty())
+      if (!o.output.empty() && !compacting)
         files.atomic_write(fs::absolute(o.output), answer + "\n", true);
       if (terminal)
         terminal->say(answer);
@@ -996,15 +1037,15 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       else if (!input.empty())
         prompt += "\n\nAdditional stdin context:\n" + input;
     }
-    if (prompt.empty() && o.command == "fork") {
+    if (prompt.empty() && pending_images.empty() && o.command == "fork") {
       std::cout << Json({{"type", "thread.started"}, {"thread_id", session.id}}).dump() << '\n';
       return 0;
     }
-    if (prompt.empty())
-      throw Error("Headless mode requires a prompt or stdin", 2);
+    if (prompt.empty() && pending_images.empty())
+      throw Error("Headless mode requires a prompt, stdin or an image", 2);
     return run(prompt);
   }
-  if (!prompt.empty())
+  if (!prompt.empty() || !pending_images.empty())
     run(prompt);
   if (quit_requested)
     return 0;
@@ -1027,9 +1068,78 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     if (*input == "/quit" || *input == "/exit")
       break;
     if (*input == "/help") {
-      terminal->say("/help /quit /permissions [MODE] /sessions /new /name TEXT /export /memory "
+      terminal->say("/help /quit /model [MODEL [EFFORT]] /status /compact /permissions [MODE] "
+                    "/sessions /new /name TEXT /export /memory "
                     "consolidate; custom "
                     "commands from commands/*.md");
+      continue;
+    }
+    if (*input == "/model" || input->rfind("/model ", 0) == 0) {
+      if (*input == "/model") {
+        terminal->say("Current: " + config.provider + "/" + config.model +
+                      "; effort: " + (config.effort.empty() ? "provider default" : config.effort));
+        if (config.provider == "codex")
+          terminal->say(model_catalog().dump(2));
+        terminal->say("Use /model MODEL [EFFORT]. Bundled models are reference entries; account "
+                      "availability varies.");
+      } else {
+        try {
+          std::istringstream words(input->substr(7));
+          std::string model, effort, extra;
+          words >> model;
+          const bool explicit_effort = bool(words >> effort);
+          if (model.empty() || (words >> extra))
+            throw Error("Use /model MODEL [EFFORT]", 2);
+          Config next = config;
+          next.model = model;
+          next.effort = effort;
+          if (!explicit_effort && next.provider == "codex")
+            for (const auto &entry : model_catalog())
+              if (entry.at("model") == model)
+                next.effort = entry.at("default_effort").get<std::string>();
+          validate_effort(next);
+          const auto previous_model = session.model;
+          const auto previous_effort = session.effort;
+          session.model = next.model;
+          session.effort = next.effort;
+          try {
+            state.save(session);
+          } catch (...) {
+            session.model = previous_model;
+            session.effort = previous_effort;
+            throw;
+          }
+          config = std::move(next);
+          terminal->say("Model: " + config.model + "; effort: " +
+                        (config.effort.empty() ? "provider default" : config.effort));
+        } catch (const std::exception &error) {
+          terminal->say(std::string("Error: ") + error.what());
+        }
+      }
+      continue;
+    }
+    if (*input == "/status") {
+      Json status = {{"session_id", session.id},
+                     {"provider", config.provider},
+                     {"model", config.model},
+                     {"reasoning_effort", config.effort},
+                     {"permission_mode", config.permission_mode},
+                     {"context_tokens", config.context_tokens}};
+      if (last_usage)
+        status["last_turn_usage_this_invocation"] = {
+            {"input_tokens", last_usage->input},
+            {"output_tokens", last_usage->output},
+            {"cached_input_tokens", last_usage->cached},
+            {"reasoning_output_tokens", last_usage->reasoning}};
+      else
+        status["last_turn_usage_this_invocation"] = nullptr;
+      terminal->say(status.dump(2));
+      continue;
+    }
+    if (*input == "/compact") {
+      compacting = true;
+      run("");
+      compacting = false;
       continue;
     }
     if (*input == "/permissions" || input->rfind("/permissions ", 0) == 0) {
@@ -1052,7 +1162,12 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     if (*input == "/new") {
       auto fresh = state.create();
       auto fresh_owner = state.acquire(fresh.id);
+      fresh.provider = config.provider;
+      fresh.model = config.model;
+      fresh.effort = config.effort;
+      state.save(fresh);
       session = std::move(fresh);
+      last_usage.reset();
       current_owner = std::move(fresh_owner);
       terminal->say("Started " + session.id);
       continue;

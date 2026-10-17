@@ -57,6 +57,14 @@ class PromptBundle(unittest.TestCase):
                 if "The final answer must always be fully self-contained" in original:
                     self.assertIn("The final answer must always be fully self-contained", adapted)
 
+    def test_offline_catalog_records_only_selection_metadata(self):
+        manifest = json.loads((ROOT / "prompts/manifest.json").read_text())
+        self.assertEqual(set(manifest["catalog"]), set(manifest["models"]))
+        for model in manifest["catalog"].values():
+            self.assertEqual(set(model), {"default_effort", "efforts"})
+            if model["default_effort"]:
+                self.assertIn(model["default_effort"], model["efforts"])
+
     def test_utf8_bytes_and_newlines_are_deterministic(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "unicode.md"
