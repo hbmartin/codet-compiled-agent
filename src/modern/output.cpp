@@ -168,7 +168,6 @@ void OutputSpool::flush_checked() {
   }
   Descriptor lock(open_regular(store_->directory_ / ".capture.lock", O_CREAT | O_RDWR, true));
   require(::flock(lock.fd, LOCK_EX) == 0, "Lock output store");
-  store_->prepare_catalog();
   ++store_->metrics.batches;
   if (fd_ < 0) {
     path_ = store_->directory_ / ("capture-" + unique_id() + ".txt");
