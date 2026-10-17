@@ -10,6 +10,7 @@
 #include <future>
 #include <histedit.h>
 #include <iostream>
+#include <nlohmann/json-schema.hpp>
 #include <poll.h>
 #include <sstream>
 #include <sys/stat.h>
@@ -44,7 +45,8 @@ Usage: codet [OPTIONS] [PROMPT]
       --add-dir DIR             Additional authorized root
       --ui MODE                 auto, curses, line
       --max-turns N             Model request limit
-      --ephemeral               Temporary sessions and automatic output captures
+      --durability MODE         durable (default) or fast
+      --ephemeral               Temporary automatic session state
       --last                    Select most recent session
       --color auto|always|never  Terminal color policy
       --version / --help
@@ -57,8 +59,8 @@ Native sign-in, multiagent, goals, MCP, ACP, LSP and plugins are deferred.
 struct Options {
   bool exec = false, last = false, json = false, ephemeral = false, key = false;
   bool help = false, version = false;
-  std::string command, action, session, profile, provider, model, format = "text", ui, mode,
-                                                                  approval, color = "auto";
+  std::string command, action, session, profile, provider, model,
+      format = "text", ui, mode, approval, durability, color = "auto";
   fs::path cwd = fs::current_path(), schema, output, import;
   std::vector<std::string> overrides, allow, deny;
   std::vector<fs::path> roots, images;
@@ -123,6 +125,8 @@ Options parse(const std::vector<std::string> &args) {
           o.last = true;
         else if (a == "--ephemeral")
           o.ephemeral = true;
+        else if (a == "--durability")
+          o.durability = value();
         else if (a == "--with-api-key")
           o.key = true;
         else if (a == "--model" || a == "-m")
@@ -582,6 +586,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   setting("ui", o.ui);
   setting("permission_mode", o.mode);
   setting("approval_policy", o.approval);
+  setting("durability", o.durability);
   Config config = load_config(home, o.cwd, o.profile, overrides, files);
   auto allowed = config.rules().allow, denied = config.rules().deny;
   allowed.insert(allowed.end(), o.allow.begin(), o.allow.end());
@@ -623,6 +628,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     std::cout << Json({{"version", CODET_VERSION},
                        {"pointer_bits", sizeof(void *) * 8},
                        {"provider", config.provider},
+                       {"durability", config.durability},
                        {"cwd", config.cwd.string()},
                        {"state", config.home.string()},
                        {"os_sandbox", false},
@@ -667,7 +673,66 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   // Destroy processes/capture handles before removing the private invocation directory.
   NativeProcesses processes;
   processes.set_diagnostics(diagnostic);
-  StateStore state(state_home, artifact_directory(config));
+  config.state_root = state_home;
+  Json schema;
+  if (!o.schema.empty()) {
+    try {
+      schema = Json::parse(files.read(fs::absolute(o.schema), size_t{1024} * 1024), nullptr, false);
+    } catch (const Error &e) {
+      throw Error(e.what(), 2);
+    }
+    if (!schema.is_object())
+      throw Error("Invalid output schema JSON", 2);
+  }
+  if (!schema.is_null()) {
+    nlohmann::json_schema::schema_loader loader = [](const nlohmann::json_uri &, Json &) {
+      throw Error("External schema references are disabled", 2);
+    };
+    try {
+      if (schema.value("type", "") != "object")
+        throw Error("Output schema must describe an object", 2);
+      const auto draft = schema.value("$schema", "http://json-schema.org/draft-07/schema#");
+      if (draft != "http://json-schema.org/draft-07/schema#" &&
+          draft != "https://json-schema.org/draft-07/schema")
+        throw Error("Only JSON Schema Draft 7 is supported", 2);
+      nlohmann::json_schema::json_validator validator(loader);
+      validator.set_root_schema(schema);
+    } catch (const std::exception &e) {
+      throw Error(std::string("Invalid output schema: ") + e.what(), 2);
+    }
+  }
+  std::string prompt = combined(o.positionals);
+  const bool will_run = o.command != "sessions" && o.command != "export";
+  const bool headless = o.exec || !isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO);
+  if (will_run && headless && !isatty(STDIN_FILENO)) {
+    auto input = stdin_text();
+    if (prompt.empty() || prompt == "-")
+      prompt = input;
+    else if (!input.empty())
+      prompt += "\n\nAdditional stdin context:\n" + input;
+  }
+  if (o.command == "memory" && o.action != "consolidate")
+    throw Error("Use memory consolidate", 2);
+  if (will_run && headless && prompt.empty() && o.images.empty() && o.command != "fork" &&
+      o.command != "memory")
+    throw Error("Headless mode requires a prompt, stdin or an image", 2);
+  const auto provider_preflight = [&] {
+    Tools preflight(config, files, processes, http, clock);
+    if (!prompt.empty())
+      (void)preflight.expand_command(prompt);
+    ApiProvider check(http, credentials, clock);
+    Json auth = Json::object();
+    if (config.provider == "codex") {
+      const auto saved = credentials.load();
+      if (!saved.contains("codex"))
+        throw Error("No imported ChatGPT credentials. Use codet login --import FILE");
+      auth = saved.at("codex");
+    }
+    (void)check.request(config, "", {}, preflight.schemas(), auth);
+  };
+  if (will_run && o.command != "resume" && o.command != "fork")
+    provider_preflight();
+  StateStore state(state_home, artifact_directory(config), config.durability);
   if (o.command == "sessions") {
     std::cout << state.list().dump(2) << '\n';
     return 0;
@@ -714,6 +779,8 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   validate_effort(config);
   const auto selected_effort = saved_effort(config, session.id.empty() ? nullptr : &session);
   auto pending_images = input_images(config, files, *native_images(), o.images, cancel);
+  if (o.command == "resume" || o.command == "fork")
+    provider_preflight();
   if (o.command == "fork")
     session = state.fork(session);
   else if (session.id.empty())
@@ -725,7 +792,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   session.effort = selected_effort;
   session.model = config.model;
   session.provider = config.provider;
-  state.save(session);
+  state.update_metadata(session);
   const bool interactive = !o.exec && isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
   std::shared_ptr<Terminal> terminal;
   diagnostics->live = DiagnosticBuffer(config.tool_output_limit);
@@ -764,16 +831,6 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     };
   Tools tools(config, files, processes, http, clock, approver, questioner, diagnostic, interaction);
   ApiProvider provider(http, credentials, clock);
-  Json schema;
-  if (!o.schema.empty()) {
-    try {
-      schema = Json::parse(files.read(fs::absolute(o.schema), size_t{1024} * 1024), nullptr, false);
-    } catch (const Error &e) {
-      throw Error(e.what(), 2);
-    }
-    if (!schema.is_object())
-      throw Error("Invalid output schema JSON", 2);
-  }
   auto events = [&](const Json &event) {
     if (terminal)
       interaction->post(event);
@@ -837,7 +894,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     context.role = "system";
     context.text = "SessionStart hook context:\n" + started.additional_context;
     session.messages.push_back(context);
-    state.save(session);
+    state.append_messages(session, session.messages.size() - 1);
   }
   bool quit_requested = false;
   bool new_requested = false, compacting = false;
@@ -1007,13 +1064,19 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       if (terminal) {
         pending_input(false);
         terminal->say(std::string("Error: ") + safe_text(e.what()));
+        if (const auto *raw = dynamic_cast<const ProviderError *>(&e))
+          terminal->say(raw->body);
         cancel.requested = false;
         return e.code;
       }
-      if (o.format == "json")
-        std::cout
-            << Json({{"session_id", session.id}, {"status", "error"}, {"error", e.what()}}).dump()
-            << '\n';
+      if (o.format == "json") {
+        Json failed = {{"session_id", session.id}, {"status", "error"}, {"error", e.what()}};
+        if (const auto *raw = dynamic_cast<const ProviderError *>(&e))
+          failed["provider_error"] = raw->details();
+        if (dynamic_cast<const HookFailure *>(&e))
+          failed["hook_failure"] = true;
+        std::cout << failed.dump() << '\n';
+      }
       throw;
     } catch (const std::exception &e) {
       if (terminal) {
@@ -1026,7 +1089,6 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       throw Error(safe_text(e.what()));
     }
   };
-  std::string prompt = combined(o.positionals);
   if (o.command == "memory") {
     if (o.action != "consolidate")
       throw Error("Use memory consolidate", 2);
@@ -1038,13 +1100,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
              "provenance, and report what changed. Do not perform unrelated work.";
   }
   if (!interactive) {
-    if (!isatty(STDIN_FILENO)) {
-      auto input = stdin_text();
-      if (prompt.empty() || prompt == "-")
-        prompt = input;
-      else if (!input.empty())
-        prompt += "\n\nAdditional stdin context:\n" + input;
-    }
+
     if (prompt.empty() && pending_images.empty() && o.command == "fork") {
       std::cout << Json({{"type", "thread.started"}, {"thread_id", session.id}}).dump() << '\n';
       return 0;
@@ -1113,7 +1169,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
           session.model = next.model;
           session.effort = saved_effort(next);
           try {
-            state.save(session);
+            state.update_metadata(session);
           } catch (...) {
             session.model = previous_model;
             session.effort = previous_effort;
@@ -1131,6 +1187,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     if (*input == "/status") {
       Json status = {{"session_id", session.id},
                      {"provider", config.provider},
+                     {"durability", config.durability},
                      {"model", config.model},
                      {"reasoning_effort", config.effort},
                      {"permission_mode", config.permission_mode},
@@ -1143,6 +1200,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
             {"reasoning_output_tokens", last_usage->reasoning}};
       else
         status["last_turn_usage_this_invocation"] = nullptr;
+      status["durability"] = config.durability;
       terminal->say(status.dump(2));
       continue;
     }
@@ -1175,7 +1233,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       fresh.provider = config.provider;
       fresh.model = config.model;
       fresh.effort = saved_effort(config, &session);
-      state.save(fresh);
+      state.update_metadata(fresh);
       session = std::move(fresh);
       last_usage.reset();
       current_owner = std::move(fresh_owner);
@@ -1184,7 +1242,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     }
     if (input->rfind("/name ", 0) == 0) {
       session.name = input->substr(6);
-      state.save(session);
+      state.update_metadata(session);
       continue;
     }
     if (*input == "/export") {

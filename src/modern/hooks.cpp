@@ -45,6 +45,19 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
   if (!hooks.is_array())
     throw Error("Hook event must be an array", 2);
   for (const auto &hook : hooks) {
+    const bool control = event != "SessionEnd" && event != "PostToolUseFailure";
+    const auto on_error = hook.value("on_error", "stop");
+    if (on_error != "stop" && on_error != "warn")
+      throw Error("Hook on_error must be stop or warn", 2);
+    const auto fail = [&](const std::string &reason) {
+      auto message = event;
+      message += ": ";
+      message += reason;
+      diagnose(message, DiagnosticLevel::error);
+      if (control && on_error == "stop")
+        throw HookFailure(
+            std::string("Control hook ").append(event).append(" failed: ").append(reason));
+    };
     cancel.check();
     if (budget_ms > 0 &&
         std::chrono::steady_clock::now() - began >= std::chrono::milliseconds(budget_ms)) {
@@ -71,8 +84,8 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
       spec.timeout_ms = hook.value("timeout_ms", 10000);
       if (spec.timeout_ms < 1 || spec.timeout_ms > 120000)
         throw Error("Hook timeout must be 1..120000 ms");
-      fs::create_directories(config_.home / "hook-input");
-      file = config_.home / "hook-input" / (unique_id() + ".json");
+      fs::create_directories(invocation_directory(config_) / "hook-input");
+      file = invocation_directory(config_) / "hook-input" / (unique_id() + ".json");
       files_.atomic_write(file, safe_json(input).dump() + "\n", true);
       if (budget_ms > 0) {
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -101,7 +114,7 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
       cancel.check();
       if (fatal(std::current_exception()))
         throw;
-      diagnose(event + ": " + error.what(), DiagnosticLevel::error);
+      fail(error.what());
       continue;
     }
     const bool reads_stdout = event != "SessionEnd" && event != "PostToolUseFailure";
@@ -114,18 +127,18 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
     const auto nonempty = [](const std::string &s) {
       return s.find_first_not_of(" \t\r\n") != std::string::npos;
     };
-    const bool can_block = event == "PreToolUse" || event == "PermissionRequest" ||
-                           event == "PostToolUse" || event == "UserPromptSubmit" || event == "Stop";
+    const bool can_block = control;
     if (result.exit_code != 0) {
-      if (result.exit_code == 2 && can_block && nonempty(stderr_text)) {
+      if (result.exit_code == 2 && can_block) {
         out.blocked = true;
-        append(out.reason, stderr_text);
+        if (event == "SessionStart" || event == "PreCompact")
+          out.stopped = true;
+        append(out.reason, nonempty(stderr_text) ? stderr_text : event + " vetoed execution");
         if (event == "PermissionRequest")
           out.permission = Decision::deny;
       } else
-        diagnose(event + " exited with code " + std::to_string(result.exit_code) +
-                     (stderr_text.empty() ? "" : ": " + stderr_text),
-                 DiagnosticLevel::error);
+        fail("exited with code " + std::to_string(result.exit_code) +
+             (stderr_text.empty() ? "" : ": " + stderr_text));
       continue;
     }
     if (nonempty(stderr_text)) {
@@ -139,16 +152,44 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
     const auto first = stdout_text.find_first_not_of(" \t\r\n");
     const bool json_like = stdout_text[first] == '{' || stdout_text[first] == '[';
     if (json_like && result.stdout_truncated) {
-      diagnose(event + " returned truncated JSON output");
+      fail("returned truncated JSON output");
+      continue;
+    }
+    if (result.stdout_truncated && (event == "SessionStart" || event == "UserPromptSubmit")) {
+      fail("returned truncated context output");
       continue;
     }
     const auto value = Json::parse(stdout_text, nullptr, false);
     if (!value.is_object()) {
       if (json_like || event == "Stop")
-        diagnose(event + " returned invalid JSON output");
+        fail("returned invalid JSON output");
       else if (event == "SessionStart" || event == "UserPromptSubmit")
         append(out.additional_context, stdout_text);
       continue;
+    }
+    // Recognizable vetoes remain binding even when unrelated optional fields are malformed.
+    if (can_block) {
+      const auto specific = value.value("hookSpecificOutput", Json());
+      const auto decision = specific.is_object() ? specific.value("decision", Json()) : Json();
+      const bool stop = value.value("continue", Json()) == false &&
+                        (event == "SessionStart" || event == "UserPromptSubmit" ||
+                         event == "Stop" || event == "PostToolUse" || event == "PreCompact");
+      const bool veto =
+          stop ||
+          (value.value("decision", Json()) == "block" &&
+           (event == "PreToolUse" || event == "UserPromptSubmit" || event == "PostToolUse" ||
+            event == "Stop")) ||
+          (specific.is_object() && (event == "PreToolUse" || event == "PermissionRequest") &&
+           specific.value("permissionDecision", Json()) == "deny") ||
+          (event == "PermissionRequest" && decision.is_object() &&
+           decision.value("behavior", Json()) == "deny");
+      if (veto) {
+        out.blocked = true;
+        out.stopped = stop;
+        if (event == "PermissionRequest")
+          out.permission = Decision::deny;
+        append(out.reason, event + " vetoed execution");
+      }
     }
     try {
       const auto specific = value.value("hookSpecificOutput", Json::object());
@@ -211,12 +252,14 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
           throw Error("Unsupported hook decision");
       }
       if (block && !nonempty(reason))
-        throw Error("Blocking decision requires a nonempty reason");
+        reason = event + " vetoed execution";
       if (updated && !updated->is_object())
         throw Error("updatedInput must be an object");
       if (block || stop) {
         out.blocked = out.blocked || block;
         out.stopped = out.stopped || stop;
+        if (block && out.reason == event + " vetoed execution")
+          out.reason.clear();
         append(out.reason, reason);
       }
       if (permission && (out.permission != Decision::deny))
@@ -228,7 +271,7 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
     } catch (const std::exception &e) {
       if (fatal(std::current_exception()))
         throw;
-      diagnose(event + ": " + e.what());
+      fail(e.what());
     }
     out.additional_context = bounded_text(out.additional_context, config_.tool_output_limit);
     out.reason = bounded_text(out.reason, config_.tool_output_limit);

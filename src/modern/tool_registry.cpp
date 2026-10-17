@@ -265,6 +265,10 @@ void validate_hook_matchers(const Json &hooks) {
         throw Error("Invalid hook entry for " + event.key() +
                         ": expected command string, optional matcher string and timeout_ms integer",
                     2);
+      if (hook.contains("on_error") &&
+          (!hook.at("on_error").is_string() ||
+           (hook.at("on_error") != "stop" && hook.at("on_error") != "warn")))
+        throw Error("Hook on_error must be stop or warn", 2);
       if (hook.contains("timeout_ms") &&
           (hook.at("timeout_ms") < 1 || hook.at("timeout_ms") > 120000))
         throw Error("Hook timeout must be 1..120000 ms", 2);
