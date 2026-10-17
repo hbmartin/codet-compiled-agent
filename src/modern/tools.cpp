@@ -915,7 +915,7 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
         result.metadata["hook_stop"] = post.reason;
         prefix = "Tool completed; hook requested stop: " + post.reason + "\n";
       } else if (post.blocked)
-        throw HookFailure(post.reason);
+        throw Error(post.reason);
     } catch (const Error &e) {
       if (e.code == 130)
         throw;

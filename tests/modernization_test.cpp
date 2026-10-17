@@ -312,6 +312,95 @@ TEST_F(Modernization, HookFailuresStopButWarnNeverWeakensVetoes) {
   EXPECT_THROW(load_config(config.home, config.cwd, "", {"hooks=" + config.hooks.dump()}, files),
                Error);
 }
+TEST_F(Modernization, HookStopsSurviveVetoesInEitherOrder) {
+  struct Sequence : HookProcesses {
+    std::vector<std::string> outputs;
+    size_t index = 0;
+    ProcessResult run(const ProcessSpec &, const Cancellation &) override {
+      return {0, outputs.at(index++)};
+    }
+  } sequence;
+  config.hooks["PostToolUse"] = Json::array({{{"command", "first"}}, {{"command", "second"}}});
+  for (bool stop_first : {true, false}) {
+    sequence.outputs = {"{\"continue\":false}", "{\"decision\":\"block\"}"};
+    if (!stop_first)
+      std::reverse(sequence.outputs.begin(), sequence.outputs.end());
+    sequence.index = 0;
+    Tools tools(config, files, sequence, http, clock);
+    const auto result = tools.run_hooks("PostToolUse", Json::object(), cancel);
+    EXPECT_TRUE(result.blocked);
+    EXPECT_TRUE(result.stopped);
+  }
+}
+TEST_F(Modernization, PostToolBlockingFeedbackAllowsTheModelToContinue) {
+  struct FeedbackProvider : Provider {
+    int requests = 0;
+    ProviderResult complete(const Config &, const std::string &,
+                            const std::vector<codet::Message> &, const Json &, const Cancellation &,
+                            const ChunkSink &, const ItemSink &) override {
+      ProviderResult out;
+      out.message.role = "assistant";
+      if (requests++ == 0) {
+        for (const auto *id : {"first", "second"})
+          out.message.calls.push_back(
+              {id, "update_plan", {{"plan", Json::array({{{"step", id}, {"status", "pending"}}})}}});
+      } else
+        out.message.text = "Handled formatting feedback";
+      return out;
+    }
+  } provider;
+  config.hooks["PostToolUse"] = Json::array({{{"command", "fixture"}}});
+  processes.result = {0, "{\"decision\":\"block\",\"reason\":\"fix formatting\"}"};
+  StateStore store(config.state_root);
+  auto session = store.create();
+  Tools tools(config, files, processes, http, clock);
+  Agent agent(config, provider, tools, store, {});
+  EXPECT_NO_THROW(agent.run(session, "run", cancel));
+  EXPECT_EQ(provider.requests, 2);
+  const auto saved = store.load_id(session.id, false);
+  int outcomes = 0;
+  for (const auto &message : saved.messages) {
+    if (message.role != "tool")
+      continue;
+    ++outcomes;
+    const auto result = Json::parse(message.text);
+    EXPECT_TRUE(result["metadata"].value("action_completed", false));
+    EXPECT_FALSE(result["metadata"].contains("hook_stop"));
+    EXPECT_FALSE(result["metadata"].contains("hook_failure"));
+    EXPECT_THAT(result.value("content", ""), HasSubstr("fix formatting"));
+  }
+  EXPECT_EQ(outcomes, 2);
+}
+TEST_F(Modernization, ExplicitPostToolStopStillReconcilesRemainingCalls) {
+  struct Batch : Provider {
+    ProviderResult complete(const Config &, const std::string &,
+                            const std::vector<codet::Message> &, const Json &, const Cancellation &,
+                            const ChunkSink &, const ItemSink &) override {
+      ProviderResult out;
+      out.message.role = "assistant";
+      for (const auto *id : {"first", "remaining"})
+        out.message.calls.push_back(
+            {id, "update_plan", {{"plan", Json::array({{{"step", id}, {"status", "pending"}}})}}});
+      return out;
+    }
+  } provider;
+  config.hooks["PostToolUse"] = Json::array({{{"command", "fixture"}}});
+  processes.result = {0, "{\"continue\":false,\"stopReason\":\"stop now\"}"};
+  StateStore store(config.state_root);
+  auto session = store.create();
+  Tools tools(config, files, processes, http, clock);
+  Agent agent(config, provider, tools, store, {});
+  EXPECT_THROW(agent.run(session, "run", cancel), HookFailure);
+  std::vector<Json> results;
+  for (const auto &message : store.load_id(session.id, true).messages)
+    if (message.role == "tool")
+      results.push_back(Json::parse(message.text));
+  ASSERT_EQ(results.size(), 2u);
+  EXPECT_TRUE(results[0]["metadata"].value("action_completed", false));
+  EXPECT_TRUE(results[0]["metadata"].contains("hook_stop"));
+  EXPECT_FALSE(results[0]["metadata"].contains("hook_failure"));
+  EXPECT_EQ(results[1]["metadata"]["recovery"], "not_started");
+}
 TEST_F(Modernization, CorruptPlanResumesAndQuarantinesBeforeReplacement) {
   for (const auto &damaged : {std::string("{broken"), std::string("[]\0opaque", 9)}) {
     const auto id = unique_id();
