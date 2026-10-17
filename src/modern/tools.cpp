@@ -1057,7 +1057,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
       page.tool_call_id = call.id;
       page.previewed = true;
       page.text = Json({{"content", text}, {"is_error", false}, {"metadata", metadata}}).dump();
-      return Json(page).dump().size();
+      return result_bytes(page, call.name);
     };
     if (fs::is_directory(p)) {
       if (a.contains("byte_offset") || a.contains("byte_limit"))
@@ -1163,7 +1163,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
       std::array<size_t, 256> out{};
       for (size_t i = 0; i < out.size(); ++i) {
         std::string value(1, static_cast<char>(i));
-        out[i] = i >= 128 ? 3 : Json(Json(value).dump()).dump().size() - 6;
+        out[i] = i >= 128 ? 3 : Json(value).dump().size() - 2;
       }
       return out;
     }();
@@ -1203,7 +1203,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
             valid_until = i + width;
         }
         const auto addition = (lead >= 128 && i < valid_until ? 1 : weights[lead]) + prefix.size() +
-                              (prefix.empty() ? 0 : 2);
+                              (prefix.empty() ? 0 : 1);
         if (selected && cost + addition > cap) {
           full = true;
           break;
@@ -1282,7 +1282,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
         throw Error("Duplicate file in batch/patch");
       if (!before && !after)
         throw Error("Cannot delete a missing file");
-      struct stat st {};
+      struct stat st{};
       const auto mode = stat(p.c_str(), &st) == 0 ? st.st_mode & 0777 : 0644;
       changes.push_back({p, before, std::move(after), static_cast<mode_t>(mode)});
     };
@@ -1679,7 +1679,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
   }
   throw Error("Unavailable tool handler");
 }
-std::string Tools::dynamic_context() const {
+std::string Tools::dynamic_context(bool anticipate_indexes) const {
   std::string out;
   if (!todos_.empty() || large_plan_) {
     out = "\n# Current task plan (bounded view; original step numbers)\n";
@@ -1711,16 +1711,24 @@ std::string Tools::dynamic_context() const {
   }
   if (!session_id_.empty()) {
     const auto results = artifact_directory(config_) / "indexes" / (session_id_ + ".results.jsonl");
-    if (fs::exists(results))
+    if (anticipate_indexes || fs::exists(results))
       out += "\n# Retained tool results and captures\n" + results.string() +
              "\nPage this reference index with read_file in any mode. Paths are relative to "
              "the artifact root (results) or capture root (text captures). Pass listed paths "
              "directly to read_file; registered capture filenames resolve automatically. Captures "
              "may expire.\n";
     const auto index = artifact_index_path(artifact_directory(config_), session_id_);
-    if (fs::exists(index))
+    if (anticipate_indexes || fs::exists(index))
       out += "\n# Historical image index\n" + index.string() + "\nPosition: " +
-             image_history_position(artifact_directory(config_), files_, session_id_).dump() +
+             (anticipate_indexes
+                  ? Json({{"version", 2},
+                          {"kind", "position"},
+                          {"observations", UINT64_MAX},
+                          {"legacy_unknown", UINT64_MAX},
+                          {"last_sequence", UINT64_MAX},
+                          {"latest_line", UINT64_MAX}})
+                  : image_history_position(artifact_directory(config_), files_, session_id_))
+                 .dump() +
              "\nArtifact root: " + artifact_directory(config_).string() +
              "\nPage this JSONL observation index with read_file in any mode. Resolve relative "
              "image paths under the artifact root and reload selected images with view_image. "

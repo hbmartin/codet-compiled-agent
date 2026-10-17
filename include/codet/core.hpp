@@ -571,7 +571,7 @@ public:
   std::string result_reference(const Message &) const;
   ToolResult execute(const ToolCall &, const Cancellation &);
   std::string instructions() const;
-  std::string dynamic_context() const;
+  std::string dynamic_context(bool anticipate_indexes = false) const;
   fs::path archive_images(const std::vector<Message> &);
   std::string expand_command(const std::string &) const;
   std::vector<std::string> take_input();
@@ -604,9 +604,14 @@ public:
         diagnostics_(std::move(diagnostics)) {}
 
 private:
+  struct CompactionCycle {
+    bool hook_called = false, checkpoint = false;
+    unsigned summaries = 0;
+  };
+  std::string execution_context(const Session &);
   bool compact_history(Session &, const Cancellation &, const std::string &project,
                        const Json &schemas, const std::string &trigger, Usage &,
-                       size_t *requests = nullptr);
+                       size_t *requests = nullptr, CompactionCycle *cycle = nullptr);
 
 public:
   RunResult compact(Session &, const Cancellation &);

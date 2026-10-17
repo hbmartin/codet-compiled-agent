@@ -382,6 +382,125 @@ TEST_F(Checkpoint, FailedLexicalAnchorDoesNotAdvertiseOrShadowAUsableSkill) {
 }
 
 // OpenAI's two wire APIs are separate cases even though they share a provider name.
+
+TEST_F(Checkpoint, RepeatedCompactionKeepsTheOriginalImageArchiveReference) {
+  Tools tools(config, files, processes, http, clock);
+  config.context_tokens = test::context_tokens(tools, config, 14000);
+  StateStore state(config.home);
+  auto session = state.create();
+  codet::Message human, call, result;
+  human.role = "user";
+  human.origin = "human";
+  human.text = "keep this image";
+  human.message_id = unique_id();
+  human.images = {persist_image(config, files, {"pixels", "image/png", 1, 1}, "high")};
+  call.role = "assistant";
+  call.calls = {{"huge", "exec_command", {{"cmd", std::string(130000, 'x')}}}};
+  result.role = "tool";
+  result.tool_call_id = "huge";
+  result.text = "completed";
+  session.messages = {human, call, result};
+  state.save(session);
+  Reply provider;
+  provider.reply = [&](const auto &, const auto &) { return answer("completed work"); };
+  Agent agent(config, provider, tools, state, {});
+  EXPECT_EQ(agent.compact(session, cancel).text, "Conversation compacted.");
+  auto found = std::find_if(session.messages.begin(), session.messages.end(),
+                            [&](const auto &m) { return m.message_id == human.message_id; });
+  ASSERT_NE(found, session.messages.end());
+  EXPECT_TRUE(found->images.empty());
+  ASSERT_FALSE(found->result_file.empty());
+  const auto archive_path = artifact_directory(config) / found->result_file;
+  const auto archived = files.read(archive_path, 10000);
+  EXPECT_EQ(Json::parse(archived)["images"].size(), 1u);
+  human.message_id = unique_id();
+  human.text = "next steering";
+  human.images.clear();
+  session.messages.push_back(human);
+  state.save(session);
+  EXPECT_EQ(agent.compact(session, cancel).text, "Conversation compacted.");
+  EXPECT_EQ(files.read(archive_path, 10000), archived);
+}
+TEST_F(Checkpoint, UnseenImagesAndHooksKeepChronologicalOrderExactlyOnce) {
+  Tools tools(config, files, processes, http, clock);
+  config.context_tokens = test::context_tokens(tools, config, 14000);
+  StateStore state(config.home);
+  auto session = state.create();
+  const auto image = persist_image(config, files, {"pixels", "image/png", 1, 1}, "high");
+  codet::Message call, result, old, latest, hook;
+  call.role = "assistant";
+  call.calls = {{"huge", "exec_command", {{"cmd", std::string(130000, 'x')}}}};
+  result.role = "tool";
+  result.tool_call_id = "huge";
+  result.text = "completed";
+  result.images = {image};
+  old.role = "user";
+  old.origin = "artifact";
+  old.text = "older unseen image";
+  old.images = {image};
+  latest.role = "user";
+  latest.origin = "human";
+  latest.text = "latest steering";
+  hook.role = "user";
+  hook.origin = "hook";
+  hook.text = "hook with image";
+  hook.images = {image};
+  session.messages = {call, result, old, latest, hook};
+  state.save(session);
+  Reply provider;
+  provider.reply = [&](const auto &, const auto &) { return answer("completed work"); };
+  Agent agent(config, provider, tools, state, {});
+  EXPECT_EQ(agent.compact(session, cancel).text, "Conversation compacted.");
+  ASSERT_EQ(session.messages.size(), 5u);
+  EXPECT_EQ(session.messages[1].origin, "artifact");
+  EXPECT_EQ(session.messages[2].text, old.text);
+  EXPECT_EQ(session.messages[3].text, latest.text);
+  EXPECT_EQ(session.messages[4].text, hook.text);
+}
+TEST_F(Checkpoint, LiveFactsRefreshAfterCheckpointWithoutPersistingRunningProse) {
+  Tools tools(config, files, processes, http, clock);
+  config.context_tokens = test::context_tokens(tools, config, 14000);
+  StateStore state(config.home);
+  auto session = state.create();
+  tools.use_session(session.id);
+  const auto id = start(tools);
+  codet::Message call, result;
+  call.role = "assistant";
+  call.calls = {{"huge", "exec_command", {{"cmd", std::string(130000, 'x')}}}};
+  result.role = "tool";
+  result.tool_call_id = "huge";
+  result.text = "completed";
+  session.messages = {call, result};
+  state.save(session);
+  struct Script : Provider {
+    std::function<ProviderResult(const std::string &, const std::vector<codet::Message> &,
+                                 const Json &)>
+        reply;
+    ProviderResult complete(const Config &, const std::string &system,
+                            const std::vector<codet::Message> &messages, const Json &schemas,
+                            const Cancellation &, const ChunkSink &, const ItemSink &) override {
+      return reply(system, messages, schemas);
+    }
+  } provider;
+  int requests = 0;
+  provider.reply = [&](const auto &system, const auto &messages, const auto &schemas) {
+    if (schemas.empty())
+      return answer("Completed work; collect output.");
+    EXPECT_THAT(messages[0].text, Not(HasSubstr("\"state\":\"running\"")));
+    if (requests++ == 0) {
+      EXPECT_THAT(system, HasSubstr("\"state\":\"running\""));
+      processes.running = false;
+      auto r = answer("");
+      r.message.calls = {{"collect", "write_stdin", {{"session_id", id}}}};
+      return r;
+    }
+    EXPECT_THAT(system, Not(HasSubstr("\"state\":\"running\"")));
+    EXPECT_TRUE(tools.execution_state(messages).empty());
+    return answer("done");
+  };
+  Agent agent(config, provider, tools, state, {});
+  EXPECT_EQ(agent.run(session, "continue", cancel).text, "done");
+}
 class WireBudget : public Checkpoint, public WithParamInterface<std::string> {
   void SetUp() override {
     Checkpoint::SetUp();
@@ -474,6 +593,30 @@ TEST_P(WireBudget, SmallFreshResultsUseTheFastPathWithoutCreatingArchives) {
   EXPECT_TRUE(projected[1].previewed);
   EXPECT_TRUE(projected[1].result_file.empty());
   EXPECT_FALSE(fs::exists(artifact_directory(config) / "results"));
+}
+
+TEST_P(WireBudget, QuotedFilePagesUseWireAllowanceAndKeepContiguousUnicode) {
+  config.permission_mode = "plan";
+  std::string source;
+  for (int i = 0; i < 400; ++i)
+    source += "{\"x\":\"\\\\\",\"y\":\"é\"}\n";
+  files.atomic_write(config.cwd / "quoted.json", source, true);
+  Tools tools(config, files, processes, http, clock);
+  tools.inspection_budget(2048);
+  const auto result = tools.execute(
+      {"read", "read_file", {{"path", "quoted.json"}, {"byte_offset", 0}, {"byte_limit", 65536}}},
+      cancel);
+  ASSERT_FALSE(result.error) << result.content;
+  codet::Message page;
+  page.role = "tool";
+  page.tool_call_id = "read";
+  page.text =
+      Json({{"content", result.content}, {"is_error", false}, {"metadata", result.metadata}})
+          .dump();
+  EXPECT_LE(tools.result_bytes(page, "read_file"), 2048u);
+  EXPECT_GT(tools.result_bytes(page, "read_file"), 1800u);
+  EXPECT_EQ(result.content, source.substr(0, result.content.size()));
+  EXPECT_EQ(result.metadata["next_byte_offset"], result.content.size());
 }
 INSTANTIATE_TEST_SUITE_P(AllAdapters, WireBudget,
                          Values("codex", "openai", "chat", "anthropic", "google", "ollama"));

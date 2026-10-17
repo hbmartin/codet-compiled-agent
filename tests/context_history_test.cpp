@@ -798,6 +798,50 @@ TEST_F(History, LegacyIndexesMigrateOnResumeAndForkWithoutNewAttachments) {
               Not(HasSubstr("stale/artifacts")));
   EXPECT_EQ(image_history_position(root, files, child.id)["legacy_unknown"], 1);
 }
+
+TEST_F(History, PlanAndReadBatchesReserveFuturePromptGrowthInEitherOrder) {
+  config.permission_mode = "plan";
+  config.provider = "openai";
+  for (bool read_first : {false, true}) {
+    Tools tools(config, files, processes, http, clock);
+    config.context_tokens = test::context_tokens(tools, config, 20000);
+    StateStore state(config.home);
+    auto session = state.create();
+    const std::string source(25000, 'x');
+    put(config.cwd / "batch-source", source);
+    Json plan = Json::array();
+    for (int i = 0; i < 70; ++i)
+      plan.push_back({{"step", std::to_string(i) + std::string(110, 'p')}, {"status", "pending"}});
+    Scripted provider;
+    size_t main = 0;
+    provider.script = [&](const auto &, const auto &, const auto &messages, const Json &schemas) {
+      EXPECT_FALSE(schemas.empty());
+      if (++main == 1) {
+        auto reply = text_result("");
+        ToolCall read{"read", "read_file", {{"path", "batch-source"}, {"byte_offset", 0}}};
+        ToolCall update{"plan", "update_plan", {{"plan", plan}}};
+        reply.message.calls =
+            read_first ? std::vector<ToolCall>{read, update} : std::vector<ToolCall>{update, read};
+        return reply;
+      }
+      for (const auto &message : messages)
+        if (message.role == "tool" && message.tool_call_id == "read") {
+          const auto envelope = Json::parse(message.text);
+          EXPECT_FALSE(envelope["is_error"]);
+          const auto page = envelope["content"].template get<std::string>();
+          EXPECT_GT(page.size(), 1000u);
+          EXPECT_EQ(page, source.substr(0, page.size()));
+          EXPECT_EQ(envelope["metadata"]["next_byte_offset"], page.size());
+          EXPECT_FALSE(envelope["metadata"].value("projection_truncated", false));
+        }
+      return text_result("done");
+    };
+    Agent agent(config, provider, tools, state, {});
+    EXPECT_EQ(agent.run(session, "inspect and plan", cancel).text, "done");
+    EXPECT_EQ(main, 2u);
+  }
+}
+
 } // namespace
 
 TEST_F(History, JsonBytePagesRemainVerbatimThroughSaveForkAndProviderFormatting) {
@@ -866,7 +910,7 @@ TEST_F(History, DirectoryPagesRespectContextBudgetAndResumeInSortedOrder) {
     encoded.text =
         Json({{"content", page.content}, {"is_error", page.error}, {"metadata", page.metadata}})
             .dump();
-    EXPECT_LE(Json(encoded).dump().size(), 2000u);
+    EXPECT_LE(t.result_bytes(encoded, "read_file"), 2000u);
     EXPECT_EQ(page.metadata["scan_limited"], false);
     const auto entries = Json::parse(page.content)["entries"];
     ASSERT_FALSE(entries.empty());
@@ -1338,7 +1382,9 @@ TEST_F(History, SchemaFiveSkipsCorruptRowsWithoutChangingThemOrLosingValidRefere
   EXPECT_EQ(reopened.references(good).size(), 2u);
 }
 TEST_F(History, SchemaFiveDatabaseFailureRollsBackAndCanRetry) {
-  { StateStore initial(config.home); }
+  {
+    StateStore initial(config.home);
+  }
   sqlite3 *db = nullptr;
   ASSERT_EQ(sqlite3_open((config.home / "state.sqlite3").c_str(), &db), SQLITE_OK);
   legacy_layout(db);
