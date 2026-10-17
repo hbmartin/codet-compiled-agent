@@ -191,8 +191,8 @@ TEST_F(Modernization, PublicResponsesReasoningDefaultsAreModelAware) {
     for (const auto *effort : {"", "high"}) {
       config.effort = effort;
       const auto body = Json::parse(provider.request(config, "hello", {}, Json::array()).body);
-      const bool expected = !config.effort.empty() || config.model == "gpt-6.1-sol" ||
-                            config.model == "gpt-6-astra";
+      const bool expected =
+          !config.effort.empty() || config.model == "gpt-6.1-sol" || config.model == "gpt-6-astra";
       EXPECT_EQ(body.contains("reasoning"), expected) << model << ":" << effort;
       EXPECT_EQ(body.contains("include"), expected) << model << ":" << effort;
       if (expected) {
@@ -203,13 +203,13 @@ TEST_F(Modernization, PublicResponsesReasoningDefaultsAreModelAware) {
   }
   config.provider = "codex";
   config.effort.clear();
-  auto body = Json::parse(provider.request(config, "hello", {}, Json::array(),
-                                         {{"access_token", "fixture"}}).body);
+  auto body = Json::parse(
+      provider.request(config, "hello", {}, Json::array(), {{"access_token", "fixture"}}).body);
   EXPECT_FALSE(body.contains("reasoning"));
   EXPECT_TRUE(body.contains("include"));
   config.effort = "high";
-  body = Json::parse(provider.request(config, "hello", {}, Json::array(),
-                                     {{"access_token", "fixture"}}).body);
+  body = Json::parse(
+      provider.request(config, "hello", {}, Json::array(), {{"access_token", "fixture"}}).body);
   EXPECT_EQ(body["reasoning"]["effort"], "high");
   EXPECT_TRUE(body.contains("include"));
   config.provider = "openai";
@@ -381,7 +381,9 @@ TEST_F(Modernization, PostToolBlockingFeedbackAllowsTheModelToContinue) {
       if (requests++ == 0) {
         for (const auto *id : {"first", "second"})
           out.message.calls.push_back(
-              {id, "update_plan", {{"plan", Json::array({{{"step", id}, {"status", "pending"}}})}}});
+              {id,
+               "update_plan",
+               {{"plan", Json::array({{{"step", id}, {"status", "pending"}}})}}});
       } else
         out.message.text = "Handled formatting feedback";
       return out;
@@ -460,7 +462,7 @@ TEST_F(Modernization, CorruptPlanResumesAndQuarantinesBeforeReplacement) {
       if (entry.path().filename().string().rfind(id + ".corrupt-", 0) == 0) {
         ++recovered;
         EXPECT_EQ(files.read(entry.path()), damaged);
-        struct stat st {};
+        struct stat st{};
         ASSERT_EQ(::stat(entry.path().c_str(), &st), 0);
         EXPECT_EQ(st.st_mode & 0777, 0600);
       }
@@ -653,7 +655,7 @@ TEST_F(Modernization, LegacyMigrationBacksUpAndPreservesMalformedBytesIndependen
   for (const auto &entry : fs::directory_iterator(config.state_root))
     if (entry.path().filename().string().rfind("state.sqlite3.pre-v6-", 0) == 0) {
       ++backups;
-      struct stat st {};
+      struct stat st{};
       ASSERT_EQ(::stat(entry.path().c_str(), &st), 0);
       EXPECT_EQ(st.st_mode & 0777, 0600);
     }
@@ -701,5 +703,80 @@ TEST_F(Modernization, AbruptExitNeverReexecutesIncompleteToolsInEitherMode) {
       else
         EXPECT_EQ(Json::parse(recovered.messages.back().text)["metadata"]["recovery"], "uncertain");
     }
+}
+
+TEST_F(Modernization, EmptyAnthropicRepliesKeepSourcePositionsWithoutEmptyWireMessages) {
+  config.provider = "anthropic";
+  config.model = "claude-sonnet-5-5";
+  config.providers["anthropic"].api_key = "fixture";
+  CredentialStore credentials(config.home, files, clock);
+  ApiProvider provider(http, credentials, clock);
+  codet::Message user;
+  user.role = "user";
+  user.text = "start";
+  std::vector<codet::Message> history{user};
+  http.status = 200;
+  http.stream = "event: message_delta\ndata: "
+                "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n"
+                "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+  for (int i = 0; i < 3; ++i) {
+    auto reply = provider.complete(config, "instructions", history, Json::array(), cancel, {});
+    ASSERT_TRUE(reply.message.replay.empty());
+    history.push_back(reply.message);
+    user.text = "continue " + std::to_string(i);
+    history.push_back(user);
+    const auto body =
+        Json::parse(provider.request(config, "instructions", history, Json::array()).body);
+    for (const auto &message : body["messages"])
+      EXPECT_FALSE(message["role"] == "assistant" && message["content"].empty());
+    EXPECT_EQ(provider.conversation_state()["messages"].size(), history.size());
+  }
+}
+TEST_F(Modernization, AnthropicModelTransitionResetsOnceThenPreservesNewToolPairs) {
+  config.provider = "anthropic";
+  config.model = "claude-sonnet-5-5";
+  config.providers["anthropic"].api_key = "fixture";
+  CredentialStore credentials(config.home, files, clock);
+  ApiProvider provider(http, credentials, clock);
+  codet::Message user;
+  user.role = "user";
+  user.text = "start";
+  std::vector<codet::Message> history{user};
+  (void)provider.request(config, "signed instructions", history, Json::array());
+  config.model = "claude-sonnet-4-5";
+  (void)provider.request(config, "transition", history, Json::array());
+  codet::Message call, result;
+  call.role = "assistant";
+  call.calls = {{"new-call", "read_file", {{"path", "x"}}}};
+  result.role = "tool";
+  result.tool_call_id = "new-call";
+  result.text = "completed";
+  history.push_back(call);
+  history.push_back(result);
+  for (int i = 0; i < 4; ++i) {
+    auto prompt = "plan update " + std::to_string(i);
+    const auto body = Json::parse(provider.request(config, prompt, history, Json::array()).body);
+    EXPECT_EQ(body["system"][0]["text"], prompt);
+    EXPECT_EQ(body["messages"][1]["content"][0]["type"], "tool_use");
+    EXPECT_EQ(body["messages"][2]["content"][0]["type"], "tool_result");
+    EXPECT_EQ(provider.conversation_state()["messages"].size(), 3u);
+  }
+}
+TEST_F(Modernization, IncompleteResponsesPreserveSpecificDiagnosticAndRawBody) {
+  CredentialStore credentials(config.home, files, clock);
+  ApiProvider provider(http, credentials, clock);
+  http.status = 200;
+  const std::string body =
+      R"({"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}})";
+  for (const auto &event : {std::string("event: response.incomplete\n"), std::string{}}) {
+    http.stream = event + "data: " + body + "\n\n";
+    try {
+      provider.complete(config, "", {}, Json::array(), cancel, {});
+      FAIL();
+    } catch (const ProviderError &e) {
+      EXPECT_THAT(e.what(), HasSubstr("output limit or interruption"));
+      EXPECT_EQ(e.body, body);
+    }
+  }
 }
 } // namespace

@@ -401,6 +401,8 @@ TEST_P(WireBudget, ExactCombinedHistoryFitsAndOneByteLessRejectsWithoutMutation)
   }
   ensure_message_ids(messages);
   const auto size = tools.history_size(messages);
+  EXPECT_EQ(size.aggregate_items, 0u);
+  EXPECT_LE(size.encoded_parts, messages.size() * 2 + 1);
   EXPECT_EQ(size.total,
             size.fixed + std::accumulate(size.messages.begin(), size.messages.end(), size_t{}));
   const auto before = Json(messages);

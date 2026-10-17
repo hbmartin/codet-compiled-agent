@@ -157,21 +157,38 @@ void account_wire(ProviderHistorySize *size, size_t owner, size_t bytes) {
   else
     size->fixed += bytes;
 }
-void append_wire(Json &out, Json item, size_t owner, ProviderHistorySize *size) {
+struct WireOutput {
+  Json data = Json::array();
+  size_t items = 0, blocks = 0;
+  std::string role;
+  Json take(ProviderHistorySize *size) {
+    if (size)
+      size->aggregate_items += data.size();
+    return std::move(data);
+  }
+};
+void append_wire(WireOutput &out, Json item, size_t owner, ProviderHistorySize *size) {
   if (size)
-    account_wire(size, owner, item.dump().size() + (out.empty() ? 0 : 1));
-  out.push_back(std::move(item));
+    account_wire(size, owner, item.dump().size() + (out.items ? 1 : 0));
+  ++out.items;
+  out.role = item.value("role", "");
+  out.blocks = item.contains("content") && item["content"].is_array() ? item["content"].size()
+               : item.contains("parts")                               ? item["parts"].size()
+                                                                      : 0;
+  if (!size)
+    out.data.push_back(std::move(item));
 }
-void extend_wire(Json &out, const std::string &role, const char *field, Json parts, size_t owner,
-                 ProviderHistorySize *size) {
+void extend_wire(WireOutput &out, const std::string &role, const char *field, Json parts,
+                 size_t owner, ProviderHistorySize *size) {
   if (parts.empty())
     return;
-  if (!out.empty() && out.back()["role"] == role) {
-    auto &previous = out.back()[field];
+  if (out.items && out.role == role) {
     for (auto &part : parts) {
       if (size)
-        account_wire(size, owner, part.dump().size() + (previous.empty() ? 0 : 1));
-      previous.push_back(std::move(part));
+        account_wire(size, owner, part.dump().size() + (out.blocks ? 1 : 0));
+      else
+        out.data.back()[field].push_back(std::move(part));
+      ++out.blocks;
     }
   } else
     append_wire(out, {{"role", role}, {field, std::move(parts)}}, owner, size);
@@ -182,7 +199,7 @@ Json chat_messages(const Config &c, const std::string &system, const std::vector
   for (const auto &m : messages)
     for (const auto &call : m.calls)
       tool_names[call.id] = call.name;
-  Json out = Json::array();
+  WireOutput out;
   append_wire(out, {{"role", "system"}, {"content", system}}, messages.size(), size);
   size_t owner = 0, pending_owner = 0;
   Json pending = Json::array();
@@ -243,7 +260,7 @@ Json chat_messages(const Config &c, const std::string &system, const std::vector
     append_wire(out, std::move(j), owner, size);
   }
   flush();
-  return out;
+  return out.take(size);
 }
 Json wire_history(const Config &c, const std::string &system, const std::vector<Message> &messages,
                   const std::map<std::string, std::string> *known_names = nullptr,
@@ -256,7 +273,7 @@ Json wire_history(const Config &c, const std::string &system, const std::vector<
     for (const auto &call : m.calls)
       tool_names[call.id] = call.name;
   if (uses_responses(c)) {
-    Json input = Json::array();
+    WireOutput input;
     append_wire(input, {{"role", "developer"}, {"content", system}}, messages.size(), size);
     // Earlier code revisited every prior item after each ordinary message. Count those
     // visits once; each call now takes work bounded by its qualified name length.
@@ -342,10 +359,10 @@ Json wire_history(const Config &c, const std::string &system, const std::vector<
         }
       }
     }
-    return input;
+    return input.take(size);
   }
   if (c.provider == "anthropic") {
-    Json ms = Json::array();
+    WireOutput ms;
     for (size_t owner = 0; owner < messages.size(); ++owner) {
       const auto &m = messages[owner];
       Json content = Json::array();
@@ -392,10 +409,10 @@ Json wire_history(const Config &c, const std::string &system, const std::vector<
       }
       extend_wire(ms, role, "content", std::move(content), owner, size);
     }
-    return ms;
+    return ms.take(size);
   }
   if (c.provider == "google") {
-    Json contents = Json::array();
+    WireOutput contents;
     std::map<std::string, std::string> names;
     for (size_t owner = 0; owner < messages.size(); ++owner) {
       const auto &m = messages[owner];
@@ -427,7 +444,7 @@ Json wire_history(const Config &c, const std::string &system, const std::vector<
         extend_wire(contents, role, "parts", std::move(parts), owner, size);
       }
     }
-    return contents;
+    return contents.take(size);
   }
   return chat_messages(c, system, messages, c.provider == "ollama", size);
 }
@@ -513,8 +530,6 @@ Json epoch_request(Json &state, const Config &c, const std::string &system, cons
                state.value("tools", Json::array()) == tools &&
                state.value("endpoint", "") == endpoint &&
                state.value("artifacts", "") == artifacts && state.value("captures", "") == captures;
-  if (reuse && c.model != "claude-sonnet-5-5" && state.value("latest_system", "") != system)
-    reuse = false;
   if (reuse) {
     for (const auto &part : state.at("messages")) {
       if (!part.contains("source"))
@@ -554,10 +569,13 @@ Json epoch_request(Json &state, const Config &c, const std::string &system, cons
     state["messages"].push_back({{"source", source_hash(messages[i])}, {"wire", wire}});
   }
   if (reuse && state.value("latest_system", "") != system) {
-    state["messages"].push_back(
-        {{"wire",
-          Json::array({{{"role", "system"},
-                        {"content", Json::array({{{"type", "text"}, {"text", system}}})}}})}});
+    if (c.model == "claude-sonnet-5-5")
+      state["messages"].push_back(
+          {{"wire",
+            Json::array({{{"role", "system"},
+                          {"content", Json::array({{{"type", "text"}, {"text", system}}})}}})}});
+    else
+      state["system"] = system;
     state["latest_system"] = system;
   }
   Json out = Json::array();
@@ -632,10 +650,6 @@ HttpRequest ApiProvider::request(const Config &c, const std::string &system,
                                  const std::vector<Message> &original_messages, const Json &tools,
                                  const Json &auth) const {
   const auto messages = prepare_images(c, original_messages);
-  std::map<std::string, std::string> tool_names;
-  for (const auto &m : messages)
-    for (const auto &call : m.calls)
-      tool_names[call.id] = call.name;
   HttpRequest r;
   r.timeout_seconds = c.request_timeout;
   r.connect_timeout_seconds = c.connect_timeout;
@@ -767,6 +781,10 @@ eof_line: "*** End of File" LF
       body["tools"] = std::move(declarations);
     }
     if (c.model == "claude-sonnet-5-5" || conversation_.is_object()) {
+      std::map<std::string, std::string> tool_names;
+      for (const auto &m : messages)
+        for (const auto &call : m.calls)
+          tool_names[call.id] = call.name;
       const auto declarations = body.value("tools", Json::array());
       body["messages"] =
           epoch_request(conversation_, c, system, declarations, key, messages, tool_names);
@@ -896,7 +914,10 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
       }
       if (stream_failed)
         return;
-      if (event == "error" || event == "response.failed" || event == "response.incomplete") {
+      if (event == "response.incomplete")
+        throw ProviderError("Provider response incomplete (output limit or interruption)", 200,
+                            data);
+      if (event == "error" || event == "response.failed") {
         stream_failed = true;
         stream_error = data;
         saw = true;
@@ -1119,9 +1140,11 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
         result.stop_reason == "MAX_TOKENS")
       throw Error("Provider output token limit reached");
     if (c.provider == "anthropic" && conversation_.is_object()) {
+      Json wire = Json::array();
+      if (!result.message.replay.empty())
+        wire.push_back({{"role", "assistant"}, {"content", result.message.replay}});
       conversation_["messages"].push_back(
-          {{"source", source_hash(result.message)},
-           {"wire", Json::array({{{"role", "assistant"}, {"content", result.message.replay}}})}});
+          {{"source", source_hash(result.message)}, {"wire", std::move(wire)}});
     } else
       conversation_ = nullptr;
     return result;

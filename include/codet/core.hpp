@@ -354,6 +354,7 @@ public:
 using ItemSink = std::function<void(const Json &)>;
 struct ProviderHistorySize {
   size_t total = 2, fixed = 2, encoded_parts = 0;
+  size_t aggregate_items = 0;
   std::vector<size_t> messages;
 };
 ProviderHistorySize provider_history_size(const Config &, const std::vector<Message> &);
