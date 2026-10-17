@@ -105,8 +105,8 @@ TEST_F(CatalogRecovery, FailedRebuildRollsBackAndNonCorruptionErrorsAreNotRecove
   Database other(dir / "catalog.sqlite3");
   other.exec("CREATE TRIGGER fail_delete BEFORE DELETE ON captures "
              "BEGIN SELECT RAISE(ABORT,'injected delete failure'); END");
-  NativeFileSystem files;
-  files.atomic_write(dir / "namespace-change", "x", true);
+  // Reopening forces a rebuild even on shared filesystems with coarse directory timestamps.
+  store = std::make_shared<CaptureStore>(dir);
   OutputSpool failed(store);
   failed.append("new");
   failed.flush();
