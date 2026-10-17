@@ -177,7 +177,9 @@ std::string bounded_text(const std::string &text, size_t limit) {
   return clean;
 }
 int ProcessControl::wait_ready(int fd, int timeout_ms) {
-  struct pollfd ready{fd, POLLIN, 0};
+  struct pollfd ready {
+    fd, POLLIN, 0
+  };
   const int result = ::poll(&ready, 1, timeout_ms);
   if (result < 0 && errno != EINTR)
     throw Error(system_error("wait for child setup"));
@@ -324,7 +326,7 @@ std::string read_file_bytes(const fs::path &path, size_t limit, bool prefix) {
   Fd fd(::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK));
   if (fd.n < 0)
     throw Error(system_error("Read " + path.string()));
-  struct stat status{};
+  struct stat status {};
   if (::fstat(fd.n, &status) != 0 || !S_ISREG(status.st_mode))
     throw Error("Expected regular file: " + path.string());
   if (!prefix && (status.st_size < 0 || static_cast<uint64_t>(status.st_size) > limit))
@@ -377,7 +379,7 @@ void NativeFileSystem::atomic_stream(const fs::path &p,
                                      bool private_file) {
   if (!fs::exists(p.parent_path()))
     throw Error("Parent directory does not exist: " + p.parent_path().string());
-  struct stat old{};
+  struct stat old {};
   const bool exists = ::lstat(p.c_str(), &old) == 0;
   if (exists && !S_ISREG(old.st_mode))
     throw Error("Refusing to replace non-regular file: " + p.string());
@@ -416,7 +418,7 @@ void NativeFileSystem::atomic_stream(const fs::path &p,
     flush();
     if (::fsync(fd.n) != 0)
       throw Error(system_error("Sync file"));
-    struct stat current{};
+    struct stat current {};
     const bool now = ::lstat(p.c_str(), &current) == 0;
     if (now != exists || (now && (old.st_dev != current.st_dev || old.st_ino != current.st_ino)))
       throw Error("File changed during atomic write");
@@ -431,7 +433,7 @@ void NativeFileSystem::atomic_stream(const fs::path &p,
   }
 }
 void NativeFileSystem::remove(const fs::path &p) {
-  struct stat st{};
+  struct stat st {};
   if (lstat(p.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
     throw Error("Expected regular file for deletion");
   if (::unlink(p.c_str()) != 0)
@@ -474,7 +476,7 @@ public:
 #ifdef __APPLE__
     (void)pid;
     struct kevent event;
-    struct timespec immediate{};
+    struct timespec immediate {};
     const int count = ::kevent(observer, nullptr, 0, &event, 1, &immediate);
     if (count < 0 && errno == EINTR)
       return false;
@@ -668,7 +670,7 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
   if (pid == 0) {
     ::close(ready_read.n);
     ::close(release_write.n);
-    struct sigaction disposition{};
+    struct sigaction disposition {};
     disposition.sa_handler = SIG_DFL;
     sigemptyset(&disposition.sa_mask);
     for (int sig = 1; sig < NSIG; ++sig)
@@ -1313,9 +1315,21 @@ void from_json(const Json &j, ToolCall &t) {
   t.name = j.at("name");
   t.arguments = j.at("arguments");
 }
+void to_json(Json &j, const AssistantText &m) {
+  j = {{"id", m.id}, {"text", m.text}};
+  if (!m.phase.empty())
+    j["phase"] = m.phase;
+}
+void from_json(const Json &j, AssistantText &m) {
+  m.id = j.value("id", "");
+  m.text = j.value("text", "");
+  m.phase = j.value("phase", "");
+}
 void to_json(Json &j, const Message &m) {
   j = {{"role", m.role},   {"text", m.text},     {"tool_call_id", m.tool_call_id},
        {"calls", m.calls}, {"replay", m.replay}, {"replay_provider", m.replay_provider}};
+  if (!m.assistant_items.empty())
+    j["assistant_items"] = m.assistant_items;
   if (!m.images.empty())
     j["images"] = m.images;
   if (!m.origin.empty())
@@ -1326,10 +1340,13 @@ void to_json(Json &j, const Message &m) {
     j["message_id"] = m.message_id;
   if (!m.result_file.empty())
     j["result_file"] = m.result_file;
+  if (m.previewed)
+    j["previewed"] = true;
   if (m.images_archived)
     j["images_archived"] = true;
 }
 void from_json(const Json &j, Message &m) {
+  m.assistant_items = j.value("assistant_items", std::vector<AssistantText>{});
   m.role = j.at("role");
   m.text = j.value("text", "");
   m.tool_call_id = j.value("tool_call_id", "");
@@ -1341,6 +1358,7 @@ void from_json(const Json &j, Message &m) {
   m.artifact_index = j.value("artifact_index", "");
   m.message_id = j.value("message_id", "");
   m.result_file = j.value("result_file", "");
+  m.previewed = j.value("previewed", false);
   m.images_archived = j.value("images_archived", false);
 }
 } // namespace codet

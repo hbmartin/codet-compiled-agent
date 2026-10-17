@@ -5,12 +5,68 @@
 #include <sys/stat.h>
 #ifdef __APPLE__
 #include <ApplicationServices/ApplicationServices.h>
+#ifdef check
+#undef check
+#endif
 #if !defined(__ppc__)
 #include <ImageIO/ImageIO.h>
 #endif
 #endif
 
 namespace codet {
+std::vector<ImageArtifact> input_images(const Config &config, FileSystem &files,
+                                        ImageBackend &backend, const std::vector<fs::path> &paths,
+                                        const Cancellation &cancel) {
+  if (paths.empty())
+    return {};
+  if (paths.size() > 4)
+    throw Error("At most four input images may be attached", 2);
+  if (!image_input_enabled(config) || !backend.available())
+    throw Error("Image input or image codec is unavailable", 2);
+  std::vector<ImageData> decoded;
+  size_t total = 0;
+  for (const auto &path : paths) {
+    cancel.check();
+    Config input = config;
+    const auto canonical = files.canonical(path);
+    input.roots = {canonical};
+    input.permission_mode = "bypass";
+    const auto authorize = [&] {
+      if (Permissions(input, files).decide({"view_image", canonical.string(), canonical, false}) ==
+          Decision::deny)
+        throw Error("Input image denied: " + path.string(), 2);
+    };
+    authorize();
+    auto opened = files.open_read(path);
+    if (opened->path() != canonical)
+      throw Error("Input image changed while opening", 2);
+    authorize();
+    if (opened->size() > image_file_limit)
+      throw Error("Input image exceeds 8 MiB", 2);
+    std::string bytes;
+    char buffer[8192];
+    for (;;) {
+      cancel.check();
+      const auto n = opened->read(buffer, sizeof buffer);
+      if (!n)
+        break;
+      if (n > image_file_limit - bytes.size())
+        throw Error("Input image exceeds 8 MiB", 2);
+      bytes.append(buffer, n);
+    }
+    auto image = backend.load_bytes(bytes, "high");
+    if (image.bytes.size() > image_file_limit - total)
+      throw Error("Input images exceed the combined 8 MiB request budget", 2);
+    total += image.bytes.size();
+    decoded.push_back(std::move(image));
+  }
+  std::vector<ImageArtifact> result;
+  for (const auto &image : decoded) {
+    cancel.check();
+    result.push_back(persist_image(config, files, image, "high"));
+  }
+  return result;
+}
 namespace {
 void dimensions(size_t w, size_t h) {
   if (!w || !h || w > image_buffer_limit / 4 || h > image_buffer_limit / (w * 4))

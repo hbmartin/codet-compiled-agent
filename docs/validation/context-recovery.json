@@ -1,0 +1,165 @@
+{
+  "baseline": "d817cf6 plus existing small-core alignment changes",
+  "prior_evidence": "core-alignment.json",
+  "schema": 5,
+  "decisions": {
+    "sqlite_transcript_row": "retained",
+    "automatic_compaction_threshold": 0.8,
+    "summary_hard_limit_bytes": 8192,
+    "summary_overflow_retries": 1,
+    "hfs_path_check": "retained; regression coverage added"
+  },
+  "checks": {
+    "host": {
+      "passed": true,
+      "ctest_suites": 4,
+      "unit_tests_passed": 262,
+      "opt_in_tests_skipped": 2,
+      "cli_integration_cases": 40,
+      "prompt_tests": 6,
+      "log": "build/context-fix-host-final.log"
+    },
+    "asan_ubsan": {
+      "passed": true,
+      "ctest_suites": 4,
+      "unit_tests_passed": 262,
+      "log": "build/context-fix-sanitize-final.log"
+    },
+    "static_analysis": {
+      "clang-tidy": {
+        "passed": true,
+        "findings": 0,
+        "completed_sources": 23
+      },
+      "cppcheck": {
+        "passed": true,
+        "findings": 0,
+        "completed_sources": 23
+      },
+      "clang-analyzer": {
+        "passed": true,
+        "findings": 0,
+        "completed_sources": 23
+      }
+    },
+    "immutable_analysis_inputs": {
+      "changed_sources": [],
+      "changed_headers": []
+    },
+    "ppc": {
+      "passed": true,
+      "executed": false,
+      "verification": "GCC 14.2, PPC32 big-endian/G3 Mach-O, target dependency paths, no LC_RPATH",
+      "log": "build/context-fix-ppc-verify.log",
+      "binary_sha256": "e6da022c4efdd8c80a4c8d41b6b5a3cac21c7db0d207d8dd8b5057adc05679ec"
+    },
+    "prompt_assets": "unchanged",
+    "tiger_runtime": {
+      "verified": false,
+      "acceptance": "Owner-run HFS+, responsiveness, live provider/desktop and 512 MB G4 checks in TIGER-ACCEPTANCE.md"
+    }
+  },
+  "persistence_benchmark": {
+    "platform": "macOS arm64 host, Debug build; single runs with other validation work concurrent",
+    "method": "Repeated StateStore.save calls with synthetic result records; bypasses Agent compaction. Serialized-byte totals accumulate per-entry sizes without extra whole-history serialization. save_seconds measures save calls only; RSS is process high-water mark.",
+    "samples": [
+      {
+        "cumulative_transcript_bytes": 3655437,
+        "payload_bytes": 512,
+        "peak_rss_bytes": 12222464,
+        "results": 100,
+        "save_seconds": 0.219487872,
+        "seconds": 0.2254965,
+        "transcript_bytes": 72393
+      },
+      {
+        "cumulative_transcript_bytes": 14555987,
+        "payload_bytes": 512,
+        "peak_rss_bytes": 17088512,
+        "results": 200,
+        "save_seconds": 0.8178650460000003,
+        "seconds": 0.830892333,
+        "transcript_bytes": 144893
+      },
+      {
+        "cumulative_transcript_bytes": 32706537,
+        "payload_bytes": 512,
+        "peak_rss_bytes": 28786688,
+        "results": 300,
+        "save_seconds": 1.8151447159999996,
+        "seconds": 1.836869792,
+        "transcript_bytes": 217393
+      },
+      {
+        "cumulative_transcript_bytes": 332026637,
+        "payload_bytes": 65536,
+        "peak_rss_bytes": 214515712,
+        "results": 100,
+        "save_seconds": 8.997300089000003,
+        "seconds": 9.257277041,
+        "transcript_bytes": 6574793
+      },
+      {
+        "cumulative_transcript_bytes": 1321538387,
+        "payload_bytes": 65536,
+        "peak_rss_bytes": 509640704,
+        "results": 200,
+        "save_seconds": 37.418854511999996,
+        "seconds": 37.93455,
+        "transcript_bytes": 13149693
+      },
+      {
+        "cumulative_transcript_bytes": 2968540137,
+        "payload_bytes": 65536,
+        "peak_rss_bytes": 1043087360,
+        "results": 300,
+        "save_seconds": 81.77683467700005,
+        "seconds": 82.550024958,
+        "transcript_bytes": 19724593
+      }
+    ],
+    "interpretation": "Whole-row writes retain quadratic cumulative work. The unbounded 300 x 64 KiB stress case exceeded 512 MiB RSS on this host. Normal Agent history uses bounded previews and early compaction; these measurements do not establish Tiger memory acceptance."
+  },
+  "coverage": [
+    "Oversized new patch dispatches once; completed batch checkpoints on smaller-context resume",
+    "Four Plan listings, sorted directory paging and actual encoded inspection budgets",
+    "Stable previews, canonical journal outcomes, direct capture and post-action diagnostics",
+    "Verbatim JSON pages through save, fork and every provider adapter",
+    "Advisory summary targets, one hard-overflow retry, usage, one hook and cancellation",
+    "Schema-4 journal backfill, reference transaction rollback/retry, fork, relocation, expiry and denies",
+    "Past-EOF line counts, bounded plan preview, file/image case variants and hard links",
+    "Existing terminal, recovery, artifact, provider, prompt and permission suites"
+  ],
+  "implementation_sha256": {
+    "CMakeLists.txt": "0c4c63e1c64b6bca4c4bd8f978e1b5bcfd0d436508f9319317e0ca4499f03fb3",
+    "cmake/prompts.cmake": "b0cef80525ffeaaf532b3999efaac3e3089c38e3e0fa424adb98120a17fa80e9",
+    "include/codet/artifacts.hpp": "4a93be57d0098d80a2fc85bfd9cc5240e399e4e6b328feccb2349e1d3b785a06",
+    "include/codet/computer.hpp": "aa4e4ef2a400b761ed98f8dfe3b596d140eb06fa58ca7689ed927276c860eeb7",
+    "include/codet/core.hpp": "da459e4ff3dfde2074111a042912bff3bdc5d9b3de360a490d3f05990e559aeb",
+    "include/codet/prompt.hpp": "e5d0c77795ef4f1880ebee03a5d023bd32d9a6cc2d72430aef37a83f033910af",
+    "prompts/manifest.json": "0bc98eee7f4210867e7a5c88be3e73351d1fce57c9bc16c76fd886f73f1720e1",
+    "scripts/import-prompts.py": "2fccd24eb8019576875378eb627d3880960eb63d9d63fdd8d4d5679a78bebae5",
+    "src/modern/agent.cpp": "e646b2cead462262789730caf47d41d3d3eac26c75925e61c8c0f344364cceee",
+    "src/modern/artifacts.cpp": "d869c12ac29c4325f58ca02bec5577f668789e531e75b8c984bd8399de593e79",
+    "src/modern/cli.cpp": "ecdd89bbdc482351e865ac921dc1d419133b04c7a3b27007d405f8fb8c545828",
+    "src/modern/config.cpp": "a689c3e88b846b1c61884a4736c7c01d960a3021c6adb0694158f5be4f457dfe",
+    "src/modern/context.cpp": "49709f598bc490b47e5c0bdc43904aebcc95960a8baa82da8d91ef5271e9592c",
+    "src/modern/images.cpp": "60e46ffdfc3cd494eb58be5f6b83dfe80fc0f4e5fee52e85e436c41084528a0e",
+    "src/modern/instructions.cpp": "707e19d96a7d82ffdc3991859cf012cec993fe2fd027d178cfcba202671f1ad7",
+    "src/modern/platform.cpp": "ef9c96fbf3de23e3724858dbdfa4a2313196cdd2f74ff0b130b19760ae6e2ba5",
+    "src/modern/prompts.cpp": "25ea1b16267419b7980fce7ad8027ee2438b49b70e27e96539ade5155d08d255",
+    "src/modern/provider.cpp": "3f92ccd10b516d5b22660b98bf6ebfbd49b5049ba8915fbf3fb9b6d107b82208",
+    "src/modern/state.cpp": "631da9d0cfea06a270f50eebafbf70c8988074799a782da8d3e3fb0c827f1f71",
+    "src/modern/tool_registry.cpp": "9a7a3337b840adc756c74136b221e564b8509c91c6033c5dd200269e0d48afcd",
+    "src/modern/tools.cpp": "dfa14246ee9b71388ee69a11fadf3298681617683ccf23c74b0c47dcf1d77850",
+    "tests/cli_integration.py": "e961882431e2a63de8d2a726aeb3546b20af7a0e6cbf17ee163e706eadd3bbb8",
+    "tests/context_history_test.cpp": "86501445d254600cf0de1c208d714a707554527a88cc2fa1f0f2560841b3c3c3",
+    "tests/core_test.cpp": "04544a7b1a62416409af28840af4f2e4b11e6fb2a7dd4cebdabcf25b31435526",
+    "tests/persistence_bench.cpp": "a0b49b9547877b5b311cd5027f7bf0e9940555333fc86824434da85993f16b5c",
+    "tests/process_policy_test.cpp": "bf8bdd3e6339233f23a2f674868365fc4fd76c75a04e3336810b83a5b18d3eb5",
+    "tests/prompt_test.cpp": "bdadabee6d13729fd7f6cc0d072235cd5e15204a652752b9f3603039b6cffc7e",
+    "tests/remaining_test.cpp": "685e63833820c027b9bc0812766032a60a786c4124b3e77f7ee4ee27d48d06ac",
+    "tests/small_core_test.cpp": "ce4a5f1dbfa9e877b10ce37be4d8584ed8a5ce710252d8ecb9675f47170d34eb",
+    "tests/test_prompts.py": "e13e8bc848dab97c8c9c1668fa104e7ef3b41bd164e8dfc776cfb73e9ea5e1b7"
+  }
+}

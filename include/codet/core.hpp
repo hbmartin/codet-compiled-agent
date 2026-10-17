@@ -225,6 +225,11 @@ struct ImageArtifact {
 };
 void to_json(Json &, const ImageArtifact &);
 void from_json(const Json &, ImageArtifact &);
+struct AssistantText {
+  std::string id, text, phase;
+};
+void to_json(Json &, const AssistantText &);
+void from_json(const Json &, AssistantText &);
 struct Message {
   std::string role, text, tool_call_id;
   std::vector<ToolCall> calls;
@@ -234,6 +239,8 @@ struct Message {
   std::string origin, artifact_index;
   std::string message_id, result_file;
   bool images_archived = false;
+  std::vector<AssistantText> assistant_items = {};
+  bool previewed = false;
 };
 void to_json(Json &, const ToolCall &);
 void from_json(const Json &, ToolCall &);
@@ -303,7 +310,7 @@ public:
   Json hooks = Json::object(), keybindings = Json::object();
   bool trust_project = false;
   // Invocation selection only: explicit profile/CLI fields, independent of base defaults.
-  std::optional<std::string> selected_provider, selected_model;
+  std::optional<std::string> selected_provider, selected_model, selected_effort;
   Selection configured{"codex", ""};
 };
 Config load_config(const fs::path &home, const fs::path &cwd, const std::string &profile,
@@ -330,6 +337,26 @@ public:
   Json codex(HttpTransport &, const Cancellation &);
 };
 struct Provider {
+protected:
+  std::function<void(const Json &)> assistant_events_;
+
+public:
+  ProviderResult complete_items(const Config &c, const std::string &system,
+                                const std::vector<Message> &messages, const Json &tools,
+                                const Cancellation &cancel, const ChunkSink &text,
+                                std::function<void(const Json &)> items) {
+    struct Restore {
+      std::function<void(const Json &)> &target;
+      std::function<void(const Json &)> previous;
+      explicit Restore(std::function<void(const Json &)> &slot)
+          : target(slot), previous(std::move(slot)) {}
+      ~Restore() {
+        target = std::move(previous);
+      }
+    } restore{assistant_events_};
+    assistant_events_ = std::move(items);
+    return complete(c, system, messages, tools, cancel, text);
+  }
   virtual ~Provider() = default;
   virtual ProviderResult complete(const Config &, const std::string &system,
                                   const std::vector<Message> &, const Json &tools,
@@ -363,6 +390,7 @@ struct Session {
   std::string id, name;
   std::vector<Message> messages;
   std::string provider = "", model = "";
+  std::optional<std::string> effort = std::nullopt;
 };
 class StateStore {
   struct Impl;
@@ -380,6 +408,8 @@ public:
   Session last();
   Session fork(const Session &);
   void save(const Session &);
+  void remember_references(const std::string &, const std::vector<Message> &);
+  std::vector<std::string> references(const std::string &);
   Json list();
   void begin_turn(const std::string &);
   void finish_turn(const std::string &, const std::string &);
@@ -458,9 +488,10 @@ class Tools {
   std::set<fs::path> referenced_results_;
   std::string result_owner_ = unique_id();
   mutable std::vector<fs::path> skill_directories_;
+  mutable std::map<fs::path, fs::path> skill_anchors_;
   bool large_plan_ = false;
   std::optional<size_t> inspection_budget_;
-  std::map<fs::path, fs::path> private_anchors_;
+  mutable std::map<fs::path, fs::path> private_anchors_;
   mutable std::set<std::string> warnings_;
   const Cancellation *active_cancel_ = nullptr;
   std::shared_ptr<Interaction> interaction_;
@@ -492,6 +523,7 @@ public:
   Json schemas(const Json &capabilities) const;
   void use_session(const std::string &id);
   void reference_results(const std::vector<Message> &);
+  void restore_references(const std::vector<std::string> &);
   std::string retain_result(Message &);
   void inspection_budget(size_t bytes) {
     inspection_budget_ = bytes;
@@ -530,8 +562,16 @@ public:
         DiagnosticSink diagnostics = {})
       : config_(c), provider_(p), tools_(t), state_(s), events_(std::move(e)),
         diagnostics_(std::move(diagnostics)) {}
+
+private:
+  bool compact_history(Session &, const Cancellation &, const std::string &project,
+                       const Json &schemas, const std::string &trigger, Usage &,
+                       size_t *requests = nullptr);
+
+public:
+  RunResult compact(Session &, const Cancellation &);
   RunResult run(Session &, const std::string &, const Cancellation &, const Json &schema = Json(),
-                bool expand_command = true);
+                bool expand_command = true, const std::vector<ImageArtifact> &images = {});
 };
 int cli_main(const std::vector<std::string> &args, Cancellation &);
 } // namespace codet

@@ -1,8 +1,31 @@
 #include "prompts.hpp"
 #include "codet/prompt.hpp"
+#include <algorithm>
 #include <sstream>
 
 namespace codet {
+Json model_catalog() {
+  return Json::parse(bundled_prompts::catalog);
+}
+void validate_effort(const Config &config) {
+  if (config.provider == "google" && !config.effort.empty())
+    throw Error("Google reasoning effort override is not supported", 2);
+  if (config.provider != "codex" || config.effort.empty())
+    return;
+  for (const auto &entry : model_catalog())
+    if (entry.at("model") == config.model) {
+      const auto &levels = entry.at("efforts");
+      if (std::find(levels.begin(), levels.end(), config.effort) == levels.end())
+        throw Error("Unsupported reasoning effort for " + config.model + ": " + config.effort, 2);
+    }
+}
+std::string resolve_effort(const Config &config, const Session *saved) {
+  if (config.selected_effort)
+    return *config.selected_effort;
+  if (saved && saved->provider == config.provider && saved->model == config.model && saved->effort)
+    return *saved->effort;
+  return config.effort;
+}
 PromptBudget prompt_budget(const Config &config, const std::string &system, const Json &schemas) {
   return {config.context_tokens * 3, system.size() + schemas.dump().size() + 256,
           config.max_output_tokens * 3};

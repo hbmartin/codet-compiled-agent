@@ -1,0 +1,67 @@
+{
+  "baseline": "d817cf6",
+  "reference": "core-alignment-reference.json",
+  "checks": {
+    "host": {
+      "passed": true,
+      "ctest_suites": 4,
+      "unit_tests_passed": 250,
+      "opt_in_tests_skipped": 2,
+      "cli_integration_cases": 40,
+      "prompt_tests": 6
+    },
+    "asan_ubsan": {
+      "passed": true,
+      "ctest_suites": 4
+    },
+    "static_analysis": {
+      "clang-tidy": {
+        "passed": true,
+        "findings": 0,
+        "completed_sources": 23
+      },
+      "cppcheck": {
+        "passed": true,
+        "findings": 0,
+        "completed_sources": 23
+      },
+      "clang-analyzer": {
+        "passed": true,
+        "findings": 0,
+        "completed_sources": 23
+      }
+    },
+    "ppc": {
+      "passed": true,
+      "verification": "GCC 14.2, PPC32 big-endian/G3 Mach-O, target dependency paths, no LC_RPATH",
+      "executed": false
+    },
+    "tiger_runtime": {
+      "verified": false,
+      "acceptance": "Owner-run live provider, desktop and 512 MB G4 checks in TIGER-ACCEPTANCE.md"
+    }
+  },
+  "implementation_sha256": {
+    "CMakeLists.txt": "12a45b96d5dcd6b187dfe8edc1e8601cb302e18a2ebc66c4c02e7aac9857cfe6",
+    "cmake/prompts.cmake": "b0cef80525ffeaaf532b3999efaac3e3089c38e3e0fa424adb98120a17fa80e9",
+    "include/codet/computer.hpp": "aa4e4ef2a400b761ed98f8dfe3b596d140eb06fa58ca7689ed927276c860eeb7",
+    "include/codet/core.hpp": "532396eba83a29017c51a7d96b529a1f8e6f65dd808d91d449c079aa03bacb48",
+    "include/codet/prompt.hpp": "e5d0c77795ef4f1880ebee03a5d023bd32d9a6cc2d72430aef37a83f033910af",
+    "prompts/manifest.json": "0bc98eee7f4210867e7a5c88be3e73351d1fce57c9bc16c76fd886f73f1720e1",
+    "scripts/import-prompts.py": "2fccd24eb8019576875378eb627d3880960eb63d9d63fdd8d4d5679a78bebae5",
+    "src/modern/agent.cpp": "c45717b851cfbc7831d0108f410d5c5d95ab75a2e1441a78678441cfe03bda6c",
+    "src/modern/cli.cpp": "ecdd89bbdc482351e865ac921dc1d419133b04c7a3b27007d405f8fb8c545828",
+    "src/modern/config.cpp": "a689c3e88b846b1c61884a4736c7c01d960a3021c6adb0694158f5be4f457dfe",
+    "src/modern/images.cpp": "60e46ffdfc3cd494eb58be5f6b83dfe80fc0f4e5fee52e85e436c41084528a0e",
+    "src/modern/instructions.cpp": "707e19d96a7d82ffdc3991859cf012cec993fe2fd027d178cfcba202671f1ad7",
+    "src/modern/platform.cpp": "a8606259d98392d9bdf2cb17491f07e3ef7a31ab3a0ba17121355d8b7d7425c0",
+    "src/modern/prompts.cpp": "25ea1b16267419b7980fce7ad8027ee2438b49b70e27e96539ade5155d08d255",
+    "src/modern/provider.cpp": "713bbf74bf977bc57636ccf919495ced9162756615910fec369ddfd2734822f0",
+    "src/modern/state.cpp": "94d2363b086b5ca62ab5921a892e73205f4bb09b248353dbe086563f5e622b36",
+    "src/modern/tools.cpp": "e73ca08bec3beb8876b3bda5472c68dee4fb9afc0971433cea9b4bea59f824ba",
+    "tests/cli_integration.py": "4379bef4a43768c111dba0eb928846e96dc6a0b89782bfdf9ee7686dba290138",
+    "tests/remaining_test.cpp": "3bfde5ba3183ea26693616f9c63f19640bddcb44d71077adfc6e7f0d3b49b1f5",
+    "tests/small_core_test.cpp": "9113baa395b15bad5943d845026080d8e589a8b8d11a07ccfe4b31282116331c",
+    "tests/test_prompts.py": "e13e8bc848dab97c8c9c1668fa104e7ef3b41bd164e8dfc776cfb73e9ea5e1b7"
+  }
+}

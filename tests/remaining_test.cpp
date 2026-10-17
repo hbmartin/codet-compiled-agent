@@ -461,7 +461,7 @@ struct CountingFiles : FileSystem {
 TEST_F(Remaining, PermissionDecisionSharesCanonicalPrefixesAcrossRules) {
   fs::create_directories(config.cwd / "shared");
   files.atomic_write(config.cwd / "shared/public", "public");
-  config.permission_mode = "default";
+  config.permission_mode = "plan";
   for (int i = 0; i < 50; ++i)
     config.add_denied("read_file(shared/secret-" + std::to_string(i) + "*)");
   CountingFiles counted;
@@ -583,7 +583,8 @@ TEST_F(Remaining, OversizedInstructionsMemoryAndIncludesUseBoundedReads) {
   auto text = tools.instructions();
   EXPECT_THAT(text, HasSubstr("included"));
   EXPECT_THAT(text, Not(HasSubstr("later memory")));
-  EXPECT_LT(text.size(), config.project_doc_max_bytes + config.memory_context_max_bytes + 100);
+  EXPECT_LT(text.size(),
+            config.project_doc_max_bytes + config.memory_context_max_bytes + 16384 + 100);
   EXPECT_EQ(files.read(config.cwd / "AGENTS.md").size(), 80017u);
   config.project_doc_max_bytes = 0;
   config.memory_context_max_bytes = 0;

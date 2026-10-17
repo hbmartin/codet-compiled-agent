@@ -44,6 +44,8 @@ std::shared_ptr<ComputerBackend> native_computer();
 fs::path artifact_directory(const Config &);
 ImageArtifact persist_image(const Config &, FileSystem &, const ImageData &, const std::string &);
 std::string image_data_url(const ImageArtifact &, const Config &);
+std::vector<ImageArtifact> input_images(const Config &, FileSystem &, ImageBackend &,
+                                        const std::vector<fs::path> &, const Cancellation &);
 std::string base64_encode(const std::string &);
 ImageData encode_rgb(const std::string &, size_t, size_t, const std::string &);
 // Converts tightly bounded Tiger framebuffer rows to RGB, without alignment assumptions.

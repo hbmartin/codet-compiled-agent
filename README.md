@@ -42,11 +42,14 @@ The modern build statically links compiler support and dynamically links TigerPo
 codet login --import /explicit/path/to/token-file.json
 codet --ui line
 codet exec --provider openai --model YOUR_MODEL --json 'explain this repository'
+codet exec -i screenshot.png 'explain this image'
 codet exec resume --last 'continue'
 codet memory consolidate
 ```
 
 State lives under `CODET_HOME` or `~/.codet`. No existing Codex or Claurst files are imported implicitly. Native sign-in is deferred; API-key providers are the explicit fallback if subscription transport cannot be validated. Application permission rules do not provide an OS shell sandbox. Content search uses system `grep` through exec_command. Select `--permission-mode bypass` for auto/no-approval operation, or change modes live with `/permissions MODE`. Explicit deny rules retain precedence.
+
+Interactive workflows include `/model [MODEL [EFFORT]]`, `/status`, and `/compact`. Instructions use Codex filename precedence, and skills are discovered lazily with bounded metadata.
 
 ## Documentation
 

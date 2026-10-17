@@ -154,6 +154,8 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
     c.ui = data.value("ui", c.ui);
     c.theme = data.value("theme", c.theme);
     c.effort = data.value("model_reasoning_effort", "");
+    if (selection.contains("model_reasoning_effort"))
+      c.selected_effort = selection.at("model_reasoning_effort").get<std::string>();
     c.max_turns = data.value("max_turns", c.max_turns);
     c.max_output_tokens = data.value("max_output_tokens", c.max_output_tokens);
     c.context_tokens = data.value("context_tokens", c.context_tokens);

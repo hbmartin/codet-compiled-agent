@@ -1,0 +1,15 @@
+{
+  "baseline": "d817cf6",
+  "reference": "supplied codex-main source snapshot (no Git metadata)",
+  "sources": {
+    "codex-rs/protocol/src/models.rs": "1154d07d27e893630e0d5eb0b3951a9878de2ba05c259e8e2db681d3e25dc994",
+    "codex-rs/core/src/stream_events_utils.rs": "3316d151e21ddacb0f4fb976045b67245296b4e798b168c532dfb69a588eb139",
+    "codex-rs/core/src/session/turn.rs": "394b2246903a312c0cd76c370d06afe7f0673dddde792105a9779a7657dc9e70",
+    "codex-rs/core/src/agents_md.rs": "97427a870741b904a3f3c143f5990eaaa65b5bfa99ddac1808b2980052b5fc78",
+    "codex-rs/skills/src/parser.rs": "f3532df1cc16f4da423b8e5c813269940c90317bcd211b6659cad449fd877e89",
+    "codex-rs/core/src/compact.rs": "9b37f42e826e45ebf2fe3115355fde5ced2f67183c19fab84119b57b0c6bd13b",
+    "codex-rs/tui/src/slash_command.rs": "fc438de2c106b60bacc19f37fab5da57a528dce81f4ccbd2847e8fb224863c9b",
+    "codex-rs/exec/src/cli.rs": "66643e8b3d5964b70cb8f231fb309312376272fb3ea87bcb6849f44cf112f8f6",
+    "codex-rs/models-manager/models.json": "943ca7fe1d19ed019054158303f0dbbd80b3bef43b3aa425a71aa7cb3fb52c2b"
+  }
+}

@@ -37,6 +37,24 @@ void sql(sqlite3 *db, const char *s) {
   if (sqlite3_exec(db, s, nullptr, nullptr, nullptr) != SQLITE_OK)
     throw Error(sqlite3_errmsg(db));
 }
+struct Transaction {
+  sqlite3 *db;
+  bool owner, finished = false;
+  explicit Transaction(sqlite3 *connection)
+      : db(connection), owner(sqlite3_get_autocommit(connection) != 0) {
+    if (owner)
+      sql(db, "BEGIN IMMEDIATE");
+  }
+  ~Transaction() {
+    if (owner && !finished)
+      (void)sqlite3_exec(db, "ROLLBACK", nullptr, nullptr, nullptr);
+  }
+  void commit() {
+    if (owner)
+      sql(db, "COMMIT");
+    finished = true;
+  }
+};
 std::string column(sqlite3_stmt *p, int n) {
   auto *s = sqlite3_column_text(p, n);
   return s ? reinterpret_cast<const char *>(s) : "";
@@ -46,6 +64,7 @@ struct StateStore::Impl {
   sqlite3 *db = nullptr;
   fs::path home, artifact_root;
   std::map<std::string, std::weak_ptr<void>> owners;
+  std::map<std::string, std::set<std::string>> known_references;
   ~Impl() {
     if (db)
       sqlite3_close(db);
@@ -72,7 +91,7 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root)
   if (sqlite3_step(version.p) != SQLITE_ROW)
     throw Error("Cannot read state schema");
   const int n = sqlite3_column_int(version.p, 0);
-  if (n > 3)
+  if (n > 5)
     throw Error("Session database was created by a newer Codet version");
   sql(impl_->db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;");
   sql(impl_->db,
@@ -85,7 +104,31 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root)
     sql(impl_->db,
         "BEGIN IMMEDIATE; ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT '';ALTER "
         "TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT '';PRAGMA user_version=2;COMMIT;");
-  if(n<3) sql(impl_->db,"PRAGMA user_version=3;");
+  if (n < 3)
+    sql(impl_->db, "PRAGMA user_version=3;");
+  if (n < 4)
+    sql(impl_->db, "BEGIN IMMEDIATE; ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT;"
+                   "PRAGMA user_version=4; COMMIT;");
+  if (n < 5) {
+    sql(impl_->db, "BEGIN IMMEDIATE; CREATE TABLE session_references("
+                   "session TEXT NOT NULL,kind TEXT NOT NULL,path TEXT NOT NULL,"
+                   "PRIMARY KEY(session,kind,path),FOREIGN KEY(session) REFERENCES sessions(id));");
+    try {
+      Statement sessions(impl_->db, "SELECT id,messages FROM sessions");
+      while (sqlite3_step(sessions.p) == SQLITE_ROW)
+        remember_references(column(sessions.p, 0),
+                            Json::parse(column(sessions.p, 1)).get<std::vector<Message>>());
+      Statement journal(impl_->db, "SELECT session,result FROM tools WHERE result IS NOT NULL");
+      while (sqlite3_step(journal.p) == SQLITE_ROW)
+        remember_references(column(journal.p, 0),
+                            {Json::parse(column(journal.p, 1)).get<Message>()});
+      sql(impl_->db, "PRAGMA user_version=5; COMMIT;");
+      impl_->known_references.clear();
+    } catch (...) {
+      (void)sqlite3_exec(impl_->db, "ROLLBACK", nullptr, nullptr, nullptr);
+      throw;
+    }
+  }
 }
 StateStore::~StateStore() = default;
 std::shared_ptr<void> StateStore::acquire(const std::string &id) {
@@ -144,13 +187,17 @@ Session StateStore::load(const std::string &selector, bool repair) {
   return load_id(column(q.p, 0), repair);
 }
 Session StateStore::load_id(const std::string &id, bool repair) {
-  Statement q(impl_->db, "SELECT id,name,messages,status,provider,model FROM sessions WHERE id=?");
+  Statement q(
+      impl_->db,
+      "SELECT id,name,messages,status,provider,model,reasoning_effort FROM sessions WHERE id=?");
   q.text(1, id);
   if (sqlite3_step(q.p) != SQLITE_ROW)
     throw Error("Session not found: " + id, 2);
   Session s{column(q.p, 0), column(q.p, 1), {}};
   s.provider = column(q.p, 4);
   s.model = column(q.p, 5);
+  if (sqlite3_column_type(q.p, 6) != SQLITE_NULL)
+    s.effort = column(q.p, 6);
   try {
     s.messages = Json::parse(column(q.p, 2)).get<std::vector<Message>>();
   } catch (const std::exception &) {
@@ -283,6 +330,13 @@ void StateStore::reconcile(Session &session, bool persist) {
             result.message_id = answer.message_id;
           if (!answer.result_file.empty())
             result.result_file = answer.result_file;
+          if (answer.previewed && !answer.result_file.empty()) {
+            const auto preview = Json::parse(answer.text, nullptr, false);
+            if (preview.is_object() &&
+                preview.value("metadata", Json::object()).value("projection_truncated", false))
+              result.text = answer.text;
+          }
+          result.previewed = answer.previewed;
           result.images_archived = answer.images_archived;
         }
         if (result.images_archived)
@@ -315,8 +369,10 @@ void StateStore::reconcile(Session &session, bool persist) {
         write.run();
       }
     session.messages = std::move(repaired);
-    if (persist)
+    if (persist) {
+      remember_references(session.id, session.messages);
       save(session);
+    }
     sql(impl_->db, "COMMIT");
   } catch (...) {
     session.messages.swap(previous);
@@ -339,6 +395,7 @@ Session StateStore::fork(const Session &parent) {
   Session s{unique_id(), parent.name.empty() ? "" : parent.name + " (fork)", recovered.messages};
   s.provider = parent.provider;
   s.model = parent.model;
+  s.effort = parent.effort;
   auto owner = acquire(s.id);
   NativeFileSystem files;
   if (std::any_of(s.messages.begin(), s.messages.end(),
@@ -350,6 +407,12 @@ Session StateStore::fork(const Session &parent) {
     if (!message.artifact_index.empty())
       message.artifact_index = artifact_index_reference(s.id);
   save(s);
+  remember_references(s.id, s.messages);
+  Statement refs(impl_->db, "INSERT OR IGNORE INTO session_references(session,kind,path) "
+                            "SELECT ?,kind,path FROM session_references WHERE session=?");
+  refs.text(1, s.id);
+  refs.text(2, parent.id);
+  refs.run();
   reconcile(s);
   Statement q(impl_->db, "UPDATE sessions SET parent=? WHERE id=?");
   q.text(1, parent.id);
@@ -359,19 +422,53 @@ Session StateStore::fork(const Session &parent) {
 }
 void StateStore::save(const Session &s) {
   auto owner = acquire(s.id);
-  Statement q(impl_->db, "INSERT INTO sessions(id,name,updated,messages,provider,model) "
-                         "VALUES(?,?,strftime('%s','now'),?,?,?) ON CONFLICT(id) DO UPDATE SET "
-                         "name=excluded.name,updated=excluded.updated,messages=excluded.messages,"
-                         "provider=excluded.provider,model=excluded.model");
+  Statement q(
+      impl_->db,
+      "INSERT INTO sessions(id,name,updated,messages,provider,model,reasoning_effort) "
+      "VALUES(?,?,strftime('%s','now'),?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+      "name=excluded.name,updated=excluded.updated,messages=excluded.messages,"
+      "provider=excluded.provider,model=excluded.model,reasoning_effort=excluded.reasoning_effort");
   q.text(1, s.id);
   q.text(2, s.name);
-  auto messages = s.messages;
-  portable_messages(messages, s.id);
-  ensure_message_ids(messages);
-  q.text(3, safe_json(Json(messages)).dump());
+  q.text(3, safe_json(Json(s.messages)).dump());
   q.text(4, s.provider);
   q.text(5, s.model);
+  if (s.effort)
+    q.text(6, *s.effort);
   q.run();
+}
+void StateStore::remember_references(const std::string &id, const std::vector<Message> &messages) {
+  auto &known = impl_->known_references[id];
+  const auto paths = message_references(messages);
+  if (std::all_of(paths.begin(), paths.end(), [&](const auto &path) { return known.count(path); }))
+    return;
+  Transaction transaction(impl_->db);
+  for (const auto &path : paths) {
+    if (known.count(path))
+      continue;
+    Statement q(impl_->db,
+                "INSERT OR IGNORE INTO session_references(session,kind,path) VALUES(?,?,?)");
+    q.text(1, id);
+    q.text(2, result_name(path) ? "result" : "capture");
+    q.text(3, path);
+    q.run();
+  }
+  transaction.commit();
+  if (transaction.owner)
+    known.insert(paths.begin(), paths.end());
+}
+std::vector<std::string> StateStore::references(const std::string &id) {
+  Statement q(impl_->db, "SELECT path FROM session_references WHERE session=? ORDER BY kind,path");
+  q.text(1, id);
+  std::vector<std::string> out;
+  int status;
+  while ((status = sqlite3_step(q.p)) == SQLITE_ROW)
+    out.push_back(column(q.p, 0));
+  if (status != SQLITE_DONE)
+    throw Error("Cannot read session references");
+  if (sqlite3_get_autocommit(impl_->db))
+    impl_->known_references[id].insert(out.begin(), out.end());
+  return out;
 }
 Json StateStore::list() {
   Statement q(
@@ -417,11 +514,12 @@ void StateStore::tool_started(const std::string &id, const ToolCall &t) {
 }
 void StateStore::tool_finished(const std::string &id, const ToolCall &t, const Json &result) {
   auto owner = acquire(id);
+  Transaction transaction(impl_->db);
   Statement q(impl_->db, "UPDATE tools SET status='complete',result=? WHERE session=? AND "
                          "call_id=? AND status='running'");
   auto message = result.get<Message>();
   std::vector<Message> portable{message};
-  portable_messages(portable, id);
+  portable_messages(portable, id, t.name);
   ensure_message_ids(portable);
   q.text(1, safe_json(Json(portable.front())).dump());
   q.text(2, id);
@@ -429,5 +527,7 @@ void StateStore::tool_finished(const std::string &id, const ToolCall &t, const J
   q.run();
   if (sqlite3_changes(impl_->db) != 1)
     throw Error("Session modified by another process: tool outcome is no longer pending");
+  remember_references(id, portable);
+  transaction.commit();
 }
 } // namespace codet

@@ -122,7 +122,7 @@ def adapt(text, family):
 
 
 def import_bundle(catalog, supporting, modes, destination):
-    manifest = dict(version=1, sources={}, assets={}, models={}, bundled={})
+    manifest = dict(version=1, sources={}, assets={}, models={}, bundled={}, catalog={})
     for path in (catalog,):
         manifest["sources"]["models-manager/models.json"] = hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -150,6 +150,9 @@ def import_bundle(catalog, supporting, modes, destination):
             raise ValueError("Invalid model slug")
         messages = model.get("model_messages") or {}
         collaboration = messages.get("collaboration_modes") or {}
+        manifest["catalog"][slug] = {
+            "default_effort": model.get("default_reasoning_level") or "",
+            "efforts": [entry["effort"] for entry in model.get("supported_reasoning_levels", [])]}
         manifest["models"][slug] = {
             "instructions": asset(messages.get("instructions_template"), "instructions", f"models-manager/models.json#/models/{index}/model_messages/instructions_template"),
             **{mode: asset(collaboration.get(mode), "mode", f"models-manager/models.json#/models/{index}/model_messages/collaboration_modes/{mode}") for mode in ("default", "plan")},

@@ -105,3 +105,27 @@ Context/history follow-up acceptance (native Tiger execution required):
 - Repeat index/result paging with --ephemeral and verify automatic storage is removed after hooks/process cleanup.
 - With a valid and invalid display entry, explicitly capture the valid display and automatically capture a window/region on it; verify warnings for skipped invalid entries, unchanged IDs, correct pointer mapping and rejection of spans across valid displays.
 - Force summary output exhaustion and a persistence failure; verify durable history/results survive and completed side effects are never replayed. Run screenshot-led TextEdit and browser workflows after explicit image reload.
+
+## Small-core alignment acceptance
+
+Run `SmallCore.*` on the target along with existing offline suites. In both line and curses
+interfaces, run `/model`, select an available model/effort, reject an invalid known effort,
+and use `/status` before and after a turn. Resume and fork and verify selection persistence.
+Use `/compact` on an empty session (no provider call), then after several turns; verify the
+PreCompact hook receives `manual`, latest steering/outcomes survive, and interruption keeps
+history usable. Enter these commands during active work and verify they stay out of the
+model prompt. Pass one and multiple local PNG/JPEG inputs with `-i`, including an image-only
+prompt, and verify pixels reach an image-capable live provider. Repeat with denied paths,
+invalid files and disabled image input. Observe separate progress/final messages without
+duplicate terminal text and check final-only stdout/`-o` on a headless invocation. Exercise
+ancestor/override guidance and skill metadata/support-file reads from both project and user
+locations. Record startup latency, peak RSS, repeated-turn growth, responsiveness and any
+swapping on the 512 MB G4. Cross-link and host fixtures do not establish this acceptance.
+
+## Context recovery and inspection acceptance
+
+In both terminal interfaces, execute a roughly 130 KiB patch once, then continue with a smaller context; inspect its archived arguments/outcome and confirm no repeated edit. In Plan mode request four large directory listings in one batch, page by next_entry_offset, and verify progress without a context dead end. Exercise early compaction, stable prior previews, recent build/test output, a summary larger than its advisory target, one retry for genuine overflow, and cancellation during summarization. Resume/fork after compaction and inspect retained captures, including after relocating state/artifact/capture roots; expired captures should fail only their read, and explicit denies must still prevail.
+
+On Tiger's HFS+ volume, inspect a file through differently cased names and a hard link with read_file and view_image. Verify normal aliases work, replaced/symlink targets and new denies remain blocked, and record filesystem details. Host APFS results do not establish HFS+ behavior. Read JSON byte pages, malformed/valid UTF-8, a past-EOF line page and long lines; verify contiguous offsets and unchanged file formatting through resume/fork. Test a 100-step plan near 8 KiB and confirm one omission notice.
+
+Build/run codet_persistence_bench with payload arguments 512 and 65536; record 100/200/300-result timing, peak RSS, swapping and responsiveness. These synthetic measurements retain whole-transcript writes; compare them with real stable-preview/compaction sessions on the 512 MB G4. Target runtime acceptance remains owner-run.

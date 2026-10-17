@@ -9,6 +9,7 @@
 #include "codet/support.hpp"
 #include "codet/tool_registry.hpp"
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <ctime>
 #include <fnmatch.h>
@@ -215,14 +216,6 @@ struct RulePaths {
     return matches_candidates(candidates);
   }
 };
-std::vector<std::string> lines(const std::string &s) {
-  std::vector<std::string> out;
-  std::istringstream in(s);
-  std::string l;
-  while (std::getline(in, l))
-    out.push_back(l);
-  return out;
-}
 struct Change {
   fs::path path;
   std::optional<std::string> before, after;
@@ -289,6 +282,8 @@ Decision Permissions::decide(const PermissionRequest &r,
     if (paths.matches(rule, r))
       return Decision::deny;
   if (config_.permission_mode == "plan" && r.mutation)
+    return Decision::deny;
+  if (r.tool == "read_file" && config_.permission_mode != "plan" && !r.internal_read)
     return Decision::deny;
   if (config_.permission_mode == "bypass")
     return Decision::allow;
@@ -458,18 +453,6 @@ PermissionRequest Tools::execution_request(const ToolCall &call) const {
   return request;
 }
 namespace {
-bool result_name(const fs::path &ref) {
-  const auto components = std::vector<fs::path>(ref.begin(), ref.end());
-  const auto identity = [](const std::string &value) {
-    return !value.empty() && value.size() <= 128 &&
-           value.find_first_not_of(
-               "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-") ==
-               std::string::npos;
-  };
-  return !ref.is_absolute() && components.size() == 3 && components[0] == "results" &&
-         identity(components[1].string()) && components[2].extension() == ".json" &&
-         identity(components[2].stem().string());
-}
 bool private_regular(const FileSystem &files, const fs::path &root, const fs::path &p,
                      bool directory = false) {
   const auto base = fs::absolute(root).lexically_normal();
@@ -506,6 +489,10 @@ bool Tools::private_read(const fs::path &p) const {
   if (!session_id_.empty() &&
       value == fs::absolute(artifact_index_path(artifacts, session_id_)).lexically_normal())
     return private_anchor(artifacts) && private_regular(files_, artifacts, value);
+  if (!session_id_.empty() &&
+      value ==
+          fs::absolute(artifacts / "indexes" / (session_id_ + ".results.jsonl")).lexically_normal())
+    return private_anchor(artifacts) && private_regular(files_, artifacts, value);
   const auto plans = config_.home / "plans";
   if (!session_id_.empty() &&
       value == fs::absolute(plans / (session_id_ + ".json")).lexically_normal())
@@ -516,11 +503,9 @@ bool Tools::private_read(const fs::path &p) const {
     return true;
   for (const auto &skill : skill_directories_)
     if (within(value, fs::absolute(skill).lexically_normal())) {
-      const auto anchor = within(fs::absolute(skill).lexically_normal(),
-                                 fs::absolute(config_.home).lexically_normal())
-                              ? config_.home
-                              : config_.cwd;
-      if (private_anchor(anchor) && private_regular(files_, anchor, value, true))
+      const auto found = skill_anchors_.find(skill);
+      if (found != skill_anchors_.end() && private_anchor(found->second) &&
+          private_regular(files_, found->second, value, true))
         return true;
     }
   const auto captures = fs::absolute(capture_directory(config_)).lexically_normal();
@@ -530,6 +515,38 @@ bool Tools::private_read(const fs::path &p) const {
     return private_anchor(captures) && private_regular(files_, captures, value);
   return within(value, fs::absolute(artifacts / "results").lexically_normal()) &&
          private_anchor(artifacts) && private_regular(files_, artifacts, value);
+}
+void Tools::restore_references(const std::vector<std::string> &references) {
+  bool changed = false;
+  for (const auto &ref : references) {
+    fs::path target;
+    if (result_name(ref))
+      target = artifact_directory(config_) / ref;
+    else if (capture_name(ref) && fs::path(ref) == fs::path(ref).filename())
+      target = capture_directory(config_) / ref;
+    else
+      throw Error("Invalid persisted result reference");
+    changed = referenced_results_.insert(fs::absolute(target).lexically_normal()).second || changed;
+  }
+  const auto root = artifact_directory(config_);
+  const auto index = root / "indexes" / (session_id_ + ".results.jsonl");
+  if (references.empty() || (!changed && fs::exists(index)))
+    return;
+  if (!private_anchor(root) || fs::is_symlink(root) || fs::is_symlink(index.parent_path()) ||
+      fs::is_symlink(index))
+    throw Error("Invalid result index storage");
+  fs::create_directories(index.parent_path());
+  if (::chmod(root.c_str(), 0700) || ::chmod(index.parent_path().c_str(), 0700))
+    throw Error("Cannot protect result index directory");
+  files_.atomic_stream(
+      index,
+      [&](const FileSystem::Writer &write) {
+        write(Json({{"version", 1}, {"session_id", session_id_}}).dump() + '\n');
+        for (const auto &ref : references)
+          write(Json({{"kind", result_name(ref) ? "result" : "capture"}, {"path", ref}}).dump() +
+                '\n');
+      },
+      true);
 }
 void Tools::reference_results(const std::vector<Message> &messages) {
   const auto accept = [&](const std::string &value) {
@@ -713,9 +730,7 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
           throw Error("Permission denied for " + candidate.name + ": " + value);
       };
       if (candidate.name == "read_file" || candidate.name == "view_image") {
-        if ((candidate.name == "read_file" && config_.permission_mode != "plan" &&
-             !request.internal_read) ||
-            permissions_.decide(request) == Decision::deny)
+        if (permissions_.decide(request) == Decision::deny)
           throw Error("Permission denied for " + candidate.name + ": " + request.target);
       } else if (candidate.name == "apply_patch") {
         for (const auto &line : patch_lines(candidate.arguments.at("patch")))
@@ -916,50 +931,11 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
   const auto structured = [](Json data) { return ToolResult{data.dump(), false, std::move(data)}; };
   if (definition->handler == ToolHandler::read) {
     auto fresh = execution_request(call);
-    if (config_.permission_mode != "plan" && !fresh.internal_read)
-      throw Error("read_file outside Plan mode is limited to advertised private context");
     authorize(fresh);
-    // Approval hooks/callbacks may change paths or rules without updatedInput.
     fresh = execution_request(call);
-    if ((config_.permission_mode != "plan" && !fresh.internal_read) ||
-        permissions_.decide(fresh) == Decision::deny)
+    if (permissions_.decide(fresh) == Decision::deny)
       throw Error("Permission denied for read_file: " + fresh.target);
     const auto p = files_.canonical(*fresh.path);
-    if (fs::is_directory(p)) {
-      Json entries = Json::array();
-      size_t visited = 0;
-      const auto context = permissions_.context();
-      for (const auto &entry : fs::directory_iterator(p)) {
-        cancel.check();
-        if (++visited > 10000)
-          break;
-        PermissionRequest candidate{"read_file", entry.path().string(), entry.path(), false};
-        candidate.internal_read = private_read(entry.path());
-        if ((config_.permission_mode != "plan" && !candidate.internal_read) ||
-            permissions_.decide(candidate, context) == Decision::deny)
-          continue;
-        entries.push_back({{"name", safe_text(entry.path().filename().string())},
-                           {"type", entry.is_symlink()     ? "symlink"
-                                    : entry.is_directory() ? "directory"
-                                                           : "file"}});
-        if (entries.dump().size() > config_.tool_output_limit / 2)
-          break;
-      }
-      return structured({{"entries", entries}, {"truncated", visited > entries.size()}});
-    }
-    auto opened = files_.open_read(p);
-    fresh = execution_request(call);
-    if (opened->path() != files_.canonical(*fresh.path) ||
-        (config_.permission_mode != "plan" && !fresh.internal_read) ||
-        permissions_.decide(fresh) == Decision::deny)
-      throw Error("Inspection target changed or permission denied while opening");
-    auto actual = fresh;
-    actual.path = opened->path();
-    if (permissions_.decide(actual) == Decision::deny)
-      throw Error("Permission denied for opened inspection target");
-    const bool bytes = a.contains("byte_offset") || a.contains("byte_limit");
-    if (bytes && (a.contains("offset") || a.contains("limit")))
-      throw Error("Choose line paging or byte paging");
     const auto number = [&](const char *key, uint64_t fallback, uint64_t maximum) {
       if (!a.contains(key))
         return fallback;
@@ -970,51 +946,174 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
         throw Error("Inspection range exceeds supported limit");
       return value;
     };
+    const auto context_budget = inspection_budget_.value_or(std::numeric_limits<size_t>::max());
+    const auto encoded = [&](const std::string &text, const Json &metadata) {
+      Message page;
+      page.role = "tool";
+      page.message_id = "00000000-0000-0000-0000-000000000000";
+      page.tool_call_id = call.id;
+      page.previewed = true;
+      page.text = Json({{"content", text}, {"is_error", false}, {"metadata", metadata}}).dump();
+      return Json(page).dump().size();
+    };
+    if (fs::is_directory(p)) {
+      if (a.contains("byte_offset") || a.contains("byte_limit"))
+        throw Error("Directory paging uses offset and limit");
+      const auto offset = number("offset", 1, uint64_t{1} << 62);
+      const auto count = number("limit", 2000, 100000);
+      if (!offset || !count)
+        throw Error("Invalid inspection range");
+      std::vector<fs::directory_entry> candidates;
+      bool bounded = false;
+      const auto context = permissions_.context();
+      size_t visited = 0;
+      for (const auto &entry : fs::directory_iterator(p)) {
+        cancel.check();
+        if (++visited > 10000) {
+          bounded = true;
+          break;
+        }
+        PermissionRequest candidate{"read_file", entry.path().string(), entry.path(), false};
+        candidate.internal_read = private_read(entry.path());
+        if (permissions_.decide(candidate, context) != Decision::deny)
+          candidates.push_back(entry);
+      }
+      std::sort(candidates.begin(), candidates.end(), [](const auto &left, const auto &right) {
+        return left.path().filename().native() < right.path().filename().native();
+      });
+      const auto budget =
+          std::min(context_budget,
+                   config_.tool_output_limit + encoded("", {{"next_entry_offset", UINT64_MAX},
+                                                            {"eof", false},
+                                                            {"truncated", true}}));
+      Json entries = Json::array();
+      const auto start = std::min<uint64_t>(offset - 1, candidates.size());
+      size_t at = static_cast<size_t>(start);
+      const Json page_meta = {
+          {"next_entry_offset", UINT64_MAX}, {"eof", false}, {"truncated", true}};
+      const auto empty_cost = encoded("", page_meta);
+      size_t page_cost =
+          encoded(Json({{"entries", entries}, {"truncated", false}}).dump(), page_meta);
+      for (; at < candidates.size() && at - start < count; ++at) {
+        const auto &entry = candidates[at];
+        Json row = {{"name", safe_text(entry.path().filename().string())},
+                    {"type", entry.is_symlink()     ? "symlink"
+                             : entry.is_directory() ? "directory"
+                                                    : "file"}};
+        const auto addition =
+            encoded(row.dump(), page_meta) - empty_cost + (entries.empty() ? 0 : 1);
+        if (addition > budget || page_cost > budget - addition)
+          break;
+        entries.push_back(std::move(row));
+        page_cost += addition;
+      }
+      if (at == start && at < candidates.size())
+        throw Error("Inspection budget cannot fit one directory entry; increase context_tokens");
+      const bool more = bounded || at < candidates.size();
+      return {Json({{"entries", entries}, {"truncated", more}}).dump(),
+              false,
+              {{"next_entry_offset", at + 1}, {"eof", !more}, {"truncated", more}}};
+    }
+    auto opened = files_.open_read(p);
+    fresh = execution_request(call);
+    if (opened->path() != files_.canonical(*fresh.path) ||
+        permissions_.decide(fresh) == Decision::deny)
+      throw Error("Inspection target changed or permission denied while opening");
+    auto actual = fresh;
+    actual.path = opened->path();
+    if (permissions_.decide(actual) == Decision::deny)
+      throw Error("Permission denied for opened inspection target");
+    const bool bytes = a.contains("byte_offset") || a.contains("byte_limit");
+    if (bytes && (a.contains("offset") || a.contains("limit")))
+      throw Error("Choose line paging or byte paging");
     const auto offset = bytes ? number("byte_offset", 0, uint64_t{1} << 62)
                               : number("offset", 1, uint64_t{1} << 62);
     const auto count = bytes ? number("byte_limit", 65536, 1048576) : number("limit", 2000, 100000);
     if (!count || (!bytes && !offset))
       throw Error("Invalid inspection range");
-    const auto cap = std::max<size_t>(
-        4, std::min(config_.tool_output_limit / 8,
-                    inspection_budget_ ? *inspection_budget_ / 16 : config_.tool_output_limit / 8));
+    Json maximum = {{"total_bytes", opened->size()},
+                    {"next_byte_offset", UINT64_MAX},
+                    {"bytes_read", UINT64_MAX},
+                    {"eof", false}};
+    if (!bytes) {
+      maximum["next_line"] = UINT64_MAX;
+      maximum["total_lines"] = UINT64_MAX;
+    }
+    const auto fixed = encoded("", maximum);
+    const auto budget = std::min(context_budget, fixed + config_.tool_output_limit);
+    // Hooks may add bounded feedback after the read. Reserve it only when configured.
+    const auto annotations = config_.hooks.empty() ? 0 : config_.tool_output_limit / 3;
+    const auto cap = budget > fixed + annotations ? budget - fixed - annotations : 0;
+    if (cap < 4)
+      throw Error("Inspection budget cannot fit a text page; increase context_tokens");
     if (bytes)
       opened->seek(offset);
     std::string text;
     uint64_t consumed = 0, line = 1, next_line = offset;
-    bool eof = false;
+    bool eof = false, full = false, any = false;
+    char last = 0;
+    size_t cost = 0;
+    static const auto weights = [] {
+      std::array<size_t, 256> out{};
+      for (size_t i = 0; i < out.size(); ++i) {
+        std::string value(1, static_cast<char>(i));
+        out[i] = i >= 128 ? 3 : Json(Json(value).dump()).dump().size() - 6;
+      }
+      return out;
+    }();
     char buffer[4096];
-    // Line scans consume a bounded buffer, including very long skipped lines.
-    while (text.size() < cap && (bytes ? consumed < count : line < offset + count)) {
+    while (!full && (bytes ? consumed < count : line < offset + count)) {
       cancel.check();
-      const auto want = bytes ? static_cast<size_t>(std::min<uint64_t>(
-                                    {sizeof buffer, cap - text.size(), count - consumed}))
-                              : sizeof buffer;
+      const auto want =
+          bytes ? static_cast<size_t>(std::min<uint64_t>(sizeof buffer, count - consumed))
+                : sizeof buffer;
       const auto n = opened->read(buffer, want);
       if (!n) {
         eof = true;
         break;
       }
+      size_t valid_until = 0;
       for (size_t i = 0; i < n; ++i) {
-        if (text.size() >= cap || (!bytes && line >= offset + count))
+        if (!bytes && line >= offset + count)
           break;
         const char ch = buffer[i];
         if (ch == '\0')
           throw Error("Binary file cannot be read as text");
+        const bool selected = bytes || line >= offset;
+        const auto prefix = !bytes && selected && (text.empty() || text.back() == '\n')
+                                ? std::to_string(line) + "\t"
+                                : "";
+        const auto lead = static_cast<unsigned char>(ch);
+        if (lead >= 0xc2 && i >= valid_until) {
+          const size_t width = lead <= 0xdf ? 2 : lead <= 0xef ? 3 : lead <= 0xf4 ? 4 : 0;
+          bool valid = width && width <= n - i;
+          for (size_t j = 1; valid && j < width; ++j) {
+            const auto next = static_cast<unsigned char>(buffer[i + j]);
+            const auto low = j == 1 && lead == 0xe0 ? 0xa0 : j == 1 && lead == 0xf0 ? 0x90 : 0x80;
+            const auto high = j == 1 && lead == 0xed ? 0x9f : j == 1 && lead == 0xf4 ? 0x8f : 0xbf;
+            valid = next >= low && next <= high;
+          }
+          if (valid)
+            valid_until = i + width;
+        }
+        const auto addition = (lead >= 128 && i < valid_until ? 1 : weights[lead]) + prefix.size() +
+                              (prefix.empty() ? 0 : 2);
+        if (selected && cost + addition > cap) {
+          full = true;
+          break;
+        }
         ++consumed;
-        if (bytes)
+        any = true;
+        last = ch;
+        if (selected) {
+          text += prefix;
           text += ch;
-        else {
-          if (line >= offset) {
-            if (text.empty() || text.back() == '\n')
-              text += std::to_string(line) + "\t";
-            text += ch;
-            next_line = line;
-          }
-          if (ch == '\n') {
-            ++line;
-            next_line = line;
-          }
+          cost += addition;
+          next_line = line;
+        }
+        if (!bytes && ch == '\n') {
+          ++line;
+          next_line = line;
         }
       }
     }
@@ -1038,17 +1137,19 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
           throw Error("byte_limit is too small for a Unicode character; use at least 4");
       }
     }
-    auto out = ToolResult{safe_text(text),
-                          false,
-                          {{"total_bytes", opened->size()},
-                           {"next_byte_offset", position},
-                           {"bytes_read", consumed},
-                           {"eof", eof}}};
+    ToolResult out{safe_text(text),
+                   false,
+                   {{"total_bytes", opened->size()},
+                    {"next_byte_offset", position},
+                    {"bytes_read", consumed},
+                    {"eof", eof}}};
     if (!bytes) {
       out.metadata["next_line"] = next_line;
       if (eof)
-        out.metadata["total_lines"] = line - (text.empty() || text.back() == '\n' ? 1 : 0);
+        out.metadata["total_lines"] = any ? line - (last == '\n' ? 1 : 0) : 0;
     }
+    if (encoded(out.content, out.metadata) > budget)
+      throw Error("Encoded inspection page exceeded its budget");
     return out;
   }
   if (definition->handler == ToolHandler::patch) {
@@ -1075,7 +1176,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
         throw Error("Duplicate file in batch/patch");
       if (!before && !after)
         throw Error("Cannot delete a missing file");
-      struct stat st{};
+      struct stat st {};
       const auto mode = stat(p.c_str(), &st) == 0 ? st.st_mode & 0777 : 0644;
       changes.push_back({p, before, std::move(after), static_cast<mode_t>(mode)});
     };
@@ -1462,133 +1563,6 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
   }
   throw Error("Unavailable tool handler");
 }
-std::string Tools::instructions() const {
-  const std::string inspection = "read_file";
-  const auto cwd = files_.canonical(config_.cwd), home = files_.canonical(config_.home);
-  fs::path root = cwd;
-  for (auto p = cwd; !p.empty(); p = p.parent_path()) {
-    if (fs::exists(p / ".git")) {
-      root = p;
-      break;
-    }
-    if (p == p.root_path())
-      break;
-  }
-  std::vector<fs::path> directories;
-  for (auto p = cwd;; p = p.parent_path()) {
-    directories.push_back(p);
-    if (p == root)
-      break;
-  }
-  directories.push_back(home);
-  std::string out;
-  const auto warn = [&](const std::string &message) {
-    if (warnings_.insert(message).second)
-      report_diagnostic(diagnostics_, message);
-  };
-  std::set<fs::path> seen;
-  const auto append = [&](const std::string &text, size_t cap) {
-    if (out.size() >= cap)
-      return false;
-    const auto clean = safe_text(text);
-    const auto portion = bounded_text(clean, cap - out.size());
-    out += portion;
-    return portion.size() == clean.size();
-  };
-  std::function<void(const fs::path &, int)> include = [&](const fs::path &input, int depth) {
-    const auto p = files_.canonical(input);
-    if (seen.count(p) || !fs::exists(p) || (!within(p, root) && !within(p, home)))
-      return;
-    if (depth > 16) {
-      warn("Instruction include depth exceeded: " + p.string());
-      return;
-    }
-    seen.insert(p);
-    if (!config_.project_doc_max_bytes)
-      return;
-    if (out.size() >= config_.project_doc_max_bytes) {
-      warn("Instruction budget exhausted; omitted: " + p.string());
-      return;
-    }
-    bool truncated = false;
-    std::string text;
-    try {
-      text = files_.read_prefix(p, config_.project_doc_max_bytes - out.size(), truncated);
-    } catch (const std::exception &e) {
-      warn("Instruction read failed: " + std::string(e.what()));
-      return;
-    }
-    append("\n# Instructions: " + p.string() + "\n", config_.project_doc_max_bytes);
-    const auto parts = lines(text);
-    for (size_t i = 0; i < parts.size(); ++i) {
-      const auto &line = parts[i];
-      const bool complete_line =
-          !truncated || i + 1 < parts.size() || (!text.empty() && text.back() == '\n');
-      if (complete_line && line.rfind("@include ", 0) == 0)
-        include(p.parent_path() / line.substr(9), depth + 1);
-      else if (complete_line && !line.empty() && line[0] == '@' &&
-               line.find(' ') == std::string::npos)
-        include(p.parent_path() / line.substr(1), depth + 1);
-      else if (!append(line + "\n", config_.project_doc_max_bytes)) {
-        truncated = true;
-        break;
-      }
-    }
-    if (truncated)
-      warn("Instruction content truncated to project_doc_max_bytes: " + p.string());
-  };
-  for (auto it = directories.rbegin(); it != directories.rend(); ++it) {
-    include(*it / "AGENTS.md", 0);
-    include(*it / "CLAUDE.md", 0);
-  }
-  const auto memory = config_.home / "memory";
-  size_t count = 0;
-  if (config_.memory_context_max_bytes && fs::exists(memory)) {
-    std::set<fs::path> paths;
-    bool omitted = false;
-    for (const auto &entry : fs::directory_iterator(memory))
-      if (!entry.is_symlink() && entry.is_regular_file() && entry.path().extension() == ".md") {
-        paths.insert(entry.path());
-        if (paths.size() > 200) {
-          paths.erase(std::prev(paths.end()));
-          omitted = true;
-        }
-      }
-    if (omitted)
-      warn("Memory file count exceeds 200; omitted later paths");
-    const auto cap = out.size() + config_.memory_context_max_bytes;
-    for (const auto &p : paths) {
-      if (++count > 200 || out.size() >= cap) {
-        warn("Memory context budget exhausted; use " + inspection + " to read additional files");
-        break;
-      }
-      if (!append("\n# Memory: " + p.string() + " (read through " + inspection + ")\n", cap))
-        break;
-      bool truncated = false;
-      try {
-        const auto text = files_.read_prefix(p, cap - out.size(), truncated);
-        append(text, cap);
-        if (truncated)
-          warn("Memory context truncated: " + p.string());
-      } catch (const std::exception &e) {
-        warn("Memory read failed: " + std::string(e.what()));
-      }
-    }
-  }
-  out += "\n# Available skills (read SKILL.md through " + inspection + ")\n";
-  count = 0;
-  skill_directories_.clear();
-  for (const auto &dir :
-       std::vector<fs::path>{config_.cwd / ".codet/skills", config_.cwd / ".agents/skills",
-                             config_.cwd / ".claude/skills", config_.home / "skills"})
-    if (fs::exists(dir))
-      for (const auto &entry : fs::directory_iterator(dir))
-        if (++count <= 100 && !entry.is_symlink() && fs::exists(entry.path() / "SKILL.md")) {
-          skill_directories_.push_back(entry.path());
-          out += entry.path().string() + "\n";
-        }
-  return out;
-}
 std::string Tools::dynamic_context() const {
   std::string out;
   if (!todos_.empty() || large_plan_) {
@@ -1597,7 +1571,10 @@ std::string Tools::dynamic_context() const {
            "; inspect with read_file.\n";
     if (large_plan_)
       out += "Saved plan is too large to preview; inspect it in pages before changing it.\n";
-    for (const auto *status : {"in_progress", "pending", "completed"})
+    bool omitted = false;
+    for (const auto *status : {"in_progress", "pending", "completed"}) {
+      if (omitted)
+        break;
       for (size_t i = 0; i < todos_.size(); ++i) {
         const auto &step = todos_[i];
         if (step.at("status") != status)
@@ -1608,12 +1585,19 @@ std::string Tools::dynamic_context() const {
                           (label.size() > 128 ? " [see full plan]" : "") + "\n";
         if (out.size() + line.size() + 100 > 8192) {
           out += "Additional steps omitted; read the full saved plan.\n";
+          omitted = true;
           break;
         }
         out += line;
       }
+    }
   }
   if (!session_id_.empty()) {
+    const auto results = artifact_directory(config_) / "indexes" / (session_id_ + ".results.jsonl");
+    if (fs::exists(results))
+      out += "\n# Retained tool results and captures\n" + results.string() +
+             "\nPage this reference index with read_file in any mode. Paths are relative to "
+             "the artifact root (results) or capture root (text captures). Captures may expire.\n";
     const auto index = artifact_index_path(artifact_directory(config_), session_id_);
     if (fs::exists(index))
       out += "\n# Historical image index\n" + index.string() + "\nPosition: " +

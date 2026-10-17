@@ -205,10 +205,11 @@ TEST_F(History, BytePagesReturnActualUtf8BoundariesAndUseBoundedReads) {
   EXPECT_EQ(page.content, "雪🌲");
   EXPECT_EQ(page.metadata["next_byte_offset"], 8);
   page = read(t, memory, {{"byte_offset", 8}, {"byte_limit", 1048576}});
-  EXPECT_LE(page.content.size(), config.tool_output_limit / 8);
+  EXPECT_GT(page.content.size(), config.tool_output_limit / 2);
+  EXPECT_LE(page.content.size(), config.tool_output_limit);
   EXPECT_EQ(page.metadata["next_byte_offset"], 8 + page.content.size());
   EXPECT_LE(files.largest, 4096u);
-  EXPECT_LT(files.bytes, 20000u);
+  EXPECT_LT(files.bytes, config.tool_output_limit + 10000);
   EXPECT_TRUE(read(t, memory, {{"byte_offset", 0}, {"offset", 1}}).error);
   EXPECT_TRUE(read(t, memory, {{"byte_offset", -1}}).error);
   EXPECT_TRUE(read(t, memory, {{"byte_limit", 0}}).error);
@@ -251,7 +252,8 @@ TEST_F(History, DefaultBudgetProjectsLargeBatchesWithoutRerunningOrLosingDurable
         EXPECT_EQ(Json::parse(result["content"].get<std::string>())["exit_code"], 0);
         if (!m.result_file.empty()) {
           ++references;
-          const auto path = result["metadata"]["result_path"].get<std::string>();
+          const auto path =
+              artifact_directory(config) / result["metadata"]["result_path"].get<std::string>();
           const codet::Message full = Json::parse(files.native.read(path)).get<codet::Message>();
           EXPECT_GE(full.text.size(), 45000u);
           EXPECT_FALSE(read(t, path, {{"byte_limit", 80}}).error);
@@ -266,7 +268,7 @@ TEST_F(History, DefaultBudgetProjectsLargeBatchesWithoutRerunningOrLosingDurable
   const auto saved = state.load_id(session.id);
   for (const auto &m : saved.messages)
     if (m.role == "tool")
-      EXPECT_GT(m.text.size(), 45000u);
+      EXPECT_TRUE(m.previewed);
 }
 TEST_F(History, SummaryEscapingEmptyAndExhaustionPreserveDurableHistory) {
   for (int failure = 0; failure < 3; ++failure) {
@@ -295,7 +297,7 @@ TEST_F(History, SummaryEscapingEmptyAndExhaustionPreserveDurableHistory) {
     Agent agent(config, provider, t, state, {});
     EXPECT_THAT([&] { agent.run(session, "human objective", cancel); },
                 ThrowsMessage<Error>(HasSubstr("history retained")));
-    EXPECT_EQ(requests, 1u);
+    EXPECT_EQ(requests, failure == 0 ? 2u : 1u);
     EXPECT_EQ(state.load_id(session.id).messages.front().text, old.text);
   }
 }
@@ -750,3 +752,381 @@ TEST_F(History, LegacyIndexesMigrateOnResumeAndForkWithoutNewAttachments) {
   EXPECT_EQ(image_history_position(root, files, child.id)["legacy_unknown"], 1);
 }
 } // namespace
+
+TEST_F(History, JsonBytePagesRemainVerbatimThroughSaveForkAndProviderFormatting) {
+  config.permission_mode = "plan";
+  const std::string source = "{\n  \"name\": \"example\",\n  \"version\": \"1\"\n}\n";
+  put(config.cwd / "package.json", source);
+  Tools t(config, files, processes, http, clock);
+  auto page = read(t, config.cwd / "package.json", {{"byte_offset", 0}});
+  ASSERT_FALSE(page.error) << page.content;
+  EXPECT_EQ(page.content, source);
+  StateStore state(config.home);
+  auto session = state.create();
+  codet::Message call;
+  call.role = "assistant";
+  call.calls = {{"json", "read_file", {{"path", "package.json"}, {"byte_offset", 0}}}};
+  codet::Message result;
+  result.role = "tool";
+  result.tool_call_id = "json";
+  result.text =
+      Json({{"content", page.content}, {"is_error", false}, {"metadata", page.metadata}}).dump();
+  session.messages = {call, result};
+  state.save(session);
+  const auto child = state.fork(state.load_id(session.id));
+  EXPECT_EQ(Json::parse(child.messages.back().text)["content"], source);
+  EXPECT_EQ(Json::parse(child.messages.back().text)["metadata"]["next_byte_offset"], source.size());
+  CredentialStore credentials(config.home, files, clock);
+  ApiProvider provider(http, credentials, clock);
+  std::function<bool(const Json &)> contains_page = [&](const Json &value) {
+    if (value.is_string())
+      return value.get<std::string>().find(source + "\n<codet_result>") != std::string::npos;
+    if (value.is_structured())
+      for (const auto &item : value)
+        if (contains_page(item))
+          return true;
+    return false;
+  };
+  for (const auto *name : {"codex", "openai", "anthropic", "google", "ollama"}) {
+    config.provider = name;
+    config.providers[name].api_key = "fixture";
+    const auto body = Json::parse(
+        provider
+            .request(config, "system", child.messages, Json::array(), {{"access_token", "fixture"}})
+            .body);
+    EXPECT_TRUE(contains_page(body)) << name;
+  }
+}
+TEST_F(History, DirectoryPagesRespectContextBudgetAndResumeInSortedOrder) {
+  config.permission_mode = "plan";
+  const auto dir = config.cwd / "listing";
+  fs::create_directories(dir);
+  for (int i = 0; i < 200; ++i)
+    put(dir / (std::to_string(1000 + i) + std::string(60, 'x')), "");
+  Tools t(config, files, processes, http, clock);
+  t.inspection_budget(2000);
+  size_t offset = 1, total = 0;
+  std::string previous;
+  do {
+    const auto page = read(t, dir, {{"offset", offset}, {"limit", 25}});
+    ASSERT_FALSE(page.error) << page.content;
+    EXPECT_LT(page.content.size(), 2000u);
+    const auto entries = Json::parse(page.content)["entries"];
+    ASSERT_FALSE(entries.empty());
+    for (const auto &entry : entries) {
+      const auto name = entry["name"].get<std::string>();
+      EXPECT_GT(name, previous);
+      previous = name;
+      ++total;
+    }
+    offset = page.metadata["next_entry_offset"].get<size_t>();
+    if (page.metadata["eof"] == true)
+      break;
+  } while (total < 250);
+  EXPECT_EQ(total, 200u);
+}
+TEST_F(History, PastEndLineCountsAndCaseAndHardLinkInspectionUseActualFiles) {
+  config.permission_mode = "plan";
+  put(config.cwd / "CaseFile", "a\nb");
+  Tools t(config, files, processes, http, clock);
+  EXPECT_EQ(read(t, config.cwd / "CaseFile", {{"offset", 5}}).metadata["total_lines"], 2);
+  fs::create_hard_link(config.cwd / "CaseFile", config.cwd / "hard-link");
+  EXPECT_FALSE(read(t, config.cwd / "hard-link").error);
+  if (fs::exists(config.cwd / "casefile"))
+    EXPECT_FALSE(read(t, config.cwd / "casefile").error);
+}
+TEST_F(History, PlanPreviewStopsOnceAndStaysInsideEightKiB) {
+  Tools t(config, files, processes, http, clock);
+  t.use_session("bounded-plan");
+  Json plan = Json::array();
+  for (size_t i = 0; i < 100; ++i)
+    plan.push_back({{"step", std::string(70, 'x')},
+                    {"status", i == 0   ? "in_progress"
+                               : i < 98 ? "pending"
+                                        : "completed"}});
+  ASSERT_FALSE(t.execute({"plan", "update_plan", {{"plan", plan}}}, cancel).error);
+  const auto view = t.dynamic_context();
+  EXPECT_LE(view.size(), 8192u);
+  const auto notice = view.find("Additional steps omitted");
+  ASSERT_NE(notice, std::string::npos);
+  EXPECT_EQ(view.find("Additional steps omitted", notice + 1), std::string::npos);
+  EXPECT_THAT(view.substr(notice), Not(HasSubstr("[completed]")));
+}
+TEST_F(History, StablePreviewsPreserveRawJournalAndCaptureReferencesAcrossCompactionAndFork) {
+  StateStore state(config.home);
+  auto session = state.create();
+  Tools t(config, files, processes, http, clock);
+  t.use_session(session.id);
+  codet::Message assistant;
+  assistant.role = "assistant";
+  assistant.message_id = unique_id();
+  assistant.calls = {{"output", "exec_command", {{"cmd", "test"}}}};
+  const std::string capture = "01234567-1234-1234-1234-0123456789ab.txt";
+  put(config.home / "tool-output" / capture, "complete raw capture");
+  codet::Message result;
+  result.role = "tool";
+  result.message_id = unique_id();
+  result.tool_call_id = "output";
+  result.text = Json({{"content", std::string(30000, 'x')},
+                      {"is_error", true},
+                      {"metadata",
+                       {{"spill_path", capture},
+                        {"capture_error", "partial capture"},
+                        {"post_action_error", "hook failed"},
+                        {"action_completed", true}}}})
+                    .dump();
+  session.messages = {assistant, result};
+  state.save(session);
+  state.tool_started(session.id, assistant.calls.front());
+  state.tool_finished(session.id, assistant.calls.front(), Json(result));
+  auto preview = project_history(session.messages, 5000, t);
+  const auto stable = session.messages.back().text;
+  const auto meta = Json::parse(stable)["metadata"];
+  EXPECT_EQ(meta["spill_path"], capture);
+  EXPECT_EQ(meta["capture_error"], "partial capture");
+  EXPECT_EQ(meta["post_action_error"], "hook failed");
+  codet::Message extra;
+  extra.role = "user";
+  extra.text = "additional user input";
+  extra.message_id = unique_id();
+  session.messages.push_back(extra);
+  EXPECT_EQ(project_history(session.messages, 10000, t)[1].text, stable);
+  state.save(session);
+  auto loaded = state.load_id(session.id);
+  state.reconcile(loaded);
+  EXPECT_EQ(loaded.messages[1].text, stable);
+  state.remember_references(session.id, loaded.messages);
+  loaded.messages = {extra}; // Simulate retirement of tool messages after a committed summary.
+  state.save(loaded);
+  const auto child = state.fork(loaded);
+  Tools resumed(config, files, processes, http, clock);
+  resumed.use_session(child.id);
+  resumed.restore_references(state.references(child.id));
+  const auto reference = resumed.execute({"raw", "read_file", {{"path", capture}}}, cancel);
+  EXPECT_FALSE(reference.error) << reference.content;
+  EXPECT_THAT(reference.content, HasSubstr("complete raw capture"));
+  config.set_deny({"read_file(*tool-output*)"});
+  EXPECT_TRUE(resumed.execute({"denied", "read_file", {{"path", capture}}}, cancel).error);
+  config.set_deny({});
+  const auto old_root = artifact_directory(config);
+  const auto moved = temp.root / "relocated-artifacts";
+  fs::copy(old_root, moved, fs::copy_options::recursive);
+  const auto moved_captures = temp.root / "relocated-captures";
+  fs::copy(config.home / "tool-output", moved_captures, fs::copy_options::recursive);
+  config.artifact_root = moved;
+  config.capture_root = moved_captures;
+  StateStore relocated(config.home, moved);
+  Tools moved_tools(config, files, processes, http, clock);
+  moved_tools.use_session(child.id);
+  moved_tools.restore_references(relocated.references(child.id));
+  EXPECT_FALSE(read(moved_tools, capture).error);
+  EXPECT_FALSE(read(moved_tools, preview[1].result_file).error);
+  EXPECT_TRUE(read(moved_tools, old_root / preview[1].result_file).error);
+}
+TEST_F(History, OversizedCompletedPatchCanCheckpointAfterSmallerContextResume) {
+  StateStore state(config.home);
+  auto session = state.create();
+  codet::Message user;
+  user.role = "user";
+  user.origin = "human";
+  user.text = "preserve this steering";
+  codet::Message assistant;
+  assistant.role = "assistant";
+  assistant.calls = {{"large", "apply_patch", {{"patch", std::string(130000, 'x')}}}};
+  codet::Message done;
+  done.role = "tool";
+  done.tool_call_id = "large";
+  done.text = Json({{"content", "completed"},
+                    {"is_error", false},
+                    {"metadata", {{"action_completed", true}, {"recovery", "uncertain"}}}})
+                  .dump();
+  session.messages = {user, assistant, done};
+  state.save(session);
+  Tools t(config, files, processes, http, clock);
+  config.context_tokens = codet::test::context_tokens(t, config, 12000);
+  Scripted provider;
+  size_t summaries = 0, normal = 0;
+  provider.script = [&](const Config &, const auto &, const auto &messages, const Json &schemas) {
+    if (schemas.empty()) {
+      ++summaries;
+      return text_result("Large patch was completed; inspect uncertainty before further action.");
+    }
+    ++normal;
+    EXPECT_THAT(Json(messages).dump(), HasSubstr("continue"));
+    EXPECT_THAT(Json(messages).dump(), HasSubstr("uncertain"));
+    for (const auto &m : messages)
+      EXPECT_TRUE(m.calls.empty());
+    return text_result("continued");
+  };
+  Agent agent(config, provider, t, state, {});
+  EXPECT_EQ(agent.run(session, "continue", cancel).text, "continued");
+  EXPECT_EQ(summaries, 1u);
+  EXPECT_EQ(normal, 1u);
+  EXPECT_FALSE(state.references(session.id).empty());
+}
+TEST_F(History, AdvisorySummaryTargetUsesActualSizeAndRetriesOnlyHardOverflow) {
+  for (int mode = 0; mode < 3; ++mode) {
+    StateStore state(config.home);
+    auto session = state.create();
+    codet::Message old;
+    old.role = "assistant";
+    old.text = std::string(20000, 'x');
+    codet::Message human;
+    human.role = "user";
+    human.origin = "human";
+    human.text = "latest";
+    session.messages = {old, human};
+    state.save(session);
+    Tools t(config, files, processes, http, clock);
+    config.context_tokens = codet::test::context_tokens(t, config, 5000);
+    Scripted provider;
+    size_t calls = 0;
+    provider.script = [&](const Config &, const auto &, const auto &, const Json &) {
+      ++calls;
+      auto out = text_result(mode == 0 || (mode == 1 && calls == 2) ? std::string(800, 'a')
+                                                                    : std::string(9000, 'x'));
+      out.usage.input = 11;
+      return out;
+    };
+    Agent agent(config, provider, t, state, {});
+    if (mode < 2) {
+      const auto result = agent.compact(session, cancel);
+      EXPECT_EQ(result.usage.input, mode == 0 ? 11 : 22);
+    } else {
+      EXPECT_THROW(agent.compact(session, cancel), Error);
+      EXPECT_EQ(state.load_id(session.id).messages.front().text, old.text);
+    }
+    EXPECT_EQ(calls, mode == 0 ? 1u : 2u);
+  }
+}
+TEST_F(History, LargeNewPatchDispatchesOnceAndFourPlanListingsStayRecoverable) {
+  for (bool listing : {false, true}) {
+    config.permission_mode = listing ? "plan" : "bypass";
+    Tools t(config, files, processes, http, clock);
+    config.context_tokens = codet::test::context_tokens(t, config, 14000);
+    StateStore state(config.home);
+    auto session = state.create();
+    if (listing)
+      for (int i = 0; i < 200; ++i)
+        put(config.cwd / "entries" / (std::to_string(1000 + i) + std::string(60, 'x')), "");
+    Scripted provider;
+    size_t normal = 0;
+    provider.script = [&](const Config &, const auto &, const auto &, const Json &schemas) {
+      if (schemas.empty())
+        return text_result(
+            "Completed the requested operation; inspect retained results as needed.");
+      if (++normal > 1)
+        return text_result("done");
+      auto out = text_result("");
+      if (listing)
+        for (int i = 0; i < 4; ++i)
+          out.message.calls.push_back(
+              {"listing-" + std::to_string(i), "read_file", {{"path", "entries"}}});
+      else
+        out.message.calls = {{"patch",
+                              "apply_patch",
+                              {{"patch", "*** Begin Patch\n*** Add File: big\n+" +
+                                             std::string(130000, 'x') + "\n*** End Patch\n"}}}};
+      return out;
+    };
+    Agent agent(config, provider, t, state, {});
+    EXPECT_EQ(agent.run(session, "perform requested work once", cancel).text, "done");
+    EXPECT_EQ(normal, 2u);
+    if (!listing)
+      EXPECT_EQ(files.native.read(config.cwd / "big").size(), 130001u);
+  }
+}
+TEST_F(History, SchemaFourBackfillsJournalReferencesEvenWhenTranscriptWasCompacted) {
+  std::string id;
+  const std::string capture = "01234567-1234-1234-1234-0123456789ab.txt";
+  {
+    StateStore state(config.home);
+    auto session = state.create();
+    id = session.id;
+    ToolCall call{"old-output", "exec_command", {{"cmd", "test"}}};
+    state.tool_started(id, call);
+    codet::Message result;
+    result.role = "tool";
+    result.tool_call_id = call.id;
+    result.text =
+        Json({{"content", "preview"}, {"is_error", false}, {"metadata", {{"spill_path", capture}}}})
+            .dump();
+    state.tool_finished(id, call, Json(result));
+  }
+  sqlite3 *db = nullptr;
+  ASSERT_EQ(sqlite3_open((config.home / "state.sqlite3").c_str(), &db), SQLITE_OK);
+  ASSERT_EQ(sqlite3_exec(db, "DROP TABLE session_references; PRAGMA user_version=4;", nullptr,
+                         nullptr, nullptr),
+            SQLITE_OK);
+  sqlite3_close(db);
+  StateStore upgraded(config.home);
+  EXPECT_THAT(upgraded.references(id), ElementsAre(capture));
+  put(config.home / "tool-output" / capture, "legacy capture");
+  Tools resumed(config, files, processes, http, clock);
+  resumed.use_session(id);
+  resumed.restore_references(upgraded.references(id));
+  EXPECT_FALSE(read(resumed, capture).error);
+  fs::remove(config.home / "tool-output" / capture);
+  EXPECT_NO_THROW(resumed.restore_references(upgraded.references(id)));
+  EXPECT_TRUE(read(resumed, capture).error);
+}
+TEST_F(History, SummaryRetryRunsHookOnceAndCancellationPreservesDurableHistory) {
+  config.hooks["PreCompact"] = Json::array({{{"command", "printf x >> compact-count"}}});
+  for (bool interrupted : {false, true}) {
+    StateStore state(config.home);
+    auto session = state.create();
+    codet::Message old;
+    old.role = "assistant";
+    old.text = std::string(20000, 'x');
+    codet::Message human;
+    human.role = "user";
+    human.origin = "human";
+    human.text = "latest";
+    session.messages = {old, human};
+    state.save(session);
+    const auto before = Json(state.load_id(session.id).messages);
+    Tools t(config, files, processes, http, clock);
+    config.context_tokens = codet::test::context_tokens(t, config, 5500);
+    Scripted provider;
+    size_t calls = 0;
+    provider.script = [&](const Config &, const auto &, const auto &, const Json &) {
+      if (interrupted) {
+        cancel.requested = true;
+        return text_result("cancelled summary");
+      }
+      return text_result(++calls == 1 ? std::string(9000, 'x') : "fits");
+    };
+    Agent agent(config, provider, t, state, {});
+    if (interrupted) {
+      EXPECT_THAT([&] { agent.compact(session, cancel); },
+                  ThrowsMessage<Error>(HasSubstr("Interrupted")));
+      EXPECT_EQ(Json(state.load_id(session.id).messages), before);
+      cancel.requested = false;
+    } else {
+      EXPECT_NO_THROW(agent.compact(session, cancel));
+      EXPECT_EQ(calls, 2u);
+    }
+  }
+  EXPECT_EQ(files.native.read(config.cwd / "compact-count"), "xx");
+}
+TEST_F(History, ReferencePublicationRollsBackAndRetryDoesNotUseUncommittedCache) {
+  StateStore state(config.home);
+  auto session = state.create();
+  codet::Message capture, result;
+  capture.result_file = "01234567-1234-1234-1234-0123456789ab.txt";
+  result.result_file = "results/" + session.id + "/archived.json";
+  sqlite3 *db = nullptr;
+  ASSERT_EQ(sqlite3_open((config.home / "state.sqlite3").c_str(), &db), SQLITE_OK);
+  ASSERT_EQ(
+      sqlite3_exec(db,
+                   "CREATE TRIGGER ref_fail BEFORE INSERT ON session_references "
+                   "WHEN NEW.kind='result' BEGIN SELECT RAISE(FAIL,'reference failure'); END;",
+                   nullptr, nullptr, nullptr),
+      SQLITE_OK);
+  EXPECT_THROW(state.remember_references(session.id, {capture, result}), Error);
+  EXPECT_TRUE(state.references(session.id).empty());
+  ASSERT_EQ(sqlite3_exec(db, "DROP TRIGGER ref_fail", nullptr, nullptr, nullptr), SQLITE_OK);
+  sqlite3_close(db);
+  EXPECT_NO_THROW(state.remember_references(session.id, {capture, result}));
+  EXPECT_EQ(state.references(session.id).size(), 2u);
+}

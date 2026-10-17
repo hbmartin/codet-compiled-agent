@@ -276,7 +276,7 @@ TEST_F(Prompts, CompactionPreservesAsyncSteeringAfterCompletedToolBatch) {
   auto session = state.create();
   codet::Message old;
   old.role = "system";
-  old.text = std::string(3500, 'x');
+  old.text = std::string(3000, 'x');
   session.messages = {old, old};
   state.save(session);
   Script provider;
@@ -325,7 +325,7 @@ TEST_F(Prompts, FixedOverheadAndUnshrinkableSummaryFailWithoutRepeatedRequests) 
   state.save(session);
   config.context_tokens = codet::test::context_tokens(t, config, 5000);
   EXPECT_THROW(agent.run(session, "latest", cancel), Error);
-  EXPECT_EQ(requests, 1);
+  EXPECT_EQ(requests, 2);
   EXPECT_EQ(state.load(session.id).messages.front().text, old.text);
 }
 TEST_F(Prompts, OversizedFirstInputFailsWithItsOwnBudgetDiagnostic) {
