@@ -793,6 +793,7 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
     result.message.replay_provider = c.provider;
     bool completed = false, saw = false;
     std::string stream_error;
+    bool stream_failed = false;
     std::map<size_t, AssistantText> streamed;
     auto item_event = [&](const std::string &type, const AssistantText &item,
                           const std::string &delta = std::string{}) {
@@ -820,13 +821,20 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
         completed = true;
         return;
       }
-      if (!stream_error.empty())
+      if (stream_failed)
         return;
+      if (event == "error" || event == "response.failed" || event == "response.incomplete") {
+        stream_failed = true;
+        stream_error = data;
+        saw = true;
+        return;
+      }
       const auto j = parse_object(data);
       saw = true;
       const auto type = j.value("type", event);
       if (j.contains("error") || type == "error" || type == "response.failed") {
         stream_error = data;
+        stream_failed = true;
         return;
       }
       if (uses_responses(c)) {
@@ -1009,7 +1017,7 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
         frame("", ndjson);
     } else
       sse.finish();
-    if (!stream_error.empty())
+    if (stream_failed)
       throw ProviderError("Provider stream reported an error", response.status, stream_error);
     // A JSON error body must not be mistaken for a successful empty stream.
     if (!saw || !completed)

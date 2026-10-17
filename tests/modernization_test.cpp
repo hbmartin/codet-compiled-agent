@@ -1,6 +1,7 @@
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/output.hpp"
+#include "process_helper.hpp"
 #include "temp.hpp"
 #include <csignal>
 #include <fcntl.h>
@@ -107,6 +108,19 @@ TEST_F(Modernization, RawProviderFailuresPreserveBodiesAndRetryRules) {
     FAIL();
   } catch (const ProviderError &e) {
     EXPECT_EQ(e.body, frame);
+  }
+  for (const auto &raw :
+       {std::string("<html>stream failure</html>"), std::string("bad\xff\0", 5), std::string{}}) {
+    http.requests = 0;
+    http.stream = "event: error\ndata: " + raw + "\n\n";
+    try {
+      provider.complete(config, "", {}, Json::array(), cancel, {});
+      FAIL();
+    } catch (const ProviderError &e) {
+      EXPECT_EQ(e.body, raw);
+      EXPECT_EQ(e.http_status, 200);
+    }
+    EXPECT_EQ(http.requests, 1);
   }
 }
 TEST_F(Modernization, PublicResponsesSharesReplayWithoutPrivateHeaders) {
@@ -545,42 +559,11 @@ TEST_F(Modernization, AbruptExitNeverReexecutesIncompleteToolsInEitherMode) {
         StateStore initial(root, {}, mode);
         id = initial.create().id;
       }
-      const auto child = ::fork();
+      const auto child = codet::test::start_helper(
+          {"--codet-crash-helper", root.string(), id, mode, complete ? "complete" : "intent"});
       ASSERT_GE(child, 0);
-      if (child == 0) {
-        try {
-          StateStore store(root, {}, mode);
-          auto session = store.load_id(id, false);
-          codet::Message assistant;
-          assistant.role = "assistant";
-          assistant.calls = {{"effect", "read_file", {{"path", "x"}}}};
-          session.messages.push_back(assistant);
-          store.append_messages(session, 0);
-          store.tool_started(id, assistant.calls[0]);
-          if (complete) {
-            codet::Message result;
-            result.role = "tool";
-            result.tool_call_id = "effect";
-            result.text = "completed once";
-            store.complete_tool(session, assistant.calls[0], result);
-          }
-          ::_exit(0);
-        } catch (...) {
-          ::_exit(1);
-        }
-      }
       int status = 0;
-      pid_t waited = 0;
-      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-      while ((waited = ::waitpid(child, &status, WNOHANG)) == 0 &&
-             std::chrono::steady_clock::now() < deadline)
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-      if (waited == 0) {
-        ::kill(child, SIGKILL);
-        ::waitpid(child, &status, 0);
-        FAIL() << "Crash fixture timed out";
-      }
-      ASSERT_EQ(waited, child);
+      ASSERT_TRUE(codet::test::wait_helper(child, status));
       ASSERT_TRUE(WIFEXITED(status));
       ASSERT_EQ(WEXITSTATUS(status), 0);
       StateStore store(root, {}, mode);
