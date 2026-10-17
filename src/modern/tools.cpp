@@ -334,7 +334,7 @@ void Tools::authorize(const PermissionRequest &r) {
                                  {"cwd", r.context.value("cwd", config_.cwd.string())}},
                                 *active_cancel_);
     if (hook.blocked || hook.stopped || hook.permission == Decision::deny)
-      throw Error("Permission denied by hook: " + hook.reason);
+      throw HookFailure("Permission denied by hook: " + hook.reason);
     if (hook.permission == Decision::allow)
       return;
   }
@@ -354,7 +354,8 @@ Tools::Tools(const Config &c, FileSystem &f, Processes &p, HttpTransport &h, Clo
       computer_(computer ? std::move(computer) : native_computer()),
       images_(images ? std::move(images) : native_images()) {
   (void)h;
-  for (const auto &root : {config_.home, config_.cwd, artifact_directory(c), capture_directory(c)})
+  for (const auto &root : {config_.home, invocation_directory(c), config_.cwd,
+                           artifact_directory(c), capture_directory(c)})
     private_anchors_[fs::absolute(root).lexically_normal()] = files_.canonical(root);
 }
 PermissionRequest Tools::execution_request(const ToolCall &call) const {
@@ -493,10 +494,11 @@ bool Tools::private_read(const fs::path &p) const {
       value ==
           fs::absolute(artifacts / "indexes" / (session_id_ + ".results.jsonl")).lexically_normal())
     return private_anchor(artifacts) && private_regular(files_, artifacts, value);
-  const auto plans = config_.home / "plans";
+  const auto plans = invocation_directory(config_) / "plans";
   if (!session_id_.empty() &&
       value == fs::absolute(plans / (session_id_ + ".json")).lexically_normal())
-    return private_anchor(config_.home) && private_regular(files_, config_.home, value);
+    return private_anchor(invocation_directory(config_)) &&
+           private_regular(files_, invocation_directory(config_), value);
   const auto memory = fs::absolute(config_.home / "memory").lexically_normal();
   if ((value == memory || (value.parent_path() == memory && value.extension() == ".md")) &&
       private_anchor(config_.home) && private_regular(files_, config_.home, value, value == memory))
@@ -818,7 +820,7 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
                         {"cwd", invocation_cwd}},
                        cancel);
     if (hook.blocked || hook.stopped)
-      throw Error("Hook blocked PreToolUse: " + hook.reason);
+      throw HookFailure("Hook blocked PreToolUse: " + hook.reason);
     if (hook.updated_input) {
       const auto updated = hook.updated_input.value();
       if (call.name == "exec_command") {
@@ -885,10 +887,14 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
         result.metadata["hook_stop"] = post.reason;
         prefix = "Tool completed; hook requested stop: " + post.reason + "\n";
       } else if (post.blocked)
-        throw Error(post.reason);
+        throw HookFailure(post.reason);
     } catch (const Error &e) {
       if (e.code == 130)
         throw;
+      if (dynamic_cast<const HookFailure *>(&e)) {
+        result.metadata["hook_stop"] = e.what();
+        result.metadata["hook_failure"] = true;
+      }
       prefix = "Tool completed; PostToolUse feedback: " + std::string(e.what()) + "\n";
       result.error = true;
       result.metadata["action_completed"] = true;
@@ -970,6 +976,11 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
         throw;
     }
     Json metadata = Json::object();
+    if (dynamic_cast<const HookFailure *>(&e)) {
+      metadata["hook_stop"] = e.what();
+      metadata["hook_failure"] = true;
+      metadata["action_completed"] = false;
+    }
     if (dynamic_cast<const ProcessTimeout *>(&e))
       metadata["exit_code"] = 124;
     return {bounded_text(e.what(), config_.tool_output_limit), true, metadata};
@@ -1515,8 +1526,18 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
     if (serialized.size() > 1048576)
       throw Error("Plan exceeds 1 MiB; saved plan unchanged");
     if (!session_id_.empty()) {
-      fs::create_directories(config_.home / "plans");
-      files_.atomic_write(config_.home / "plans" / (session_id_ + ".json"), serialized, true);
+      const auto plans = invocation_directory(config_) / "plans";
+      fs::create_directories(plans);
+      const auto target = plans / (session_id_ + ".json");
+      if (damaged_plan_ && fs::exists(target)) {
+        if (fs::is_symlink(target) || !fs::is_regular_file(target))
+          throw Error("Saved plan must be a regular file");
+        if (::chmod(target.c_str(), 0600))
+          throw Error("Cannot protect damaged plan");
+        fs::rename(target, plans / (session_id_ + ".corrupt-" + unique_id() + ".json"));
+      }
+      files_.atomic_write(target, serialized, true);
+      damaged_plan_ = false;
     }
     todos_ = plan;
     large_plan_ = false;
@@ -1634,7 +1655,8 @@ std::string Tools::dynamic_context() const {
   std::string out;
   if (!todos_.empty() || large_plan_) {
     out = "\n# Current task plan (bounded view; original step numbers)\n";
-    out += "Full saved plan: " + (config_.home / "plans" / (session_id_ + ".json")).string() +
+    out += "Full saved plan: " +
+           (invocation_directory(config_) / "plans" / (session_id_ + ".json")).string() +
            "; inspect with read_file.\n";
     if (large_plan_)
       out += "Saved plan is too large to preview; inspect it in pages before changing it.\n";
@@ -1695,15 +1717,35 @@ void Tools::use_session(const std::string &id) {
   referenced_results_.clear();
   large_plan_ = false;
   todos_ = Json::array();
-  const auto p = config_.home / "plans" / (id + ".json");
-  if (fs::exists(p)) {
+  damaged_plan_ = false;
+  const auto p = invocation_directory(config_) / "plans" / (id + ".json");
+  if (fs::exists(p) || fs::is_symlink(p)) {
+    if (fs::is_symlink(p) || !fs::is_regular_file(p))
+      throw Error("Saved plan must be a regular file");
     if (fs::file_size(p) > 1048576) {
       large_plan_ = true;
+      damaged_plan_ = true;
+      report_diagnostic(diagnostics_, "Saved task plan exceeds 1 MiB; preserved at " + p.string() +
+                                          "; resuming without an active plan");
       return;
     }
-    todos_ = Json::parse(files_.read(p, 1048576), nullptr, false);
-    if (!todos_.is_array())
-      throw Error("Invalid saved task plan");
+    const auto bytes = files_.read(p, 1048576);
+    todos_ = bytes.find('\0') == std::string::npos ? Json::parse(bytes, nullptr, false) : Json();
+    bool valid = todos_.is_array() && todos_.size() <= 100;
+    size_t active = 0;
+    if (valid)
+      for (const auto &step : todos_) {
+        const auto status = step.is_object() ? step.value("status", Json()) : Json();
+        valid = valid && step.is_object() && step.contains("step") && step["step"].is_string() &&
+                (status == "pending" || status == "in_progress" || status == "completed");
+        active += status == "in_progress";
+      }
+    if (!valid || active > 1) {
+      todos_ = Json::array();
+      damaged_plan_ = true;
+      report_diagnostic(diagnostics_, "Invalid saved task plan preserved at " + p.string() +
+                                          "; resuming without an active plan");
+    }
   }
 }
 std::string Tools::expand_command(const std::string &input) const {

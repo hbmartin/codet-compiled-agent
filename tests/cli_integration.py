@@ -31,7 +31,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == '/api/chat':
             data=(json.dumps({'message':{'role':'assistant','content':'fixture done'},'done':True})+'\n').encode()
             self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
-        if self.path == '/codex':
+        if self.path in ('/codex','/v1/responses'):
             prompt=next((m.get('content','') for m in reversed(body['input']) if m.get('role')=='user'),'')
             items=[{'type':'message','id':'progress-'+str(len(self.server.requests)),'phase':'commentary','role':'assistant','content':[{'type':'output_text','text':'Checking fixture'}]}]
             if prompt!='commentary-only':
@@ -42,6 +42,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                {'type':'response.output_text.delta','output_index':index,'item_id':item['id'],'delta':item['content'][0]['text']}])
             frames.append({'type':'response.completed','response':{'status':'completed','output':items}})
             data=''.join('data: '+json.dumps(frame)+'\n\n' for frame in frames).encode()
+            self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers()
+            for at in range(0,len(data),7):self.wfile.write(data[at:at+7]);self.wfile.flush()
+            return
+        if self.path == '/v1/messages':
+            completed=any(block.get('type')=='tool_result' for m in body['messages'] for block in m['content'])
+            if not completed:
+                frames=[{'type':'content_block_start','index':0,'content_block':{'type':'thinking','thinking':'','signature':'loopback-signed-empty'}},
+                        {'type':'content_block_start','index':1,'content_block':{'type':'tool_use','id':'plan','name':'update_plan','input':{'plan':[{'step':'fixture','status':'pending'}]}}}]
+            else:
+                frames=[{'type':'content_block_start','index':0,'content_block':{'type':'text','text':''}},
+                        {'type':'content_block_delta','index':0,'delta':{'type':'text_delta','text':'sonnet done'}}]
+            frames.append({'type':'message_stop'})
+            data=''.join('event: '+f['type']+'\ndata: '+json.dumps(f)+'\n\n' for f in frames).encode()
             self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers()
             for at in range(0,len(data),7):self.wfile.write(data[at:at+7]);self.wfile.flush()
             return
@@ -135,7 +148,7 @@ class CliTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory(prefix='codet-cli-');self.root=pathlib.Path(self.tmp.name);self.home=self.root/'home';self.home.mkdir();self.workspace=self.root/'workspace';self.workspace.mkdir()
         (self.home/'config.toml').write_text(f"provider='openai'\nmodel='fixture'\n[providers.openai]\napi_key='fake-key'\nbase_url='http://127.0.0.1:{self.server.server_port}/v1'\n")
-        self.env=dict(os.environ,CODET_HOME=str(self.home));self.env.pop('SEARXNG_URL',None)
+        self.env=dict(__import__("hermetic").environment(self.root/"user-home"),CODET_HOME=str(self.home));self.env.pop('SEARXNG_URL',None)
         self.server.requests=[]
     def tearDown(self):self.tmp.cleanup()
     def run_cli(self,*args,input=''):
@@ -277,8 +290,8 @@ class CliTests(unittest.TestCase):
         (self.home/'config.toml').write_text((self.home/'config.toml').read_text().split('[hooks]')[0])
         marker=self.configure_hooks(start='exit 1')
         marker.unlink(missing_ok=True)
-        r=self.run_cli('exec','simple');self.assertEqual(r.returncode,0)
-        self.assertIn('SessionStart exited with code 1',r.stderr)
+        r=self.run_cli('exec','simple');self.assertEqual(r.returncode,1)
+        self.assertIn('Control hook SessionStart failed',r.stderr)
         self.assertEqual([json.loads(x)['hook_event_name'] for x in marker.read_text().splitlines()],['SessionEnd'])
 
     def test_end_hook_runs_after_interruption(self):
@@ -355,7 +368,7 @@ class CliTests(unittest.TestCase):
                 if select.select([master],[],[],.03)[0]:received+=os.read(master,65536)
             self.assertEqual(p.poll(),0,repr(received))
         finally:
-            if p.poll() is None:p.kill();p.wait()
+            if p.poll() is None:p.kill();p.wait(timeout=5)
             os.close(master);os.close(slave)
 
     def test_small_core_commands_in_both_terminals_and_effort_resume(self):
@@ -365,11 +378,13 @@ class CliTests(unittest.TestCase):
             fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',40,120,0,0))
             p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
             received=b''
-            def wait_for(text):
+            def wait_for(text,retry=None):
                 nonlocal received
                 deadline=time.monotonic()+7
                 while text not in received and time.monotonic()<deadline:
                     if select.select([master],[],[],.03)[0]:received+=os.read(master,65536)
+                    if retry and b'after the active turn completes.' in received:
+                        received=b'';os.write(master,retry)
                 self.assertIn(text,received)
                 received=b''
             try:
@@ -381,7 +396,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(len(self.server.requests),count)
                 os.write(master,b'fixture\n');wait_for(b'fixture done')
                 self.assertEqual(self.server.requests[-1]['body']['reasoning_effort'],'high')
-                os.write(master,b'/status\n');wait_for(b'last_turn_usage_this_invocation')
+                os.write(master,b'/status\n');wait_for(b'last_turn_usage_this_invocation',b'/status\n')
                 os.write(master,b'/new\n');wait_for(b'Started ')
                 os.write(master,b'/status\n');wait_for(b'"last_turn_usage_this_invocation": null')
                 os.write(master,b'/quit\n')
@@ -390,7 +405,7 @@ class CliTests(unittest.TestCase):
                     if select.select([master],[],[],.03)[0]:received+=os.read(master,65536)
                 self.assertEqual(p.poll(),0,repr(received))
             finally:
-                if p.poll() is None:p.kill();p.wait()
+                if p.poll() is None:p.kill();p.wait(timeout=5)
                 os.close(master);os.close(slave)
             resumed=self.run_cli('exec','resume','--last','--json','fixture')
             self.assertEqual(resumed.returncode,0,resumed.stderr)
@@ -432,7 +447,7 @@ class CliTests(unittest.TestCase):
                     if select.select([master],[],[],.03)[0]:received+=os.read(master,65536)
                 self.assertEqual(process.poll(),0,repr(received))
             finally:
-                if process.poll() is None:process.kill();process.wait()
+                if process.poll() is None:process.kill();process.wait(timeout=5)
                 os.close(master);os.close(slave)
             (self.home/'config.toml').write_text("model_reasoning_effort='medium'\n"+base)
             result=self.run_cli('exec','resume','--last','fixture')
@@ -440,6 +455,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(self.server.requests[-1]['body']['reasoning_effort'],'medium')
 
     def test_invalid_known_model_effort_leaves_saved_selection_unchanged(self):
+        (self.home/'auth.json').write_text(json.dumps({'codex':{'access_token':'fixture'}}))
         import pty,select,sqlite3
         master,slave=pty.openpty()
         p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','line','--provider','codex'],stdin=slave,stdout=slave,stderr=slave,env=self.env)
@@ -462,7 +478,7 @@ class CliTests(unittest.TestCase):
                 if select.select([master],[],[],.03)[0]:received+=os.read(master,65536)
             self.assertEqual(p.poll(),0,repr(received))
         finally:
-            if p.poll() is None:p.kill();p.wait()
+            if p.poll() is None:p.kill();p.wait(timeout=5)
             os.close(master);os.close(slave)
 
     def test_image_arguments_validate_before_provider_and_allow_image_only(self):
@@ -535,7 +551,7 @@ class CliTests(unittest.TestCase):
                     if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
                 self.assertEqual(p.poll(),0,repr(received))
             finally:
-                if p.poll() is None:p.kill();p.wait()
+                if p.poll() is None:p.kill();p.wait(timeout=5)
                 os.close(master);os.close(slave)
 
     def test_curses_progress_clears_after_success_failure_and_cancellation(self):
@@ -576,7 +592,7 @@ class CliTests(unittest.TestCase):
                 if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
             self.assertEqual(p.poll(),0,repr(received))
         finally:
-            if p.poll() is None:p.kill();p.wait()
+            if p.poll() is None:p.kill();p.wait(timeout=5)
             os.close(master);os.close(slave)
 
     def test_cleanup_diagnostics_follow_curses_restoration(self):
@@ -604,7 +620,7 @@ class CliTests(unittest.TestCase):
             restored[3]&=~getattr(termios,'PENDIN',0);original[3]&=~getattr(termios,'PENDIN',0)
             self.assertEqual(restored,original)
         finally:
-            if p.poll() is None:p.kill();p.wait()
+            if p.poll() is None:p.kill();p.wait(timeout=5)
             os.close(master);os.close(slave)
 
     def test_export_fork_and_resume_of_a_live_session(self):
@@ -620,7 +636,7 @@ class CliTests(unittest.TestCase):
             self.assertNotEqual(branch,session)
             import sqlite3
             with contextlib.closing(sqlite3.connect(self.home/'state.sqlite3')) as db:
-                messages=json.loads(db.execute('SELECT messages FROM sessions WHERE id=?',(branch,)).fetchone()[0])
+                messages=[json.loads(row[0]) for row in db.execute('SELECT payload FROM session_messages WHERE session=? ORDER BY position',(branch,))]
             recovery=[json.loads(m['text'])['metadata']['recovery'] for m in messages if m['role']=='tool']
             self.assertEqual(recovery,['uncertain','not_started'])
             resumed=self.run_cli('exec','resume',session,'continue');self.assertEqual(resumed.returncode,1,resumed.stderr)
@@ -708,7 +724,7 @@ class CliTests(unittest.TestCase):
                 if mode=='curses':self.assertEqual(stderr.count(b'hook-visible'),1)
                 else:self.assertIn(b'hook-visible',stderr)
             finally:
-                if p.poll() is None:p.kill();p.wait()
+                if p.poll() is None:p.kill();p.wait(timeout=5)
                 p.stderr.close();os.close(master);os.close(slave)
 
     def test_curses_replay_and_cleanup_are_ordered_after_success_error_and_interrupt(self):
@@ -742,7 +758,7 @@ class CliTests(unittest.TestCase):
                     self.assertLess(stderr.index(b'live-before'),stderr.index(b'end-warning'));self.assertLess(stderr.index(b'end-warning'),stderr.index(b'end-error'))
                     self.assertIn(b'SessionEnd hook warning:',stderr);self.assertIn(b'SessionEnd hook cleanup failed:',stderr)
                 finally:
-                    if p.poll() is None:p.kill();p.wait()
+                    if p.poll() is None:p.kill();p.wait(timeout=5)
                     p.stderr.close();os.close(master);os.close(slave)
 
     def test_curses_replay_and_cleanup_have_independent_budgets_and_omission_notices(self):
@@ -768,7 +784,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(stderr.count(b'[Additional diagnostics omitted or truncated]'),2)
             self.assertLessEqual(len(stderr),1024)
         finally:
-            if p.poll() is None:p.kill();p.wait()
+            if p.poll() is None:p.kill();p.wait(timeout=5)
             p.stderr.close();os.close(master);os.close(slave)
 
     def test_ephemeral_capture_is_pageable_and_removed_after_success_or_error(self):
@@ -803,7 +819,7 @@ class CliTests(unittest.TestCase):
             self.assertFalse(list(temporary.glob('codet-ephemeral-*')))
             self.assertFalse((self.home/'tool-output').exists())
         finally:
-            if p.poll() is None:p.kill();p.wait()
+            if p.poll() is None:p.kill();p.wait(timeout=5)
             p.stdout.close();p.stderr.close()
 
     def test_new_session_lifecycle_and_invalid_hook_bytes_in_both_terminals(self):
@@ -828,9 +844,12 @@ class CliTests(unittest.TestCase):
                 wait_for(b'codet>');received=b''
                 os.write(master,b'/new\n');wait_for(b'Started ')
                 if mode=='line':wait_for(b'codet>')
-                received=b'';os.write(master,b'fixture-command\n');wait_for(b'fixture done')
-                tool=[m for m in self.server.requests[-1]['body']['messages'] if m['role']=='tool'][-1]
-                outcome=tool['content'];self.assertIn('Tool error:',outcome);self.assertIn('\ufffd',outcome)
+                received=b'';os.write(master,b'fixture-command\n');wait_for(b'Stopped by control hook')
+                import sqlite3
+                with sqlite3.connect(self.home/'state.sqlite3') as db:
+                    messages=[json.loads(row[0]) for row in db.execute('SELECT payload FROM session_messages ORDER BY rowid')]
+                outcome=[m for m in messages if m['role']=='tool'][-1]
+                self.assertIn('\ufffd',outcome['text'])
                 received=b'';os.write(master,b'simple\n');wait_for(b'fixture done')
                 os.write(master,b'/quit\n');deadline=time.monotonic()+6
                 while p.poll() is None and time.monotonic()<deadline:
@@ -840,7 +859,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual([x['hook_event_name'] for x in events],['SessionStart','SessionEnd'])
                 self.assertEqual(events[0]['session_id'],events[1]['session_id'])
             finally:
-                if p.poll() is None:p.kill();p.wait()
+                if p.poll() is None:p.kill();p.wait(timeout=5)
                 os.close(master);os.close(slave)
 
     def test_jsonl_real_tool_roundtrip_and_state(self):
@@ -857,14 +876,45 @@ class CliTests(unittest.TestCase):
     def test_text_final_only_and_output_file(self):
         output=self.root/'answer';r=self.run_cli('exec','-o',str(output),'simple')
         self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(r.stdout,'fixture done\n');self.assertEqual(output.read_text(),r.stdout)
+    def test_sonnet_signed_history_survives_tool_and_resume(self):
+        flags=['--provider','anthropic','--model','claude-sonnet-5-5','-c','providers.anthropic.api_key="fixture"','-c',f'providers.anthropic.base_url="http://127.0.0.1:{self.server.server_port}"']
+        r=self.run_cli('exec',*flags,'--output-format=json','start')
+        self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual(json.loads(r.stdout)['result'],'sonnet done')
+        first,second=[request['body'] for request in self.server.requests]
+        self.assertEqual(first['system'],second['system'])
+        signed=next(m for m in second['messages'] if m['role']=='assistant')
+        self.assertEqual(signed['content'][0],{'type':'thinking','thinking':'','signature':'loopback-signed-empty'})
+        r=self.run_cli('exec','resume','--last',*flags,'--output-format=json','continue')
+        self.assertEqual(r.returncode,0,r.stderr)
+        third=self.server.requests[-1]['body']
+        self.assertEqual(first['system'],third['system'])
+        self.assertEqual(next(m for m in third['messages'] if m['role']=='assistant'),signed)
+
+    def test_public_responses_runs_through_loopback(self):
+        r=self.run_cli('exec','--model','gpt-6.1-sol','-c','providers.openai.wire_api="responses"','--output-format=json','simple')
+        self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual(json.loads(r.stdout)['result'],'Final fixture answer')
+        self.assertEqual(self.server.requests[-1]['path'],'/v1/responses')
+        self.assertEqual(self.server.requests[-1]['body']['reasoning']['effort'],'medium')
+
+    def test_deterministic_failures_do_not_create_sessions(self):
+        for flags in [('--durability','invalid','simple'),('-c','hooks.PreToolUse=[{command="true",on_error="invalid"}]','simple'),('/missing-command',)]:
+            r=self.run_cli('exec',*flags)
+            self.assertNotEqual(r.returncode,0)
+            self.assertFalse((self.home/'state.sqlite3').exists(),r.stderr)
+        (self.home/'config.toml').write_text("provider='openai'\n")
+        r=self.run_cli('exec','simple');self.assertNotEqual(r.returncode,0)
+        self.assertFalse((self.home/'state.sqlite3').exists(),r.stderr)
+
     def test_stdin_and_single_json_result(self):
         r=self.run_cli('exec','--output-format=json',input='piped prompt');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(json.loads(r.stdout)['result'],'fixture done')
     def test_schema_validates_final_answer(self):
         schema=self.root/'schema.json';schema.write_text(json.dumps({'type':'object','properties':{'answer':{'type':'integer'}},'required':['answer']}))
         r=self.run_cli('exec','--output-format=json','--output-schema',str(schema),'fixture-schema')
         self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(json.loads(r.stdout)['structured_output'],{'answer':42})
-    def test_provider_errors_do_not_echo_body_or_credentials(self):
-        r=self.run_cli('exec','--output-format=json','fixture-error');self.assertEqual(r.returncode,1);self.assertEqual(json.loads(r.stdout)['status'],'error');self.assertNotIn('do-not-leak',r.stdout+r.stderr)
+    def test_provider_errors_preserve_raw_body(self):
+        r=self.run_cli('exec','--output-format=json','fixture-error');self.assertEqual(r.returncode,1);self.assertEqual(json.loads(r.stdout)['status'],'error');self.assertEqual(json.loads(r.stdout)['provider_error']['body'],'{"error":{"message":"do-not-leak-fake-credential"}}')
     def test_ephemeral_session_not_saved(self):
         r=self.run_cli('exec','--ephemeral','simple');self.assertEqual(r.returncode,0,r.stderr)
         r=self.run_cli('sessions');self.assertEqual(json.loads(r.stdout),[])
@@ -906,7 +956,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(before[3]&~pending,after[3]&~pending)
                 self.assertEqual(before[:3],after[:3])
             finally:
-                if p.poll() is None:p.kill();p.wait()
+                if p.poll() is None:p.kill();p.wait(timeout=5)
                 os.close(master);os.close(slave)
     def test_interactive_interrupt_restores_terminal(self):
         import pty,termios,select
@@ -923,7 +973,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(p.poll(),130,repr(received));after=termios.tcgetattr(slave);pending=getattr(termios,'PENDIN',0)
                 self.assertEqual(before[3]&~pending,after[3]&~pending)
             finally:
-                if p.poll() is None:p.kill();p.wait()
+                if p.poll() is None:p.kill();p.wait(timeout=5)
                 os.close(master);os.close(slave)
     def test_both_terminal_modes_answer_questions(self):
         import pty,select
@@ -945,7 +995,7 @@ class CliTests(unittest.TestCase):
                     if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
                 self.assertEqual(p.poll(),0,repr(received))
             finally:
-                if p.poll() is None:p.kill();p.wait()
+                if p.poll() is None:p.kill();p.wait(timeout=5)
                 os.close(master);os.close(slave)
 
     def test_async_questions_and_sleep_wake_in_both_terminal_modes(self):
@@ -968,7 +1018,7 @@ class CliTests(unittest.TestCase):
                     if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
                 self.assertEqual(p.poll(),0,repr(received))
             finally:
-                if p.poll() is None:p.kill();p.wait()
+                if p.poll() is None:p.kill();p.wait(timeout=5)
                 os.close(master);os.close(slave)
 
     def test_late_slash_steering_runs_before_a_deferred_new_session(self):
@@ -1008,7 +1058,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(process.poll(),0,repr(received))
             finally:
                 release.touch()
-                if process.poll() is None:process.kill();process.wait()
+                if process.poll() is None:process.kill();process.wait(timeout=5)
                 process.stderr.close();os.close(master);os.close(slave)
 
 if __name__=='__main__':unittest.main()

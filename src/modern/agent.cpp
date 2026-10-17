@@ -190,7 +190,8 @@ bool Agent::compact_history(Session &session, const Cancellation &cancel,
     throw capacity("Compaction instructions and human input cannot fit");
   ContextMetrics work;
   request.text =
-      label + context_excerpt(Json(older).dump(), summary_budget - fixed, 1, &work).text + steering;
+      label + context_excerpt(semantic_transcript(older), summary_budget - fixed, 1, &work).text +
+      steering;
   if (Json(std::vector<Message>{request}).dump().size() > summary_budget)
     throw capacity("Compaction request exceeded its reserved input allowance");
   bool accepted = false;
@@ -233,11 +234,14 @@ bool Agent::compact_history(Session &session, const Cancellation &cancel,
   cancel.check();
   const auto before = session.messages.size();
   auto previous = std::move(session.messages);
+  auto previous_provider = std::move(session.provider_state);
+  session.provider_state = nullptr;
   session.messages = std::move(continuation);
   try {
-    state_.save(session);
+    state_.replace_history(session);
   } catch (...) {
     session.messages = std::move(previous);
+    session.provider_state = std::move(previous_provider);
     throw;
   }
   if (events_)
@@ -349,8 +353,9 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
     user.text = expanded;
     user.images = images;
     additions.push_back(user);
+    const auto first_prompt = session.messages.size();
     PromptAppend pending(session, std::move(additions));
-    state_.save(session);
+    state_.append_messages(session, first_prompt);
     pending.commit();
     // Project documents and previews are loaded once; runtime facts refresh per request.
     const auto project_context = tools_.instructions();
@@ -358,6 +363,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
     size_t requests = 0;
     while (requests < config_.max_turns) {
       cancel.check();
+      const auto first_incoming = session.messages.size();
       const auto incoming_input = tools_.take_input();
       for (const auto &text : incoming_input) {
         Message incoming;
@@ -369,7 +375,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         emit({{"type", "codet.user_input.received"}, {"text", text}});
       }
       if (!incoming_input.empty())
-        state_.save(session);
+        state_.append_messages(session, first_incoming);
       const auto capabilities = tools_.capabilities();
       Json schemas = tools_.schemas(capabilities);
       if (validator)
@@ -398,8 +404,10 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         throw context_error("Fixed prompt, tools and output reserve cannot fit", 1);
       auto available = budget.available();
       tools_.reference_results(session.messages);
-      const auto previews_before = std::count_if(session.messages.begin(), session.messages.end(),
-                                                 [](const auto &m) { return m.previewed; });
+      std::vector<bool> previews_before;
+      previews_before.reserve(session.messages.size());
+      for (const auto &m : session.messages)
+        previews_before.push_back(m.previewed);
       bool hard = false;
       std::vector<Message> request_messages;
       auto trial = session.messages;
@@ -455,9 +463,13 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
           references.push_back(std::move(ref));
         }
       state_.remember_references(session.id, references);
-      if (previews_before != std::count_if(session.messages.begin(), session.messages.end(),
-                                           [](const auto &m) { return m.previewed; }))
-        state_.save(session);
+      std::vector<size_t> revisions;
+      if (!compacted)
+        for (size_t i = 0; i < session.messages.size(); ++i)
+          if (session.messages[i].previewed && !previews_before.at(i))
+            revisions.push_back(i);
+      if (!revisions.empty())
+        state_.revise_messages(session, revisions);
       const auto item_id = unique_id();
       bool fallback_started = false;
       std::set<std::string> streamed_ids;
@@ -469,6 +481,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         }
       };
       ++requests;
+      provider_.restore_conversation(session.provider_state);
       auto response = provider_.complete(
           config_, system, request_messages, schemas, cancel,
           [&](const std::string &delta) {
@@ -496,7 +509,8 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
           item.id = unique_id();
       response.message.message_id = unique_id();
       session.messages.push_back(response.message);
-      state_.save(session);
+      session.provider_state = provider_.conversation_state();
+      state_.append_messages(session, session.messages.size() - 1, true);
       if (response.message.assistant_items.empty()) {
         start_fallback();
         emit({{"type", "item.completed"},
@@ -524,6 +538,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
       if (response.message.calls.empty()) {
         const auto incoming = tools_.take_input();
         if (!incoming.empty()) {
+          const auto first = session.messages.size();
           for (const auto &text : incoming) {
             Message m;
             m.role = "user";
@@ -533,7 +548,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
             session.messages.push_back(m);
             emit({{"type", "codet.user_input.received"}, {"text", text}});
           }
-          state_.save(session);
+          state_.append_messages(session, first);
           continue;
         }
         if (validator && structured.is_null())
@@ -555,6 +570,8 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
           else if (stop.blocked)
             throw Error(stop.reason);
         } catch (const Error &e) {
+          if (dynamic_cast<const HookFailure *>(&e))
+            throw;
           if (e.code == 130 || ++stop_blocks > 3)
             throw;
           Message blocked;
@@ -564,7 +581,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
           blocked.text = "Completion hook blocked the stop: " + std::string(e.what()) +
                          ". Address its requirements without repeating completed side effects.";
           session.messages.push_back(blocked);
-          state_.save(session);
+          state_.append_messages(session, session.messages.size() - 1);
           continue;
         }
         state_.finish_turn(session.id, "complete");
@@ -628,9 +645,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         std::vector<Message> normalized{std::move(tool)};
         portable_messages(normalized, session.id, call.name);
         tool = std::move(normalized.front());
-        state_.tool_finished(session.id, call, Json(tool));
-        session.messages.push_back(tool);
-        state_.save(session);
+        state_.complete_tool(session, call, std::move(tool));
         item["status"] = result.error && !result.metadata.value("action_completed", false)
                              ? "failed"
                              : "completed";
@@ -642,8 +657,8 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         if (result.failure_after_completion)
           std::rethrow_exception(result.failure_after_completion);
         if (result.metadata.contains("hook_stop"))
-          throw Error("Stopped by PostToolUse hook: " +
-                      result.metadata.at("hook_stop").get<std::string>());
+          throw HookFailure("Stopped by control hook: " +
+                            result.metadata.at("hook_stop").get<std::string>());
       }
     }
     throw Error("Maximum model turns reached");
@@ -651,7 +666,11 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
     if (e.code == 130)
       tools_.cancel_exec();
     recover(e.code == 130 ? "interrupted" : "failed");
-    emit({{"type", "turn.failed"}, {"error", {{"message", e.what()}}}});
+    const auto *provider_error = dynamic_cast<const ProviderError *>(&e);
+    auto details = provider_error ? provider_error->details() : Json{{"message", e.what()}};
+    if (dynamic_cast<const HookFailure *>(&e))
+      details["hook_failure"] = true;
+    emit({{"type", "turn.failed"}, {"error", details}});
     throw;
   } catch (const std::exception &e) {
     recover("failed");

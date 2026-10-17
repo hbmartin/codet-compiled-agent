@@ -6,6 +6,7 @@ import json
 import pathlib
 import tarfile
 import urllib.request
+from verified_sources import extract_verified
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -22,9 +23,9 @@ def main():
     for lock,prefix in locks:
       for dep in lock['dependencies']:
         archive = dest / (prefix+dep['name'] + ('.tar' if prefix else '.tar.gz'))
-        if not archive.exists():
+        if not archive.exists() or hashlib.sha256(archive.read_bytes()).hexdigest() != dep['sha256']:
             if args.offline:
-                raise SystemExit('Missing archive: ' + str(archive))
+                raise SystemExit('Missing or outdated archive: ' + str(archive))
             with urllib.request.urlopen(dep['url'], timeout=120) as response:
                 data = response.read()
             if hashlib.sha256(data).hexdigest() != dep['sha256']:
@@ -32,13 +33,7 @@ def main():
             archive.write_bytes(data)
         if hashlib.sha256(archive.read_bytes()).hexdigest() != dep['sha256']:
             raise SystemExit('Checksum mismatch: ' + dep['name'])
-        with tarfile.open(archive) as bundle:
-            archive_prefix = bundle.getmembers()[0].name.split('/')[0] + '/'
-            for member in bundle.getmembers():
-                if not member.name.startswith(archive_prefix):
-                    continue
-                member.name = ('tiger-' if lock.get('tigerports_revision') else '') + dep['name'] + '/' + member.name[len(archive_prefix):]
-                bundle.extract(member, dest, filter='data')
+        extract_verified(archive, dep['sha256'], dest / (prefix + dep['name']))
         print(dep['name'], dep['version'], dep['sha256'])
       for patch in lock.get('patches',[]):
         path=dest/'tiger-patches'/patch['name']/patch['path']

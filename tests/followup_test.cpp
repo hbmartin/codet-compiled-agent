@@ -4,6 +4,7 @@
 #include "codet/process_control.hpp"
 #include "codet/prompt.hpp"
 #include "core_tools.hpp"
+#include "process_helper.hpp"
 #include "prompt_support.hpp"
 #include "temp.hpp"
 #include <cerrno>
@@ -66,6 +67,7 @@ TEST_F(Followup, EveryAdapterOmitsEmptyToolsAndKeepsNonemptyDeclarations) {
   for (const auto &name : {"codex", "anthropic", "google", "openai", "ollama"}) {
     config.provider = name;
     config.providers[name].api_key = "fixture";
+    config.providers[name].wire_api = "chat_completions";
     config.providers[name].image_input = true;
     const auto empty = Json::parse(
         provider.request(config, "system", {}, Json::array(), {{"access_token", "fake"}}).body);
@@ -124,6 +126,7 @@ TEST_F(Followup, CompactionUsesRealAdaptersWithoutToolsAndRetainsNormalTools) {
   for (const auto &name : {"codex", "anthropic", "google", "openai", "ollama"}) {
     config.provider = name;
     config.providers[name].api_key = "fixture";
+    config.providers[name].wire_api = "chat_completions";
     config.providers[name].image_input = true;
     StateStore state(config.home);
     auto session = state.create();
@@ -162,7 +165,9 @@ TEST_F(Followup, ShellSpoolPreservesOutputAndSupportsReadPaging) {
   files.atomic_write(config.cwd / "source", text);
   Tools tools(config, files, processes, http, clock);
   const auto result = execute_core(
-      tools, config, {"shell", "exec_command", {{"cmd", "cat source"}, {"login", false}}}, cancel);
+      tools, config,
+      {"shell", "exec_command", {{"cmd", "cat source"}, {"login", false}, {"shell", "/bin/sh"}}},
+      cancel);
   ASSERT_FALSE(result.error) << result.content;
   EXPECT_LE(result.content.size(), config.tool_output_limit);
   EXPECT_THAT(result.content, HasSubstr("HEAD"));
@@ -189,9 +194,12 @@ TEST_F(Followup, ShellSpoolPreservesOutputAndSupportsReadPaging) {
 }
 TEST_F(Followup, SmallCommandsDoNotCreateCaptureFiles) {
   Tools tools(config, files, processes, http, clock);
-  const auto result = execute_core(
-      tools, config, {"small", "exec_command", {{"cmd", "printf approved"}, {"login", false}}},
-      cancel);
+  const auto result =
+      execute_core(tools, config,
+                   {"small",
+                    "exec_command",
+                    {{"cmd", "printf approved"}, {"login", false}, {"shell", "/bin/sh"}}},
+                   cancel);
   ASSERT_FALSE(result.error);
   EXPECT_EQ(result.content, "approved");
   EXPECT_FALSE(result.metadata.contains("spill_path"));
@@ -202,7 +210,9 @@ TEST_F(Followup, InvalidByteExpansionKeepsOriginalCaptureAndQuotaMetadata) {
   files.atomic_write(config.cwd / "source", std::string(300, '\xff'));
   Tools tools(config, files, processes, http, clock);
   const auto result = execute_core(
-      tools, config, {"bytes", "exec_command", {{"cmd", "cat source"}, {"login", false}}}, cancel);
+      tools, config,
+      {"bytes", "exec_command", {{"cmd", "cat source"}, {"login", false}, {"shell", "/bin/sh"}}},
+      cancel);
   ASSERT_FALSE(result.error);
   EXPECT_LE(result.content.size(), config.tool_output_limit);
   const fs::path path = result.metadata["spill_path"].get<std::string>();
@@ -224,7 +234,9 @@ TEST_F(Followup, PortableShellSearchSkipsGeneratedAndBinaryFiles) {
       {"search",
        "exec_command",
        {{"cmd", "find . -type d \\( -name .git -o -name build -o -name node_modules \\) -prune -o "
-                "-type f -exec grep -I -n -E -e 'needle|alternative' /dev/null {} +"}}},
+                "-type f -exec grep -I -n -E -e 'needle|alternative' /dev/null {} +"},
+        {"login", false},
+        {"shell", "/bin/sh"}}},
       cancel);
   ASSERT_FALSE(result.error) << result.content;
   EXPECT_EQ(result.content, "./unicode-雪.txt:1:needle\n");
@@ -282,24 +294,15 @@ TEST_F(Followup, CaptureOwnershipCoordinatesAcrossProcesses) {
   int ready[2], release[2];
   ASSERT_EQ(::pipe(ready), 0);
   ASSERT_EQ(::pipe(release), 0);
-  const auto pid = ::fork();
+  const auto pid =
+      codet::test::start_helper({"--codet-capture-helper", (config.home / "tool-output").string(),
+                                 std::to_string(ready[1]), std::to_string(release[0])},
+                                {ready[0], release[1]});
   ASSERT_GE(pid, 0);
-  if (!pid) {
-    ::close(ready[0]);
-    ::close(release[1]);
-    OutputSpool active(config.home / "tool-output", 8, 8, 64);
-    active.append("123456");
-    active.flush();
-    char token = active.bytes() == 6 ? 'y' : 'n';
-    (void)::write(ready[1], &token, 1);
-    (void)::read(release[0], &token, 1);
-    active.close();
-    ::_exit(0);
-  }
   ::close(ready[1]);
   ::close(release[0]);
   char token = 0;
-  EXPECT_EQ(::read(ready[0], &token, 1), 1);
+  EXPECT_TRUE(codet::test::read_token(ready[0], token));
   EXPECT_EQ(token, 'y');
   OutputSpool other(config.home / "tool-output", 8, 8, 64);
   other.append("abcd");
@@ -308,7 +311,7 @@ TEST_F(Followup, CaptureOwnershipCoordinatesAcrossProcesses) {
   EXPECT_TRUE(other.truncated());
   (void)::write(release[1], &token, 1);
   int status = 0;
-  EXPECT_EQ(::waitpid(pid, &status, 0), pid);
+  EXPECT_TRUE(codet::test::wait_helper(pid, status));
   EXPECT_EQ(status, 0);
   ::close(ready[0]);
   ::close(release[1]);
@@ -318,7 +321,9 @@ TEST_F(Followup, SpoolFailureKeepsExitStatusAndSerializablePreview) {
   files.atomic_write(config.cwd / "source", std::string(3000, '\xff') + "TAIL\n");
   Tools tools(config, files, processes, http, clock);
   const auto result = execute_core(
-      tools, config, {"shell", "exec_command", {{"cmd", "cat source"}, {"login", false}}}, cancel);
+      tools, config,
+      {"shell", "exec_command", {{"cmd", "cat source"}, {"login", false}, {"shell", "/bin/sh"}}},
+      cancel);
   EXPECT_FALSE(result.error);
   EXPECT_EQ(result.metadata["exit_code"], 0);
   EXPECT_TRUE(result.metadata.contains("capture_error"));

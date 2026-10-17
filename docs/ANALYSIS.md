@@ -1,5 +1,7 @@
 # Static analysis findings for the recovered PPC application
 
+Historical analysis of the recovered C target at the revision below. Its local `analysis/` harness and Makefile targets have been retired; the reproduction commands describe that archived setup. Current application checks are documented in [MODERN-ANALYSIS.md](MODERN-ANALYSIS.md).
+
 The highest-priority issues are the reconstructed address calculation in `cache_init`, which adds two object addresses before initializing a dynamic string, and unsafe shell quoting in search operations. Tool execution reaches the cache initializer; query/regex text can alter generated shell syntax under the prerequisites below. The reviewed results distinguish source-confirmed problems, conditional leaks, and model-related diagnostics.
 
 Analyzed application revision: `37bcaaf48512c2948487e783bcb59180dcc2c388`, on October 14, 2026 (America/Los_Angeles). Application C and headers are unchanged by this analysis setup. No PPC application or defective fixture was executed.

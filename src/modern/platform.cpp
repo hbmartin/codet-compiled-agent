@@ -46,10 +46,22 @@ struct CurlContext {
   const ChunkSink &sink;
   size_t max;
   int idle_seconds;
+  int status = 200;
   CurlContext(const Cancellation &c, const ChunkSink &s, size_t maximum, int idle)
       : cancel(c), sink(s), max(maximum), idle_seconds(idle) {}
   std::chrono::steady_clock::time_point activity = std::chrono::steady_clock::now();
 };
+size_t curl_header(char *p, size_t s, size_t n, void *data) {
+  if (s != 0 && n > SIZE_MAX / s)
+    return 0;
+  const size_t bytes = s * n;
+  if (bytes >= 5 && std::string(p, 5) == "HTTP/") {
+    std::istringstream line(std::string(p, bytes));
+    std::string version;
+    line >> version >> static_cast<CurlContext *>(data)->status;
+  }
+  return bytes;
+}
 size_t curl_write(char *p, size_t s, size_t n, void *data) {
   auto &c = *static_cast<CurlContext *>(data);
   if (s != 0 && n > SIZE_MAX / s)
@@ -63,7 +75,7 @@ size_t curl_write(char *p, size_t s, size_t n, void *data) {
     if (bytes)
       c.activity = std::chrono::steady_clock::now();
     c.body.append(p, bytes);
-    if (c.sink)
+    if (c.sink && c.status >= 200 && c.status < 300)
       c.sink(std::string(p, bytes));
   } catch (const std::exception &e) {
     c.error = e.what();
@@ -298,6 +310,8 @@ HttpResponse CurlTransport::perform(const HttpRequest &r, const Cancellation &ca
   curl_easy_setopt(raw, CURLOPT_ERRORBUFFER, error);
   curl_easy_setopt(raw, CURLOPT_WRITEFUNCTION, curl_write);
   curl_easy_setopt(raw, CURLOPT_WRITEDATA, &c);
+  curl_easy_setopt(raw, CURLOPT_HEADERFUNCTION, curl_header);
+  curl_easy_setopt(raw, CURLOPT_HEADERDATA, &c);
   curl_easy_setopt(raw, CURLOPT_NOPROGRESS, 0L);
   curl_easy_setopt(raw, CURLOPT_XFERINFOFUNCTION, curl_progress);
   curl_easy_setopt(raw, CURLOPT_XFERINFODATA, &c);

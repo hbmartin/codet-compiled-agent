@@ -1,8 +1,10 @@
 # Codet: a C++17 coding agent for PowerPC Tiger
 
-Codet is a single-agent terminal coding assistant targeting **Mac OS X 10.4 / PPC32**, with acceptance testing on a **G4 with 512 MB RAM**. It provides a minimal ncurses interface, an editable line REPL, and a Codex-shaped headless CLI.
+Codet is an **unofficial C++17 adaptation of the official Codex CLI**, implemented as a single-agent terminal coding assistant targeting **Mac OS X 10.4 / PPC32**, with acceptance testing on a **G4 with 512 MB RAM**. It provides a minimal ncurses interface, an editable line REPL, and a Codex-shaped headless CLI.
 
 The modern application retains Anthropic, OpenAI, Google, and Ollama providers and adds imported ChatGPT/Codex subscription credentials with refresh. It exposes Codex core tool contracts, yielding shell/PTY sessions, patches, image inputs, asynchronous terminal interaction, and native Tiger computer use through screenshots, accessibility, input events, clipboard and AppleScript. Sessions, memory previews/consolidation, hooks and text/JSON exports remain available.
+
+Codex subscription access remains the default, using imported credentials and the private ChatGPT transport. This unofficial compatibility boundary can change independently of public APIs; API-key providers are available as fallbacks. See [reliability, migration and provider behavior](docs/RELIABILITY-MODERNIZATION.md).
 
 **Verification boundary:** host fixtures and cross-build/static checks are separate from target execution. Tiger runtime and live provider acceptance must be established using the owner-run test bundle. No build or packaging target executes PPC code.
 

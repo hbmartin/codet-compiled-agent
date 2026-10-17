@@ -28,7 +28,7 @@ int open_regular(const fs::path &path, int flags, bool protect) {
   const int fd = ::open(path.c_str(), flags | O_NOFOLLOW | O_NONBLOCK, 0600);
   if (fd < 0)
     throw Error("Cannot open output capture: " + std::string(std::strerror(errno)));
-  struct stat status{};
+  struct stat status {};
   if (::fstat(fd, &status) || !S_ISREG(status.st_mode) || status.st_uid != ::geteuid() ||
       (protect && ::fchmod(fd, 0600)) || ::fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) {
     ::close(fd);
@@ -154,97 +154,7 @@ OutputSpool::~OutputSpool() {
     ::close(fd_);
 }
 size_t OutputSpool::available(size_t requested) {
-  struct Record {
-    fs::path path;
-    uint64_t bytes = 0;
-    int64_t seconds = 0, nanoseconds = 0;
-    bool active = false, readable = false;
-    dev_t device = 0;
-    ino_t inode = 0;
-  };
-  ++store_->metrics.scans;
-  std::vector<Record> records;
-  uint64_t total = 0;
-  size_t completed = 0;
-  for (const auto &entry : fs::directory_iterator(store_->directory_)) {
-    const auto name = entry.path().filename().string();
-    if (!((name.rfind("capture-", 0) == 0 && entry.path().extension() == ".txt") ||
-          uuid_name(name)))
-      continue;
-    struct stat st{};
-    if (::lstat(entry.path().c_str(), &st) != 0) {
-      store_->warn("Cannot inspect " + name);
-      continue;
-    }
-    if (!S_ISREG(st.st_mode) || st.st_size < 0) {
-      store_->warn("Ignoring nonregular entry " + name);
-      continue;
-    }
-    const auto bytes = static_cast<uint64_t>(st.st_size);
-    if (bytes > UINT64_MAX - total)
-      throw Error("Output store size overflow");
-    total += bytes;
-    bool active = fd_ >= 0 && entry.path() == path_, readable = true;
-    if (!active) {
-      try {
-        Descriptor file(open_regular(entry.path(), O_RDWR, false));
-        struct stat opened{};
-        require(::fstat(file.fd, &opened) == 0, "Inspect output capture");
-        if (opened.st_dev != st.st_dev || opened.st_ino != st.st_ino)
-          throw Error("Capture changed during inspection");
-        if ((opened.st_mode & 0777) != 0600)
-          require(::fchmod(file.fd, 0600) == 0, "Protect existing capture");
-        if (::flock(file.fd, LOCK_EX | LOCK_NB) < 0) {
-          if (errno != EWOULDBLOCK && errno != EAGAIN)
-            throw Error("Cannot inspect output ownership");
-          active = true;
-        }
-      } catch (const Error &e) {
-        readable = false;
-        store_->warn(name + ": " + e.what());
-      }
-    }
-    if (!active)
-      ++completed;
-#ifdef __APPLE__
-    const auto modified = st.st_mtimespec;
-#else
-    const auto modified = st.st_mtim;
-#endif
-    records.push_back({entry.path(), bytes, modified.tv_sec, modified.tv_nsec, active, readable,
-                       st.st_dev, st.st_ino});
-  }
-  std::sort(records.begin(), records.end(), [](const auto &a, const auto &b) {
-    return std::tie(a.seconds, a.nanoseconds, a.path) < std::tie(b.seconds, b.nanoseconds, b.path);
-  });
-  for (const auto &record : records) {
-    if (completed <= store_->records_ && total <= store_->quota_ &&
-        requested <= store_->quota_ - total)
-      break;
-    if (record.active || !record.readable)
-      continue;
-    try {
-      Descriptor owned(open_regular(record.path, O_RDWR, false));
-      if (::flock(owned.fd, LOCK_EX | LOCK_NB) < 0)
-        continue;
-      struct stat current{}, link{};
-      require(::fstat(owned.fd, &current) == 0 && ::lstat(record.path.c_str(), &link) == 0,
-              "Recheck capture eviction");
-      if (current.st_dev != record.device || current.st_ino != record.inode ||
-          link.st_dev != current.st_dev || link.st_ino != current.st_ino)
-        throw Error("Capture changed before eviction");
-      require(::unlink(record.path.c_str()) == 0, "Evict completed output capture");
-      total -= record.bytes;
-      --completed;
-    } catch (const Error &e) {
-      store_->warn(record.path.filename().string() + ": " + e.what());
-    }
-  }
-  if (completed > store_->records_)
-    return 0;
-  return total < store_->quota_
-             ? static_cast<size_t>(std::min(uint64_t{requested}, store_->quota_ - total))
-             : 0;
+  return store_->reserve(*this, requested);
 }
 void OutputSpool::flush_checked() {
   if (pending_size_ == 0)
@@ -258,6 +168,7 @@ void OutputSpool::flush_checked() {
   }
   Descriptor lock(open_regular(store_->directory_ / ".capture.lock", O_CREAT | O_RDWR, true));
   require(::flock(lock.fd, LOCK_EX) == 0, "Lock output store");
+  store_->prepare_catalog();
   ++store_->metrics.batches;
   if (fd_ < 0) {
     path_ = store_->directory_ / ("capture-" + unique_id() + ".txt");
@@ -345,7 +256,8 @@ void OutputSpool::close() {
     }
   } else {
     // Only remove our own empty file, never a substituted directory entry.
-    struct stat own{}, current{};
+    struct stat own {
+    }, current{};
     if (::fstat(fd_, &own) == 0 && ::lstat(path_.c_str(), &current) == 0 &&
         own.st_dev == current.st_dev && own.st_ino == current.st_ino)
       (void)::unlink(path_.c_str());
@@ -353,13 +265,12 @@ void OutputSpool::close() {
   ::close(fd_);
   fd_ = -1;
   try {
-    Descriptor lock(open_regular(store_->directory_ / ".capture.lock", O_CREAT | O_RDWR, true));
-    require(::flock(lock.fd, LOCK_EX) == 0, "Lock output store");
-    (void)available(0);
+    store_->account_closed(*this);
   } catch (const std::bad_alloc &) {
     throw;
   } catch (const std::exception &e) {
-    error_ = bounded_text(e.what(), 1024);
+    error_ = e.what();
+    truncated_ = true;
   }
 }
 RenderedOutput render_output(const OutputSnapshot &data, size_t limit) {
@@ -386,7 +297,8 @@ RenderedOutput render_output(const OutputSnapshot &data, size_t limit) {
           omitted};
 }
 fs::path capture_directory(const Config &config) {
-  return config.capture_root.empty() ? config.home / "tool-output" : config.capture_root;
+  return config.capture_root.empty() ? invocation_directory(config) / "tool-output"
+                                     : config.capture_root;
 }
 OutputCapture::OutputCapture(std::shared_ptr<CaptureStore> store, size_t limit)
     : store_(std::move(store)), limit_(limit) {

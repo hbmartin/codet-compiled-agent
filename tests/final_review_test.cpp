@@ -113,6 +113,8 @@ TEST_F(FinalReview, SeparateHookChannelsCannotStarveControlOutput) {
   config.hooks["PreToolUse"] = Json::array(
       {{{"command",
          "printf '{\"decision\":\"block\",\"reason\":\"'; printf '%01000d' 0; printf '\"}'"}}});
+  EXPECT_THROW(tools.run_hooks("PreToolUse", Json::object(), cancel), HookFailure);
+  config.hooks["PreToolUse"][0]["on_error"] = "warn";
   EXPECT_FALSE(tools.run_hooks("PreToolUse", Json::object(), cancel).blocked);
   EXPECT_THAT(diagnostics, Contains(HasSubstr("truncated JSON")));
 }

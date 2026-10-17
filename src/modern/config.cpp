@@ -153,6 +153,7 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
     c.approval = data.value("approval_policy", c.approval);
     c.ui = data.value("ui", c.ui);
     c.theme = data.value("theme", c.theme);
+    c.durability = data.value("durability", c.durability);
     c.effort = data.value("model_reasoning_effort", "");
     if (selection.contains("model_reasoning_effort"))
       c.selected_effort = selection.at("model_reasoning_effort").get<std::string>();
@@ -176,6 +177,9 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
         p.api_key = expand_env(it.value().value("api_key", ""));
         p.base_url = it.value().value("base_url", "");
         p.model = it.value().value("model", "");
+        p.wire_api = it.value().value("wire_api", "auto");
+        if (p.wire_api != "auto" && p.wire_api != "responses" && p.wire_api != "chat_completions")
+          throw Error("wire_api must be auto, responses, or chat_completions", 2);
         if (it.value().contains("image_input"))
           p.image_input = it.value().at("image_input").get<bool>();
         c.providers[it.key()] = p;
@@ -198,6 +202,8 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
     throw Error("Invalid permission_mode", 2);
   if (c.approval != "on-request" && c.approval != "never")
     throw Error("Invalid approval_policy", 2);
+  if (c.durability != "durable" && c.durability != "fast")
+    throw Error("durability must be durable or fast", 2);
   for (const auto &provider : {c.provider, c.selected_provider.value_or(c.provider)})
     if (provider != "codex" && provider != "openai" && provider != "anthropic" &&
         provider != "google" && provider != "ollama")
@@ -221,11 +227,11 @@ std::string default_model(const Config &c, const std::string &provider) {
   const auto found = c.providers.find(provider);
   if (found != c.providers.end() && !found->second.model.empty())
     return found->second.model;
-  return provider == "anthropic" ? "claude-sonnet-4-5"
-         : provider == "google"  ? "gemini-2.5-flash"
+  return provider == "anthropic" ? "claude-sonnet-5-5"
+         : provider == "google"  ? "gemini-3.8-flash"
          : provider == "ollama"  ? "qwen3-coder"
          : provider == "codex"   ? "gpt-5.5"
-                                 : "gpt-4o-mini";
+                                 : "gpt-6.1-sol";
 }
 Selection resolve_selection(const Config &c, const std::optional<Selection> &saved) {
   const auto previous = saved && !saved->provider.empty() ? saved->provider : c.configured.provider;

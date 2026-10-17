@@ -1,4 +1,5 @@
 #include "codet/core.hpp"
+#include "codet/output.hpp"
 #include "temp.hpp"
 #include <chrono>
 #include <fstream>
@@ -109,9 +110,48 @@ int main(int argc, char **argv) {
     inspection_bench();
     return 0;
   }
+  if (argc > 1 && std::string(argv[1]) == "captures") {
+    TempDirectory temp;
+    auto store = std::make_shared<CaptureStore>(temp.root / "captures");
+    for (int i = 0; i < 40; ++i) {
+      OutputSpool old(store);
+      old.append(std::string(4096, 'r'));
+      old.close();
+    }
+    OutputSpool active(store);
+    active.append(std::string(65536, 'x'));
+    active.flush();
+    const auto scans = store->metrics.scans;
+    const auto start = std::chrono::steady_clock::now();
+    for (int i = 0; i < 100; ++i) {
+      active.append(std::string(65536, 'x'));
+      active.flush();
+    }
+    if (store->metrics.scans != scans)
+      throw Error("Ordinary flush scanned the whole store");
+    active.close();
+    struct rusage io {};
+    getrusage(RUSAGE_SELF, &io);
+    std::cout
+        << Json({{"flushes", 100},
+                 {"capture_bytes", active.bytes()},
+                 {"capture_syncs", store->metrics.syncs},
+                 {"capture_batches", store->metrics.batches},
+                 {"retained_files", 40},
+                 {"ordinary_flush_scans", store->metrics.scans - scans},
+                 {"seconds",
+                  std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count()},
+                 {"peak_rss_bytes", peak_rss()},
+                 {"input_blocks", io.ru_inblock},
+                 {"output_blocks", io.ru_oublock}})
+               .dump()
+        << std::endl;
+    return 0;
+  }
   const size_t payload = argc > 1 ? static_cast<size_t>(std::stoul(argv[1])) : 512;
   TempDirectory temporary;
-  StateStore state(temporary.root / "state");
+  const std::string mode = argc > 2 ? argv[2] : "durable";
+  StateStore state(temporary.root / "state", {}, mode);
   auto session = state.create();
   uint64_t written = 0, transcript = 2;
   double save_seconds = 0;
@@ -129,10 +169,12 @@ int main(int argc, char **argv) {
     transcript += Json(result).dump().size() + (i > 1 ? 1 : 0);
     session.messages.push_back(std::move(result));
     const auto saving = std::chrono::steady_clock::now();
-    state.save(session);
+    state.append_messages(session, session.messages.size() - 1);
     save_seconds +=
         std::chrono::duration<double>(std::chrono::steady_clock::now() - saving).count();
-    written += transcript;
+    written = state.serialized_bytes();
+    if (written > transcript * 2)
+      throw Error("Append serialized unchanged history");
     if (i % 100 == 0) {
       struct rusage usage {};
       if (getrusage(RUSAGE_SELF, &usage))
@@ -148,7 +190,12 @@ int main(int argc, char **argv) {
       std::cout << Json({{"results", i},
                          {"payload_bytes", payload},
                          {"transcript_bytes", transcript},
-                         {"cumulative_transcript_bytes", written},
+                         {"serialized_bytes", written},
+                         {"database_bytes", fs::file_size(temporary.root / "state/state.sqlite3")},
+                         {"wal_bytes", fs::file_size(temporary.root / "state/state.sqlite3-wal")},
+                         {"durability", mode},
+                         {"input_blocks", usage.ru_inblock},
+                         {"output_blocks", usage.ru_oublock},
                          {"seconds", elapsed},
                          {"save_seconds", save_seconds},
                          {"peak_rss_bytes", rss_bytes}})

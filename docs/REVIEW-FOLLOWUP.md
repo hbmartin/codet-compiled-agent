@@ -1,5 +1,7 @@
 # Follow-up review dispositions
 
+These are historical dispositions for the stated baseline. [Reliability modernization](RELIABILITY-MODERNIZATION.md) supersedes the former fail-open hook policy and whole-transcript persistence design.
+
 Base: main `1d6c0e3bfe0ca247b421bdc54e72a13fbc254e2d` (merged PR #4). This batch preserves C++17, PPC750/Tiger, application dependency pins, application exit codes, the JSONL subset and unrelated local work. No PR changes or push are part of delivery.
 
 ## Application review

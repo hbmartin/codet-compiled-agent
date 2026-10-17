@@ -65,6 +65,7 @@ struct Fixture : Test {
     config.provider = "openai";
     config.model = "fixture-model";
     config.providers["openai"].api_key = "fake-key";
+    config.providers["openai"].wire_api = "chat_completions";
   }
   void write(const std::string &p, const std::string &text) {
     files.atomic_write(config.cwd / p, text);
@@ -76,6 +77,10 @@ struct Fixture : Test {
     if (name == "exec_command" && input.contains("command")) {
       input["cmd"] = input["command"];
       input.erase("command");
+    }
+    if (name == "exec_command") {
+      input["shell"] = "/bin/sh";
+      input["login"] = false;
     }
     if (name == "clock.sleep" && input.contains("seconds")) {
       input["duration_ms"] = std::max(1, input.at("seconds").get<int>() * 1000);
@@ -383,7 +388,8 @@ TEST_F(Fixture, StateMigratesV1AndRejectsTruncatedMessages) {
     EXPECT_EQ(state.load("old").provider, "ollama");
   }
   ASSERT_EQ(sqlite3_open((config.home / "state.sqlite3").c_str(), &db), SQLITE_OK);
-  ASSERT_EQ(sqlite3_exec(db, "UPDATE sessions SET messages='[{';", nullptr, nullptr, nullptr),
+  ASSERT_EQ(sqlite3_exec(db, "UPDATE sessions SET messages='[{',message_format=0;", nullptr,
+                         nullptr, nullptr),
             SQLITE_OK);
   sqlite3_close(db);
   StateStore state(config.home);

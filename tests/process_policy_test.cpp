@@ -305,6 +305,8 @@ TEST_F(Policies, ValidLargeDenyUsesFullChannelBudgetAndUnusedStdoutIsIgnored) {
   EXPECT_EQ(h.reason.size(), 40000u);
   files.atomic_write(config.cwd / "decision",
                      Json({{"decision", "block"}, {"reason", std::string(70000, 'x')}}).dump());
+  EXPECT_THROW(tools.run_hooks("PreToolUse", Json::object(), cancel), HookFailure);
+  config.hooks["PreToolUse"][0]["on_error"] = "warn";
   EXPECT_FALSE(tools.run_hooks("PreToolUse", Json::object(), cancel).blocked);
   EXPECT_THAT(diagnostics, Contains(HasSubstr("truncated JSON")));
   config.tool_output_limit = 512;

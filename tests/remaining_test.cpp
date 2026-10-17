@@ -34,6 +34,7 @@ struct Remaining : Test {
     config.provider = "openai";
     config.model = "fixture";
     config.providers["openai"].api_key = "fake";
+    config.providers["openai"].wire_api = "chat_completions";
   }
 
   ToolCall call(const std::string &name, const Json &args) {
@@ -499,17 +500,18 @@ TEST_F(Remaining, HookFailurePlaintextStderrAndExplicitDenialsFollowEventSemanti
     EXPECT_FALSE(result.blocked);
     EXPECT_FALSE(result.diagnostics.empty());
   }
-  for (const auto &command :
-       {"printf '{bad'", "exit 1", "exit 2", "printf ignored", "printf x >&2; exit 3"}) {
+  for (const auto &command : {"printf '{bad'", "exit 1", "printf x >&2; exit 3"}) {
     hook("PreToolUse", command);
-    const auto result = tools.run_hooks("PreToolUse", Json::object(), cancel);
-    EXPECT_FALSE(result.blocked);
-    EXPECT_FALSE(result.stopped);
+    EXPECT_THROW(tools.run_hooks("PreToolUse", Json::object(), cancel), HookFailure);
+    config.hooks["PreToolUse"][0]["on_error"] = "warn";
+    EXPECT_FALSE(tools.run_hooks("PreToolUse", Json::object(), cancel).blocked);
   }
   hook("PreToolUse", "printf reason >&2; exit 2");
   EXPECT_TRUE(tools.run_hooks("PreToolUse", Json::object(), cancel).blocked);
+  hook("PreToolUse", "exit 2");
+  EXPECT_TRUE(tools.run_hooks("PreToolUse", Json::object(), cancel).blocked);
   hook("SessionStart", "printf reason >&2; exit 2");
-  EXPECT_FALSE(tools.run_hooks("SessionStart", Json::object(), cancel).blocked);
+  EXPECT_TRUE(tools.run_hooks("SessionStart", Json::object(), cancel).blocked);
   hook("PreCompact", "printf '%s' '{\"continue\":false,\"stopReason\":\"stop\"}'");
   EXPECT_TRUE(tools.run_hooks("PreCompact", Json::object(), cancel).stopped);
   hook("SessionEnd", "printf '%s' '{\"continue\":false}'");
