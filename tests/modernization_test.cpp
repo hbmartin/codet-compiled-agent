@@ -224,6 +224,12 @@ TEST_F(Modernization, SignedPrefixesPersistAndEpochChangesDiscardSignatures) {
   body = Json::parse(provider.request(config, "changed model", history, Json::array()).body);
   EXPECT_THAT(body.dump(), Not(HasSubstr("signed-empty")));
   EXPECT_THAT(body.dump(), HasSubstr("completed"));
+  provider.restore_conversation(state);
+  config.model = "claude-sonnet-5-5";
+  config.providers["anthropic"].api_key = "fixture";
+  config.capture_root = temp.root / "relocated-captures";
+  body = Json::parse(provider.request(config, "moved references", history, Json::array()).body);
+  EXPECT_THAT(body.dump(), Not(HasSubstr("signed-empty")));
 }
 TEST_F(Modernization, SemanticProjectionOmitsReplayAndKeepsRecoveryAndReferences) {
   codet::Message m;

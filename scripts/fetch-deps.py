@@ -23,9 +23,9 @@ def main():
     for lock,prefix in locks:
       for dep in lock['dependencies']:
         archive = dest / (prefix+dep['name'] + ('.tar' if prefix else '.tar.gz'))
-        if not archive.exists():
+        if not archive.exists() or hashlib.sha256(archive.read_bytes()).hexdigest() != dep['sha256']:
             if args.offline:
-                raise SystemExit('Missing archive: ' + str(archive))
+                raise SystemExit('Missing or outdated archive: ' + str(archive))
             with urllib.request.urlopen(dep['url'], timeout=120) as response:
                 data = response.read()
             if hashlib.sha256(data).hexdigest() != dep['sha256']:

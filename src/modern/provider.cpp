@@ -444,9 +444,14 @@ Json epoch_request(Json &state, const Config &c, const std::string &system, cons
                    const std::string &key, const std::vector<Message> &messages,
                    const std::map<std::string, std::string> &names) {
   size_t first = 0;
+  const auto provider = c.providers.find(c.provider);
+  const auto endpoint = provider == c.providers.end() ? std::string{} : provider->second.base_url;
+  const auto artifacts = artifact_directory(c).string(), captures = capture_directory(c).string();
   bool reuse = state.is_object() && state.value("provider", "") == c.provider &&
                state.value("model", "") == c.model && state.value("account", "") == digest(key) &&
-               state.value("tools", Json::array()) == tools;
+               state.value("tools", Json::array()) == tools &&
+               state.value("endpoint", "") == endpoint &&
+               state.value("artifacts", "") == artifacts && state.value("captures", "") == captures;
   if (reuse && c.model != "claude-sonnet-5-5" && state.value("latest_system", "") != system)
     reuse = false;
   if (reuse) {
@@ -470,9 +475,10 @@ Json epoch_request(Json &state, const Config &c, const std::string &system, cons
     }
     if (!pending.empty())
       throw Error("Cannot reset signed conversation with unresolved tool calls");
-    state = {{"provider", c.provider},   {"model", c.model},        {"account", digest(key)},
-             {"system", system},         {"latest_system", system}, {"tools", tools},
-             {"messages", Json::array()}};
+    state = {{"provider", c.provider},    {"model", c.model},        {"account", digest(key)},
+             {"system", system},          {"latest_system", system}, {"tools", tools},
+             {"messages", Json::array()}, {"endpoint", endpoint},    {"artifacts", artifacts},
+             {"captures", captures}};
     first = 0;
   }
   for (size_t i = first; i < messages.size(); ++i) {

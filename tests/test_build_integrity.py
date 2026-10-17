@@ -65,6 +65,27 @@ class BuildIntegrity(unittest.TestCase):
         self.assertNotEqual(tree_hashes(self.root), before)
         self.assertEqual(tree_hashes(self.root, exclude_manifest=True), before)
 
+    def test_lock_version_change_refetches_archive_and_discards_extracted_cache(self):
+        import json
+        fetch_spec = importlib.util.spec_from_file_location('fetch_deps', SCRIPTS / 'fetch-deps.py')
+        fetch = importlib.util.module_from_spec(fetch_spec)
+        fetch_spec.loader.exec_module(fetch)
+        old = self.archive('v1', {'old.c': 'stale'})
+        new = self.archive('v2', {'code.c': 'verified new version'})
+        cache = self.root / '.deps'
+        cache.mkdir()
+        (cache / 'library.tar.gz').write_bytes(old.read_bytes())
+        extract_verified(old, file_hash(old), cache / 'library')
+        (self.root / 'dependencies.lock.json').write_text(json.dumps({'dependencies': [
+            {'name': 'library', 'version': '2', 'sha256': file_hash(new), 'url': 'fixture://v2'}]}))
+        with patch.object(fetch, 'ROOT', self.root), patch.object(sys, 'argv', ['fetch-deps.py']), \
+                patch.object(fetch.urllib.request, 'urlopen', return_value=io.BytesIO(new.read_bytes())) as network:
+            fetch.main()
+            network.assert_called_once()
+        self.assertEqual(file_hash(cache / 'library.tar.gz'), file_hash(new))
+        self.assertFalse((cache / 'library/old.c').exists())
+        self.assertEqual((cache / 'library/code.c').read_text(), 'verified new version')
+
     def runtime(self):
         for name in ['lib/libcurl.dylib', 'lib/libsqlite3.dylib', 'lib/libz.dylib',
                      'lib/libncurses.dylib', 'lib/libedit.dylib',
