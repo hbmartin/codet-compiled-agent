@@ -397,6 +397,27 @@ TEST_F(Modernization, AbandonedCaptureReservationsAreReconciledUnderQuotaPressur
   EXPECT_TRUE(next.error().empty()) << next.error();
   EXPECT_EQ(next.bytes(), 64u);
   EXPECT_GT(store->metrics.scans, scans);
+  const auto records_dir = config.state_root / "abandoned-records";
+  auto limited = std::make_shared<CaptureStore>(records_dir, 128, 4096, 2);
+  for (int n = 0; n < 2; ++n) {
+    OutputSpool old(limited);
+    old.append("completed");
+    old.close();
+  }
+  ASSERT_EQ(sqlite3_open((records_dir / "catalog.sqlite3").c_str(), &db), SQLITE_OK);
+  ASSERT_EQ(sqlite3_exec(db, "UPDATE captures SET active=1", nullptr, nullptr, nullptr), SQLITE_OK);
+  sqlite3_close(db);
+  {
+    OutputSpool next(limited);
+    next.append("new");
+    next.close();
+    ASSERT_TRUE(next.error().empty());
+  }
+  size_t completed = 0;
+  for (const auto &entry : fs::directory_iterator(records_dir))
+    if (entry.path().extension() == ".txt")
+      ++completed;
+  EXPECT_LE(completed, 2u);
 }
 TEST_F(Modernization, HookFailureJournalsTheAffectedCallBeforeCancellingRemainingCalls) {
   struct Batch : Provider {

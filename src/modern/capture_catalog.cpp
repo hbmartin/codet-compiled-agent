@@ -300,6 +300,17 @@ void CaptureStore::account_closed(OutputSpool &spool) {
   if (::flock(lock.fd, LOCK_EX))
     throw Error("Cannot lock output store");
   prepare_catalog();
+  bool crowded = false;
+  {
+    Query count(catalog_->db, "SELECT count(*) FROM captures");
+    if (sqlite3_step(count.s) != SQLITE_ROW)
+      throw Error("Cannot count capture catalog");
+    crowded = sqlite3_column_int64(count.s, 0) > static_cast<sqlite3_int64>(records_);
+  }
+  // An abandoned active flag must not bypass completed-file capacity after its owner dies.
+  if (crowded)
+    rebuild_catalog();
+
   struct stat st {};
   if (spool.bytes_ && ::lstat(spool.path_.c_str(), &st) == 0 && S_ISREG(st.st_mode))
     record(catalog_->db, spool.path_.filename().string(), st, static_cast<uint64_t>(st.st_size),
