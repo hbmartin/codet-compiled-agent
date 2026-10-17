@@ -222,7 +222,7 @@ class Terminal {
   std::string input_, status_, progress_;
   std::string prompt_;
   std::map<std::string, int> bindings_{{"submit", 10}, {"quit", 4}, {"backspace", 127}};
-  struct termios original_{};
+  struct termios original_ {};
   bool restore_ = false;
   const Cancellation *read_cancel_ = nullptr;
   static int read_character(EditLine *edit, wchar_t *character) {
@@ -233,7 +233,9 @@ class Terminal {
     for (;;) {
       if (terminal && terminal->read_cancel_ && terminal->read_cancel_->requested)
         return 0;
-      struct pollfd descriptor{STDIN_FILENO, POLLIN, 0};
+      struct pollfd descriptor {
+        STDIN_FILENO, POLLIN, 0
+      };
       const int ready = ::poll(&descriptor, 1, 100);
       if (ready < 0) {
         if (errno == EINTR)
@@ -673,19 +675,17 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   Session session;
   if (o.command == "resume" || o.command == "fork" || o.command == "export") {
     if (o.last)
-      session = state.last();
+      session = state.last(o.command == "export");
     else if (!o.session.empty())
-      session = state.load(o.session);
+      session = state.load(o.session, o.command == "export");
     else {
       if (o.exec || !isatty(STDIN_FILENO))
         throw Error("Select a session id or --last", 2);
       std::cerr << state.list().dump(2) << "\nSession id: ";
       std::string id;
       std::getline(std::cin, id);
-      session = state.load(id);
+      session = state.load(id, o.command == "export");
     }
-    if (o.command == "fork")
-      session = state.fork(session);
     if (o.command == "export") {
       if (o.format == "text") {
         for (const auto &m : session.messages)
@@ -698,22 +698,31 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
                   << '\n';
       return 0;
     }
-  } else
+  }
+  if (o.command == "resume") {
+    lifecycle_owner = state.acquire(session.id);
+    session = state.load_id(session.id, false);
+  }
+  // Validate candidate selection and explicit attachments before publishing a new session/fork.
+  const auto candidate = resolve_selection(
+      config, session.id.empty() ? std::nullopt
+                                 : std::optional<Selection>{{session.provider, session.model}});
+  config.provider = candidate.provider;
+  config.model = candidate.model;
+  const auto inherited_effort = config.effort;
+  config.effort = resolve_effort(config, session.id.empty() ? nullptr : &session);
+  validate_effort(config);
+  const auto selected_effort = saved_effort(config, session.id.empty() ? nullptr : &session);
+  auto pending_images = input_images(config, files, *native_images(), o.images, cancel);
+  if (o.command == "fork")
+    session = state.fork(session);
+  else if (session.id.empty())
     session = state.create();
   lifecycle_owner = state.acquire(session.id);
   current_owner = lifecycle_owner;
   session = state.load_id(session.id, false);
   state.reconcile(session);
-  const auto resolved =
-      resolve_selection(config, o.command == "resume" || o.command == "fork"
-                                    ? std::optional<Selection>{{session.provider, session.model}}
-                                    : std::nullopt);
-  config.provider = resolved.provider;
-  config.model = resolved.model;
-  config.effort =
-      resolve_effort(config, o.command == "resume" || o.command == "fork" ? &session : nullptr);
-  validate_effort(config);
-  session.effort = config.effort;
+  session.effort = selected_effort;
   session.model = config.model;
   session.provider = config.provider;
   state.save(session);
@@ -755,7 +764,6 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     };
   Tools tools(config, files, processes, http, clock, approver, questioner, diagnostic, interaction);
   ApiProvider provider(http, credentials, clock);
-  auto pending_images = input_images(config, files, *native_images(), o.images, cancel);
   Json schema;
   if (!o.schema.empty()) {
     try {
@@ -1092,8 +1100,10 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
             throw Error("Use /model MODEL [EFFORT]", 2);
           Config next = config;
           next.model = model;
-          next.effort = effort;
-          if (!explicit_effort && next.provider == "codex")
+          next.selected_effort =
+              explicit_effort ? std::optional<std::string>{effort} : std::nullopt;
+          next.effort = explicit_effort ? effort : inherited_effort;
+          if (!explicit_effort && next.effort.empty() && next.provider == "codex")
             for (const auto &entry : model_catalog())
               if (entry.at("model") == model)
                 next.effort = entry.at("default_effort").get<std::string>();
@@ -1101,7 +1111,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
           const auto previous_model = session.model;
           const auto previous_effort = session.effort;
           session.model = next.model;
-          session.effort = next.effort;
+          session.effort = saved_effort(next);
           try {
             state.save(session);
           } catch (...) {
@@ -1164,7 +1174,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       auto fresh_owner = state.acquire(fresh.id);
       fresh.provider = config.provider;
       fresh.model = config.model;
-      fresh.effort = config.effort;
+      fresh.effort = saved_effort(config, &session);
       state.save(fresh);
       session = std::move(fresh);
       last_usage.reset();

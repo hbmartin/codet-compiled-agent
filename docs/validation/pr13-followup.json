@@ -1,0 +1,211 @@
+{
+  "date": "2026-10-17",
+  "baseline_commit": "ef8db94f623b83d5d3fcf3761f51489e5dc78d11",
+  "prior_evidence": "context-recovery.json records the earlier snapshot and remains unchanged",
+  "schema": 5,
+  "decisions": {
+    "directory_limit": "Flagged partial pages; eof ends the scanned subset; no complete alphabetical coverage or snapshot guarantee beyond the bound",
+    "scan_limited": "Optional boolean metadata retained by projections and provider trailers",
+    "semgrep": "Development/CI only; explicit pinned provisioning; checks never install or fetch rules",
+    "prompt_bundle": "Unchanged from baseline commit",
+    "delivery": "Local commit only; no push or GitHub feedback"
+  },
+  "checks": {
+    "host": {
+      "passed": true,
+      "ctest_suites": 4,
+      "unit_tests_passed": 271,
+      "opt_in_tests_skipped": [
+        "Contracts.NativeTigerDesktopAcceptance",
+        "NetworkOptIn.TlsHandshake"
+      ],
+      "cli_integration_cases": 40,
+      "prompt_tests": 7,
+      "log": "build/pr13-host-tests.log"
+    },
+    "asan_ubsan": {
+      "passed": true,
+      "ctest_suites": 4,
+      "unit_tests_passed": 271,
+      "opt_in_tests_skipped": [
+        "Contracts.NativeTigerDesktopAcceptance",
+        "NetworkOptIn.TlsHandshake"
+      ],
+      "cli_integration_cases": 40,
+      "prompt_tests": 7,
+      "log": "build/pr13-sanitize-tests.log"
+    },
+    "static_analysis": {
+      "clang-tidy": {
+        "passed": true,
+        "findings": 0,
+        "completed_sources": 23,
+        "version_outputs": [
+          "Ubuntu LLVM version 18.1.3\n  Optimized build."
+        ],
+        "canaries_passed": 0
+      },
+      "cppcheck": {
+        "passed": true,
+        "findings": 0,
+        "completed_sources": 23,
+        "version_outputs": [
+          "Cppcheck 2.22.0"
+        ],
+        "canaries_passed": 3
+      },
+      "clang-analyzer": {
+        "passed": true,
+        "findings": 0,
+        "completed_sources": 23,
+        "version_outputs": [
+          "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin",
+          "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin"
+        ],
+        "canaries_passed": 0
+      }
+    },
+    "immutable_analysis_inputs": {
+      "sources": 23,
+      "headers": 24,
+      "changed_sources": [],
+      "changed_headers": []
+    },
+    "semgrep": {
+      "passed": true,
+      "version": "1.177.0",
+      "fixture_suites": 2,
+      "expected_positive_matches": 13,
+      "production_inputs": [
+        "src/modern/instructions.cpp",
+        "src/modern/state.cpp"
+      ],
+      "findings": 0,
+      "analysis_errors": 0,
+      "failure_canaries": [
+        {
+          "case": "throwing discovery",
+          "exit": 1,
+          "findings": 2,
+          "errors": 0
+        },
+        {
+          "case": "inline migration decoding",
+          "exit": 1,
+          "findings": 1,
+          "errors": 0
+        },
+        {
+          "case": "invalid local rule configuration",
+          "exit": 7,
+          "errors": 2
+        },
+        {
+          "case": "missing tool",
+          "exit": 2
+        }
+      ],
+      "provisioning_interpreter": "Homebrew Python 3.12; dedicated build/semgrep-venv",
+      "rule_sources": "Checked-in only; metrics/version checks disabled; no autofix"
+    },
+    "ppc": {
+      "passed": true,
+      "executed": false,
+      "verification": "GCC 14.2, PPC32 big-endian/G3 Mach-O, target dependency paths, no LC_RPATH",
+      "binary_sha256": "b2e786a6bcac3e7ddf2ce617ec9ac536e7d9268873fac84454ec0c5bce1caa5d",
+      "tests_binary_sha256": "bba98eb62e5655ec6a0e9794ed8791c3a192b065faf3ac4c773f866a997e7d11",
+      "log": "build/pr13-ppc-verify.log"
+    },
+    "workflow_yaml": "Parsed locally; GitHub Actions was not dispatched",
+    "formatting": "clang-format-18 dry-run and git diff --check passed",
+    "tiger_runtime": {
+      "verified": false,
+      "acceptance": "Owner-run HFS+ aliases, terminal behavior, responsiveness, swapping and peak memory within the 512 MB G4 budget; see TIGER-ACCEPTANCE.md"
+    }
+  },
+  "coverage": [
+    "Corrupt transcript/journal syntax and shapes skipped without rewriting rows; valid sessions and references reopen",
+    "Real foreign-key reference failure rolls schema-5 migration back and permits retry",
+    "Directory boundaries 9999/10000/10001, cursor progress, denied entries and empty filtered EOF",
+    "Encoded directory budgets, scan_limited projection retention and all five provider adapters",
+    "Invalid roots/parents, unreadable roots, deduplicated diagnostics and optional canonicalization failures",
+    "Aliased user HOME outside Codet home/cwd, ancestor skills, explicit denies and symlink-changing pre-hooks",
+    "Known, unknown, absent, null and nonstring phases; fragmented lifecycles, stable IDs and original provider replay",
+    "Terminal fixture synchronizes on command responses because streamed answer text can precede worker completion"
+  ],
+  "input_sha256": {
+    ".github/workflows/modern-checks.yml": "47f22294c1d0b1e67613fb467ff9ccc42f0995016d9b6ae3735f302608ace5cb",
+    "CMakeLists.txt": "0c4c63e1c64b6bca4c4bd8f978e1b5bcfd0d436508f9319317e0ca4499f03fb3",
+    "Makefile": "b3654b4346d4078aa4bca0bdee45974a890d2593f8ce43f056a9b05cfcc97f6b",
+    "README.md": "6467c42329ab6074b971da71508ab083602db56502d3130c99c11f58d2bf9451",
+    "checks/semgrep/instructions.cpp": "ac9b90ce434c4df9b591f81f31b40870fd71089b1bb5ff3e4c430464392ef6c6",
+    "checks/semgrep/instructions.yaml": "6fae5f90cf4a254744ccbda67b517fe92a22ad8d0ec4b328d68f0133799ef758",
+    "checks/semgrep/state.cpp": "f9d857cb2e91d2f3526d7187c17734a0c047d93b9703c590c606ac74357897d6",
+    "checks/semgrep/state.yaml": "7650eaeeea4aa8f4b7c333c19b9047ffa380878fc2bbb6b76a63f32871ac67e9",
+    "docs/CODEX-TOOLS.md": "a34071305482a663e3bfff522229c9e6261a2f127fcf2ce9b23e5c23cbd262c8",
+    "docs/MODERN-AGENT.md": "e08449680e72251fe0f2a8e2b4e98b2cdc4dbb568a2135ff1d4ea1e8c0198546",
+    "docs/TIGER-ACCEPTANCE.md": "e0294bc70e502b7298d891503aee9ba4106dff5d4a820208565d134e19235b48",
+    "include/app-functions.h": "8e363fc9efb6f09bed6e406c8cda95f46e18f7ca0412ee16654c9a40f26d9340",
+    "include/app-globals.h": "58b79e8bc8e47df7317aa276e7b63cd06b88f72a304e9d1ed9b7f1161b694d6c",
+    "include/app.h": "7b4aff9d8012d627b4ce9220436240b64d9a16bf9bc0b81653bf63ed753170a3",
+    "include/callback-contracts.h": "c9bd4045bd5fbb7ba1e43cbfe582281349dc1e54c7dddfcabf41b29734c3c3e8",
+    "include/codet/artifacts.hpp": "4a93be57d0098d80a2fc85bfd9cc5240e399e4e6b328feccb2349e1d3b785a06",
+    "include/codet/computer.hpp": "aa4e4ef2a400b761ed98f8dfe3b596d140eb06fa58ca7689ed927276c860eeb7",
+    "include/codet/context.hpp": "0d4ce59a92bcc8a76512f9e642e0ac569a63bd9c63728aa6b08b3b24810bd8d7",
+    "include/codet/core.hpp": "da459e4ff3dfde2074111a042912bff3bdc5d9b3de360a490d3f05990e559aeb",
+    "include/codet/diagnostics.hpp": "31ead6755d8a6ce63d365b1a3507b20d06b868bbc3ecbc2893a26f34db750da9",
+    "include/codet/interaction.hpp": "ac2bae0c6d600d8866c06090444b842acbcb5baa31475825a20d34e36b512f03",
+    "include/codet/output.hpp": "2bfa19094d762da27845e35d59b6b243b95dff90681a8de0183bba08340932a6",
+    "include/codet/patch.hpp": "5852178d6a37ef71b560421c84543fe789e0fb5c87d45e337088f48008ec2915",
+    "include/codet/process_control.hpp": "144592cd14597dc1d52750f4eaff9b48be7b3c517991109e93d502300db1f8e6",
+    "include/codet/prompt.hpp": "e5d0c77795ef4f1880ebee03a5d023bd32d9a6cc2d72430aef37a83f033910af",
+    "include/codet/support.hpp": "3b67a474dc3b7373172807c0b1120f380379f1f46c8238d84d3aca3fbfc7b6dc",
+    "include/codet/tool_registry.hpp": "6024b8a00ec83280267cc9a874eff3d9d70b60a87dc5e2394e9f9aafa51e0771",
+    "include/embedded-strings.h": "6ffac0e9967e511dd10556aed94a2ef0201c926bd01d699208e4e26834ec2e86",
+    "include/imported-interfaces.h": "f28bc5576423cc04e2138d46b5accbdc64c3e294dcce7a080fcb4da6e16f2c8b",
+    "include/observed-abi.h": "a6526dee44e4e156cdc8f2cd8a9f5ea28cd1a25c8ea3a1deb31d0e28055f2d64",
+    "include/recovered-declarations.h": "328a2d82bcdb6bab00b171749643475b7e55f40ae7508fb305782a606ffa02a9",
+    "include/recovered-layouts.h": "68c1c0b0313d38632390b8919ddc297d6240bed0c2d1de307fce3f0cb431f195",
+    "include/recovered-storage.h": "a655bf2e2172d9293a2920b3f5ffb6ed6e7164e03b16d1c3400547d00648ce09",
+    "include/recovered-types.h": "22d85c337901a5b84de45b08c20409256586c6cc9e5ca4a13ec783788ca76caa",
+    "include/text_compat.h": "6ff5d6fe7251e3b156983ec5d1e4c2dea5bf08cdf40ac68734e1546850dd0da7",
+    "prompts/manifest.json": "63a0bfffdc14135906e55454473bb92b5e868c8f01d7b38a18fb2c5d17751743",
+    "scripts/import-prompts.py": "d01431e832bb5b6563ebc3245e547e8130dce63b2e8798a90386fe4e6626166c",
+    "src/modern/agent.cpp": "e646b2cead462262789730caf47d41d3d3eac26c75925e61c8c0f344364cceee",
+    "src/modern/artifacts.cpp": "d869c12ac29c4325f58ca02bec5577f668789e531e75b8c984bd8399de593e79",
+    "src/modern/cli.cpp": "ecdd89bbdc482351e865ac921dc1d419133b04c7a3b27007d405f8fb8c545828",
+    "src/modern/computer.cpp": "ccb8fd5b7c0847a18ac44f32dd2319df25e4a173fec947fd1ea5a67f3c86263e",
+    "src/modern/config.cpp": "a689c3e88b846b1c61884a4736c7c01d960a3021c6adb0694158f5be4f457dfe",
+    "src/modern/context.cpp": "7fb2c3d3a650de061b59b09877a9c23e8fe08bacac63e302c8a5c5d2e6abdcd8",
+    "src/modern/failure.cpp": "aabbc34d0e235141e79fee2c370d4ed7f3450eb89787ed467fb1b1bacf383a2a",
+    "src/modern/hooks.cpp": "52041cb90ad29c81f8133caa87304b3aedd9536a8e76949a52213f55407f0ea0",
+    "src/modern/images.cpp": "60e46ffdfc3cd494eb58be5f6b83dfe80fc0f4e5fee52e85e436c41084528a0e",
+    "src/modern/inspection.cpp": "b36fadfea5ef50b49e8a547ad3f275be1935df8436874bfac14089750cfa2379",
+    "src/modern/instructions.cpp": "3df61903f53fde20ea24432eb28be2e8c8611827f84a4e1c6bcfb22652d85675",
+    "src/modern/interaction.cpp": "1e18bf1c1f8cb1a221fc458661687f148c0479365c2912bdeb58265d0a2f82ed",
+    "src/modern/main.cpp": "2e2b9ae909db159f535d1a0f9dbee31d16fb52e001a3c9d1d06b33e0cbdb9ad1",
+    "src/modern/output.cpp": "b9ea8220af4a16ae1e2b8a1e256e7017a7404384407043b9b9efd0c99966a081",
+    "src/modern/patch.cpp": "8c99791527f8a6b09b35674802db3c29cafe2adde4700a67ca7adda60562f770",
+    "src/modern/platform.cpp": "ef9c96fbf3de23e3724858dbdfa4a2313196cdd2f74ff0b130b19760ae6e2ba5",
+    "src/modern/prompts.cpp": "25ea1b16267419b7980fce7ad8027ee2438b49b70e27e96539ade5155d08d255",
+    "src/modern/provider.cpp": "73f435c0684e7a1c1a781aaf0da6f968b9f47366b6de172554c885dfedda1dcd",
+    "src/modern/state.cpp": "4cad77a9d5e5ab6ebb6cbe5f43727ef39db99f1a043fa8c22d8b58ce4c6c56f1",
+    "src/modern/support.cpp": "40dfad2759619972f3b0eba053a24b00877b05ce2defb648b727ebd608dd594a",
+    "src/modern/tool_registry.cpp": "9a7a3337b840adc756c74136b221e564b8509c91c6033c5dd200269e0d48afcd",
+    "src/modern/tools.cpp": "06a2ac5fb76e713b3819014c174845753e658c7499ba7e72a592d42bd7e0e7d4",
+    "src/text_compat.c": "00213a0ad26fd98c9bd9a0a45fb84f9b853fcac8df7fed05c79e4d6444fb2205",
+    "tests/cli_integration.py": "912578f612b7937662e9f6f12eade039482af748b600526b5f3306f53ce708f8",
+    "tests/context_history_test.cpp": "6d9f4bee8ad6c0bce971ccf6b783899b327978169dbe0a3173dcd797ce4bd7bd",
+    "tests/small_core_test.cpp": "4f5c148c3be811d374d5996581b8f8a07ede7f58a9386183e632b802c7890693"
+  },
+  "artifact_sha256": {
+    "build/pr13-host-tests.log": "1b88116c4d4ce1e4e3b460c45a5a5748c61f33b4c5e0abaa970fedc6c107971d",
+    "build/pr13-sanitize-tests.log": "90f106a0aa36438fa338d4d679e4cdf8c899fa6b488741bc33d7eaac8800224d",
+    "build/pr13-analysis.log": "2df0735c9d9b8fed7f0b242b95e9e77ba33454e5ea1fc84cb773580280889c1b",
+    "build/analysis/analysis/manifest.json": "db2a0a1b57ecf738651b8f1b7454ef17331dc07f97e5e166b11a7a2d3995ec54",
+    "build/semgrep/tests.json": "554df761360b1dfd0e00d01fc3379956c138ed95b14728f952d33cab6cc35cc1",
+    "build/semgrep/scan.json": "58304f49589a4ac8ff29ebef25bb5509b51a7cb3142ad237bd2ceee03bf77557",
+    "build/semgrep/failure-canaries.json": "24de846e7d56c0c5c79b1fc84aaee8e032a6e46541f101c1ae636dc30bb4fbf5",
+    "build/pr13-ppc-verify.log": "93312e884d41916a125238b52fb590d1e71a71d7fbd6f7ef31a164e80092bb25"
+  }
+}

@@ -2,6 +2,7 @@
 #include "codet/core.hpp"
 #include "codet/prompt.hpp"
 #include "temp.hpp"
+#include <cstdlib>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <sqlite3.h>
@@ -33,7 +34,8 @@ struct ScriptedProvider : Provider {
   std::function<ProviderResult(const std::vector<codet::Message> &, const Json &)> next;
   ProviderResult complete(const Config &, const std::string &,
                           const std::vector<codet::Message> &messages, const Json &tools,
-                          const Cancellation &cancel, const ChunkSink &) override {
+                          const Cancellation &cancel, const ChunkSink &,
+                          const ItemSink & = {}) override {
     cancel.check();
     return next(messages, tools);
   }
@@ -148,8 +150,8 @@ TEST_F(SmallCore, NullableProviderItemMetadataUsesStableUntaggedFallback) {
   CredentialStore credentials(config.home, files, clock);
   ApiProvider provider(http, credentials, clock);
   std::vector<Json> events;
-  const auto result = provider.complete_items(config, "system", {}, Json::array(), cancel, {},
-                                              [&](const Json &event) { events.push_back(event); });
+  const auto result = provider.complete(config, "system", {}, Json::array(), cancel, {},
+                                        [&](const Json &event) { events.push_back(event); });
   ASSERT_EQ(result.message.assistant_items.size(), 1u);
   EXPECT_TRUE(result.message.assistant_items[0].phase.empty());
   EXPECT_FALSE(result.message.assistant_items[0].id.empty());
@@ -176,6 +178,149 @@ TEST_F(SmallCore, UntaggedMessagesAndMissingItemIdsRemainCompatible) {
   EXPECT_EQ(Json(session.messages).get<std::vector<codet::Message>>().back().text, "firstsecond");
   auto legacy = Json::parse(R"({"role":"assistant","text":"legacy"})").get<codet::Message>();
   EXPECT_TRUE(legacy.assistant_items.empty());
+}
+TEST_F(SmallCore, AssistantPhasesAgreeThroughoutFragmentedLifecycles) {
+  config.provider = "codex";
+  put(config.home / "auth.json", R"({"codex":{"access_token":"fixture"}})");
+  for (const Json &phase : Json::array(
+           {"commentary", "partial_answer", "final_answer", "future", "missing", "", nullptr, 7})) {
+    SCOPED_TRACE(phase.dump());
+    Json message = {{"type", "message"},
+                    {"id", "phase-item"},
+                    {"phase", phase},
+                    {"content", Json::array({{{"type", "output_text"}, {"text", "done"}}})}};
+    if (phase == "missing")
+      message.erase("phase");
+    http.frames = {
+        {{"type", "response.output_item.added"}, {"output_index", 0}, {"item", message}},
+        {{"type", "response.output_text.delta"}, {"output_index", 0}, {"delta", "done"}},
+        {{"type", "response.completed"}, {"response", {{"output", Json::array({message})}}}}};
+    CredentialStore credentials(config.home, files, clock);
+    ApiProvider provider(http, credentials, clock);
+    Tools tools(config, files, processes, http, clock);
+    StateStore state(config.home);
+    auto session = state.create();
+    std::vector<Json> events;
+    Agent agent(config, provider, tools, state,
+                [&](const Json &event) { events.push_back(event); });
+    EXPECT_EQ(agent.run(session, "inspect", cancel).text, "done");
+    const std::string expected =
+        phase == "commentary" || phase == "partial_answer" || phase == "final_answer"
+            ? phase.get<std::string>()
+            : "";
+    size_t seen = 0;
+    for (const auto &event : events) {
+      const auto item = event.value("item", Json::object());
+      if (item.value("id", "") != "phase-item")
+        continue;
+      ++seen;
+      EXPECT_EQ(item.value("phase", ""), expected);
+      EXPECT_EQ(item.contains("phase"), !expected.empty());
+    }
+    EXPECT_EQ(seen, 3u);
+    const auto saved = state.load(session.id).messages.back();
+    EXPECT_EQ(saved.assistant_items.at(0).phase, expected);
+    EXPECT_EQ(saved.replay.at(0), message);
+  }
+}
+TEST_F(SmallCore, InvalidDiscoveryRootsKeepGuidanceAndOtherSkillsWithDeduplicatedWarnings) {
+  put(config.home / "AGENTS.md", "global-guidance");
+  put(config.cwd / "AGENTS.md", "project-guidance");
+  put(config.home / "memory", "not a directory");
+  put(config.cwd / ".codet", "not a directory parent");
+  put(config.cwd / ".claude/skills", "not a directory");
+  put(config.cwd / ".agents/skills/good/SKILL.md", "---\nname: good\ndescription: available\n---");
+  std::vector<std::string> warnings;
+  Tools tools(config, files, processes, http, clock, {}, {},
+              [&](const auto &s) { warnings.push_back(s); });
+  const auto text = tools.instructions();
+  EXPECT_THAT(text, HasSubstr("global-guidance"));
+  EXPECT_THAT(text, HasSubstr("project-guidance"));
+  EXPECT_THAT(text, HasSubstr("- good:"));
+  EXPECT_THAT(warnings, Contains(HasSubstr("memory")));
+  EXPECT_THAT(warnings, Contains(HasSubstr(".claude/skills")));
+  EXPECT_THAT(warnings, Contains(HasSubstr(".codet/skills")));
+  const auto count = warnings.size();
+  EXPECT_EQ(tools.instructions(), text);
+  EXPECT_EQ(warnings.size(), count);
+}
+TEST_F(SmallCore, UnreadableDiscoveryRootsDoNotAbortOtherGuidance) {
+  const auto memory = config.home / "memory", skills = config.cwd / ".agents/skills";
+  fs::create_directories(memory);
+  fs::create_directories(skills);
+  struct Restore {
+    fs::path first, second;
+    ~Restore() {
+      std::error_code error;
+      fs::permissions(first, fs::perms::owner_all, error);
+      fs::permissions(second, fs::perms::owner_all, error);
+    }
+  } restore{memory, skills};
+  fs::permissions(memory, fs::perms::none);
+  fs::permissions(skills, fs::perms::none);
+  std::error_code error;
+  fs::directory_iterator check(skills, error);
+  if (!error)
+    GTEST_SKIP() << "Execution user can read permission-denied directories";
+  put(config.cwd / "AGENTS.md", "retained-guidance");
+  put(config.home / "skills/good/SKILL.md", "---\nname: good\ndescription: retained-skill\n---");
+  std::vector<std::string> warnings;
+  Tools tools(config, files, processes, http, clock, {}, {},
+              [&](const auto &s) { warnings.push_back(s); });
+  const auto text = tools.instructions();
+  EXPECT_THAT(text, HasSubstr("retained-guidance"));
+  EXPECT_THAT(text, HasSubstr("retained-skill"));
+  EXPECT_THAT(warnings, Contains(HasSubstr(memory.string())));
+  EXPECT_THAT(warnings, Contains(HasSubstr(skills.string())));
+}
+TEST_F(SmallCore, AliasedUserAndAncestorSkillsRespectAnchorsAndDenials) {
+  struct RestoreHome {
+    std::optional<std::string> value;
+    RestoreHome() {
+      if (const auto *home = std::getenv("HOME"))
+        value = home;
+    }
+    ~RestoreHome() {
+      if (value)
+        ::setenv("HOME", value->c_str(), 1);
+      else
+        ::unsetenv("HOME");
+    }
+  } restore;
+  const auto real = temp.root / "user", alias = temp.root / "user-alias";
+  const auto skill = real / ".agents/skills/user/SKILL.md";
+  put(skill, "---\nname: user\ndescription: user-skill\n---");
+  fs::create_directory_symlink(real, alias);
+  ASSERT_EQ(::setenv("HOME", alias.c_str(), 1), 0);
+  config.permission_mode = "plan";
+  const auto repo = config.cwd.parent_path();
+  fs::create_directory(repo / ".git");
+  const auto ancestor = repo / ".agents/skills/ancestor/SKILL.md";
+  put(ancestor, "---\nname: ancestor\ndescription: ancestor-skill\n---");
+  Tools tools(config, files, processes, http, clock);
+  const auto text = tools.instructions();
+  EXPECT_THAT(text, HasSubstr(files.canonical(skill).string()));
+  const auto read = [&](const fs::path &path) {
+    return tools.execute({unique_id(), "read_file", {{"path", files.canonical(path).string()}}},
+                         cancel);
+  };
+  EXPECT_FALSE(read(skill).error);
+  EXPECT_FALSE(read(ancestor).error);
+  config.set_deny({"read_file(*SKILL.md)"});
+  EXPECT_TRUE(read(skill).error);
+  config.set_deny({});
+  // An advertised descendant replaced with a symlink never gains private access.
+  const auto descendant = real / ".agents/skills/user";
+  config.hooks["PreToolUse"] = Json::array(
+      {{{"matcher", "read_file"},
+        {"command", "mv '" + descendant.string() + "' '" + descendant.string() + ".old'; ln -s '" +
+                        descendant.string() + ".old' '" + descendant.string() + "'"}}});
+  EXPECT_TRUE(tools
+                  .execute({unique_id(),
+                            "read_file",
+                            {{"path", (alias / ".agents/skills/user/SKILL.md").string()}}},
+                           cancel)
+                  .error);
 }
 TEST_F(SmallCore, InstructionPrecedenceAndAncestorSkillMetadataAreDeterministic) {
   const auto repo = config.cwd.parent_path();

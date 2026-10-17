@@ -29,7 +29,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build python3 python3-yaml ca-certificates \
+            build-essential cmake ninja-build python3 python3-yaml python3-venv ca-certificates \
             clang-18 clang-tidy-18 libcurl4-openssl-dev libssl-dev \
             zlib1g-dev libsqlite3-dev libncurses-dev libedit-dev
       - name: Fetch verified dependencies
@@ -38,12 +38,20 @@ jobs:
         run: make fetch-analysis-tools
       - name: Build pinned analyzer offline
         run: make build-analysis-tools
+      - name: Provision pinned development-only Semgrep
+        run: make fetch-semgrep
       - name: Configure and build with Clang
         id: build
         run: make modern-analysis-host
       - name: Test analysis runner
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: make test-modern-analysis-runner
+      - name: Test local Semgrep rules
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: make test-semgrep
+      - name: Check scoped regression patterns
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: make check-semgrep
       - name: Verify analyzer detection
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: make analyze-modern-selftest
@@ -61,5 +69,6 @@ jobs:
           retention-days: 14
           path: |
             build/modern-checks/analysis/
+            build/semgrep/
             build/modern-checks/Testing/Temporary/
             build/modern-checks/CMakeFiles/CMakeConfigureLog.yaml

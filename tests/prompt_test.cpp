@@ -60,7 +60,7 @@ struct Script : Provider {
       next;
   ProviderResult complete(const Config &config, const std::string &s,
                           const std::vector<codet::Message> &m, const Json &t, const Cancellation &,
-                          const ChunkSink &) override {
+                          const ChunkSink &, const ItemSink & = {}) override {
     EXPECT_LE(Json(m).dump().size(), prompt_budget(config, s, t).available());
     output_limits.push_back(config.max_output_tokens);
     return next(s, m, t);
@@ -118,6 +118,9 @@ TEST_F(Prompts, ExactModelSelectionDeduplicatesAndRetainsExplicitEmptyOverrides)
   for (const auto &slug : {"gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol",
                            "gpt-daybreak-blue-latest", "gpt-daybreak-red-latest", "gpt-5.5"}) {
     const std::string base = model_prompt(slug)->instructions;
+    EXPECT_EQ(base.find("You are Codet,"), 0u) << slug;
+    for (const auto &identity : {"You are Codex,", "As Codex,", "as Codex:"})
+      EXPECT_THAT(base, Not(HasSubstr(identity))) << slug;
     for (const auto &unavailable :
          {"functions.", "multi_tool_use.parallel", "skills.read", "skills.list",
           "# Apps (Connectors)", "# Plugins", "Playwright screenshots"})

@@ -594,6 +594,54 @@ std::string Tools::result_reference(const Message &message) const {
     throw Error("Invalid private result identity");
   return (artifact_directory(config_) / ref).string();
 }
+Json Tools::execution_state(const std::vector<Message> &messages) const {
+  std::map<std::string, Json> recovery;
+  const auto collect = [&](const Json &facts) {
+    if (!facts.is_array())
+      throw Error("Invalid checkpoint recovery state");
+    for (const auto &fact : facts)
+      if (fact.is_object() && fact.value("call_id", Json()).is_string() &&
+          fact.contains("recovery"))
+        recovery[fact.at("call_id").get<std::string>()] = fact;
+  };
+  for (const auto &message : messages) {
+    if (!message.checkpoint_state.is_null()) {
+      const auto &saved = message.checkpoint_state;
+      if (saved.is_array())
+        collect(saved);
+      else {
+        const auto ref = saved.at("recovery_record").get<std::string>();
+        const auto path = artifact_directory(config_) / ref;
+        if (!result_name(ref) || !private_anchor(artifact_directory(config_)) ||
+            !private_regular(files_, artifact_directory(config_), path))
+          throw Error("Invalid checkpoint recovery reference");
+        const auto archive = Json::parse(files_.read(path, size_t{8} * 1024 * 1024)).get<Message>();
+        collect(Json::parse(archive.text));
+      }
+    }
+    if (message.role != "tool")
+      continue;
+    const auto envelope = Json::parse(message.text, nullptr, false);
+    if (!envelope.is_object())
+      continue;
+    const auto meta = envelope.value("metadata", Json::object());
+    if (meta.is_object() && meta.contains("recovery"))
+      recovery[message.tool_call_id] = {
+          {"call_id", message.tool_call_id},
+          {"recovery", meta.at("recovery")},
+          {"action_completed", meta.value("action_completed", false)}};
+    else
+      recovery.erase(message.tool_call_id);
+  }
+  Json facts = Json::array();
+  for (const auto &entry : recovery)
+    facts.push_back(entry.second);
+  // Only this Tools instance owns execution handles. Historical IDs are never live after resume.
+  for (const auto &entry : exec_sessions_)
+    if (!entry.second.completed && processes_.status(entry.second.process).running)
+      facts.push_back({{"session_id", entry.first}, {"state", "running"}});
+  return facts;
+}
 std::string Tools::retain_result(Message &message) {
   if (message.result_file.empty()) {
     if (message.message_id.empty())
@@ -602,13 +650,29 @@ std::string Tools::retain_result(Message &message) {
     const fs::path path = result_reference(message);
     const auto ref = path.lexically_relative(root);
     if (!private_anchor(root) || fs::is_symlink(root) || fs::is_symlink(root / "results") ||
-        fs::is_symlink(path.parent_path()))
+        fs::is_symlink(path.parent_path()) || fs::is_symlink(path))
       throw Error("Invalid private result storage");
-    fs::create_directories(path.parent_path());
-    for (const auto &dir : {root, root / "results", path.parent_path()})
-      if (::chmod(dir.c_str(), 0700))
-        throw Error("Cannot protect private result directory");
-    files_.atomic_write(path, safe_json(Json(message)).dump(), true);
+    const auto content = safe_json(Json(message)).dump();
+    const auto hash = digest(content);
+    const auto cached = archived_results_.find(message.message_id);
+    bool published = cached != archived_results_.end() && cached->second.first == hash &&
+                     cached->second.second == path.string() && private_regular(files_, root, path);
+    if (!published && private_regular(files_, root, path)) {
+      if (files_.read(path, content.size() + 1) != content)
+        throw Error("Archived message identity changed");
+      published = true;
+    }
+    if (!published) {
+      fs::create_directories(path.parent_path());
+      for (const auto &dir : {root, root / "results", path.parent_path()})
+        if (::chmod(dir.c_str(), 0700))
+          throw Error("Cannot protect private result directory");
+      files_.atomic_write(path, content, true);
+    }
+    // Keep retry reuse bounded independently of session length.
+    if (archived_results_.size() >= 256)
+      archived_results_.clear();
+    archived_results_[message.message_id] = {hash, path.string()};
     message.result_file = ref.string();
   }
   const auto path = result_reference(message);
@@ -981,16 +1045,16 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
       std::sort(candidates.begin(), candidates.end(), [](const auto &left, const auto &right) {
         return left.path().filename().native() < right.path().filename().native();
       });
+      // False is the longer JSON spelling, reserving room for either flag value.
+      const Json page_meta = {{"next_entry_offset", UINT64_MAX},
+                              {"eof", false},
+                              {"truncated", false},
+                              {"scan_limited", false}};
       const auto budget =
-          std::min(context_budget,
-                   config_.tool_output_limit + encoded("", {{"next_entry_offset", UINT64_MAX},
-                                                            {"eof", false},
-                                                            {"truncated", true}}));
+          std::min(context_budget, config_.tool_output_limit + encoded("", page_meta));
       Json entries = Json::array();
       const auto start = std::min<uint64_t>(offset - 1, candidates.size());
       size_t at = static_cast<size_t>(start);
-      const Json page_meta = {
-          {"next_entry_offset", UINT64_MAX}, {"eof", false}, {"truncated", true}};
       const auto empty_cost = encoded("", page_meta);
       size_t page_cost =
           encoded(Json({{"entries", entries}, {"truncated", false}}).dump(), page_meta);
@@ -1009,10 +1073,13 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
       }
       if (at == start && at < candidates.size())
         throw Error("Inspection budget cannot fit one directory entry; increase context_tokens");
-      const bool more = bounded || at < candidates.size();
-      return {Json({{"entries", entries}, {"truncated", more}}).dump(),
+      const bool more = at < candidates.size();
+      return {Json({{"entries", entries}, {"truncated", more || bounded}}).dump(),
               false,
-              {{"next_entry_offset", at + 1}, {"eof", !more}, {"truncated", more}}};
+              {{"next_entry_offset", at + 1},
+               {"eof", !more},
+               {"truncated", more || bounded},
+               {"scan_limited", bounded}}};
     }
     auto opened = files_.open_read(p);
     fresh = execution_request(call);
@@ -1597,7 +1664,9 @@ std::string Tools::dynamic_context() const {
     if (fs::exists(results))
       out += "\n# Retained tool results and captures\n" + results.string() +
              "\nPage this reference index with read_file in any mode. Paths are relative to "
-             "the artifact root (results) or capture root (text captures). Captures may expire.\n";
+             "the artifact root (results) or capture root (text captures). Pass listed paths "
+             "directly to read_file; registered capture filenames resolve automatically. Captures "
+             "may expire.\n";
     const auto index = artifact_index_path(artifact_directory(config_), session_id_);
     if (fs::exists(index))
       out += "\n# Historical image index\n" + index.string() + "\nPosition: " +
@@ -1605,7 +1674,8 @@ std::string Tools::dynamic_context() const {
              "\nArtifact root: " + artifact_directory(config_).string() +
              "\nPage this JSONL observation index with read_file in any mode. Resolve relative "
              "image paths under the artifact root and reload selected images with view_image. "
-             "Compaction removes every attachment.\n";
+             "Compaction archives presented attachments; images awaiting a model response remain "
+             "attached.\n";
   }
   return out;
 }

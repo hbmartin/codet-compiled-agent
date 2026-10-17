@@ -87,13 +87,20 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root)
   if (chmod(path.c_str(), 0600) != 0)
     throw Error("Cannot protect session database");
   sqlite3_busy_timeout(impl_->db, 5000);
-  Statement version(impl_->db, "PRAGMA user_version");
-  if (sqlite3_step(version.p) != SQLITE_ROW)
-    throw Error("Cannot read state schema");
-  const int n = sqlite3_column_int(version.p, 0);
-  if (n > 5)
-    throw Error("Session database was created by a newer Codet version");
   sql(impl_->db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;");
+  const auto version = [&] {
+    Statement query(impl_->db, "PRAGMA user_version");
+    if (sqlite3_step(query.p) != SQLITE_ROW)
+      throw Error("Cannot read state schema");
+    const auto value = sqlite3_column_int(query.p, 0);
+    if (value > 5)
+      throw Error("Session database was created by a newer Codet version");
+    return value;
+  };
+  if (version() == 5)
+    return;
+  Transaction migration(impl_->db);
+  const int n = version(); // Another starter may have migrated while we waited for the lock.
   sql(impl_->db,
       "CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,name TEXT NOT NULL,parent "
       "TEXT,updated INTEGER NOT NULL,messages TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'idle');"
@@ -102,33 +109,50 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root)
       "KEY(session,call_id),FOREIGN KEY(session) REFERENCES sessions(id));");
   if (n < 2)
     sql(impl_->db,
-        "BEGIN IMMEDIATE; ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT '';ALTER "
-        "TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT '';PRAGMA user_version=2;COMMIT;");
+        "ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT '';ALTER "
+        "TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT '';PRAGMA user_version=2;");
   if (n < 3)
     sql(impl_->db, "PRAGMA user_version=3;");
   if (n < 4)
-    sql(impl_->db, "BEGIN IMMEDIATE; ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT;"
-                   "PRAGMA user_version=4; COMMIT;");
+    sql(impl_->db, "ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT;"
+                   "PRAGMA user_version=4;");
   if (n < 5) {
-    sql(impl_->db, "BEGIN IMMEDIATE; CREATE TABLE session_references("
+    sql(impl_->db, "CREATE TABLE session_references("
                    "session TEXT NOT NULL,kind TEXT NOT NULL,path TEXT NOT NULL,"
                    "PRIMARY KEY(session,kind,path),FOREIGN KEY(session) REFERENCES sessions(id));");
-    try {
+    {
       Statement sessions(impl_->db, "SELECT id,messages FROM sessions");
-      while (sqlite3_step(sessions.p) == SQLITE_ROW)
-        remember_references(column(sessions.p, 0),
-                            Json::parse(column(sessions.p, 1)).get<std::vector<Message>>());
+      int status;
+      while ((status = sqlite3_step(sessions.p)) == SQLITE_ROW) {
+        std::vector<Message> parsed;
+        try {
+          parsed = Json::parse(column(sessions.p, 1)).get<std::vector<Message>>();
+        } catch (const Json::exception &) {
+          continue; // Loading this session still reports its corrupt transcript.
+        }
+        remember_references(column(sessions.p, 0), parsed);
+      }
+      if (status != SQLITE_DONE)
+        throw Error("Cannot backfill session references: " +
+                    std::string(sqlite3_errmsg(impl_->db)));
       Statement journal(impl_->db, "SELECT session,result FROM tools WHERE result IS NOT NULL");
-      while (sqlite3_step(journal.p) == SQLITE_ROW)
-        remember_references(column(journal.p, 0),
-                            {Json::parse(column(journal.p, 1)).get<Message>()});
-      sql(impl_->db, "PRAGMA user_version=5; COMMIT;");
+      while ((status = sqlite3_step(journal.p)) == SQLITE_ROW) {
+        Message parsed;
+        try {
+          parsed = Json::parse(column(journal.p, 1)).get<Message>();
+        } catch (const Json::exception &) {
+          continue; // Reconciliation retains its existing corrupt-record handling.
+        }
+        remember_references(column(journal.p, 0), {parsed});
+      }
+      if (status != SQLITE_DONE)
+        throw Error("Cannot backfill journal references: " +
+                    std::string(sqlite3_errmsg(impl_->db)));
+      sql(impl_->db, "PRAGMA user_version=5;");
       impl_->known_references.clear();
-    } catch (...) {
-      (void)sqlite3_exec(impl_->db, "ROLLBACK", nullptr, nullptr, nullptr);
-      throw;
     }
   }
+  migration.commit();
 }
 StateStore::~StateStore() = default;
 std::shared_ptr<void> StateStore::acquire(const std::string &id) {
@@ -196,7 +220,7 @@ Session StateStore::load_id(const std::string &id, bool repair) {
   Session s{column(q.p, 0), column(q.p, 1), {}};
   s.provider = column(q.p, 4);
   s.model = column(q.p, 5);
-  if (sqlite3_column_type(q.p, 6) != SQLITE_NULL)
+  if (sqlite3_column_type(q.p, 6) != SQLITE_NULL && !column(q.p, 6).empty())
     s.effort = column(q.p, 6);
   try {
     s.messages = Json::parse(column(q.p, 2)).get<std::vector<Message>>();
@@ -381,11 +405,11 @@ void StateStore::reconcile(Session &session, bool persist) {
     throw;
   }
 }
-Session StateStore::last() {
+Session StateStore::last(bool repair) {
   Statement q(impl_->db, "SELECT id FROM sessions ORDER BY updated DESC,rowid DESC LIMIT 1");
   if (sqlite3_step(q.p) != SQLITE_ROW)
     throw Error("No saved sessions", 2);
-  return load_id(column(q.p, 0));
+  return load_id(column(q.p, 0), repair);
 }
 Session StateStore::fork(const Session &parent) {
   auto recovered = parent;

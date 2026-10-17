@@ -57,8 +57,23 @@ class PromptBundle(unittest.TestCase):
                 if "The final answer must always be fully self-contained" in original:
                     self.assertIn("The final answer must always be fully self-contained", adapted)
 
+    def test_identity_adaptation_preserves_product_references(self):
+        original = ("You are Codex, fixture.\nAs Codex, help the user.\n"
+                    "You have a vivid inner life as Codex: curious and present.\n"
+                    "Use the Codex source snapshot as a reference.\n")
+        adapted, edits = importer.adapt(original, "instructions")
+        self.assertTrue(adapted.startswith("You are Codet,"))
+        self.assertIn("As Codet, help the user.", adapted)
+        self.assertIn("You have a vivid inner life as Codet: curious and present.", adapted)
+        self.assertIn("Use the Codex source snapshot as a reference.", adapted)
+        replayed = original
+        for edit in edits:
+            self.assertEqual(replayed.count(edit["before"]), edit["count"])
+            replayed = replayed.replace(edit["before"], edit["after"])
+        self.assertEqual(replayed, adapted)
+
     def test_offline_catalog_records_only_selection_metadata(self):
-        manifest = json.loads((ROOT / "prompts/manifest.json").read_text())
+        manifest = json.loads((ROOT / "prompts/manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(set(manifest["catalog"]), set(manifest["models"]))
         for model in manifest["catalog"].values():
             self.assertEqual(set(model), {"default_effort", "efforts"})
@@ -68,20 +83,25 @@ class PromptBundle(unittest.TestCase):
     def test_utf8_bytes_and_newlines_are_deterministic(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "unicode.md"
-            importer.write_utf8(target, "雪🌲é\n")
-            self.assertEqual(target.read_bytes(), "雪🌲é\n".encode("utf-8"))
-            self.assertEqual(importer.digest("雪🌲é\n"), hashlib.sha256(target.read_bytes()).hexdigest())
+            text = "雪🌲é ’ — …\n"
+            importer.write_utf8(target, text)
+            self.assertEqual(target.read_bytes(), text.encode("utf-8"))
+            self.assertEqual(importer.digest(text), hashlib.sha256(target.read_bytes()).hexdigest())
 
     def test_every_asset_has_complete_replayable_provenance(self):
         bundle = ROOT / "prompts"
-        manifest = json.loads((bundle / "manifest.json").read_text())
+        manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
         for key, asset in manifest["assets"].items():
-            adapted = (bundle / "assets" / (key + ".md")).read_text()
+            path = bundle / "assets" / (key + ".md")
+            adapted = path.read_text(encoding="utf-8")
+            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), key)
             self.assertEqual(importer.digest(adapted), key)
             self.assertEqual(asset["adapted_sha256"], key)
             self.assertTrue(asset["origins"])
             for origin in asset["origins"]:
-                text = (bundle / "upstream" / (origin["upstream_sha256"] + ".md")).read_text()
+                path = bundle / "upstream" / (origin["upstream_sha256"] + ".md")
+                text = path.read_text(encoding="utf-8")
+                self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), origin["upstream_sha256"])
                 self.assertEqual(importer.digest(text), origin["upstream_sha256"])
                 for edit in origin["edits"]:
                     self.assertEqual(text.count(edit["before"]), edit["count"])
@@ -102,19 +122,19 @@ class PromptBundle(unittest.TestCase):
             root = Path(directory)
             catalog = root / "models.json"
             catalog.write_text(json.dumps({"models": [
-                {"slug": "gpt-5.5", "model_messages": {"instructions_template": "You are Codex, fixture."}},
+                {"slug": "gpt-5.5", "model_messages": {"instructions_template": "You are Codex, 雪 ’ — …."}},
                 {"slug": "missing"},
-                {"slug": "empty", "model_messages": {"instructions_template": "", "collaboration_modes": {"plan": ""}}}]}))
+                {"slug": "empty", "model_messages": {"instructions_template": "", "collaboration_modes": {"plan": ""}}}]}, ensure_ascii=False), encoding="utf-8", newline="\n")
             supporting = root / "supporting"
             modes = root / "modes"
             for path in (supporting / "templates/compact/prompt.md", supporting / "templates/compact/summary_prefix.md",
                          supporting / "templates/permissions/approval_policy/on_request.md", supporting / "templates/permissions/approval_policy/never.md",
                          modes / "templates/default.md", modes / "templates/plan.md"):
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(path.name)
+                path.write_text(path.name + " 雪 ’ — …\n", encoding="utf-8", newline="\n")
             output = root / "output"
             importer.import_bundle(catalog, supporting, modes, output)
-            manifest = json.loads((output / "manifest.json").read_text())
+            manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
             self.assertIsNone(manifest["models"]["missing"]["instructions"])
             self.assertEqual(manifest["models"]["empty"]["instructions"], importer.digest(""))
             self.assertEqual(manifest["models"]["empty"]["plan"], importer.digest(""))

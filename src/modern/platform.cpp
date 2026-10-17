@@ -1330,6 +1330,8 @@ void to_json(Json &j, const Message &m) {
        {"calls", m.calls}, {"replay", m.replay}, {"replay_provider", m.replay_provider}};
   if (!m.assistant_items.empty())
     j["assistant_items"] = m.assistant_items;
+  if (!m.checkpoint_state.is_null())
+    j["checkpoint_state"] = m.checkpoint_state;
   if (!m.images.empty())
     j["images"] = m.images;
   if (!m.origin.empty())
@@ -1346,6 +1348,7 @@ void to_json(Json &j, const Message &m) {
     j["images_archived"] = true;
 }
 void from_json(const Json &j, Message &m) {
+  m.checkpoint_state = j.value("checkpoint_state", Json());
   m.assistant_items = j.value("assistant_items", std::vector<AssistantText>{});
   m.role = j.at("role");
   m.text = j.value("text", "");

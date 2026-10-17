@@ -336,7 +336,8 @@ TEST(DiagnosticPolicies, SharedBufferBudgetsFormattedMessagesAndReportsOmissions
 }
 struct ReadyProvider : Provider {
   ProviderResult complete(const Config &, const std::string &, const std::vector<codet::Message> &,
-                          const Json &, const Cancellation &, const ChunkSink &) override {
+                          const Json &, const Cancellation &, const ChunkSink &,
+                          const ItemSink & = {}) override {
     ProviderResult r;
     r.message.role = "assistant";
     r.message.text = "done";

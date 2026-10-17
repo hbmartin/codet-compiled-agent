@@ -278,7 +278,8 @@ struct OneCall : Provider {
   ToolCall tool;
   size_t requests = 0;
   ProviderResult complete(const Config &, const std::string &, const std::vector<codet::Message> &,
-                          const Json &, const Cancellation &, const ChunkSink &) override {
+                          const Json &, const Cancellation &, const ChunkSink &,
+                          const ItemSink & = {}) override {
     ++requests;
     codet::Message message;
     message.role = "assistant";
@@ -638,7 +639,9 @@ TEST_F(Runtime, StartupDescriptorExhaustionIsFatal) {
   const auto child = fork();
   ASSERT_GE(child, 0);
   if (!child) {
-    struct rlimit limit{3, 3};
+    struct rlimit limit {
+      3, 3
+    };
     if (setrlimit(RLIMIT_NOFILE, &limit))
       _exit(2);
     NativeProcesses owned;
@@ -798,7 +801,8 @@ TEST_F(Runtime, NumericOptionLabelsAreMappedOnlyOnce) {
 }
 struct FinalProvider : Provider {
   ProviderResult complete(const Config &, const std::string &, const std::vector<codet::Message> &,
-                          const Json &, const Cancellation &, const ChunkSink &) override {
+                          const Json &, const Cancellation &, const ChunkSink &,
+                          const ItemSink & = {}) override {
     codet::Message message;
     message.role = "assistant";
     message.text = "done";

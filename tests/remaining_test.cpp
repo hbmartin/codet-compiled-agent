@@ -264,7 +264,7 @@ struct ScriptedProvider : Provider {
   std::function<ProviderResult(const std::vector<codet::Message> &)> next;
   ProviderResult complete(const Config &, const std::string &,
                           const std::vector<codet::Message> &messages, const Json &,
-                          const Cancellation &, const ChunkSink &) override {
+                          const Cancellation &, const ChunkSink &, const ItemSink & = {}) override {
     return next(messages);
   }
 };

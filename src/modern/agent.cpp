@@ -1,8 +1,10 @@
 #include "codet/artifacts.hpp"
+#include "codet/computer.hpp"
 #include "codet/context.hpp"
 #include "codet/core.hpp"
 #include "codet/output.hpp"
 #include "codet/prompt.hpp"
+#include "codet/support.hpp"
 #include "codet/tool_registry.hpp"
 #include <iostream>
 #include <nlohmann/json-schema.hpp>
@@ -10,10 +12,30 @@
 #include <sstream>
 
 namespace codet {
+namespace {
+struct SummaryFailure : Error {
+  using Error::Error;
+};
+size_t image_boundary(const std::vector<Message> &messages) {
+  size_t boundary = 0;
+  for (size_t i = 0; i < messages.size(); ++i)
+    if (messages[i].role == "assistant")
+      boundary = i + 1;
+  return boundary;
+}
+} // namespace
 bool Agent::compact_history(Session &session, const Cancellation &cancel,
                             const std::string &project, const Json &schemas,
                             const std::string &trigger, Usage &usage, size_t *requests) {
+  ensure_message_ids(session.messages);
   auto keep = protected_history(session.messages);
+  const auto boundary = image_boundary(session.messages);
+  std::set<std::string> unseen_images;
+  for (size_t i = boundary; i < session.messages.size(); ++i)
+    if (!session.messages[i].images.empty()) {
+      keep.push_back(i);
+      unseen_images.insert(session.messages[i].message_id);
+    }
   if (trigger == "manual")
     for (size_t i = session.messages.size(); i > 0; --i)
       if (session.messages[i - 1].role == "user" &&
@@ -36,8 +58,8 @@ bool Agent::compact_history(Session &session, const Cancellation &cancel,
   auto system = compose();
   auto budget = prompt_budget(config_, system, schemas);
   const auto capacity = [&](const std::string &reason) {
-    return Error(reason +
-                 "; increase context_tokens or reduce output/project context. history retained.");
+    return SummaryFailure(
+        reason + "; increase context_tokens or reduce output/project context. history retained.");
   };
   std::vector<Message> older, tail;
   for (size_t i = 0; i < session.messages.size(); ++i)
@@ -55,9 +77,9 @@ bool Agent::compact_history(Session &session, const Cancellation &cancel,
   continuation.insert(continuation.end(), tail.begin(), tail.end());
   bool checkpoint = false;
   try {
-    if (budget.available() <= 3072)
+    if (budget.available() <= 512)
       throw ContextCapacity("No summary allowance");
-    (void)project_history(continuation, budget.available() - 3072, tools_);
+    (void)project_history(continuation, budget.available() - 512, tools_);
   } catch (const ContextCapacity &) {
     checkpoint = true;
     older = session.messages;
@@ -65,30 +87,28 @@ bool Agent::compact_history(Session &session, const Cancellation &cancel,
     if (!latest.role.empty())
       tail.push_back(latest);
     bool after_human = false;
-    Json critical = Json::array();
     for (const auto &m : session.messages) {
       if (m.message_id == latest.message_id && m.role == "user")
         after_human = true;
       else if (after_human && m.origin == "hook")
         tail.push_back(m);
-      if (m.role != "tool")
-        continue;
-      const auto envelope = Json::parse(m.text, nullptr, false);
-      if (!envelope.is_object())
-        continue;
-      const auto meta = envelope.value("metadata", Json::object());
-      if (meta.is_object() && (meta.contains("session_id") || meta.contains("recovery"))) {
-        Json fact = {{"call_id", m.tool_call_id}};
-        for (const auto *key : {"session_id", "exit_code", "recovery", "action_completed"})
-          if (meta.contains(key))
-            fact[key] = meta.at(key);
-        critical.push_back(std::move(fact));
+      if (unseen_images.count(m.message_id) && m.message_id != latest.message_id) {
+        if (m.role == "tool") {
+          Message observation;
+          observation.role = "user";
+          observation.origin = "artifact";
+          observation.message_id = unique_id();
+          observation.text = "Unpresented images from archived tool result: " +
+                             fs::path(tools_.result_reference(m))
+                                 .lexically_relative(artifact_directory(config_))
+                                 .string();
+          observation.images = m.images;
+          unseen_images.insert(observation.message_id);
+          tail.push_back(std::move(observation));
+        } else
+          tail.push_back(m);
       }
     }
-    compact.text +=
-        "Completed tool groups are archived; do not repeat their effects. "
-        "Inspect retained results before uncertain actions. Recovery/execution state: " +
-        critical.dump() + "\n";
   }
   const bool retire = std::any_of(older.begin(), older.end(),
                                   [](const auto &m) { return m.origin != "compaction"; });
@@ -100,6 +120,24 @@ bool Agent::compact_history(Session &session, const Cancellation &cancel,
       cancel);
   if (hook.stopped)
     throw Error(hook.reason);
+  auto critical = tools_.execution_state(session.messages);
+  if (checkpoint || !critical.empty()) {
+    if (critical.dump().size() > 2048) {
+      Message record;
+      record.role = "system";
+      record.origin = "recovery";
+      record.message_id = digest(critical.dump());
+      record.text = critical.dump();
+      tools_.retain_result(record);
+      state_.remember_references(session.id, {record});
+      critical = {{"records", critical.size()}, {"recovery_record", record.result_file}};
+    }
+    compact.checkpoint_state = critical;
+    compact.text +=
+        "Completed tool groups are archived; do not repeat their effects. "
+        "Inspect retained results before uncertain actions. Recovery/execution state: " +
+        critical.dump() + "\n";
+  }
   // Publish complete records and portable references before retiring model-visible messages.
   const auto index = tools_.archive_images(session.messages);
   if (!index.empty())
@@ -109,26 +147,28 @@ bool Agent::compact_history(Session &session, const Cancellation &cancel,
   state_.remember_references(session.id, older);
   tools_.restore_references(state_.references(session.id));
   for (auto &m : tail) {
-    if (!m.images.empty())
-      m.images_archived = true;
-    m.images.clear();
+    if (!unseen_images.count(m.message_id)) {
+      if (!m.images.empty())
+        m.images_archived = true;
+      m.images.clear();
+    }
   }
   system = compose();
   budget = prompt_budget(config_, system, schemas);
   const auto available = budget.available();
   continuation = {compact};
   continuation.insert(continuation.end(), tail.begin(), tail.end());
-  if (available <= 3072)
+  if (available <= 512)
     throw capacity("No space remains for a compaction summary");
   std::vector<Message> projected;
   try {
-    projected = project_history(continuation, available - 3072, tools_);
+    projected = project_history(continuation, available - 512, tools_);
   } catch (const ContextCapacity &) {
     throw capacity("Human steering and recovery state cannot fit with a summary");
   }
-  size_t target = std::min<size_t>(8192, (available - Json(projected).dump().size()) / 6);
-  if (target < 512)
-    throw capacity("No space remains for a minimum compaction summary");
+  size_t target = std::min<size_t>(8192, (available - tools_.history_bytes(projected)) / 6);
+  target =
+      std::max<size_t>(1, target); // Advisory target; actual continuation size is authoritative.
   const std::string base =
       std::string(summarization_prompt()) +
       "\nPreserve goals, constraints, completed effects, test evidence, failures, artifact "
@@ -157,7 +197,7 @@ bool Agent::compact_history(Session &session, const Cancellation &cancel,
   for (unsigned attempt = 0; attempt < 2; ++attempt) {
     cancel.check();
     if (requests && *requests + 1 >= config_.max_turns)
-      throw Error("Context requires compaction and another request. Increase max_turns.");
+      throw SummaryFailure("Context requires compaction and another request. Increase max_turns.");
     ProviderResult summary;
     try {
       if (requests)
@@ -167,7 +207,8 @@ bool Agent::compact_history(Session &session, const Cancellation &cancel,
     } catch (const Error &e) {
       if (e.code == 130)
         throw;
-      throw Error("Compaction request failed; history retained: " + std::string(e.what()), e.code);
+      throw SummaryFailure("Compaction request failed; history retained: " + std::string(e.what()),
+                           e.code);
     }
     usage.input += summary.usage.input;
     usage.output += summary.usage.output;
@@ -175,13 +216,13 @@ bool Agent::compact_history(Session &session, const Cancellation &cancel,
     usage.reasoning += summary.usage.reasoning;
     if (summary.stop_reason == "length" || summary.stop_reason == "max_tokens" ||
         summary.stop_reason == "MAX_TOKENS")
-      throw Error("Compaction exhausted the provider output allowance; history retained. "
-                  "Increase max_output_tokens and context_tokens.");
+      throw SummaryFailure("Compaction exhausted the provider output allowance; history retained. "
+                           "Increase max_output_tokens and context_tokens.");
     if (summary.message.text.find_first_not_of(" \t\r\n") == std::string::npos ||
         !summary.message.calls.empty())
-      throw Error("Compaction returned an empty summary or tool calls; history retained");
+      throw SummaryFailure("Compaction returned an empty summary or tool calls; history retained");
     continuation[0].text = compact.text + summary.message.text;
-    if (summary.message.text.size() <= 8192 && Json(continuation).dump().size() <= available) {
+    if (summary.message.text.size() <= 8192 && tools_.history_bytes(continuation) <= available) {
       accepted = true;
       break;
     }
@@ -230,9 +271,9 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
   session = state_.load_id(session.id, false);
   RunResult out;
   Json structured;
+  session.effort = saved_effort(config_, &session);
   session.provider = config_.provider;
   session.model = config_.model;
-  session.effort = config_.effort;
   tools_.use_session(session.id);
   tools_.restore_references(state_.references(session.id));
   tools_.begin_input_turn(session.id);
@@ -282,6 +323,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
       report_diagnostic(diagnostics_, "Turn status update failed: " + std::string(e.what()));
     }
   };
+  bool soft_failed = false;
   try {
     const auto submitted = tools_.run_hooks("UserPromptSubmit",
                                             {{"hook_event_name", "UserPromptSubmit"},
@@ -360,36 +402,50 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
                                                  [](const auto &m) { return m.previewed; });
       bool hard = false;
       std::vector<Message> request_messages;
+      auto trial = session.messages;
       try {
-        try {
-          request_messages = project_history(session.messages, available / 5 * 4, tools_);
-        } catch (const ContextCapacity &) {
-          request_messages = project_history(session.messages, available, tools_);
-        }
+        request_messages = project_history(trial, available, tools_);
       } catch (const ContextCapacity &) {
         hard = true;
       }
       if (hard)
         for (auto m = session.messages.rbegin(); m != session.messages.rend(); ++m)
           if (m->role == "user" && (m->origin.empty() || m->origin == "human")) {
-            if (Json(*m).dump().size() >= available)
+            if (tools_.history_bytes({*m}) >= available)
               throw context_error("Human input cannot fit without truncation",
-                                  Json(*m).dump().size());
+                                  tools_.history_bytes({*m}));
             break;
           }
-      const bool soft = Json(session.messages).dump().size() > available / 5 * 4;
+      const auto keep = protected_history(session.messages);
+      bool reducible = false;
+      for (size_t i = 0; i < session.messages.size(); ++i)
+        if (!std::binary_search(keep.begin(), keep.end(), i) &&
+            session.messages[i].origin != "compaction")
+          reducible = true;
+      const bool soft =
+          !hard && !soft_failed && reducible && tools_.history_bytes(trial) > available / 5 * 4;
+      bool compacted = false;
       if ((hard || soft) && (hard || requests + 1 < config_.max_turns)) {
-        if (!compact_history(session, cancel, project_context, schemas, "auto", out.usage,
-                             &requests)) {
+        try {
+          compacted = compact_history(session, cancel, project_context, schemas, "auto", out.usage,
+                                      &requests);
+        } catch (const SummaryFailure &e) {
           if (hard)
-            throw context_error("Human input and protected continuation cannot fit",
-                                Json(session.messages).dump().size());
-        } else {
-          system = compose();
-          budget = prompt_budget(config_, system, schemas);
-          available = budget.available();
-          request_messages = project_history(session.messages, available, tools_);
+            throw;
+          soft_failed = true;
+          report_diagnostic(diagnostics_, "Optional compaction skipped: " + std::string(e.what()));
         }
+        if (hard && !compacted)
+          throw context_error("Human input and protected continuation cannot fit",
+                              tools_.history_bytes(session.messages));
+      }
+      if (compacted || soft_failed) {
+        system = compose();
+        budget = prompt_budget(config_, system, schemas);
+        available = budget.available();
+        request_messages = project_history(session.messages, available, tools_);
+      } else if (!hard) {
+        session.messages = std::move(trial);
       }
       std::vector<Message> references;
       for (const auto &m : session.messages)
@@ -413,7 +469,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         }
       };
       ++requests;
-      auto response = provider_.complete_items(
+      auto response = provider_.complete(
           config_, system, request_messages, schemas, cancel,
           [&](const std::string &delta) {
             start_fallback();
@@ -531,7 +587,11 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         throw context_error(
             "Human input and recoverable result envelopes cannot fit before dispatch",
             batch_minimum);
-      tools_.inspection_budget((batch_available - batch_minimum) / response.message.calls.size());
+      const auto retained =
+          minimal_batch_bytes(session.messages, response.message.calls, tools_) + 3072;
+      const auto inspection_space =
+          retained < batch_available ? batch_available - retained : batch_available - batch_minimum;
+      tools_.inspection_budget(inspection_space / response.message.calls.size());
       for (const auto &call : response.message.calls) {
         cancel.check();
         state_.tool_started(session.id, call);

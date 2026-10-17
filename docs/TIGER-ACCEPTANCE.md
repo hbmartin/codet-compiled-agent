@@ -129,3 +129,32 @@ In both terminal interfaces, execute a roughly 130 KiB patch once, then continue
 On Tiger's HFS+ volume, inspect a file through differently cased names and a hard link with read_file and view_image. Verify normal aliases work, replaced/symlink targets and new denies remain blocked, and record filesystem details. Host APFS results do not establish HFS+ behavior. Read JSON byte pages, malformed/valid UTF-8, a past-EOF line page and long lines; verify contiguous offsets and unchanged file formatting through resume/fork. Test a 100-step plan near 8 KiB and confirm one omission notice.
 
 Build/run codet_persistence_bench with payload arguments 512 and 65536; record 100/200/300-result timing, peak RSS, swapping and responsiveness. These synthetic measurements retain whole-transcript writes; compare them with real stable-preview/compaction sessions on the 512 MB G4. Target runtime acceptance remains owner-run.
+
+
+## PR #13 recovery and discovery follow-up
+
+On a copy of schema-4 state, mix valid sessions/references with malformed transcript and
+journal rows. Confirm migration completes, valid sessions reopen, corrupt rows retain their
+bytes and still fail their own load/recovery, and genuine SQLite failures roll back for retry.
+In both terminal interfaces, inspect directories just below, at and above 10,000 entries.
+Nonterminal pages advance; `scan_limited` marks incomplete scans and `eof` ends the scanned
+subset even when `truncated` remains true. Partial scans have no complete alphabetical
+coverage or snapshot guarantee. Include explicit per-entry denies and an empty filtered page.
+
+Use unusable memory/skill roots alongside readable project guidance and other skills. Confirm
+local diagnostics preserve other context. On HFS+, inspect a user skill through `/var` or
+another stable ancestor alias outside Codet home/cwd; advertised canonical paths must work,
+while explicit denies and a hook replacing a descendant with a symlink must still block access.
+Check progress/final display and unchanged item IDs. Record startup/turn responsiveness,
+peak RSS and swapping on the 512 MB G4. Host/sanitizer/static/PPC verification does not complete
+these owner-run target checks. Semgrep runs only in developer/CI environments, never on Tiger.
+
+## Compaction and startup follow-up
+
+- In both terminal modes, trigger automatic compaction with a fresh `-i` attachment, including image-only resume/fork. Confirm the main request receives it. Interrupt before a response and confirm it remains available. Previously presented images remain inspectable in the ledger.
+- Inject a failing optional summary request when history fits the hard budget; confirm a diagnostic and normal continuation. Explicit PreCompact stop and Ctrl-C must still stop. Verify a large contiguous file page, including Unicode, can be continued without missing middle bytes.
+- Poll a live execution repeatedly, let it exit, and trigger a checkpoint. Its ID must disappear from live state; after resume no historical process ID is offered as live. Inspect overflow recovery records through the retained index.
+- Start two binaries concurrently against copied schema-3/4 state. Both must open successfully after serialized migration. Invalid images/effort must not create a session/fork or change `resume --last`.
+- Change global reasoning effort between resumed turns. Unpinned sessions follow it; explicit selections survive resume/fork for the same provider/model. Test `/model MODEL` clearing a pin in each terminal.
+- Run `codet_persistence_bench 512`, `codet_persistence_bench 4096`, and `codet_persistence_bench inspection` when available. Record listing latency, archive publication counts, save time, peak RSS and swapping. Directory pages still rescan their bounded subset; whole-transcript writes still grow cumulatively. Host measurements do not establish the 512 MB G4 target.
+- Check HFS+ case aliases and hard links with opened-handle validation unchanged. The host APFS handle can resolve a hard link to another name; mismatched opened names must retain the normal target-changed error. Record actual Tiger behavior.

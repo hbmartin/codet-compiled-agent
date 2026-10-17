@@ -208,6 +208,45 @@ class CliTests(unittest.TestCase):
                     selected=db.execute('SELECT provider,model FROM sessions WHERE id=?',(session,)).fetchone()
                 self.assertEqual(selected,(provider,model))
 
+    def test_preflight_failures_do_not_publish_sessions_or_change_last(self):
+        import sqlite3
+        success=self.run_cli('exec','simple');self.assertEqual(success.returncode,0,success.stderr)
+        def rows():
+            with sqlite3.connect(self.home/'state.sqlite3') as db:
+                return db.execute('SELECT id,messages,provider,model,reasoning_effort,updated FROM sessions ORDER BY rowid').fetchall()
+        before=rows();session=before[-1][0]
+        cases=[('exec','--image','missing.png','simple'),
+               ('exec','--provider','google','-c',"model_reasoning_effort='high'",'simple'),
+               ('exec','resume',session,'--image','missing.png','continue'),
+               ('exec','fork',session,'--image','missing.png','continue')]
+        for args in cases:
+            with self.subTest(args=args):
+                result=self.run_cli(*args)
+                self.assertNotEqual(result.returncode,0)
+                self.assertEqual(rows(),before)
+        self.assertEqual(len(self.server.requests),1)
+        resumed=self.run_cli('exec','resume','--last','continue')
+        self.assertEqual(resumed.returncode,0,resumed.stderr)
+        self.assertEqual(rows()[-1][0],session)
+
+    def test_effort_inherits_until_selected_and_survives_resume_and_fork(self):
+        import sqlite3
+        result=self.run_cli('exec','--json','simple');self.assertEqual(result.returncode,0,result.stderr)
+        with sqlite3.connect(self.home/'state.sqlite3') as db:
+            session,effort=db.execute('SELECT id,reasoning_effort FROM sessions ORDER BY rowid DESC LIMIT 1').fetchone()
+        self.assertIsNone(effort)
+        base=(self.home/'config.toml').read_text()
+        (self.home/'config.toml').write_text("model_reasoning_effort='low'\n"+base)
+        result=self.run_cli('exec','resume',session,'continue');self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(self.server.requests[-1]['body']['reasoning_effort'],'low')
+        result=self.run_cli('exec','resume',session,'-c',"model_reasoning_effort='high'",'continue')
+        self.assertEqual(result.returncode,0,result.stderr)
+        (self.home/'config.toml').write_text("model_reasoning_effort='medium'\n"+base)
+        result=self.run_cli('exec','fork',session,'continue');self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(self.server.requests[-1]['body']['reasoning_effort'],'high')
+        with sqlite3.connect(self.home/'state.sqlite3') as db:
+            self.assertEqual(db.execute('SELECT reasoning_effort FROM sessions ORDER BY rowid DESC LIMIT 1').fetchone()[0],'high')
+
     def configure_hooks(self,start='cat',end='cat'):
         marker=self.root/'hooks.jsonl'
         content=(self.home/'config.toml').read_text()
@@ -361,6 +400,45 @@ class CliTests(unittest.TestCase):
             self.assertEqual(changed.returncode,0,changed.stderr)
             self.assertNotIn('reasoning_effort',self.server.requests[-1]['body'])
 
+    def test_model_without_effort_clears_pin_in_both_terminals(self):
+        import fcntl,pty,select,sqlite3,struct,termios
+        base=(self.home/'config.toml').read_text()
+        for mode in ['line','curses']:
+            (self.home/'config.toml').write_text("model_reasoning_effort='low'\n"+base)
+            master,slave=pty.openpty()
+            fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',40,120,0,0))
+            process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+            received=b''
+            def wait_for(text):
+                nonlocal received
+                deadline=time.monotonic()+7
+                while text not in received and time.monotonic()<deadline:
+                    if select.select([master],[],[],.03)[0]:received+=os.read(master,65536)
+                self.assertIn(text,received);received=b''
+            def saved():
+                with sqlite3.connect(self.home/'state.sqlite3') as db:
+                    return db.execute('SELECT reasoning_effort FROM sessions ORDER BY rowid DESC LIMIT 1').fetchone()[0]
+            try:
+                wait_for(b'codet>')
+                os.write(master,b'/model changed high\n');wait_for(b'Model: changed; effort: high')
+                self.assertEqual(saved(),'high')
+                os.write(master,b'/model changed\n');wait_for(b'Model: changed; effort: low')
+                self.assertIsNone(saved())
+                os.write(master,b'/new\n');wait_for(b'Started ')
+                self.assertIsNone(saved())
+                os.write(master,b'/quit\n')
+                deadline=time.monotonic()+5
+                while process.poll() is None and time.monotonic()<deadline:
+                    if select.select([master],[],[],.03)[0]:received+=os.read(master,65536)
+                self.assertEqual(process.poll(),0,repr(received))
+            finally:
+                if process.poll() is None:process.kill();process.wait()
+                os.close(master);os.close(slave)
+            (self.home/'config.toml').write_text("model_reasoning_effort='medium'\n"+base)
+            result=self.run_cli('exec','resume','--last','fixture')
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(self.server.requests[-1]['body']['reasoning_effort'],'medium')
+
     def test_invalid_known_model_effort_leaves_saved_selection_unchanged(self):
         import pty,select,sqlite3
         master,slave=pty.openpty()
@@ -422,6 +500,22 @@ class CliTests(unittest.TestCase):
                     if select.select([master],[],[],.05)[0]:received+=os.read(master,65536)
                 self.assertIn(text,received)
                 received=b''
+            def after_turn(command,text):
+                # Curses can show streamed answer text before the worker becomes idle.
+                # Synchronize on the documented command response, not that progress text.
+                nonlocal received
+                deadline=time.monotonic()+5
+                busy=b'Change permission modes after the active turn completes.'
+                while time.monotonic()<deadline:
+                    os.write(master,command)
+                    while text not in received and busy not in received and time.monotonic()<deadline:
+                        if select.select([master],[],[],.05)[0]:received+=os.read(master,65536)
+                    if text in received:
+                        received=b''
+                        return
+                    self.assertIn(busy,received)
+                    received=b''
+                self.fail('Turn did not become idle before permission command')
             try:
                 wait_for(b'codet>')
                 os.write(master,b'/permissions bypass\n');wait_for(b'Permissions: bypass')
@@ -430,12 +524,12 @@ class CliTests(unittest.TestCase):
                 outcome=json.loads(tool['content'])
                 self.assertEqual(outcome['exit_code'],0)
                 self.assertEqual(outcome['output'],'approved')
-                os.write(master,b'/permissions invalid\n');wait_for(b'Use /permissions')
+                after_turn(b'/permissions invalid\n',b'Use /permissions')
                 os.write(master,b'/permissions\n');wait_for(b'Permissions: bypass')
                 os.write(master,b'/permissions plan\n');wait_for(b'Permissions: plan')
                 os.write(master,b'fixture-command\n');wait_for(b'fixture done')
                 self.assertIn('Permission denied for exec_command',json.dumps(self.server.requests[-1]['body']))
-                os.write(master,b'/permissions default\n');wait_for(b'Permissions: default')
+                after_turn(b'/permissions default\n',b'Permissions: default')
                 os.write(master,b'/quit\n');deadline=time.monotonic()+5
                 while p.poll() is None and time.monotonic()<deadline:
                     if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)

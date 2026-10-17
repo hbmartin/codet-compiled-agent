@@ -1,0 +1,8 @@
+rules:
+  - id: codet-backfill-inline-json
+    languages: [cpp]
+    severity: ERROR
+    message: Decode legacy JSON in a per-row exception boundary before persisting references.
+    paths:
+      include: ["**/state.cpp"]
+    pattern: remember_references($SESSION, <... Json::parse(...) ...>)

@@ -35,6 +35,7 @@ def adapt(text, family):
                     "one workspace, and your job is to collaborate with them until their intended "
                     "goal is completely handled.", "Codet identity without a model-family claim")
         replace("As Codex,", "As Codet,", "Codet identity")
+        replace("as Codex:", "as Codet:", "Codet identity")
         for heading in ("# Apps (Connectors)", "# Plugins", "### Visualizations"):
             pattern = re.escape(heading) + r"\n.*?(?=\n#{1," + str(len(heading.split()[0])) + r"} |\Z)"
             for match in list(re.finditer(pattern, text, re.S)):

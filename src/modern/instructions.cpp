@@ -104,9 +104,43 @@ SkillMetadata skill_metadata(const std::string &text, const std::string &fallbac
 std::string Tools::instructions() const {
   const std::string inspection = "read_file";
   const auto cwd = files_.canonical(config_.cwd), home = files_.canonical(config_.home);
+  std::string out;
+  const auto warn = [&](const std::string &message) {
+    if (warnings_.insert(message).second)
+      report_diagnostic(diagnostics_, message);
+  };
+  const auto kind = [&](const fs::path &p, bool follow = true) {
+    std::error_code error;
+    const auto status = follow ? fs::status(p, error) : fs::symlink_status(p, error);
+    if (error && error != std::errc::no_such_file_or_directory)
+      warn("Discovery status failed: " + p.string() + ": " + error.message());
+    return error ? fs::file_type::not_found : status.type();
+  };
+  const auto canonical = [&](const fs::path &p) -> std::optional<fs::path> {
+    try {
+      return files_.canonical(p);
+    } catch (const fs::filesystem_error &error) {
+      warn("Discovery path unavailable: " + p.string() + ": " + error.what());
+      return std::nullopt;
+    }
+  };
+  const auto walk = [&](const fs::path &dir, const auto &visit) {
+    std::error_code error;
+    fs::directory_iterator it(dir, error), end;
+    if (!error)
+      while (it != end) {
+        visit(*it);
+        it.increment(error);
+        if (error)
+          break;
+      }
+    if (error && error != std::errc::no_such_file_or_directory)
+      warn("Discovery directory unreadable: " + dir.string() + ": " + error.message());
+  };
   fs::path root = cwd;
   for (auto p = cwd; !p.empty(); p = p.parent_path()) {
-    if (fs::exists(p / ".git")) {
+    const auto type = kind(p / ".git");
+    if (type != fs::file_type::not_found && type != fs::file_type::none) {
       root = p;
       break;
     }
@@ -120,11 +154,6 @@ std::string Tools::instructions() const {
       break;
   }
   directories.push_back(home);
-  std::string out;
-  const auto warn = [&](const std::string &message) {
-    if (warnings_.insert(message).second)
-      report_diagnostic(diagnostics_, message);
-  };
   std::set<fs::path> seen;
   const auto append = [&](const std::string &text, size_t cap) {
     if (out.size() >= cap)
@@ -135,8 +164,12 @@ std::string Tools::instructions() const {
     return portion.size() == clean.size();
   };
   std::function<void(const fs::path &, int)> include = [&](const fs::path &input, int depth) {
-    const auto p = files_.canonical(input);
-    if (seen.count(p) || !fs::exists(p) || (!within(p, root) && !within(p, home)))
+    const auto resolved = canonical(input);
+    if (!resolved)
+      return;
+    const auto &p = *resolved;
+    if (seen.count(p) || kind(p) == fs::file_type::not_found ||
+        (!within(p, root) && !within(p, home)))
       return;
     if (depth > 16) {
       warn("Instruction include depth exceeded: " + p.string());
@@ -178,24 +211,26 @@ std::string Tools::instructions() const {
   };
   for (auto it = directories.rbegin(); it != directories.rend(); ++it) {
     for (const auto *name : {"AGENTS.override.md", "AGENTS.md", "CLAUDE.md"})
-      if (fs::is_regular_file(*it / name)) {
+      if (kind(*it / name) == fs::file_type::regular) {
         include(*it / name, 0);
         break;
       }
   }
   const auto memory = config_.home / "memory";
   size_t count = 0;
-  if (config_.memory_context_max_bytes && fs::exists(memory)) {
+  if (config_.memory_context_max_bytes && kind(memory) != fs::file_type::not_found) {
     std::set<fs::path> paths;
     bool omitted = false;
-    for (const auto &entry : fs::directory_iterator(memory))
-      if (!entry.is_symlink() && entry.is_regular_file() && entry.path().extension() == ".md") {
+    walk(memory, [&](const auto &entry) {
+      if (kind(entry.path(), false) == fs::file_type::regular &&
+          entry.path().extension() == ".md") {
         paths.insert(entry.path());
         if (paths.size() > 200) {
           paths.erase(std::prev(paths.end()));
           omitted = true;
         }
       }
+    });
     if (omitted)
       warn("Memory file count exceeds 200; omitted later paths");
     const auto cap = out.size() + config_.memory_context_max_bytes;
@@ -239,23 +274,30 @@ std::string Tools::instructions() const {
   for (const auto &dir : skill_roots) {
     if (exhausted)
       break;
-    if (fs::is_symlink(dir) || !fs::is_directory(dir))
+    const auto type = kind(dir, false);
+    if (type != fs::file_type::directory) {
+      if (type != fs::file_type::not_found && type != fs::file_type::symlink)
+        warn("Skill root is not a directory: " + dir.string());
+      continue;
+    }
+    const auto canonical_root = canonical(dir);
+    if (!canonical_root)
       continue;
     std::set<fs::path> candidates;
     // Retain only the first bounded set, independent of directory iteration order.
-    for (const auto &entry : fs::directory_iterator(dir)) {
-      if (entry.is_symlink() || !entry.is_directory())
-        continue;
+    walk(dir, [&](const auto &entry) {
+      if (kind(entry.path(), false) != fs::file_type::directory)
+        return;
       candidates.insert(entry.path());
       if (candidates.size() > 101)
         candidates.erase(std::prev(candidates.end()));
-    }
+    });
     for (const auto &candidate : candidates) {
       const auto path = candidate / "SKILL.md";
-      if (fs::is_symlink(path) || !fs::is_regular_file(path))
+      if (kind(path, false) != fs::file_type::regular)
         continue;
-      const auto canonical = files_.canonical(candidate);
-      if (!within(canonical, files_.canonical(dir)) || !visited.insert(canonical).second)
+      const auto resolved = canonical(candidate);
+      if (!resolved || !within(*resolved, *canonical_root) || !visited.insert(*resolved).second)
         continue;
       if (++admitted > 100) {
         exhausted = true;
@@ -272,22 +314,24 @@ std::string Tools::instructions() const {
       if (!names.insert(metadata.name).second)
         continue;
       const auto line = "- " + metadata.name + ": " + metadata.description +
-                        " (file: " + (canonical / "SKILL.md").string() + ")\n";
+                        " (file: " + (*resolved / "SKILL.md").string() + ")\n";
       if (line.size() > 16384 - catalog_bytes) {
         exhausted = true;
         break;
       }
       catalog_bytes += line.size();
       out += line;
-      auto advertised = canonical;
       auto anchor = fs::absolute(dir).lexically_normal();
-      for (const auto &base : {config_.home, config_.cwd})
-        if (within(canonical, files_.canonical(base))) {
-          anchor = fs::absolute(base).lexically_normal();
-          advertised = anchor / canonical.lexically_relative(files_.canonical(base));
+      auto canonical_anchor = *canonical_root;
+      for (const auto &base :
+           {std::make_pair(config_.home, home), std::make_pair(config_.cwd, cwd)})
+        if (within(*resolved, base.second)) {
+          anchor = fs::absolute(base.first).lexically_normal();
+          canonical_anchor = base.second;
           break;
         }
-      private_anchors_.emplace(anchor, files_.canonical(anchor));
+      const auto advertised = anchor / resolved->lexically_relative(canonical_anchor);
+      private_anchors_.emplace(anchor, canonical_anchor);
       skill_anchors_[advertised] = anchor;
       skill_directories_.push_back(advertised);
     }
