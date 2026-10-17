@@ -34,7 +34,8 @@ struct ScriptedProvider : Provider {
   std::function<ProviderResult(const std::vector<codet::Message> &, const Json &)> next;
   ProviderResult complete(const Config &, const std::string &,
                           const std::vector<codet::Message> &messages, const Json &tools,
-                          const Cancellation &cancel, const ChunkSink &) override {
+                          const Cancellation &cancel, const ChunkSink &,
+                          const ItemSink & = {}) override {
     cancel.check();
     return next(messages, tools);
   }
@@ -149,8 +150,8 @@ TEST_F(SmallCore, NullableProviderItemMetadataUsesStableUntaggedFallback) {
   CredentialStore credentials(config.home, files, clock);
   ApiProvider provider(http, credentials, clock);
   std::vector<Json> events;
-  const auto result = provider.complete_items(config, "system", {}, Json::array(), cancel, {},
-                                              [&](const Json &event) { events.push_back(event); });
+  const auto result = provider.complete(config, "system", {}, Json::array(), cancel, {},
+                                        [&](const Json &event) { events.push_back(event); });
   ASSERT_EQ(result.message.assistant_items.size(), 1u);
   EXPECT_TRUE(result.message.assistant_items[0].phase.empty());
   EXPECT_FALSE(result.message.assistant_items[0].id.empty());

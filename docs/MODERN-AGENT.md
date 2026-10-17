@@ -120,9 +120,11 @@ produces a diagnostic instead of silently truncating instructions or repeatedly 
 Admission includes request overhead and the configured output reserve. Diagnostics distinguish
 fixed context, oversized human input and oversized summaries and show the estimated minimum
 `context_tokens`. The default is now 65536; max_output_tokens remains 8192 and tool_output_limit remains 65536. Task-plan context refreshes each request without reloading project documents. The view is at most 8 KiB, prioritizes active then pending then completed steps, retains original step numbers and names the full saved file. New serialized plans above 1 MiB are rejected before state changes; larger legacy plans remain available through paging.
-Tool previews are bounded once per batch and persisted; later requests keep already-sent previews unchanged until compaction. Full outcomes remain in the tool journal, with complete private archives under artifacts/results/SESSION/MESSAGE.json before reduction. File reads can be projected like other results. Projections retain direct capture references, action/recovery status, paging controls and bounded capture/post-action diagnostics.
+Tool previews are bounded once per batch and persisted; later requests keep already-sent previews unchanged until compaction. Full outcomes remain in the tool journal, with complete private archives under artifacts/results/SESSION/MESSAGE.json before reduction. Fresh file pages remain contiguous and are sized before dispatch; they are never replaced by head/tail excerpts with source continuation cursors. Oversized legacy pages can retire with their completed batch into archives. Legacy excerpts direct inspection to the archived page instead of exposing misleading source cursors. Projections retain direct capture references, action/recovery status, paging controls and bounded capture/post-action diagnostics.
 
-Automatic compaction starts at 80% of the usable history budget after fixed instructions, tools and output reserves. It retires older history when possible; if the newest completed batch alone cannot fit, the whole call/result group and associated replay are replaced with a bounded checkpoint. Latest human steering, unresolved recovery outcomes and execution-session IDs remain explicit. Full records are archived and indexed before publication; cancellation, provider errors and failed publication retain durable history. Already-compacted continuations may use the remaining hard budget without repeated compaction.
+Automatic compaction is considered at 80% of the usable history budget after fixed instructions, tools and output reserves. This trigger is independent of preview sizing: new previews use the hard allowance. Text accounting shares provider message shaping and counts assistant text/items/replay once as transmitted, excluding storage-only fields; image encoding retains its separate budgets. It retires older history when possible; if the newest completed batch alone cannot fit, the whole call/result group and associated replay are replaced with a bounded checkpoint. Latest human steering, unresolved recovery outcomes and execution-session IDs remain explicit. Full records are archived and indexed before publication; cancellation, provider errors and failed publication retain durable history. Already-compacted continuations may use the remaining hard budget without repeated compaction. Ordinary optional summary failures produce a diagnostic and permit continuation only after a fresh hard-capacity check; optional compaction is not retried in that turn. Explicit PreCompact stops, cancellation, storage failures and hard overflow still stop safely. Execution facts are coalesced and only currently owned live handles are reported as running. Recovery sets exceeding 2 KiB use a registered paged archive; optional checkpoint_state message metadata carries unresolved facts across later compactions, fork and relocation. Archives are immutable by message identity and validated publications are reused across retries with a bounded 256-entry process-local cache.
+
+Development-only measurement: build `codet_persistence_bench` with `cmake --build build/host --target codet_persistence_bench`, then run it with `512`, `4096`, or `inspection`. Save cases report increasing transcript counts, cumulative bytes processed, save time and peak RSS while deliberately bypassing Agent compaction. Inspection reports bounded rescan/canonicalization work, peak RSS and archive publication counts across retries. Directory work remains proportional to pages times the scanned subset; SQLite still serializes/writes the whole transcript. This pass makes no claim of linear cumulative persistence cost or verified Tiger memory use.
 
 Summary generation retains the configured output allowance and an 8 KiB visible-prose maximum. The conservative escaping-derived target is advisory: summaries are accepted using actual serialized continuation size. A genuinely oversized summary gets one smaller-target retry, counted in usage and request limits, with one PreCompact hook invocation. Empty or exhausted responses fail without replacing history. Manual compaction shares these rules and does nothing when no history can be reduced.
 
@@ -226,8 +228,9 @@ Reviewed runtime corrections and contract changes are described in [CODEX-TOOLS.
 
 `/model` shows the current selection and, for the Codex provider, the bundled reference
 catalog. `/model MODEL [EFFORT]` changes the current provider's selection between turns.
-Omitted effort selects the known Codex model's captured default, or leaves effort unspecified
-for other/unknown models. Known Codex effort combinations are validated before saving;
+An explicit EFFORT pins the session selection. Omitted effort clears the pin and inherits configured
+effort, using the known Codex model's captured default when no configured effort is set, or leaving
+effort unspecified for other/unknown models. Known Codex effort combinations are validated before saving;
 unknown model IDs remain valid. Catalog entries do not establish account availability.
 No runtime catalog request is made. Provider defaults and the 65,536-token context default
 remain unchanged.
@@ -236,7 +239,10 @@ remain unchanged.
 `last_turn_usage_this_invocation` is null until a turn completes; it is not lifetime usage.
 `/compact` uses the same budgeted compaction implementation as automatic compaction and
 runs `PreCompact` with `trigger=manual`. It preserves the latest human message, its following
-answer, protected tool outcomes and artifact references. A conversation with no older
+answer, protected tool outcomes and artifact references. Attachments after the last durable assistant
+response remain attached until presented; this includes fresh human and tool images. A retired tool
+image is carried as a user observation referencing the archived group, without orphan tool results.
+Ambiguous image history is retained conservatively. A conversation with no older
 history is a no-op. Cancellation, provider failure and failed persistence retain the prior
 history. These commands report that they require an idle turn when entered during work;
 they are never sent to the model as prompts.
@@ -245,8 +251,8 @@ Repeat `-i/--image PATH` for up to four initial attachments on fresh/resume/fork
 Image-only input is valid. Relative paths are resolved from the invoking directory.
 Attachments are consumed by the first submitted turn, use the existing high-detail encoder,
 private artifact storage and combined 8 MiB request limit, and never authorize other files.
-Explicit view_image deny rules remain effective. Missing/invalid/disabled images fail before
-a model call. Non-Apple builds retain their unavailable native-codec diagnostic.
+Explicit view_image deny rules remain effective. Missing/invalid/disabled images and unsupported efforts fail before
+a new session/fork or selection update is published, keeping resume --last unchanged. Non-Apple builds retain their unavailable native-codec diagnostic.
 
 Codex Responses preserves ordered assistant text items and optional `commentary`,
 `partial_answer`, and `final_answer` phases. Streaming and completed item events share IDs.
@@ -261,8 +267,12 @@ request. Tool batches, pending user input and response completion retain their e
 follow-up behavior. Full provider replay remains intact.
 
 SQLite schema 5 includes nullable per-session reasoning effort and retained-result references; schema 1–4 migrate forward.
-Resume/fork keep saved effort for the same provider/model. Explicit CLI/profile effort wins;
-a changed provider/model falls back to configured effort. Older messages without
+Resume/fork keep explicitly saved effort for the same provider/model. Explicit CLI/profile effort wins;
+a changed provider/model falls back to configured effort. Inherited defaults remain NULL in SQLite
+and follow later configuration changes. Legacy empty saved values load as inherited; nonempty
+legacy selections remain pinned because their provenance is unavailable. Agent turns and /new
+preserve this distinction. Migrations acquire a write transaction and reread the schema version
+before DDL; concurrent upgraders serialize and recheck, with all steps rolled back on database errors. Older messages without
 `assistant_items` remain readable. Earlier binaries reject schema 5, so use the new binary
 after migration. No credentials or configuration locations change.
 

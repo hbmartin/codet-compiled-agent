@@ -39,7 +39,7 @@ struct MockProcesses : Processes {
 struct MockProvider : Provider {
   MOCK_METHOD(ProviderResult, complete,
               (const Config &, const std::string &, const std::vector<codet::Message> &,
-               const Json &, const Cancellation &, const ChunkSink &),
+               const Json &, const Cancellation &, const ChunkSink &, const ItemSink &),
               (override));
 };
 struct MockFiles : FileSystem {
@@ -418,7 +418,7 @@ TEST_F(Fixture, StructuredOutputIsValidatedBeforeAcceptance) {
   ProviderResult final;
   final.message.role = "assistant";
   final.message.text = "answer";
-  EXPECT_CALL(provider, complete(_, _, _, _, _, _))
+  EXPECT_CALL(provider, complete(_, _, _, _, _, _, _))
       .WillOnce(Return(invalid))
       .WillOnce(Return(valid))
       .WillOnce(Return(final));
@@ -673,11 +673,11 @@ TEST_F(Fixture, ContextCompactionUsesSameProviderAndRetainsCurrentRequest) {
   ProviderResult final;
   final.message.role = "assistant";
   final.message.text = "done";
-  EXPECT_CALL(provider, complete(_, _, _, _, _, _))
+  EXPECT_CALL(provider, complete(_, _, _, _, _, _, _))
       .WillOnce(Return(summary))
       .WillOnce(Invoke([&](const Config &, const std::string &,
                            const std::vector<codet::Message> &messages, const Json &,
-                           const Cancellation &, const ChunkSink &) {
+                           const Cancellation &, const ChunkSink &, const ItemSink &) {
         EXPECT_EQ(messages[0].role, "system");
         EXPECT_EQ(messages[1].text, "current objective");
         return final;
@@ -696,7 +696,7 @@ TEST_F(Fixture, RequestLimitStopsWithoutAnExtraProviderCall) {
   ProviderResult result;
   result.message.role = "assistant";
   result.message.calls = {{"read", "read_file", {{"path", "a"}}}};
-  EXPECT_CALL(provider, complete(_, _, _, _, _, _)).WillOnce(Return(result));
+  EXPECT_CALL(provider, complete(_, _, _, _, _, _, _)).WillOnce(Return(result));
   Agent agent(config, provider, tools, state, {});
   EXPECT_THROW(agent.run(s, "test", cancel), Error);
   const auto resumed = state.load(s.id);
@@ -814,7 +814,9 @@ TEST_F(Fixture, AgentExecutesToolAndPersistsOnlyCompletedTurn) {
   ProviderResult last;
   last.message.role = "assistant";
   last.message.text = "done";
-  EXPECT_CALL(provider, complete(_, _, _, _, _, _)).WillOnce(Return(first)).WillOnce(Return(last));
+  EXPECT_CALL(provider, complete(_, _, _, _, _, _, _))
+      .WillOnce(Return(first))
+      .WillOnce(Return(last));
   Agent agent(config, provider, tools, state, [&](const Json &e) { events.push_back(e); });
   EXPECT_EQ(agent.run(s, "read a", cancel).text, "done");
   EXPECT_EQ(state.load(s.id).messages.size(), 4u);

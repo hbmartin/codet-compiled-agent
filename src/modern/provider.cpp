@@ -181,7 +181,7 @@ Json chat_messages(const Config &c, const std::string &system, const std::vector
       pending.push_back(image);
     if (m.role == "tool") {
       if (ollama)
-        j["tool_name"] = names.at(m.tool_call_id);
+        j["tool_name"] = names[m.tool_call_id];
       else
         j["tool_call_id"] = m.tool_call_id;
     }
@@ -202,6 +202,161 @@ Json chat_messages(const Config &c, const std::string &system, const std::vector
   }
   flush();
   return out;
+}
+Json wire_history(const Config &c, const std::string &system,
+                  const std::vector<Message> &messages) {
+  std::map<std::string, std::string> tool_names;
+  for (const auto &m : messages)
+    for (const auto &call : m.calls)
+      tool_names[call.id] = call.name;
+  if (c.provider == "codex") {
+    Json input = Json::array({{{"role", "developer"}, {"content", system}}});
+    for (const auto &m : messages) {
+      if (m.role == "assistant" && !clean_replay(m).empty() &&
+          (m.replay_provider.empty() || m.replay_provider == c.provider)) {
+        for (const auto &item : clean_replay(m))
+          input.push_back(item);
+        continue;
+      }
+      if (m.role == "tool") {
+        // Custom apply_patch results must retain their wire type during replay.
+        bool custom = false;
+        for (const auto &old : messages)
+          for (const auto &item : old.replay)
+            if (item.value("type", "") == "custom_tool_call" &&
+                item.value("call_id", "") == m.tool_call_id)
+              custom = true;
+        input.push_back({{"type", custom ? "custom_tool_call_output" : "function_call_output"},
+                         {"call_id", m.tool_call_id},
+                         {"output", tool_text(m, c, tool_names)}});
+        if (!prepared_images(m).empty()) {
+          auto &output = input.back()["output"];
+          output = Json::array({{{"type", "input_text"}, {"text", tool_text(m, c, tool_names)}}});
+          for (const auto &image : prepared_images(m))
+            output.push_back(
+                {{"type", "input_image"}, {"image_url", image.at("url")}, {"detail", "high"}});
+        }
+      } else {
+        input.push_back({{"role", m.role == "system" ? "developer" : m.role},
+                         {"content", tool_text(m, c, tool_names)}});
+        if (!prepared_images(m).empty()) {
+          Json content = Json::array();
+          for (const auto &image : prepared_images(m))
+            content.push_back(
+                {{"type", "input_image"}, {"image_url", image.at("url")}, {"detail", "high"}});
+          input.push_back({{"role", "user"}, {"content", content}});
+        }
+        for (const auto &t : m.calls)
+          input.push_back({{"type", "function_call"},
+                           {"call_id", t.id},
+                           {"name", tool_wire_name(t.name)},
+                           {"arguments", t.arguments.dump()}});
+        for (auto &item : input)
+          if (item.value("type", "") == "function_call" && item.contains("name")) {
+            const auto qualified = item.at("name").get<std::string>();
+            const auto p = qualified.find("__");
+            if (p != std::string::npos) {
+              item["namespace"] = qualified.substr(0, p);
+              item["name"] = qualified.substr(p + 2);
+            }
+          }
+      }
+    }
+    return input;
+  }
+  if (c.provider == "anthropic") {
+    Json ms = Json::array();
+    for (const auto &m : messages) {
+      Json content = Json::array();
+      std::string role = m.role == "tool" ? "user" : m.role;
+      if (role == "system") {
+        content.push_back({{"type", "text"}, {"text", tool_text(m, c, tool_names)}});
+        role = "user";
+      } else if (m.role == "tool")
+        content.push_back({{"type", "tool_result"},
+                           {"tool_use_id", m.tool_call_id},
+                           {"content", tool_text(m, c, tool_names)}});
+      else {
+        if (m.role == "assistant" && !clean_replay(m).empty() &&
+            (m.replay_provider.empty() || m.replay_provider == c.provider))
+          content = clean_replay(m);
+        else {
+          if (!tool_text(m, c, tool_names).empty())
+            content.push_back({{"type", "text"}, {"text", tool_text(m, c, tool_names)}});
+          for (const auto &t : m.calls)
+            content.push_back({{"type", "tool_use"},
+                               {"id", t.id},
+                               {"name", tool_wire_name(t.name)},
+                               {"input", t.arguments}});
+        }
+      }
+      if (!prepared_images(m).empty()) {
+        Json blocks = Json::array();
+        if (m.role == "tool")
+          blocks.push_back({{"type", "text"}, {"text", tool_text(m, c, tool_names)}});
+        for (const auto &image : prepared_images(m)) {
+          const std::string url = image.at("url");
+          blocks.push_back({{"type", "image"},
+                            {"source",
+                             {{"type", "base64"},
+                              {"media_type", image.at("artifact").at("mime")},
+                              {"data", url.substr(url.find(',') + 1)}}}});
+        }
+        if (m.role == "tool")
+          content[0]["content"] = blocks;
+        else
+          for (const auto &block : blocks)
+            content.push_back(block);
+      }
+      if (content.empty())
+        continue;
+      if (!ms.empty() && ms.back()["role"] == role)
+        for (const auto &item : content)
+          ms.back()["content"].push_back(item);
+      else
+        ms.push_back({{"role", role}, {"content", content}});
+    }
+    return ms;
+  }
+  if (c.provider == "google") {
+    Json contents = Json::array();
+    std::map<std::string, std::string> names;
+    for (const auto &m : messages) {
+      Json parts = Json::array();
+      for (const auto &t : m.calls)
+        names[t.id] = tool_wire_name(t.name);
+      if (m.role == "assistant" && !clean_replay(m).empty() &&
+          (m.replay_provider.empty() || m.replay_provider == c.provider))
+        parts = clean_replay(m);
+      else if (m.role == "tool")
+        parts.push_back({{"functionResponse",
+                          {{"name", names[m.tool_call_id]},
+                           {"response", {{"result", tool_text(m, c, tool_names)}}}}}});
+      else {
+        if (!tool_text(m, c, tool_names).empty())
+          parts.push_back({{"text", tool_text(m, c, tool_names)}});
+        for (const auto &t : m.calls)
+          parts.push_back(
+              {{"functionCall", {{"name", tool_wire_name(t.name)}, {"args", t.arguments}}}});
+      }
+      for (const auto &image : prepared_images(m)) {
+        const std::string url = image.at("url");
+        parts.push_back({{"inlineData",
+                          {{"mimeType", image.at("artifact").at("mime")},
+                           {"data", url.substr(url.find(',') + 1)}}}});
+      }
+      if (!parts.empty()) {
+        const std::string role = m.role == "assistant" ? "model" : "user";
+        if (!contents.empty() && contents.back()["role"] == role)
+          for (const auto &part : parts)
+            contents.back()["parts"].push_back(part);
+        else
+          contents.push_back({{"role", role}, {"parts", parts}});
+      }
+    }
+    return contents;
+  }
+  return chat_messages(c, system, messages, c.provider == "ollama");
 }
 Json functions(const Json &tools) {
   Json out = Json::array();
@@ -285,6 +440,13 @@ void codex_output(ProviderResult &result, const Json &response) {
   result.stop_reason = response.value("status", "completed");
 }
 } // namespace
+size_t provider_history_bytes(const Config &config, const std::vector<Message> &messages) {
+  // Image bytes have a separate request budget. Never encode/read artifacts to count text.
+  size_t images = 0;
+  for (const auto &message : messages)
+    images += message.images.size();
+  return wire_history(config, "", messages).dump().size() + images * 256;
+}
 HttpRequest ApiProvider::request(const Config &c, const std::string &system,
                                  const std::vector<Message> &original_messages, const Json &tools,
                                  const Json &auth) const {
@@ -319,58 +481,7 @@ HttpRequest ApiProvider::request(const Config &c, const std::string &system,
     r.headers["originator"] = "codex_cli_rs";
     if (auth.contains("account_id"))
       r.headers["ChatGPT-Account-Id"] = auth["account_id"].get<std::string>();
-    Json input = Json::array({{{"role", "developer"}, {"content", system}}});
-    for (const auto &m : messages) {
-      if (m.role == "assistant" && !clean_replay(m).empty() &&
-          (m.replay_provider.empty() || m.replay_provider == c.provider)) {
-        for (const auto &item : clean_replay(m))
-          input.push_back(item);
-        continue;
-      }
-      if (m.role == "tool") {
-        // Custom apply_patch results must retain their wire type during replay.
-        bool custom = false;
-        for (const auto &old : messages)
-          for (const auto &item : old.replay)
-            if (item.value("type", "") == "custom_tool_call" &&
-                item.value("call_id", "") == m.tool_call_id)
-              custom = true;
-        input.push_back({{"type", custom ? "custom_tool_call_output" : "function_call_output"},
-                         {"call_id", m.tool_call_id},
-                         {"output", tool_text(m, c, tool_names)}});
-        if (!prepared_images(m).empty()) {
-          auto &output = input.back()["output"];
-          output = Json::array({{{"type", "input_text"}, {"text", tool_text(m, c, tool_names)}}});
-          for (const auto &image : prepared_images(m))
-            output.push_back(
-                {{"type", "input_image"}, {"image_url", image.at("url")}, {"detail", "high"}});
-        }
-      } else {
-        input.push_back({{"role", m.role == "system" ? "developer" : m.role},
-                         {"content", tool_text(m, c, tool_names)}});
-        if (!prepared_images(m).empty()) {
-          Json content = Json::array();
-          for (const auto &image : prepared_images(m))
-            content.push_back(
-                {{"type", "input_image"}, {"image_url", image.at("url")}, {"detail", "high"}});
-          input.push_back({{"role", "user"}, {"content", content}});
-        }
-        for (const auto &t : m.calls)
-          input.push_back({{"type", "function_call"},
-                           {"call_id", t.id},
-                           {"name", tool_wire_name(t.name)},
-                           {"arguments", t.arguments.dump()}});
-        for (auto &item : input)
-          if (item.value("type", "") == "function_call" && item.contains("name")) {
-            const auto qualified = item.at("name").get<std::string>();
-            const auto p = qualified.find("__");
-            if (p != std::string::npos) {
-              item["namespace"] = qualified.substr(0, p);
-              item["name"] = qualified.substr(p + 2);
-            }
-          }
-      }
-    }
+    const auto input = wire_history(c, system, messages);
     Json ft = Json::array();
     for (const auto &t : tools) {
       if (t["name"] == "apply_patch") {
@@ -442,57 +553,7 @@ eof_line: "*** End of File" LF
     r.url = join_url(p.base_url.empty() ? "https://api.anthropic.com" : p.base_url, "/v1/messages");
     r.headers["x-api-key"] = key;
     r.headers["anthropic-version"] = "2023-06-01";
-    Json ms = Json::array();
-    for (const auto &m : messages) {
-      Json content = Json::array();
-      std::string role = m.role == "tool" ? "user" : m.role;
-      if (role == "system") {
-        content.push_back({{"type", "text"}, {"text", tool_text(m, c, tool_names)}});
-        role = "user";
-      } else if (m.role == "tool")
-        content.push_back({{"type", "tool_result"},
-                           {"tool_use_id", m.tool_call_id},
-                           {"content", tool_text(m, c, tool_names)}});
-      else {
-        if (m.role == "assistant" && !clean_replay(m).empty() &&
-            (m.replay_provider.empty() || m.replay_provider == c.provider))
-          content = clean_replay(m);
-        else {
-          if (!tool_text(m, c, tool_names).empty())
-            content.push_back({{"type", "text"}, {"text", tool_text(m, c, tool_names)}});
-          for (const auto &t : m.calls)
-            content.push_back({{"type", "tool_use"},
-                               {"id", t.id},
-                               {"name", tool_wire_name(t.name)},
-                               {"input", t.arguments}});
-        }
-      }
-      if (!prepared_images(m).empty()) {
-        Json blocks = Json::array();
-        if (m.role == "tool")
-          blocks.push_back({{"type", "text"}, {"text", tool_text(m, c, tool_names)}});
-        for (const auto &image : prepared_images(m)) {
-          const std::string url = image.at("url");
-          blocks.push_back({{"type", "image"},
-                            {"source",
-                             {{"type", "base64"},
-                              {"media_type", image.at("artifact").at("mime")},
-                              {"data", url.substr(url.find(',') + 1)}}}});
-        }
-        if (m.role == "tool")
-          content[0]["content"] = blocks;
-        else
-          for (const auto &block : blocks)
-            content.push_back(block);
-      }
-      if (content.empty())
-        continue;
-      if (!ms.empty() && ms.back()["role"] == role)
-        for (const auto &item : content)
-          ms.back()["content"].push_back(item);
-      else
-        ms.push_back({{"role", role}, {"content", content}});
-    }
+    const auto ms = wire_history(c, system, messages);
     body = {{"model", c.model},
             {"system", Json::array({{{"type", "text"},
                                      {"text", system},
@@ -516,41 +577,7 @@ eof_line: "*** End of File" LF
     r.url = join_url(p.base_url.empty() ? "https://generativelanguage.googleapis.com" : p.base_url,
                      "/v1beta/models/" + url_encode(c.model) + ":streamGenerateContent?alt=sse");
     r.headers["x-goog-api-key"] = key;
-    Json contents = Json::array();
-    std::map<std::string, std::string> names;
-    for (const auto &m : messages) {
-      Json parts = Json::array();
-      for (const auto &t : m.calls)
-        names[t.id] = tool_wire_name(t.name);
-      if (m.role == "assistant" && !clean_replay(m).empty() &&
-          (m.replay_provider.empty() || m.replay_provider == c.provider))
-        parts = clean_replay(m);
-      else if (m.role == "tool")
-        parts.push_back({{"functionResponse",
-                          {{"name", names[m.tool_call_id]},
-                           {"response", {{"result", tool_text(m, c, tool_names)}}}}}});
-      else {
-        if (!tool_text(m, c, tool_names).empty())
-          parts.push_back({{"text", tool_text(m, c, tool_names)}});
-        for (const auto &t : m.calls)
-          parts.push_back(
-              {{"functionCall", {{"name", tool_wire_name(t.name)}, {"args", t.arguments}}}});
-      }
-      for (const auto &image : prepared_images(m)) {
-        const std::string url = image.at("url");
-        parts.push_back({{"inlineData",
-                          {{"mimeType", image.at("artifact").at("mime")},
-                           {"data", url.substr(url.find(',') + 1)}}}});
-      }
-      if (!parts.empty()) {
-        const std::string role = m.role == "assistant" ? "model" : "user";
-        if (!contents.empty() && contents.back()["role"] == role)
-          for (const auto &part : parts)
-            contents.back()["parts"].push_back(part);
-        else
-          contents.push_back({{"role", role}, {"parts", parts}});
-      }
-    }
+    const auto contents = wire_history(c, system, messages);
     Json declarations = Json::array();
     for (const auto &t : tools) {
       Json declaration = {{"name", tool_wire_name(t["name"].get<std::string>())},
@@ -582,9 +609,7 @@ eof_line: "*** End of File" LF
                      ollama ? "/api/chat" : "/chat/completions");
     if (!key.empty())
       r.headers["Authorization"] = "Bearer " + key;
-    body = {{"model", c.model},
-            {"messages", chat_messages(c, system, messages, ollama)},
-            {"stream", true}};
+    body = {{"model", c.model}, {"messages", wire_history(c, system, messages)}, {"stream", true}};
     if (!tools.empty())
       body["tools"] = functions(tools);
     if (ollama) {
@@ -602,7 +627,8 @@ eof_line: "*** End of File" LF
 }
 ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
                                      const std::vector<Message> &messages, const Json &tools,
-                                     const Cancellation &cancel, const ChunkSink &sink) {
+                                     const Cancellation &cancel, const ChunkSink &sink,
+                                     const std::function<void(const Json &)> &items) {
   const Json auth = c.provider == "codex" ? credentials_.codex(http_, cancel) : Json::object();
   const auto req = request(c, system, messages, tools, auth);
   for (int attempt = 0; attempt < 4; ++attempt) {
@@ -613,7 +639,7 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
     std::map<size_t, AssistantText> streamed;
     auto item_event = [&](const std::string &type, const AssistantText &item,
                           const std::string &delta = std::string{}) {
-      if (!assistant_events_)
+      if (!items)
         return;
       Json value = {{"id", item.id}, {"type", "agent_message"}};
       if (!item.phase.empty())
@@ -622,7 +648,7 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
         value["text_delta"] = delta;
       else
         value["text"] = "";
-      assistant_events_({{"type", type}, {"item", value}});
+      items({{"type", type}, {"item", value}});
     };
     std::map<size_t, Json> blocks;
     std::map<size_t, std::string> arguments;
@@ -661,7 +687,7 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
             if (type == "response.output_text.delta") {
               const auto delta = j.value("delta", "");
               found->second.text += delta;
-              if (assistant_events_)
+              if (items)
                 item_event("item.updated", found->second, delta);
               else
                 text(delta);

@@ -241,6 +241,7 @@ struct Message {
   bool images_archived = false;
   std::vector<AssistantText> assistant_items = {};
   bool previewed = false;
+  Json checkpoint_state = nullptr;
 };
 void to_json(Json &, const ToolCall &);
 void from_json(const Json &, ToolCall &);
@@ -336,31 +337,14 @@ public:
   std::string key(const std::string &) const;
   Json codex(HttpTransport &, const Cancellation &);
 };
+using ItemSink = std::function<void(const Json &)>;
+size_t provider_history_bytes(const Config &, const std::vector<Message> &);
 struct Provider {
-protected:
-  std::function<void(const Json &)> assistant_events_;
-
-public:
-  ProviderResult complete_items(const Config &c, const std::string &system,
-                                const std::vector<Message> &messages, const Json &tools,
-                                const Cancellation &cancel, const ChunkSink &text,
-                                std::function<void(const Json &)> items) {
-    struct Restore {
-      std::function<void(const Json &)> &target;
-      std::function<void(const Json &)> previous;
-      explicit Restore(std::function<void(const Json &)> &slot)
-          : target(slot), previous(std::move(slot)) {}
-      ~Restore() {
-        target = std::move(previous);
-      }
-    } restore{assistant_events_};
-    assistant_events_ = std::move(items);
-    return complete(c, system, messages, tools, cancel, text);
-  }
   virtual ~Provider() = default;
   virtual ProviderResult complete(const Config &, const std::string &system,
                                   const std::vector<Message> &, const Json &tools,
-                                  const Cancellation &, const ChunkSink &) = 0;
+                                  const Cancellation &, const ChunkSink &,
+                                  const ItemSink & = {}) = 0;
 };
 class SseDecoder {
   std::string pending_, event_, data_;
@@ -384,7 +368,8 @@ public:
   HttpRequest request(const Config &, const std::string &, const std::vector<Message> &,
                       const Json &, const Json &auth = Json::object()) const;
   ProviderResult complete(const Config &, const std::string &, const std::vector<Message> &,
-                          const Json &, const Cancellation &, const ChunkSink &) override;
+                          const Json &, const Cancellation &, const ChunkSink &,
+                          const ItemSink & = {}) override;
 };
 struct Session {
   std::string id, name;
@@ -405,7 +390,7 @@ public:
   Session load_id(const std::string &id, bool repair = true);
   std::shared_ptr<void> acquire(const std::string &id);
   void reconcile(Session &, bool persist = true);
-  Session last();
+  Session last(bool repair = true);
   Session fork(const Session &);
   void save(const Session &);
   void remember_references(const std::string &, const std::vector<Message> &);
@@ -506,6 +491,7 @@ class Tools {
     std::optional<int> exit_code;
   };
   std::map<int, ExecSession> exec_sessions_;
+  std::map<std::string, std::pair<std::string, std::string>> archived_results_;
   fs::path path(const std::string &) const;
   void authorize(const PermissionRequest &);
   PermissionRequest execution_request(const ToolCall &) const;
@@ -525,6 +511,10 @@ public:
   void reference_results(const std::vector<Message> &);
   void restore_references(const std::vector<std::string> &);
   std::string retain_result(Message &);
+  Json execution_state(const std::vector<Message> &) const;
+  size_t history_bytes(const std::vector<Message> &messages) const {
+    return provider_history_bytes(config_, messages);
+  }
   void inspection_budget(size_t bytes) {
     inspection_budget_ = bytes;
   }

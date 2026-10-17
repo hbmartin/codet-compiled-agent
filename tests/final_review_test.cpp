@@ -177,7 +177,8 @@ TEST_F(FinalReview, ExactIdsWinAndLockedReloadsNeverResolveNames) {
 }
 struct ProviderStub : Provider {
   ProviderResult complete(const Config &, const std::string &, const std::vector<codet::Message> &,
-                          const Json &, const Cancellation &, const ChunkSink &) override {
+                          const Json &, const Cancellation &, const ChunkSink &,
+                          const ItemSink & = {}) override {
     ProviderResult result;
     result.message.role = "assistant";
     result.message.text = "okay";

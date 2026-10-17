@@ -66,6 +66,7 @@ TEST_F(Followup, EveryAdapterOmitsEmptyToolsAndKeepsNonemptyDeclarations) {
   for (const auto &name : {"codex", "anthropic", "google", "openai", "ollama"}) {
     config.provider = name;
     config.providers[name].api_key = "fixture";
+    config.providers[name].image_input = true;
     const auto empty = Json::parse(
         provider.request(config, "system", {}, Json::array(), {{"access_token", "fake"}}).body);
     EXPECT_FALSE(empty.contains("tools")) << name;
@@ -123,6 +124,7 @@ TEST_F(Followup, CompactionUsesRealAdaptersWithoutToolsAndRetainsNormalTools) {
   for (const auto &name : {"codex", "anthropic", "google", "openai", "ollama"}) {
     config.provider = name;
     config.providers[name].api_key = "fixture";
+    config.providers[name].image_input = true;
     StateStore state(config.home);
     auto session = state.create();
     const auto image = persist_image(config, files, {"encoded", "image/png", 1, 1}, "high");
@@ -140,7 +142,7 @@ TEST_F(Followup, CompactionUsesRealAdaptersWithoutToolsAndRetainsNormalTools) {
     transport.provider = name;
     ApiProvider provider(transport, credentials, clock);
     Tools tools(config, files, processes, transport, clock);
-    config.context_tokens = codet::test::context_tokens(tools, config, 5000);
+    config.context_tokens = codet::test::context_tokens(tools, config, 7000);
     Agent agent(config, provider, tools, state, {});
     EXPECT_EQ(agent.run(session, "objective", cancel).text, "done") << name;
     ASSERT_EQ(transport.requests.size(), 2u) << name;
@@ -148,7 +150,7 @@ TEST_F(Followup, CompactionUsesRealAdaptersWithoutToolsAndRetainsNormalTools) {
     EXPECT_FALSE(transport.requests[1]["tools"].empty()) << name;
     EXPECT_THAT(transport.requests[0].dump(), HasSubstr("CONTEXT CHECKPOINT COMPACTION"));
     EXPECT_THAT(transport.requests[1].dump(), HasSubstr("You are Codet"));
-    EXPECT_THAT(transport.requests[1].dump(), Not(HasSubstr("data:image/")));
+    EXPECT_THAT(transport.requests[1].dump(), HasSubstr("ZW5jb2RlZA=="));
     EXPECT_THAT(transport.requests[1].dump(), HasSubstr("Historical image index"));
   }
 }
@@ -171,7 +173,7 @@ TEST_F(Followup, ShellSpoolPreservesOutputAndSupportsReadPaging) {
   EXPECT_EQ(result.metadata["total_output_bytes"], text.size());
   EXPECT_EQ(result.metadata["spill_bytes"], text.size());
   EXPECT_EQ(result.metadata["spill_truncated"], false);
-  struct stat status{};
+  struct stat status {};
   ASSERT_EQ(::stat(path.c_str(), &status), 0);
   EXPECT_EQ(status.st_mode & 0777, 0600);
   config.permission_mode = "default";
@@ -244,7 +246,7 @@ TEST_F(Followup, LongLineCaptureUsesEightMiBCapAndPreservesPreviewTail) {
   EXPECT_EQ(page.total_output_bytes, 1024u);
   // Preview bounds are independent of retained bytes.
   EXPECT_EQ(files.read(page.spill_path), std::string(1024, 'x'));
-  struct stat capture{};
+  struct stat capture {};
   ASSERT_EQ(::stat(result.spill_path.c_str(), &capture), 0);
   EXPECT_EQ(capture.st_mode & 0777, 0600);
 }
@@ -494,7 +496,8 @@ TEST_F(Followup, HandshakeRetriesEintrAndCancellationWinsOverSetupErrors) {
   }
 }
 TEST_F(Followup, CommandsResetInheritedHangupAndSignalMask) {
-  struct sigaction ignored{}, previous{};
+  struct sigaction ignored {
+  }, previous{};
   ignored.sa_handler = SIG_IGN;
   sigemptyset(&ignored.sa_mask);
   ASSERT_EQ(::sigaction(SIGHUP, &ignored, &previous), 0);

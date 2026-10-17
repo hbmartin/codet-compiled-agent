@@ -344,7 +344,7 @@ TEST_F(Contracts, ScreenshotProducesPrivateImmutablePixelsAndNoInlineEventBytes)
   ASSERT_EQ(result.images.size(), 1u);
   const auto &image = result.images[0];
   EXPECT_EQ(files.read(image.path), png());
-  struct stat st{};
+  struct stat st {};
   ASSERT_EQ(stat(image.path.c_str(), &st), 0);
   EXPECT_EQ(st.st_mode & 0777, 0600);
   EXPECT_EQ(image_data_url(image, config), "data:image/png;base64," + base64_encode(png()));
@@ -446,7 +446,7 @@ struct ScriptProvider : Provider {
   std::function<ProviderResult(const std::vector<codet::Message> &, const Json &)> next;
   ProviderResult complete(const Config &, const std::string &,
                           const std::vector<codet::Message> &messages, const Json &schemas,
-                          const Cancellation &, const ChunkSink &) override {
+                          const Cancellation &, const ChunkSink &, const ItemSink & = {}) override {
     return next(messages, schemas);
   }
 };

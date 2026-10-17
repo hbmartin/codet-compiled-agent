@@ -1,0 +1,288 @@
+{
+  "date": "2026-10-17",
+  "baseline_commit": "535751a83d4765529bc978a84fa60bda0dc3ec03",
+  "schema": 5,
+  "prior_evidence": "Earlier reports retain hashes of their original snapshots; reference paths and hashes remain in core-alignment-reference.json.",
+  "supported": [
+    "Provider-shaped textual accounting without duplicate assistant representations",
+    "Separate 80% trigger and hard-budget stable preview allocation",
+    "Optional summary failure fallback with explicit stops/cancellation/storage failures preserved",
+    "Unseen human/tool attachments survive compaction and failed provider requests",
+    "Contiguous file pages and truthful source cursors",
+    "Coalesced owned live executions and paged structured recovery state through later compaction/fork/relocation",
+    "Atomic migration with locked version recheck and corrupt-row isolation",
+    "Image/effort preflight before session/fork publication",
+    "Inherited effort remains NULL until explicitly selected",
+    "Virtual request-local item callbacks through provider decorators",
+    "Validated immutable archives reused across retries"
+  ],
+  "deliberate_tiger_adaptations": [
+    "C++17/PPC32 and existing context/output/image budgets unchanged",
+    "Sequential tools; no new runtime dependencies, services or catalog fetches",
+    "Directory pages rescan at most 10000 candidates without caching or snapshot guarantees",
+    "Whole-transcript SQLite serialization/writes remain; cumulative cost is not linear",
+    "Existing opened-path equality and explicit-deny/anchor protections retained"
+  ],
+  "checks": {
+    "host": {
+      "passed": true,
+      "ctest_suites": 4,
+      "unit_passed": 280,
+      "skipped": [
+        "Contracts.NativeTigerDesktopAcceptance",
+        "NetworkOptIn.TlsHandshake"
+      ],
+      "cli_cases": 43,
+      "prompt_tests": 7,
+      "log": "build/recovery-host.log"
+    },
+    "asan_ubsan": {
+      "passed": true,
+      "ctest_suites": 4,
+      "unit_passed": 280,
+      "skipped": [
+        "Contracts.NativeTigerDesktopAcceptance",
+        "NetworkOptIn.TlsHandshake"
+      ],
+      "cli_cases": 43,
+      "prompt_tests": 7,
+      "log": "build/recovery-sanitize.log"
+    },
+    "analyzers": {
+      "clang-tidy": {
+        "passed": true,
+        "findings": 0,
+        "sources": 23,
+        "versions": [
+          "Ubuntu LLVM version 18.1.3\n  Optimized build."
+        ]
+      },
+      "cppcheck": {
+        "passed": true,
+        "findings": 0,
+        "sources": 23,
+        "versions": [
+          "Cppcheck 2.22.0"
+        ]
+      },
+      "clang-analyzer": {
+        "passed": true,
+        "findings": 0,
+        "sources": 23,
+        "versions": [
+          "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin",
+          "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin"
+        ]
+      }
+    },
+    "analyzer_detection": {
+      "clang-tidy": true,
+      "cppcheck": true,
+      "clang-analyzer": true
+    },
+    "semgrep": {
+      "version": "1.177.0",
+      "passed": true,
+      "fixture_suites": 2,
+      "positive_matches": 13,
+      "production_findings": 0,
+      "analysis_errors": 0
+    },
+    "ppc": {
+      "passed": true,
+      "executed": false,
+      "verification": "Verified GCC 14.2, PPC32 big-endian/G3 Mach-O, target dependency paths, no LC_RPATH. PPC code was not executed.",
+      "binary_sha256": "c3bdec608d902e461f606f22a70aacf410d1dee10d243f03037850844e52b3de",
+      "tests_sha256": "4863f2003715f7d3ab11e7f772c145c384b88b6738ae85442ad5d2ccccbd8090"
+    },
+    "formatting": "clang-format-18 dry-run on changed application/header/test C++ files and git diff --check passed; annotated Semgrep fixtures excluded",
+    "owner_run_pending": [
+      "Tiger/HFS+ opened-name behavior",
+      "G4 terminal responsiveness",
+      "swapping and peak memory within the 512 MB machine budget",
+      "live provider/desktop acceptance"
+    ]
+  },
+  "benchmarks": {
+    "save_512": [
+      {
+        "cumulative_transcript_bytes": 3655437,
+        "payload_bytes": 512,
+        "peak_rss_bytes": 14254080,
+        "results": 100,
+        "save_seconds": 0.236525082,
+        "seconds": 0.244278042,
+        "transcript_bytes": 72393
+      },
+      {
+        "cumulative_transcript_bytes": 14555987,
+        "payload_bytes": 512,
+        "peak_rss_bytes": 20381696,
+        "results": 200,
+        "save_seconds": 0.8753411319999996,
+        "seconds": 0.893068208,
+        "transcript_bytes": 144893
+      },
+      {
+        "cumulative_transcript_bytes": 32706537,
+        "payload_bytes": 512,
+        "peak_rss_bytes": 27262976,
+        "results": 300,
+        "save_seconds": 1.8705910089999986,
+        "seconds": 1.898688458,
+        "transcript_bytes": 217393
+      }
+    ],
+    "save_4096": [
+      {
+        "cumulative_transcript_bytes": 21754637,
+        "payload_bytes": 4096,
+        "peak_rss_bytes": 35897344,
+        "results": 100,
+        "save_seconds": 0.6978478320000003,
+        "seconds": 0.719413,
+        "transcript_bytes": 430793
+      },
+      {
+        "cumulative_transcript_bytes": 86594387,
+        "payload_bytes": 4096,
+        "peak_rss_bytes": 66813952,
+        "results": 200,
+        "save_seconds": 2.6877698329999995,
+        "seconds": 2.732704542,
+        "transcript_bytes": 861693
+      },
+      {
+        "cumulative_transcript_bytes": 194524137,
+        "payload_bytes": 4096,
+        "peak_rss_bytes": 91947008,
+        "results": 300,
+        "save_seconds": 5.966508542000001,
+        "seconds": 6.037672583,
+        "transcript_bytes": 1292593
+      }
+    ],
+    "inspection": [
+      {
+        "canonicalizations": 10080,
+        "directory_entries": 1000,
+        "pages": 10,
+        "peak_rss_bytes": 11616256,
+        "seconds": 0.294176041
+      },
+      {
+        "canonicalizations": 50080,
+        "directory_entries": 5000,
+        "pages": 10,
+        "peak_rss_bytes": 21381120,
+        "seconds": 1.493517541
+      },
+      {
+        "canonicalizations": 100080,
+        "directory_entries": 10000,
+        "pages": 10,
+        "peak_rss_bytes": 30375936,
+        "seconds": 3.067669792
+      },
+      {
+        "archive_attempts": 50,
+        "archive_publications": 1,
+        "peak_rss_bytes": 32784384,
+        "seconds": 0.081804916
+      }
+    ]
+  },
+  "benchmark_limits": "Host Debug synthetic saves bypass Agent compaction. Measurements include allocator high-water RSS and concurrent validation load; they do not establish Tiger timing or the 512 MB target.",
+  "input_sha256": {
+    ".github/workflows/modern-checks.yml": "47f22294c1d0b1e67613fb467ff9ccc42f0995016d9b6ae3735f302608ace5cb",
+    "CMakeLists.txt": "0c4c63e1c64b6bca4c4bd8f978e1b5bcfd0d436508f9319317e0ca4499f03fb3",
+    "Makefile": "b3654b4346d4078aa4bca0bdee45974a890d2593f8ce43f056a9b05cfcc97f6b",
+    "README.md": "6467c42329ab6074b971da71508ab083602db56502d3130c99c11f58d2bf9451",
+    "checks/semgrep/instructions.cpp": "ac9b90ce434c4df9b591f81f31b40870fd71089b1bb5ff3e4c430464392ef6c6",
+    "checks/semgrep/instructions.yaml": "6fae5f90cf4a254744ccbda67b517fe92a22ad8d0ec4b328d68f0133799ef758",
+    "checks/semgrep/state.cpp": "f9d857cb2e91d2f3526d7187c17734a0c047d93b9703c590c606ac74357897d6",
+    "checks/semgrep/state.yaml": "7650eaeeea4aa8f4b7c333c19b9047ffa380878fc2bbb6b76a63f32871ac67e9",
+    "docs/CODEX-TOOLS.md": "66a30dc7aa828126c098c63cec53cafd0a9c6d41b9038f62471c51dd7005992c",
+    "docs/FEATURE-PORT.md": "7ff15e0410ed69a4ce9dc9e2dee4042f4e2d04f56271cf94356de14c97846a4a",
+    "docs/MODERN-AGENT.md": "38b9250d420f135620c1a87ab3d1be711021d1a9904dd59e2ec5db4a5743468a",
+    "docs/TIGER-ACCEPTANCE.md": "5c0fa059fe565993d5de5a58999eb63d44954460b98304a7420a91b0db6d0908",
+    "docs/validation/core-alignment-reference.json": "bd94cafeb3b873682db157711d50f4173f013e6532a8505d0173f248fb4e5068",
+    "docs/validation/pr13-followup.json": "62333bd274235094a01eff1ab52dd8ec80262b870740a399b3ff2c1a55055e23",
+    "include/app-functions.h": "8e363fc9efb6f09bed6e406c8cda95f46e18f7ca0412ee16654c9a40f26d9340",
+    "include/app-globals.h": "58b79e8bc8e47df7317aa276e7b63cd06b88f72a304e9d1ed9b7f1161b694d6c",
+    "include/app.h": "7b4aff9d8012d627b4ce9220436240b64d9a16bf9bc0b81653bf63ed753170a3",
+    "include/callback-contracts.h": "c9bd4045bd5fbb7ba1e43cbfe582281349dc1e54c7dddfcabf41b29734c3c3e8",
+    "include/codet/artifacts.hpp": "4a93be57d0098d80a2fc85bfd9cc5240e399e4e6b328feccb2349e1d3b785a06",
+    "include/codet/computer.hpp": "aa4e4ef2a400b761ed98f8dfe3b596d140eb06fa58ca7689ed927276c860eeb7",
+    "include/codet/context.hpp": "0d4ce59a92bcc8a76512f9e642e0ac569a63bd9c63728aa6b08b3b24810bd8d7",
+    "include/codet/core.hpp": "6543746caf9e7aa5ff31e72b720da999b093ba4ba861e022117f43d417702171",
+    "include/codet/diagnostics.hpp": "31ead6755d8a6ce63d365b1a3507b20d06b868bbc3ecbc2893a26f34db750da9",
+    "include/codet/interaction.hpp": "ac2bae0c6d600d8866c06090444b842acbcb5baa31475825a20d34e36b512f03",
+    "include/codet/output.hpp": "2bfa19094d762da27845e35d59b6b243b95dff90681a8de0183bba08340932a6",
+    "include/codet/patch.hpp": "5852178d6a37ef71b560421c84543fe789e0fb5c87d45e337088f48008ec2915",
+    "include/codet/process_control.hpp": "144592cd14597dc1d52750f4eaff9b48be7b3c517991109e93d502300db1f8e6",
+    "include/codet/prompt.hpp": "92fc6bd03ad038af57fcd90ef04fff91e30722bf4ed8db1c25f0e28f32da9b24",
+    "include/codet/support.hpp": "3b67a474dc3b7373172807c0b1120f380379f1f46c8238d84d3aca3fbfc7b6dc",
+    "include/codet/tool_registry.hpp": "6024b8a00ec83280267cc9a874eff3d9d70b60a87dc5e2394e9f9aafa51e0771",
+    "include/embedded-strings.h": "6ffac0e9967e511dd10556aed94a2ef0201c926bd01d699208e4e26834ec2e86",
+    "include/imported-interfaces.h": "f28bc5576423cc04e2138d46b5accbdc64c3e294dcce7a080fcb4da6e16f2c8b",
+    "include/observed-abi.h": "a6526dee44e4e156cdc8f2cd8a9f5ea28cd1a25c8ea3a1deb31d0e28055f2d64",
+    "include/recovered-declarations.h": "328a2d82bcdb6bab00b171749643475b7e55f40ae7508fb305782a606ffa02a9",
+    "include/recovered-layouts.h": "68c1c0b0313d38632390b8919ddc297d6240bed0c2d1de307fce3f0cb431f195",
+    "include/recovered-storage.h": "a655bf2e2172d9293a2920b3f5ffb6ed6e7164e03b16d1c3400547d00648ce09",
+    "include/recovered-types.h": "22d85c337901a5b84de45b08c20409256586c6cc9e5ca4a13ec783788ca76caa",
+    "include/text_compat.h": "6ff5d6fe7251e3b156983ec5d1e4c2dea5bf08cdf40ac68734e1546850dd0da7",
+    "prompts/assets/3ec03e8e1b8cd9ad2727f32dae589da5389933f8ccf7956f9a13fc031a304026.md": "3ec03e8e1b8cd9ad2727f32dae589da5389933f8ccf7956f9a13fc031a304026",
+    "prompts/manifest.json": "63a0bfffdc14135906e55454473bb92b5e868c8f01d7b38a18fb2c5d17751743",
+    "scripts/import-prompts.py": "d01431e832bb5b6563ebc3245e547e8130dce63b2e8798a90386fe4e6626166c",
+    "src/modern/agent.cpp": "c377b1b80c5adfc0b6e406c3684df73323e2da938dead5d70b6117280adc2543",
+    "src/modern/artifacts.cpp": "d869c12ac29c4325f58ca02bec5577f668789e531e75b8c984bd8399de593e79",
+    "src/modern/cli.cpp": "aae4657077a34fa3047ac984f3ec06622b8e34c2ea810ed3aba4298cae936785",
+    "src/modern/computer.cpp": "ccb8fd5b7c0847a18ac44f32dd2319df25e4a173fec947fd1ea5a67f3c86263e",
+    "src/modern/config.cpp": "a689c3e88b846b1c61884a4736c7c01d960a3021c6adb0694158f5be4f457dfe",
+    "src/modern/context.cpp": "ea55d37a515366d1ff5d65d0f22c54cd1602634e50b3e76b77c786c649488370",
+    "src/modern/failure.cpp": "aabbc34d0e235141e79fee2c370d4ed7f3450eb89787ed467fb1b1bacf383a2a",
+    "src/modern/hooks.cpp": "52041cb90ad29c81f8133caa87304b3aedd9536a8e76949a52213f55407f0ea0",
+    "src/modern/images.cpp": "60e46ffdfc3cd494eb58be5f6b83dfe80fc0f4e5fee52e85e436c41084528a0e",
+    "src/modern/inspection.cpp": "b36fadfea5ef50b49e8a547ad3f275be1935df8436874bfac14089750cfa2379",
+    "src/modern/instructions.cpp": "3df61903f53fde20ea24432eb28be2e8c8611827f84a4e1c6bcfb22652d85675",
+    "src/modern/interaction.cpp": "1e18bf1c1f8cb1a221fc458661687f148c0479365c2912bdeb58265d0a2f82ed",
+    "src/modern/main.cpp": "2e2b9ae909db159f535d1a0f9dbee31d16fb52e001a3c9d1d06b33e0cbdb9ad1",
+    "src/modern/output.cpp": "b9ea8220af4a16ae1e2b8a1e256e7017a7404384407043b9b9efd0c99966a081",
+    "src/modern/patch.cpp": "8c99791527f8a6b09b35674802db3c29cafe2adde4700a67ca7adda60562f770",
+    "src/modern/platform.cpp": "6db56f9f72b114a11b220c2d2cd24986f78d1f95ee3a16b49cd135fcd3f84b23",
+    "src/modern/prompts.cpp": "3bf1d2966d44bcc98f3ed71e4b89905eb7beccee6430fd7899cc9bb60419e5a8",
+    "src/modern/provider.cpp": "0c53c8764ab0d8c4fd8c0fe31677ebc0cb36b44d55803fa95a8ea4b35ffb868f",
+    "src/modern/state.cpp": "db60a5dee64792a9aa4d26fc7c49453371fbdecf7e0c8b1e1337e5c4840a0f58",
+    "src/modern/support.cpp": "40dfad2759619972f3b0eba053a24b00877b05ce2defb648b727ebd608dd594a",
+    "src/modern/tool_registry.cpp": "9a7a3337b840adc756c74136b221e564b8509c91c6033c5dd200269e0d48afcd",
+    "src/modern/tools.cpp": "a9b882957f79fc452d7c90338805a2f9d951d77f389d972db677c29f4b1c083c",
+    "src/text_compat.c": "00213a0ad26fd98c9bd9a0a45fb84f9b853fcac8df7fed05c79e4d6444fb2205",
+    "tests/cli_integration.py": "c40db5a1f6580bac6172cd67b16fe50f9023bbd83cdf562c9370d2cc75e250ce",
+    "tests/context_history_test.cpp": "38db50da0b72060de226a10442ae9e3f85e5a874da3b8858ddba50e35d572572",
+    "tests/core_test.cpp": "b5593f88dbc1eeb9b8ac1cd890c3a5406b14c4499ae07554801953ab78edad8a",
+    "tests/final_review_test.cpp": "cc2392d45db1a7dee5b9e8bca9a05f6464dfcb3ff742aef81c0b291638d6721e",
+    "tests/followup_test.cpp": "b93efd02a7dc95377697162d61605f3a50c02b21c50fa5db018f7cebc84c6bd4",
+    "tests/persistence_bench.cpp": "58094df7d057b3b0bc3bdc7ff72f767719e9ca2d3193b9059634da1699db2a4f",
+    "tests/process_policy_test.cpp": "ba5c5a87fc80fdc9b7e115e0cb05ff4c08fb677c385d8dcf22c223d29a269c7f",
+    "tests/prompt_test.cpp": "234c20a399888448de7c5e2b014cad6d3701ce28e5ac5f2d7a9abf2713110d9e",
+    "tests/remaining_test.cpp": "444ecf282784bcc21db257a97f467bc1b18df41f288124834572432548aa3260",
+    "tests/runtime_test.cpp": "b95c0cace683992eb3bdd21c60ff3b994b9cc1a1ccadbb6d04505d24cb858756",
+    "tests/small_core_test.cpp": "0f5e08efae88af519e83b39c8fe0a117a5986d55de8fcb401265f00348c758e2",
+    "tests/test_prompts.py": "2d3aec9cf990270d254666f3b894807bbc8fa01edc04815f8b214f31b4cb9900",
+    "tests/tool_contract_test.cpp": "3ab42a3609b278a525c65ad2e5824f5631561d363be866eeb3f6dddedba15849"
+  },
+  "artifact_sha256": {
+    "build/recovery-host.log": "ccda9111f10dcffb656298fc3fe108ea024999b1cf30529433b2ff4d3db5ec38",
+    "build/recovery-sanitize.log": "6e5fa5c933a08d16eb25cbf1a597f64cc06441205e0bb8229e2b34ff4a6a0eaf",
+    "build/recovery-analysis-final.log": "2df0735c9d9b8fed7f0b242b95e9e77ba33454e5ea1fc84cb773580280889c1b",
+    "build/recovery-analysis/analysis/manifest.json": "ac7cb2a0cd7d24d655cd562fe589d7514d810cccf86690e2a3dde0eecf62ed24",
+    "build/recovery-analysis/analysis/selftest/selftest.json": "3487eb0a98fc4af909d26aa6ce025d386b8ee2e4715fa58a679a999bf7df504a",
+    "build/semgrep/tests.json": "554df761360b1dfd0e00d01fc3379956c138ed95b14728f952d33cab6cc35cc1",
+    "build/semgrep/scan.json": "379d9e1d132f6e1667057f9b381a9fe487fd8dc84f5f9d395e491ced03c5ff21",
+    "build/recovery-ppc-verify.log": "93312e884d41916a125238b52fb590d1e71a71d7fbd6f7ef31a164e80092bb25",
+    "build/recovery-bench-512.jsonl": "1b5abbd3560856456d955abee4943477ee2e5cd1951b2fc122c62e13997597c8",
+    "build/recovery-bench-4096.jsonl": "7590d28ac09baa2fd48c3f46f95a396f61a123b0d0d7445217c38de75b783b09",
+    "build/recovery-bench-inspection.jsonl": "b04b0c44227047ad27d2f90dcd2a3ca101e5bc83a029f21d97349efe5eee4a70"
+  }
+}

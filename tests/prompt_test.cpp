@@ -60,7 +60,7 @@ struct Script : Provider {
       next;
   ProviderResult complete(const Config &config, const std::string &s,
                           const std::vector<codet::Message> &m, const Json &t, const Cancellation &,
-                          const ChunkSink &) override {
+                          const ChunkSink &, const ItemSink & = {}) override {
     EXPECT_LE(Json(m).dump().size(), prompt_budget(config, s, t).available());
     output_limits.push_back(config.max_output_tokens);
     return next(s, m, t);
