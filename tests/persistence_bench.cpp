@@ -1,3 +1,4 @@
+#include "codet/context.hpp"
 #include "codet/core.hpp"
 #include "codet/output.hpp"
 #include "temp.hpp"
@@ -104,8 +105,67 @@ void inspection_bench() {
              .dump()
       << std::endl;
 }
+void history_bench() {
+  TempDirectory temp;
+  Config config;
+  config.cwd = temp.root / "work";
+  config.home = temp.root / "home";
+  config.provider = "codex";
+  fs::create_directories(config.cwd);
+  fs::create_directories(config.home);
+  NativeFileSystem files;
+  NativeProcesses processes;
+  Offline http;
+  SystemClock clock;
+  Tools tools(config, files, processes, http, clock);
+  tools.use_session("history-benchmark");
+  for (size_t count : {100u, 300u, 1000u}) {
+    std::vector<Message> messages;
+    for (size_t i = 0; i < count; ++i) {
+      const auto id = std::to_string(i);
+      Message call, result;
+      call.role = "assistant";
+      call.calls = {{id, i % 2 ? "functions.read_file" : "apply_patch", {{"patch", "fixture"}}}};
+      if (!(i % 2))
+        call.replay = Json::array({{{"type", "custom_tool_call"},
+                                    {"call_id", id},
+                                    {"name", "apply_patch"},
+                                    {"input", "fixture"}}});
+      result.role = "tool";
+      result.tool_call_id = id;
+      result.text = Json({{"content", std::string(4096, 'x')},
+                          {"is_error", false},
+                          {"metadata", Json::object()}})
+                        .dump();
+      messages.push_back(std::move(call));
+      messages.push_back(std::move(result));
+    }
+    const auto start = std::chrono::steady_clock::now();
+    const auto size = provider_history_size(config, messages);
+    const auto sized = std::chrono::steady_clock::now();
+    if (size.encoded_parts > messages.size() * 2 + 1)
+      throw Error("Wire sizing revisited existing message parts");
+    const auto projected = project_history(messages, size.total / 2, tools);
+    std::cout
+        << Json({{"tool_results", count},
+                 {"messages", messages.size()},
+                 {"wire_parts_encoded", size.encoded_parts},
+                 {"wire_bytes", size.total},
+                 {"projected_bytes", tools.history_bytes(projected)},
+                 {"sizing_seconds", std::chrono::duration<double>(sized - start).count()},
+                 {"sizing_and_projection_seconds",
+                  std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count()},
+                 {"peak_rss_bytes", peak_rss()}})
+               .dump()
+        << std::endl;
+  }
+}
 } // namespace
 int main(int argc, char **argv) {
+  if (argc > 1 && std::string(argv[1]) == "history") {
+    history_bench();
+    return 0;
+  }
   if (argc > 1 && std::string(argv[1]) == "inspection") {
     inspection_bench();
     return 0;

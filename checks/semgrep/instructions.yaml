@@ -14,6 +14,7 @@ rules:
       - pattern: fs::is_regular_file($PATH)
       - pattern: fs::status($PATH)
       - pattern: fs::symlink_status($PATH)
+      - pattern: fs::absolute($PATH)
       - pattern: $ENTRY.is_symlink()
       - pattern: $ENTRY.is_directory()
       - pattern: $ENTRY.is_regular_file()

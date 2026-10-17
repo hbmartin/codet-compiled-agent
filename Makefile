@@ -70,20 +70,27 @@ SEMGREP_PYTHON ?= python3
 SEMGREP ?= $(CURDIR)/build/semgrep-venv/bin/semgrep
 SEMGREP_RUN = SEMGREP_ENABLE_VERSION_CHECK=0 SEMGREP_SEND_METRICS=off $(SEMGREP)
 SEMGREP_FLAGS = --metrics=off --disable-version-check --strict --no-rewrite-rule-ids
-.PHONY: fetch-semgrep semgrep-ready test-semgrep check-semgrep
+.PHONY: fetch-semgrep semgrep-environment semgrep-ready test-semgrep check-semgrep
 # Provisioning is explicit; neither check target downloads tools or rules.
 fetch-semgrep:
 	$(SEMGREP_PYTHON) -m venv build/semgrep-venv
 	build/semgrep-venv/bin/python -m pip install --disable-pip-version-check 'semgrep==$(SEMGREP_VERSION)'
+	$(MAKE) semgrep-environment
+semgrep-environment:
+	@mkdir -p build/semgrep
+	build/semgrep-venv/bin/python -m pip freeze --all > build/semgrep/requirements-resolved.txt
+	build/semgrep-venv/bin/python scripts/semgrep-report.py environment > build/semgrep/environment.json
 semgrep-ready:
 	@test -x '$(SEMGREP)' || { echo 'Run make fetch-semgrep first (or set SEMGREP to the pinned executable).'; exit 1; }
 	@codet_semgrep_version=$$($(SEMGREP_RUN) --version) && test "$$codet_semgrep_version" = '$(SEMGREP_VERSION)' || { echo 'Semgrep $(SEMGREP_VERSION) is required.'; exit 1; }
 	@mkdir -p build/semgrep
 test-semgrep: semgrep-ready
-	$(SEMGREP_RUN) scan $(SEMGREP_FLAGS) --test checks/semgrep --json > build/semgrep/tests.json
+	@$(SEMGREP_RUN) scan $(SEMGREP_FLAGS) --test checks/semgrep --json > build/semgrep/tests.json || \
+	  { codet_status=$$?; $(SEMGREP_PYTHON) scripts/semgrep-report.py failure build/semgrep/tests.json; exit $$codet_status; }
 check-semgrep: semgrep-ready
-	$(SEMGREP_RUN) scan $(SEMGREP_FLAGS) --error --config checks/semgrep --json \
-	  src/modern/instructions.cpp src/modern/state.cpp > build/semgrep/scan.json
+	@$(SEMGREP_RUN) scan $(SEMGREP_FLAGS) --error --config checks/semgrep --json \
+	  src/modern/instructions.cpp src/modern/state.cpp src/modern/tools.cpp > build/semgrep/scan.json || \
+	  { codet_status=$$?; $(SEMGREP_PYTHON) scripts/semgrep-report.py failure build/semgrep/scan.json; exit $$codet_status; }
 test-foundation:
 	cmake -S . -B build/foundation -DCODET_FOUNDATION_ONLY=ON
 	cmake --build build/foundation -j4

@@ -1,0 +1,363 @@
+{
+  "recorded_utc": "2026-10-17T21:13:17.440423+00:00",
+  "baseline_commit": "711fcce65463c5eb0247c3c8acd8dfe65650f43d",
+  "schema": 6,
+  "branch": "codex/fix-checkpoint-context",
+  "supported": [
+    "Owned running, awaiting-output and unknown execution checkpoints without consuming output",
+    "Cancellation, allocation and process-resource failures remain fatal",
+    "Immutable archive comparisons ignore only top-level presentation flags, including legacy archives",
+    "Exact combined provider wire budgets and stable per-batch preview allocation",
+    "One-pass wire-item measurements and preserved Responses custom-call/provider-switch behavior",
+    "Optional lexical skill-anchor failures stay local before advertising and deduplication",
+    "Scoped Semgrep filesystem/status guardrails and visible failed reports",
+    "Semgrep resolved environment recorded without dependency lock or runtime dependency"
+  ],
+  "checks": {
+    "macos_host": {
+      "passed": true,
+      "ctest_suites": 6,
+      "unit_cases": 320,
+      "unit_passed": 318,
+      "unit_skipped": [
+        "Contracts.NativeTigerDesktopAcceptance",
+        "NetworkOptIn.TlsHandshake"
+      ],
+      "cli_cases": 46,
+      "prompt_cases": 7,
+      "build_integrity_cases": 6,
+      "semgrep_runner_cases": 5,
+      "log": "build/checkpoint-host.log"
+    },
+    "macos_asan_ubsan": {
+      "passed": true,
+      "ctest_suites": 6,
+      "unit_cases": 320,
+      "unit_passed": 318,
+      "unit_skipped": [
+        "Contracts.NativeTigerDesktopAcceptance",
+        "NetworkOptIn.TlsHandshake"
+      ],
+      "cli_cases": 46,
+      "prompt_cases": 7,
+      "build_integrity_cases": 6,
+      "semgrep_runner_cases": 5,
+      "log": "build/checkpoint-sanitize.log"
+    },
+    "linux_amd64": {
+      "passed": true,
+      "ctest_suites": 6,
+      "unit_cases": 320,
+      "unit_passed": 315,
+      "unit_skipped": [
+        "Contracts.NativeImageIoCanEncodeAndReloadPixelsWithoutAConsole",
+        "Contracts.NativeTigerDesktopAcceptance",
+        "NetworkOptIn.TlsHandshake",
+        "OutputReview.UnreadableRegularEntryCountsWithoutDisablingHealthyCapture",
+        "SmallCore.UnreadableDiscoveryRootsDoNotAbortOtherGuidance"
+      ],
+      "cli_cases": 46,
+      "prompt_cases": 7,
+      "build_integrity_cases": 6,
+      "semgrep_runner_cases": 5,
+      "log": "build/checkpoint-linux.log"
+    },
+    "analyzers": {
+      "clang-tidy": {
+        "passed": true,
+        "findings": 0,
+        "sources": 25,
+        "versions": [
+          "Ubuntu LLVM version 18.1.3\n  Optimized build."
+        ]
+      },
+      "cppcheck": {
+        "passed": true,
+        "findings": 0,
+        "sources": 25,
+        "versions": [
+          "Cppcheck 2.22.0"
+        ]
+      },
+      "clang-analyzer": {
+        "passed": true,
+        "findings": 0,
+        "sources": 25,
+        "versions": [
+          "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin",
+          "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin"
+        ]
+      }
+    },
+    "analyzer_detection": {
+      "clang-tidy": true,
+      "cppcheck": true,
+      "clang-analyzer": true
+    },
+    "analyzer_runner": {
+      "passed": true,
+      "cases": 33,
+      "environment": "Configured Linux developer image with PyYAML"
+    },
+    "semgrep": {
+      "passed": true,
+      "version": "1.177.0",
+      "rules": 3,
+      "fixture_positive_matches": 15,
+      "production_inputs": 3,
+      "findings": 0,
+      "analysis_errors": 0,
+      "environment": {
+        "python": "3.12.15 (main, Sep 30 2026, 22:04:19) [Clang 17.0.0 (clang-1700.6.4.2)]",
+        "executable": "/Users/haroldmartin/Downloads/Tiger/compiled-agent/codet-context-history/build/semgrep-venv/bin/python",
+        "platform": "macOS-15.8-arm64-arm-64bit",
+        "semgrep": "1.177.0"
+      },
+      "resolved_requirements": [
+        "annotated-types==0.8.0",
+        "anyio==4.15.1",
+        "attrs==26.1.0",
+        "boltons==21.0.0",
+        "bracex==3.1",
+        "certifi==2026.7.22",
+        "cffi==2.1.1",
+        "charset-normalizer==3.5.2",
+        "click==8.4.2",
+        "click-option-group==0.5.9",
+        "colorama==0.4.6",
+        "cryptography==50.0.2",
+        "exceptiongroup==1.2.2",
+        "face==26.0.1",
+        "glom==25.12.0",
+        "googleapis-common-protos==1.75.5",
+        "h11==0.16.0",
+        "httpcore==1.0.9",
+        "httpx==0.28.1",
+        "httpx-sse==0.4.3",
+        "idna==3.20",
+        "importlib_metadata==8.7.1",
+        "jsonschema==4.25.1",
+        "jsonschema-specifications==2025.9.1",
+        "markdown-it-py==4.2.0",
+        "mcp==1.29.0",
+        "mdurl==0.1.2",
+        "opentelemetry-api==1.37.0",
+        "opentelemetry-exporter-otlp-proto-common==1.37.0",
+        "opentelemetry-exporter-otlp-proto-http==1.37.0",
+        "opentelemetry-instrumentation==0.58b0",
+        "opentelemetry-instrumentation-requests==0.58b0",
+        "opentelemetry-instrumentation-threading==0.58b0",
+        "opentelemetry-proto==1.37.0",
+        "opentelemetry-sdk==1.37.0",
+        "opentelemetry-semantic-conventions==0.58b0",
+        "opentelemetry-util-http==0.58b0",
+        "packaging==26.3",
+        "peewee==3.19.0",
+        "pip==26.2.1",
+        "protobuf==6.33.6",
+        "pycparser==3.11",
+        "pydantic==2.14.1",
+        "pydantic-settings==2.16.0",
+        "pydantic_core==2.50.1",
+        "Pygments==2.21.0",
+        "PyJWT==2.13.0",
+        "python-dotenv==1.2.4",
+        "python-multipart==0.0.32",
+        "referencing==0.37.0",
+        "requests==2.34.2",
+        "rich==15.0.0",
+        "rpds-py==2026.9.1",
+        "ruamel.yaml==0.19.1",
+        "ruamel.yaml.clib==0.2.15",
+        "semantic-version==2.10.0",
+        "semgrep==1.177.0",
+        "sse-starlette==3.5.0",
+        "starlette==1.8.0",
+        "tomli==2.4.1",
+        "typing-inspection==0.4.4",
+        "typing_extensions==4.16.0",
+        "urllib3==2.8.0",
+        "uvicorn==0.54.0",
+        "wcmatch==8.5.2",
+        "wrapt==1.17.3",
+        "zipp==4.1.1"
+      ],
+      "dependency_policy": "Resolved versions recorded; transitive dependencies intentionally unlocked."
+    },
+    "ppc": {
+      "passed": true,
+      "executed": false,
+      "verification": "Verified GCC 14.2, PPC32 big-endian/G3 Mach-O, target dependency paths, no LC_RPATH. PPC code was not executed.",
+      "codet_sha256": "0631f9ef7110aca97764075fbbd847d5f1b26445619b572e4ab36a8d5792b288",
+      "tests_sha256": "a08b68c53fdd74404902e9ea71144a777072f1282d80b0ef58d15593579eee19",
+      "benchmark_sha256": "e862933e4cb66811bc8d72e47e4e3b3f896afe88e879e0426dc1f9a5db28050b"
+    },
+    "formatting": "Clang-format 18 dry-run on changed production/header/tests passed; annotated Semgrep fixtures excluded; git diff --check passed."
+  },
+  "benchmarks": {
+    "mixed_history": [
+      {
+        "messages": 200,
+        "peak_rss_bytes": 13778944,
+        "projected_bytes": 213501,
+        "sizing_and_projection_seconds": 0.293341708,
+        "sizing_seconds": 0.021530708,
+        "tool_results": 100,
+        "wire_bytes": 427515,
+        "wire_parts_encoded": 251
+      },
+      {
+        "messages": 600,
+        "peak_rss_bytes": 20463616,
+        "projected_bytes": 641201,
+        "sizing_and_projection_seconds": 0.826940083,
+        "sizing_seconds": 0.061859291,
+        "tool_results": 300,
+        "wire_bytes": 1282915,
+        "wire_parts_encoded": 751
+      },
+      {
+        "messages": 2000,
+        "peak_rss_bytes": 37060608,
+        "projected_bytes": 2138149,
+        "sizing_and_projection_seconds": 2.904896166,
+        "sizing_seconds": 0.208590208,
+        "tool_results": 1000,
+        "wire_bytes": 4276815,
+        "wire_parts_encoded": 2501
+      }
+    ],
+    "inspection": [
+      {
+        "canonicalizations": 10080,
+        "directory_entries": 1000,
+        "pages": 10,
+        "peak_rss_bytes": 12681216,
+        "seconds": 0.294709875
+      },
+      {
+        "canonicalizations": 50080,
+        "directory_entries": 5000,
+        "pages": 10,
+        "peak_rss_bytes": 21905408,
+        "seconds": 1.514227958
+      },
+      {
+        "canonicalizations": 100080,
+        "directory_entries": 10000,
+        "pages": 10,
+        "peak_rss_bytes": 34406400,
+        "seconds": 3.053204625
+      },
+      {
+        "archive_attempts": 50,
+        "archive_publications": 1,
+        "peak_rss_bytes": 36536320,
+        "seconds": 0.0888565
+      }
+    ]
+  },
+  "limitations": [
+    "Linux root cannot reproduce two permission-denial fixtures; native ImageIO and desktop fixtures require macOS/Tiger, and live TLS is opt-in.",
+    "Host Debug timings and allocator high-water RSS do not establish Tiger responsiveness or memory compliance.",
+    "Existing process retention, directory rescan, context/output/image budgets and schema-6 incremental persistence are unchanged.",
+    "Earlier in-progress analysis and the storage-size assertion failure were superseded by final checks on stable sources."
+  ],
+  "owner_run_pending": [
+    "Tiger/HFS+ aliases and opened-path behavior",
+    "G4 line/curses responsiveness",
+    "swapping and peak memory within the 512 MB machine budget",
+    "live provider/desktop acceptance"
+  ],
+  "input_sha256": {
+    "CMakeLists.txt": "f0aed32db9e0bffd3aecbf7a7d8073f18a58d86e0c3377ce30cfbc24a9ae1e24",
+    "Makefile": "7acc1738b66485b7ef98374795dd339fde9af60352f72658f40f88f9d76f7d7c",
+    "README.md": "cdecd93805f91df6c47947ea2e8d396b13a897c564e34a5652a4197ad3708b93",
+    "checks/semgrep/instructions.cpp": "a2be6603e2e0f07011e381b20ab7a33fe47a7ecd51dc3a378317e1d0d9f42008",
+    "checks/semgrep/instructions.yaml": "06c7d5248d637f721f7c7e56eaf1927908d7b793ab3fbff2e734fa687e60986e",
+    "checks/semgrep/tools.cpp": "b87f0a5901a15b8702248dfb867a7e4edf10c10a0d876257234c2eae4a27310c",
+    "checks/semgrep/tools.yaml": "a69bdfa73f345dfa2dc984333d773ea42f5fd796f167af8d02f2802c6ca679c2",
+    "docs/MODERN-AGENT.md": "e6c34256379a80c74e2ca3dfb6ef642ad80f7bf05304de1b1219b76d5eb8b5fe",
+    "docs/TIGER-ACCEPTANCE.md": "5c4e10f184dd39667387cf14fb619c412719eb56eac5b02ca4db524c72a6a9e2",
+    "docs/validation/reliability-modernization.json": "7fb1cbcb383301bdc481bf2750f29b4299a5e751f7a15741ffcf4629218458d4",
+    "include/app-functions.h": "8e363fc9efb6f09bed6e406c8cda95f46e18f7ca0412ee16654c9a40f26d9340",
+    "include/app-globals.h": "58b79e8bc8e47df7317aa276e7b63cd06b88f72a304e9d1ed9b7f1161b694d6c",
+    "include/app.h": "7b4aff9d8012d627b4ce9220436240b64d9a16bf9bc0b81653bf63ed753170a3",
+    "include/callback-contracts.h": "c9bd4045bd5fbb7ba1e43cbfe582281349dc1e54c7dddfcabf41b29734c3c3e8",
+    "include/codet/artifacts.hpp": "4a93be57d0098d80a2fc85bfd9cc5240e399e4e6b328feccb2349e1d3b785a06",
+    "include/codet/computer.hpp": "aa4e4ef2a400b761ed98f8dfe3b596d140eb06fa58ca7689ed927276c860eeb7",
+    "include/codet/context.hpp": "0d4ce59a92bcc8a76512f9e642e0ac569a63bd9c63728aa6b08b3b24810bd8d7",
+    "include/codet/core.hpp": "c5793661671314632994c7df0faa29db7238659bd222732a149f5bd2c40839f2",
+    "include/codet/diagnostics.hpp": "31ead6755d8a6ce63d365b1a3507b20d06b868bbc3ecbc2893a26f34db750da9",
+    "include/codet/interaction.hpp": "ac2bae0c6d600d8866c06090444b842acbcb5baa31475825a20d34e36b512f03",
+    "include/codet/output.hpp": "6cab8db9a991cd0dde92bd9078cd9d366cbffaa4fe09f4b2b3471ed91436f651",
+    "include/codet/patch.hpp": "5852178d6a37ef71b560421c84543fe789e0fb5c87d45e337088f48008ec2915",
+    "include/codet/process_control.hpp": "144592cd14597dc1d52750f4eaff9b48be7b3c517991109e93d502300db1f8e6",
+    "include/codet/prompt.hpp": "92fc6bd03ad038af57fcd90ef04fff91e30722bf4ed8db1c25f0e28f32da9b24",
+    "include/codet/support.hpp": "3b67a474dc3b7373172807c0b1120f380379f1f46c8238d84d3aca3fbfc7b6dc",
+    "include/codet/tool_registry.hpp": "6024b8a00ec83280267cc9a874eff3d9d70b60a87dc5e2394e9f9aafa51e0771",
+    "include/embedded-strings.h": "6ffac0e9967e511dd10556aed94a2ef0201c926bd01d699208e4e26834ec2e86",
+    "include/imported-interfaces.h": "f28bc5576423cc04e2138d46b5accbdc64c3e294dcce7a080fcb4da6e16f2c8b",
+    "include/observed-abi.h": "a6526dee44e4e156cdc8f2cd8a9f5ea28cd1a25c8ea3a1deb31d0e28055f2d64",
+    "include/recovered-declarations.h": "328a2d82bcdb6bab00b171749643475b7e55f40ae7508fb305782a606ffa02a9",
+    "include/recovered-layouts.h": "68c1c0b0313d38632390b8919ddc297d6240bed0c2d1de307fce3f0cb431f195",
+    "include/recovered-storage.h": "a655bf2e2172d9293a2920b3f5ffb6ed6e7164e03b16d1c3400547d00648ce09",
+    "include/recovered-types.h": "22d85c337901a5b84de45b08c20409256586c6cc9e5ca4a13ec783788ca76caa",
+    "include/text_compat.h": "6ff5d6fe7251e3b156983ec5d1e4c2dea5bf08cdf40ac68734e1546850dd0da7",
+    "prompts/manifest.json": "63a0bfffdc14135906e55454473bb92b5e868c8f01d7b38a18fb2c5d17751743",
+    "scripts/analyze-modern.py": "7264ff6ab98f91af008f5ae738c19c79157a487ea18e03ae4aa216f0675317c5",
+    "scripts/semgrep-report.py": "224da0276c93cf02c1eaa46514ba0c2adadc99035fa87fa3623ddf8a7777c5f6",
+    "scripts/tiger.py": "0fc30669c4f26f238aecc23690b136f2785ea6faec5853491c5196333ab5f32d",
+    "src/modern/agent.cpp": "f4c81eede5a6d1acb7f33b2e4739d22c46ef1950b836c8c282fbd5d6d75355e7",
+    "src/modern/artifacts.cpp": "d869c12ac29c4325f58ca02bec5577f668789e531e75b8c984bd8399de593e79",
+    "src/modern/capture_catalog.cpp": "d480836fb9d30ec1d6f999f88cbc5af3dd60af5c2ab6988d1779b6cbed912c6f",
+    "src/modern/cli.cpp": "194551ee94ec58e8282844f7d453a783c47f768977c0bef0a93ee1d4d038b842",
+    "src/modern/computer.cpp": "ccb8fd5b7c0847a18ac44f32dd2319df25e4a173fec947fd1ea5a67f3c86263e",
+    "src/modern/config.cpp": "42c685ae9ac5499363c20de5bb8b99d15ff0a6596aed57dd607ca3936649d8c5",
+    "src/modern/context.cpp": "6f4eb8ef2583ac80a373c2458a8dc60e245c97f3064fdc16f18770d6181c8e53",
+    "src/modern/failure.cpp": "aabbc34d0e235141e79fee2c370d4ed7f3450eb89787ed467fb1b1bacf383a2a",
+    "src/modern/hooks.cpp": "8c31448ae0c39c8e925626653f1bd25eb56dd98fdbac7d81af86e909e7686ccb",
+    "src/modern/images.cpp": "bb703b2e4516c75d9dfda05af4e1cfac57fb0d4d84e7ee56fb1a631b528b1510",
+    "src/modern/inspection.cpp": "b36fadfea5ef50b49e8a547ad3f275be1935df8436874bfac14089750cfa2379",
+    "src/modern/instructions.cpp": "2c022077ac98ec33dff4bd50d514bcc8a26825e45d71c805b8bb84dbc9a6f598",
+    "src/modern/interaction.cpp": "1e18bf1c1f8cb1a221fc458661687f148c0479365c2912bdeb58265d0a2f82ed",
+    "src/modern/main.cpp": "67bb002f35e6fab656016cccd493ea985199858b106598fa8337185925583e1c",
+    "src/modern/output.cpp": "48dd5de7c964597980c002d61401efa4743a4e85b33776fc632bfccbaae5a394",
+    "src/modern/patch.cpp": "8c99791527f8a6b09b35674802db3c29cafe2adde4700a67ca7adda60562f770",
+    "src/modern/platform.cpp": "476d45f859c6ab3325d4f388e3c0e53a9b6c01cd1e5a690615fe8c08c12397cf",
+    "src/modern/prompts.cpp": "3bf1d2966d44bcc98f3ed71e4b89905eb7beccee6430fd7899cc9bb60419e5a8",
+    "src/modern/provider.cpp": "dca8d389da72e7d08a83a23bdee4d15b69692fbc1db0b607fb2a2c28ee6b15ea",
+    "src/modern/reliability.cpp": "d924d9c1e8875c7b7e053509e2ab2fe3e24e5aee814c706dbdc9c4e608461356",
+    "src/modern/state.cpp": "276d7fd8e6b215cd17a530fff5ae9ecba8bf555fa582e300d059c85d078e18b6",
+    "src/modern/support.cpp": "40dfad2759619972f3b0eba053a24b00877b05ce2defb648b727ebd608dd594a",
+    "src/modern/tool_registry.cpp": "bbec68092f2561c5d4596e5976c7766e5715eb4ccddf03ef61b99a8ed7b00a93",
+    "src/modern/tools.cpp": "f80df287aca5a70c297fb1e8ebbe6a382189c7a0a4342bff8b66f483a2ec046a",
+    "src/text_compat.c": "00213a0ad26fd98c9bd9a0a45fb84f9b853fcac8df7fed05c79e4d6444fb2205",
+    "tests/checkpoint_test.cpp": "b3039024c72b57e18841334640263d61253277217b49804dd3642792be80f821",
+    "tests/cli_integration.py": "f3b23c585c7c7b2a4a689e2e636e8473ac26986ed7be5dd3c866d7da92e78181",
+    "tests/context_history_test.cpp": "b7ac5d136fe8adaa763b62b62fef167977972f694ec82f8230791cb684a4f22a",
+    "tests/modernization_test.cpp": "dba59aa5e7cd76c0fc2aa50dd9d241d524f619d52bf8d015aeb5bda8aafe37fb",
+    "tests/persistence_bench.cpp": "4cce48647756024e42efb33b0ce8688461880d9f87b2f44b867b89302c9bd20d",
+    "tests/test_semgrep_report.py": "c608502d0a1694f77f17360a05d76457b8f74502734ceed9cb7934299bc55fcd",
+    "tiger-dependencies.lock.json": "d209dcf76da392fc9a87018df647b3dc0bf5a0e29045486d86a2a6531283e037"
+  },
+  "artifact_sha256": {
+    "build/checkpoint-host.log": "3d3932a2c672b562101a2f13486f59a0f79f46d3df0894984c68b5be399d62e6",
+    "build/checkpoint-sanitize.log": "35f0ddae00e7e73f545d592f038eb6fc65e8d09d8ab7a21c5e1c2ac837fe1fff",
+    "build/checkpoint-linux.log": "65615c374f4361969704ddc900cc566179df07ce49b2ab59b6a66e821b30d515",
+    "build/checkpoint-analysis-final.log": "2df0735c9d9b8fed7f0b242b95e9e77ba33454e5ea1fc84cb773580280889c1b",
+    "build/checkpoint-analysis/analysis/manifest.json": "9098e9116a5423471f842dcfdf986cd3b7dc3d4a8f0e33deba6fe6c23af57d95",
+    "build/checkpoint-analysis/analysis/selftest/selftest.json": "3487eb0a98fc4af909d26aa6ce025d386b8ee2e4715fa58a679a999bf7df504a",
+    "build/checkpoint-analysis-runner.log": "503ced710b3cc59a8c7c8db3d560fa0bdb1ce4225e491171286e0a9ea755e29c",
+    "build/checkpoint-semgrep.log": "cfb7539a816ed389d410c7c08733b9700f153eae0e612ac2637ab37d67aa3881",
+    "build/semgrep/tests.json": "9783c6a3d85310188326c704866479712f53bd3ee32a624c0bdbe759dd439f34",
+    "build/semgrep/scan.json": "354f1380298ea89f0974e992b222fc570e521398bd50ba967d36b10193d18aa4",
+    "build/semgrep/environment.json": "38465e488e09fb1dd65c68b6332ebca4a8ede6da0d145fd0b1b51d42581a330b",
+    "build/semgrep/requirements-resolved.txt": "d106710cc47ce26f9d4b9197dd42601f5b5dd117e5d0473e522f85af7846fb10",
+    "build/checkpoint-ppc-verify.log": "93312e884d41916a125238b52fb590d1e71a71d7fbd6f7ef31a164e80092bb25",
+    "build/tiger-verification.json": "aa70604bd1854da764136d1a64d141fac14e0c789ef7cecd9fabbe2749cb4720",
+    "build/checkpoint-bench-history.jsonl": "35069dcdf69b146a9619f1225252fed60f5167b2dc902f023e433a6269f068bf",
+    "build/checkpoint-bench-inspection.jsonl": "bc96432b3cbd3e15d6a54594b17fc3d63a5577c96074118ab555e1ceb6bc73dd",
+    "build/checkpoint-format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

@@ -944,7 +944,7 @@ TEST_F(History, DirectoryScanMetadataSurvivesBoundedProjection) {
   EXPECT_FALSE(metadata.contains("eof"));
   EXPECT_FALSE(metadata.contains("next_entry_offset"));
   EXPECT_EQ(metadata["inspect_archived_page"], true);
-  EXPECT_LE(Json(projected).dump().size(), 5000u);
+  EXPECT_LE(tools.history_bytes(projected), 5000u);
 }
 TEST_F(History, OptionalCanonicalizationFailureKeepsOtherInstructionAndSkillContext) {
   put(config.cwd / "AGENTS.md", "retained instructions");

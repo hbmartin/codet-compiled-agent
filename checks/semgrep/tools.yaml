@@ -1,0 +1,11 @@
+rules:
+  - id: codet-checkpoint-direct-status
+    languages: [cpp]
+    severity: ERROR
+    message: Collect checkpoint process status through the guarded execution_fact helper.
+    paths:
+      include: ["**/tools.cpp"]
+    patterns:
+      - pattern-inside: |
+          Json Tools::execution_state(...) const { ... }
+      - pattern: processes_.status(...)

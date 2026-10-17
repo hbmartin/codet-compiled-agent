@@ -352,7 +352,13 @@ public:
   Json codex(HttpTransport &, const Cancellation &);
 };
 using ItemSink = std::function<void(const Json &)>;
+struct ProviderHistorySize {
+  size_t total = 2, fixed = 2, encoded_parts = 0;
+  std::vector<size_t> messages;
+};
+ProviderHistorySize provider_history_size(const Config &, const std::vector<Message> &);
 size_t provider_history_bytes(const Config &, const std::vector<Message> &);
+size_t provider_result_bytes(const Config &, const Message &, const std::string &tool_name);
 struct Provider {
   virtual ~Provider() = default;
   virtual void restore_conversation(const Json &) {}
@@ -526,6 +532,7 @@ class Tools {
     bool completed = false;
     std::optional<int> exit_code;
   };
+  Json execution_fact(int, const ExecSession &) const;
   std::map<int, ExecSession> exec_sessions_;
   std::map<std::string, std::pair<std::string, std::string>> archived_results_;
   fs::path path(const std::string &) const;
@@ -550,6 +557,12 @@ public:
   Json execution_state(const std::vector<Message> &) const;
   size_t history_bytes(const std::vector<Message> &messages) const {
     return provider_history_bytes(config_, messages);
+  }
+  ProviderHistorySize history_size(const std::vector<Message> &messages) const {
+    return provider_history_size(config_, messages);
+  }
+  size_t result_bytes(const Message &message, const std::string &name) const {
+    return provider_result_bytes(config_, message, name);
   }
   void inspection_budget(size_t bytes) {
     inspection_budget_ = bytes;

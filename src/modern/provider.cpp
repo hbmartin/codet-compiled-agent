@@ -141,13 +141,46 @@ Json clean_replay(const Message &m) {
     replay.erase(replay.end() - 1);
   return replay;
 }
+// Each wire item (or appended block in a coalesced role) is encoded once for sizing.
+// Global framing belongs to fixed; tool payload deltas keep the same surrounding shape.
+void account_wire(ProviderHistorySize *size, size_t owner, size_t bytes) {
+  if (!size)
+    return;
+  size->total += bytes;
+  ++size->encoded_parts;
+  if (owner < size->messages.size())
+    size->messages[owner] += bytes;
+  else
+    size->fixed += bytes;
+}
+void append_wire(Json &out, Json item, size_t owner, ProviderHistorySize *size) {
+  if (size)
+    account_wire(size, owner, item.dump().size() + (out.empty() ? 0 : 1));
+  out.push_back(std::move(item));
+}
+void extend_wire(Json &out, const std::string &role, const char *field, Json parts, size_t owner,
+                 ProviderHistorySize *size) {
+  if (parts.empty())
+    return;
+  if (!out.empty() && out.back()["role"] == role) {
+    auto &previous = out.back()[field];
+    for (auto &part : parts) {
+      if (size)
+        account_wire(size, owner, part.dump().size() + (previous.empty() ? 0 : 1));
+      previous.push_back(std::move(part));
+    }
+  } else
+    append_wire(out, {{"role", role}, {field, std::move(parts)}}, owner, size);
+}
 Json chat_messages(const Config &c, const std::string &system, const std::vector<Message> &messages,
-                   bool ollama) {
+                   bool ollama, ProviderHistorySize *size) {
   std::map<std::string, std::string> tool_names;
   for (const auto &m : messages)
     for (const auto &call : m.calls)
       tool_names[call.id] = call.name;
-  Json out = Json::array({{{"role", "system"}, {"content", system}}});
+  Json out = Json::array();
+  append_wire(out, {{"role", "system"}, {"content", system}}, messages.size(), size);
+  size_t owner = 0, pending_owner = 0;
   Json pending = Json::array();
   auto flush = [&] {
     if (pending.empty())
@@ -170,16 +203,20 @@ Json chat_messages(const Config &c, const std::string &system, const std::vector
                {"detail",
                 image.at("artifact").value("detail", "high") == "original" ? "high" : "auto"}}}});
     }
-    out.push_back(item);
+    append_wire(out, std::move(item), pending_owner, size);
     pending = Json::array();
   };
   std::map<std::string, std::string> names;
-  for (const auto &m : messages) {
+  for (owner = 0; owner < messages.size(); ++owner) {
+    const auto &m = messages[owner];
     if (m.role != "tool")
       flush();
     Json j = {{"role", m.role}, {"content", tool_text(m, c, tool_names)}};
-    for (const auto &image : prepared_images(m))
+    for (const auto &image : prepared_images(m)) {
+      if (pending.empty())
+        pending_owner = owner;
       pending.push_back(image);
+    }
     if (m.role == "tool") {
       if (ollama)
         j["tool_name"] = names[m.tool_call_id];
@@ -199,26 +236,58 @@ Json chat_messages(const Config &c, const std::string &system, const std::vector
         j["tool_calls"].push_back(std::move(call));
       }
     }
-    out.push_back(j);
+    append_wire(out, std::move(j), owner, size);
   }
   flush();
   return out;
 }
 Json wire_history(const Config &c, const std::string &system, const std::vector<Message> &messages,
-                  const std::map<std::string, std::string> *known_names = nullptr) {
+                  const std::map<std::string, std::string> *known_names = nullptr,
+                  ProviderHistorySize *size = nullptr) {
+  if (size)
+    size->messages.resize(messages.size());
   std::map<std::string, std::string> tool_names =
       known_names ? *known_names : std::map<std::string, std::string>{};
   for (const auto &m : messages)
     for (const auto &call : m.calls)
       tool_names[call.id] = call.name;
   if (uses_responses(c)) {
-    Json input = Json::array({{{"role", "developer"}, {"content", system}}});
+    Json input = Json::array();
+    append_wire(input, {{"role", "developer"}, {"content", system}}, messages.size(), size);
+    // Earlier code revisited every prior item after each ordinary message. Count those
+    // visits once; each call now takes work bounded by its qualified name length.
+    std::vector<size_t> normalizations(messages.size());
+    size_t remaining = 0;
+    if (c.provider == "codex")
+      for (size_t i = messages.size(); i > 0; --i) {
+        const auto &m = messages[i - 1];
+        if (m.role != "tool" && !(m.role == "assistant" && !clean_replay(m).empty() &&
+                                  (m.replay_provider.empty() || m.replay_provider == c.provider)))
+          ++remaining;
+        normalizations[i - 1] = remaining;
+      }
+    const auto append = [&](Json item, size_t owner) {
+      if (normalizations[owner] && item.value("type", "") == "function_call" &&
+          item.contains("name")) {
+        auto qualified = item.at("name").get<std::string>();
+        for (size_t n = normalizations[owner]; n; --n) {
+          const auto split = qualified.find("__");
+          if (split == std::string::npos)
+            break;
+          item["namespace"] = qualified.substr(0, split);
+          qualified = qualified.substr(split + 2);
+        }
+        item["name"] = qualified;
+      }
+      append_wire(input, std::move(item), owner, size);
+    };
     std::map<std::string, bool> custom_calls;
-    for (const auto &m : messages) {
+    for (size_t owner = 0; owner < messages.size(); ++owner) {
+      const auto &m = messages[owner];
       if (m.role == "assistant" && !clean_replay(m).empty() &&
           (m.replay_provider.empty() || m.replay_provider == c.provider)) {
         for (const auto &item : clean_replay(m)) {
-          input.push_back(item);
+          append(item, owner);
           if (item.contains("call_id") && item["call_id"].is_string())
             custom_calls[item["call_id"].get<std::string>()] =
                 item.value("type", "") == "custom_tool_call";
@@ -228,59 +297,53 @@ Json wire_history(const Config &c, const std::string &system, const std::vector<
       if (m.role == "tool") {
         // Match the call type actually emitted for this provider, including provider changes.
         const bool custom = custom_calls[m.tool_call_id];
-        input.push_back({{"type", custom ? "custom_tool_call_output" : "function_call_output"},
-                         {"call_id", m.tool_call_id},
-                         {"output", tool_text(m, c, tool_names)}});
+        Json item = {{"type", custom ? "custom_tool_call_output" : "function_call_output"},
+                     {"call_id", m.tool_call_id},
+                     {"output", tool_text(m, c, tool_names)}};
         if (!prepared_images(m).empty()) {
-          auto &output = input.back()["output"];
+          auto &output = item["output"];
           output = Json::array({{{"type", "input_text"}, {"text", tool_text(m, c, tool_names)}}});
           for (const auto &image : prepared_images(m))
             output.push_back(
                 {{"type", "input_image"}, {"image_url", image.at("url")}, {"detail", "high"}});
         }
+        append(std::move(item), owner);
       } else {
-        input.push_back({{"role", m.role == "system" ? "developer" : m.role},
-                         {"content", tool_text(m, c, tool_names)}});
+        append({{"role", m.role == "system" ? "developer" : m.role},
+                {"content", tool_text(m, c, tool_names)}},
+               owner);
         if (!prepared_images(m).empty()) {
           Json content = Json::array();
           for (const auto &image : prepared_images(m))
             content.push_back(
                 {{"type", "input_image"}, {"image_url", image.at("url")}, {"detail", "high"}});
-          input.push_back({{"role", "user"}, {"content", content}});
+          append({{"role", "user"}, {"content", content}}, owner);
         }
         for (const auto &t : m.calls) {
           const bool custom = c.provider == "codex" && t.name == "apply_patch";
           custom_calls[t.id] = custom;
           if (custom) {
             const auto patch = t.arguments.value("patch", Json());
-            input.push_back(
-                {{"type", "custom_tool_call"},
-                 {"call_id", t.id},
-                 {"name", "apply_patch"},
-                 {"input", patch.is_string() ? patch.get<std::string>() : t.arguments.dump()}});
+            append({{"type", "custom_tool_call"},
+                    {"call_id", t.id},
+                    {"name", "apply_patch"},
+                    {"input", patch.is_string() ? patch.get<std::string>() : t.arguments.dump()}},
+                   owner);
           } else
-            input.push_back({{"type", "function_call"},
-                             {"call_id", t.id},
-                             {"name", tool_wire_name(t.name)},
-                             {"arguments", t.arguments.dump()}});
+            append({{"type", "function_call"},
+                    {"call_id", t.id},
+                    {"name", tool_wire_name(t.name)},
+                    {"arguments", t.arguments.dump()}},
+                   owner);
         }
-        for (auto &item : input)
-          if (c.provider == "codex" && item.value("type", "") == "function_call" &&
-              item.contains("name")) {
-            const auto qualified = item.at("name").get<std::string>();
-            const auto p = qualified.find("__");
-            if (p != std::string::npos) {
-              item["namespace"] = qualified.substr(0, p);
-              item["name"] = qualified.substr(p + 2);
-            }
-          }
       }
     }
     return input;
   }
   if (c.provider == "anthropic") {
     Json ms = Json::array();
-    for (const auto &m : messages) {
+    for (size_t owner = 0; owner < messages.size(); ++owner) {
+      const auto &m = messages[owner];
       Json content = Json::array();
       std::string role = m.role == "tool" ? "user" : m.role;
       if (role == "system") {
@@ -323,20 +386,15 @@ Json wire_history(const Config &c, const std::string &system, const std::vector<
           for (const auto &block : blocks)
             content.push_back(block);
       }
-      if (content.empty())
-        continue;
-      if (!ms.empty() && ms.back()["role"] == role)
-        for (const auto &item : content)
-          ms.back()["content"].push_back(item);
-      else
-        ms.push_back({{"role", role}, {"content", content}});
+      extend_wire(ms, role, "content", std::move(content), owner, size);
     }
     return ms;
   }
   if (c.provider == "google") {
     Json contents = Json::array();
     std::map<std::string, std::string> names;
-    for (const auto &m : messages) {
+    for (size_t owner = 0; owner < messages.size(); ++owner) {
+      const auto &m = messages[owner];
       Json parts = Json::array();
       for (const auto &t : m.calls)
         names[t.id] = tool_wire_name(t.name);
@@ -362,16 +420,12 @@ Json wire_history(const Config &c, const std::string &system, const std::vector<
       }
       if (!parts.empty()) {
         const std::string role = m.role == "assistant" ? "model" : "user";
-        if (!contents.empty() && contents.back()["role"] == role)
-          for (const auto &part : parts)
-            contents.back()["parts"].push_back(part);
-        else
-          contents.push_back({{"role", role}, {"parts", parts}});
+        extend_wire(contents, role, "parts", std::move(parts), owner, size);
       }
     }
     return contents;
   }
-  return chat_messages(c, system, messages, c.provider == "ollama");
+  return chat_messages(c, system, messages, c.provider == "ollama", size);
 }
 Json functions(const Json &tools) {
   Json out = Json::array();
@@ -551,12 +605,24 @@ void codex_output(ProviderResult &result, const Json &response) {
   result.stop_reason = response.value("status", "completed");
 }
 } // namespace
-size_t provider_history_bytes(const Config &config, const std::vector<Message> &messages) {
+ProviderHistorySize provider_history_size(const Config &config,
+                                          const std::vector<Message> &messages) {
+  ProviderHistorySize size;
+  (void)wire_history(config, "", messages, nullptr, &size);
   // Image bytes have a separate request budget. Never encode/read artifacts to count text.
-  size_t images = 0;
-  for (const auto &message : messages)
-    images += message.images.size();
-  return wire_history(config, "", messages).dump().size() + images * 256;
+  for (size_t i = 0; i < messages.size(); ++i) {
+    const auto bytes = messages[i].images.size() * 256;
+    size.messages[i] += bytes;
+    size.total += bytes;
+  }
+  return size;
+}
+size_t provider_history_bytes(const Config &config, const std::vector<Message> &messages) {
+  return provider_history_size(config, messages).total;
+}
+size_t provider_result_bytes(const Config &config, const Message &message,
+                             const std::string &name) {
+  return Json(tool_text(message, config, {{message.tool_call_id, name}})).dump().size();
 }
 HttpRequest ApiProvider::request(const Config &c, const std::string &system,
                                  const std::vector<Message> &original_messages, const Json &tools,

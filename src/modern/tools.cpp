@@ -596,6 +596,26 @@ std::string Tools::result_reference(const Message &message) const {
     throw Error("Invalid private result identity");
   return (artifact_directory(config_) / ref).string();
 }
+Json Tools::execution_fact(int id, const ExecSession &session) const {
+  Json fact = {{"session_id", id}};
+  try {
+    const auto status = processes_.status(session.process);
+    if (!status.error.empty()) {
+      fact["state"] = "unknown";
+      fact["error"] = bounded_text(status.error, 512);
+    } else {
+      fact["state"] = status.running ? "running" : "awaiting_output";
+      if (!status.running)
+        fact["exit_code"] = status.exit_code;
+    }
+  } catch (const std::exception &error) {
+    if (fatal(std::current_exception()))
+      throw;
+    fact["state"] = "unknown";
+    fact["error"] = bounded_text(error.what(), 512);
+  }
+  return fact;
+}
 Json Tools::execution_state(const std::vector<Message> &messages) const {
   std::map<std::string, Json> recovery;
   const auto collect = [&](const Json &facts) {
@@ -640,8 +660,8 @@ Json Tools::execution_state(const std::vector<Message> &messages) const {
     facts.push_back(entry.second);
   // Only this Tools instance owns execution handles. Historical IDs are never live after resume.
   for (const auto &entry : exec_sessions_)
-    if (!entry.second.completed && processes_.status(entry.second.process).running)
-      facts.push_back({{"session_id", entry.first}, {"state", "running"}});
+    if (!entry.second.completed)
+      facts.push_back(execution_fact(entry.first, entry.second));
   return facts;
 }
 std::string Tools::retain_result(Message &message) {
@@ -654,13 +674,21 @@ std::string Tools::retain_result(Message &message) {
     if (!private_anchor(root) || fs::is_symlink(root) || fs::is_symlink(root / "results") ||
         fs::is_symlink(path.parent_path()) || fs::is_symlink(path))
       throw Error("Invalid private result storage");
-    const auto content = safe_json(Json(message)).dump();
+    auto identity = safe_json(Json(message));
+    identity.erase("previewed");
+    const auto content = identity.dump();
     const auto hash = digest(content);
     const auto cached = archived_results_.find(message.message_id);
     bool published = cached != archived_results_.end() && cached->second.first == hash &&
                      cached->second.second == path.string() && private_regular(files_, root, path);
     if (!published && private_regular(files_, root, path)) {
-      if (files_.read(path, content.size() + 1) != content)
+      // Earlier archives included the optional presentation flag (at most 18 bytes).
+      auto archived = Json::parse(files_.read(path, content.size() + 32), nullptr, false);
+      if (!archived.is_object() ||
+          (archived.contains("previewed") && !archived.at("previewed").is_boolean()))
+        throw Error("Invalid archived message");
+      archived.erase("previewed");
+      if (archived.dump() != content)
         throw Error("Archived message identity changed");
       published = true;
     }

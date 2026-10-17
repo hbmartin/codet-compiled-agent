@@ -124,6 +124,15 @@ std::string Tools::instructions() const {
       return std::nullopt;
     }
   };
+  const auto absolute = [&](const fs::path &p) -> std::optional<fs::path> {
+    std::error_code error;
+    const auto value = fs::absolute(p, error);
+    if (error) {
+      warn("Discovery anchor unavailable: " + p.string() + ": " + error.message());
+      return std::nullopt;
+    }
+    return value.lexically_normal();
+  };
   const auto walk = [&](const fs::path &dir, const auto &visit) {
     std::error_code error;
     fs::directory_iterator it(dir, error), end;
@@ -297,7 +306,7 @@ std::string Tools::instructions() const {
       if (kind(path, false) != fs::file_type::regular)
         continue;
       const auto resolved = canonical(candidate);
-      if (!resolved || !within(*resolved, *canonical_root) || !visited.insert(*resolved).second)
+      if (!resolved || !within(*resolved, *canonical_root) || visited.count(*resolved))
         continue;
       if (++admitted > 100) {
         exhausted = true;
@@ -311,6 +320,22 @@ std::string Tools::instructions() const {
       } catch (const std::exception &error) {
         warn("Skill metadata unavailable: " + path.string() + ": " + error.what());
       }
+      auto anchor = absolute(dir);
+      if (!anchor)
+        continue;
+      auto canonical_anchor = *canonical_root;
+      bool valid_anchor = true;
+      for (const auto &base :
+           {std::make_pair(config_.home, home), std::make_pair(config_.cwd, cwd)})
+        if (within(*resolved, base.second)) {
+          anchor = absolute(base.first);
+          valid_anchor = anchor.has_value();
+          canonical_anchor = base.second;
+          break;
+        }
+      if (!valid_anchor)
+        continue;
+      visited.insert(*resolved);
       if (!names.insert(metadata.name).second)
         continue;
       const auto line = "- " + metadata.name + ": " + metadata.description +
@@ -321,18 +346,9 @@ std::string Tools::instructions() const {
       }
       catalog_bytes += line.size();
       out += line;
-      auto anchor = fs::absolute(dir).lexically_normal();
-      auto canonical_anchor = *canonical_root;
-      for (const auto &base :
-           {std::make_pair(config_.home, home), std::make_pair(config_.cwd, cwd)})
-        if (within(*resolved, base.second)) {
-          anchor = fs::absolute(base.first).lexically_normal();
-          canonical_anchor = base.second;
-          break;
-        }
-      const auto advertised = anchor / resolved->lexically_relative(canonical_anchor);
-      private_anchors_.emplace(anchor, canonical_anchor);
-      skill_anchors_[advertised] = anchor;
+      const auto advertised = *anchor / resolved->lexically_relative(canonical_anchor);
+      private_anchors_.emplace(*anchor, canonical_anchor);
+      skill_anchors_[advertised] = *anchor;
       skill_directories_.push_back(advertised);
     }
   }

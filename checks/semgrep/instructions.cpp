@@ -22,6 +22,8 @@ void discovery(fs::path dir, fs::directory_entry entry) {
   fs::status(dir);
   // ruleid: codet-discovery-throwing-filesystem
   fs::symlink_status(dir);
+  // ruleid: codet-discovery-throwing-filesystem
+  fs::absolute(dir);
   std::error_code error;
   // ok: codet-discovery-throwing-filesystem
   fs::directory_iterator good(dir, error), end;
@@ -35,4 +37,6 @@ void discovery(fs::path dir, fs::directory_entry entry) {
   fs::is_regular_file(dir, error);
   // ok: codet-discovery-throwing-filesystem
   entry.is_directory(error);
+  // ok: codet-discovery-throwing-filesystem
+  fs::absolute(dir, error);
 }

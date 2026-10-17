@@ -122,9 +122,29 @@ fixed context, oversized human input and oversized summaries and show the estima
 `context_tokens`. The default is now 65536; max_output_tokens remains 8192 and tool_output_limit remains 65536. Task-plan context refreshes each request without reloading project documents. The view is at most 8 KiB, prioritizes active then pending then completed steps, retains original step numbers and names the full saved file. New serialized plans above 1 MiB are rejected before state changes; larger legacy plans remain available through paging.
 Tool previews are bounded once per batch and persisted; later requests keep already-sent previews unchanged until compaction. Full outcomes remain in the tool journal, with complete private archives under artifacts/results/SESSION/MESSAGE.json before reduction. Fresh file pages remain contiguous and are sized before dispatch; they are never replaced by head/tail excerpts with source continuation cursors. Oversized legacy pages can retire with their completed batch into archives. Legacy excerpts direct inspection to the archived page instead of exposing misleading source cursors. Projections retain direct capture references, action/recovery status, paging controls and bounded capture/post-action diagnostics.
 
+Sizing uses the complete provider history: global wrappers are counted once, and coalesced
+roles retain their actual encoded shape. A fitting full history preserves fresh output without
+creating archives. Otherwise, one combined minimum history reserves unchanged previews,
+human steering, call arguments and contiguous file pages. Remaining bytes are shared by new
+clippable outcomes using their wire-payload contributions, followed by an exact final check.
+Sizing encodes each wire item or added block once rather than reserializing the history for
+each result. Responses custom-call tracking follows the calls actually emitted for that provider.
+
 Automatic compaction is considered at 80% of the usable history budget after fixed instructions, tools and output reserves. This trigger is independent of preview sizing: new previews use the hard allowance. Text accounting shares provider message shaping and counts assistant text/items/replay once as transmitted, excluding storage-only fields; image encoding retains its separate budgets. It retires older history when possible; if the newest completed batch alone cannot fit, the whole call/result group and associated replay are replaced with a bounded checkpoint. Latest human steering, unresolved recovery outcomes and execution-session IDs remain explicit. Full records are archived and indexed before publication; cancellation, provider errors and failed publication retain durable history. Already-compacted continuations may use the remaining hard budget without repeated compaction. Ordinary optional summary failures produce a diagnostic and permit continuation only after a fresh hard-capacity check; optional compaction is not retried in that turn. Explicit PreCompact stops, cancellation, storage failures and hard overflow still stop safely. Execution facts are coalesced and only currently owned live handles are reported as running. Recovery sets exceeding 2 KiB use a registered paged archive; optional checkpoint_state message metadata carries unresolved facts across later compactions, fork and relocation. Archives are immutable by message identity and validated publications are reused across retries with a bounded 256-entry process-local cache.
 
+Execution checkpoints include every owned session whose terminal output has not been collected:
+`running`, `awaiting_output` with a known exit code, or `unknown` with a bounded diagnostic.
+Status collection does not consume output. Ordinary observation failures and eviction produce
+`unknown`; cancellation and fatal resource failures still propagate. Process retention limits
+remain bounded, and persisted IDs never become live handles after resume. Archive identity
+excludes only the top-level `previewed` flag. Legacy archives with either boolean value compare
+using that same normalization without rewriting their bytes; changed content remains an error.
+
 Development measurement: `make benchmark` reports append serialization, database/WAL size, timing, peak RSS and I/O block counters for growing transcripts in both durability modes, plus repeated capture flushes. It asserts linear serialized append bytes and zero whole-store scans during ordinary flushes. `codet_persistence_bench inspection` retains directory rescan and archive-publication measurements. Directory work remains proportional to pages times the scanned subset. Host results do not establish G4 performance.
+
+`codet_persistence_bench history` adds 100/300/1000 mixed custom/function tool results and
+records wire parts encoded, sizing/projection time, textual bytes and peak RSS. These host
+measurements do not establish Tiger responsiveness or the 512 MB machine budget.
 
 Summary generation retains the configured output allowance and an 8 KiB visible-prose maximum. The conservative escaping-derived target is advisory: summaries are accepted using actual serialized continuation size. A genuinely oversized summary gets one smaller-target retry, counted in usage and request limits, with one PreCompact hook invocation. Empty or exhausted responses fail without replacing history. Manual compaction shares these rules and does nothing when no history can be reduced.
 
@@ -281,5 +301,9 @@ See [reference fingerprints](validation/core-alignment-reference.json) and the
 The [PR #13 follow-up evidence](validation/pr13-followup.json) pins the recovery,
 discovery, paging and phase fixes plus development-only Semgrep checks to their tested
 source hashes. Tiger/HFS+ runtime and the 512 MB G4 acceptance remain owner-run.
+
+The [checkpoint/context follow-up evidence](validation/checkpoint-context.json) records
+pending-output recovery, normalized archive identity, exact wire sizing, resolved Semgrep
+versions, and the mixed-history benchmark on the schema-6 main baseline.
 
 See [reliability and provider modernization](RELIABILITY-MODERNIZATION.md) for schema 6, durability, raw error output, semantic compaction, API defaults and signed conversation epochs.

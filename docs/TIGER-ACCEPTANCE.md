@@ -151,6 +151,9 @@ these owner-run target checks. Semgrep runs only in developer/CI environments, n
 
 ## Compaction and startup follow-up
 
+- Let a yielded command finish before polling, force compaction, then collect its output once through the checkpoint's `awaiting_output` ID. After exceeding the existing retained-job limit, an expired record must appear as `unknown` without blocking compaction. Cancellation must still stop the turn. Repeat in line and curses interfaces.
+- Retry a failed summary after previews are persisted. Verify immutable archives remain readable and unchanged, and a presentation-only flag does not block the retry. Exercise exact-fit histories, coalesced provider roles and a subsequent result batch; record `codet_persistence_bench history` alongside peak RSS and swapping. These target checks remain owner-run.
+
 - In both terminal modes, trigger automatic compaction with a fresh `-i` attachment, including image-only resume/fork. Confirm the main request receives it. Interrupt before a response and confirm it remains available. Previously presented images remain inspectable in the ledger.
 - Inject a failing optional summary request when history fits the hard budget; confirm a diagnostic and normal continuation. Explicit PreCompact stop and Ctrl-C must still stop. Verify a large contiguous file page, including Unicode, can be continued without missing middle bytes.
 - Poll a live execution repeatedly, let it exit, and trigger a checkpoint. Its ID must disappear from live state; after resume no historical process ID is offered as live. Inspect overflow recovery records through the retained index.
