@@ -26,6 +26,8 @@ benchmark: host
 	./build/host/codet_persistence_bench 512 durable
 	./build/host/codet_persistence_bench 512 fast
 	./build/host/codet_persistence_bench captures
+	./build/host/codet_persistence_bench history
+	./build/host/codet_persistence_bench provider
 test-build-integrity:
 	python3 -m unittest discover -s tests -p test_build_integrity.py -v
 developer-image:
@@ -90,7 +92,8 @@ test-semgrep: semgrep-ready
 check-semgrep: semgrep-ready
 	@$(SEMGREP_RUN) scan $(SEMGREP_FLAGS) --error --config checks/semgrep --json \
 	  src/modern/instructions.cpp src/modern/state.cpp src/modern/tools.cpp \
-	  src/modern/hooks.cpp src/modern/capture_catalog.cpp src/modern/provider.cpp > build/semgrep/scan.json || \
+	  src/modern/hooks.cpp src/modern/capture_catalog.cpp src/modern/provider.cpp \
+	  src/modern/agent.cpp src/modern/context.cpp src/modern/output.cpp src/modern/cli.cpp > build/semgrep/scan.json || \
 	  { codet_status=$$?; $(SEMGREP_PYTHON) scripts/semgrep-report.py failure build/semgrep/scan.json; exit $$codet_status; }
 test-foundation:
 	cmake -S . -B build/foundation -DCODET_FOUNDATION_ONLY=ON

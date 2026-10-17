@@ -18,3 +18,10 @@ rules:
     pattern: |
       if (post.blocked)
         throw HookFailure(...);
+  - id: codet-inspection-wire-size
+    languages: [cpp]
+    severity: ERROR
+    message: Size inspection pages through provider result bytes, not stored Message JSON.
+    paths:
+      include: ["**/tools.cpp"]
+    pattern: return Json(page).dump().size();

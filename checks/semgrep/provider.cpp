@@ -12,3 +12,12 @@ void request() {
   if (!c.effort.empty())
     body["reasoning"] = fields;
 }
+
+void epoch_reply() {
+  // ruleid: codet-epoch-empty-assistant
+  auto bad = Json::array({{{"role", "assistant"}, {"content", result.message.replay}}});
+  Json wire = Json::array();
+  if (!result.message.replay.empty())
+    // ok: codet-epoch-empty-assistant
+    wire.push_back({{"role", "assistant"}, {"content", result.message.replay}});
+}

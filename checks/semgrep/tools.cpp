@@ -25,3 +25,12 @@ void post_feedback() {
   if (post.stopped)
     throw HookFailure(post.reason);
 }
+
+size_t inspection_page() {
+  // ruleid: codet-inspection-wire-size
+  return Json(page).dump().size();
+}
+size_t wire_page() {
+  // ok: codet-inspection-wire-size
+  return result_bytes(page, call.name);
+}

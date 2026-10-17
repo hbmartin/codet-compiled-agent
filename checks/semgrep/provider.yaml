@@ -12,3 +12,10 @@ rules:
       - pattern: |
           if ($CONFIG.provider == "openai" || !$CONFIG.effort.empty())
             $BODY["reasoning"] = $VALUE;
+  - id: codet-epoch-empty-assistant
+    languages: [cpp]
+    severity: ERROR
+    message: Build guarded reply wire before appending an epoch source part; empty replies emit no assistant item.
+    paths:
+      include: ["**/provider.cpp"]
+    pattern: Json::array({{{"role", "assistant"}, {"content", $REPLAY}}})
