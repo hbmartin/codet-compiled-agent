@@ -775,16 +775,24 @@ void StateStore::save_provider_state(const Session &s) {
       if (sqlite3_column_int64(rows.p, 0) != static_cast<sqlite3_int64>(position))
         corrupt_provider();
       const auto payload = column(rows.p, 1);
-      const auto part = provider_json(payload);
       if (!position) {
+        const auto part = provider_json(payload);
         if (!part.is_null() && (!part.is_object() || part.contains("messages")))
           corrupt_provider();
         previous_base = provider_header(part);
       } else {
-        validate_provider_part(part);
         if (!previous_base.is_object())
           corrupt_provider();
-        if (first == previous_count && first < messages.size() && messages[first] == part) {
+        // Canonical unchanged rows are already validated through the incoming state. Avoid
+        // reparsing large image/string blocks on every uncached append.
+        bool same =
+            first == previous_count && first < messages.size() && payload == messages[first].dump();
+        if (!same) {
+          const auto part = provider_json(payload);
+          validate_provider_part(part);
+          same = first == previous_count && first < messages.size() && messages[first] == part;
+        }
+        if (same) {
           ++first;
           bytes += payload.size();
         }

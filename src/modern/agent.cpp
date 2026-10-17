@@ -73,8 +73,10 @@ bool Agent::compact_history(Session &session, const Cancellation &cancel,
     return false;
   const auto execution = execution_context(session);
   const auto compose = [&] {
-    return assemble_prompt(config_, schemas, tools_.capabilities(),
-                           project + tools_.dynamic_context() + execution,
+    auto context = project;
+    context += tools_.dynamic_context();
+    context += execution;
+    return assemble_prompt(config_, schemas, tools_.capabilities(), context,
                            std::any_of(schemas.begin(), schemas.end(), [](const auto &schema) {
                              return schema.value("name", "") == "StructuredOutput";
                            }));
@@ -433,9 +435,10 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
              {"input_schema", schema}});
       auto execution = execution_context(session);
       const auto compose = [&] {
-        return assemble_prompt(config_, schemas, capabilities,
-                               project_context + tools_.dynamic_context() + execution,
-                               bool(validator));
+        auto context = project_context;
+        context += tools_.dynamic_context();
+        context += execution;
+        return assemble_prompt(config_, schemas, capabilities, context, bool(validator));
       };
       auto system = compose();
       auto budget = prompt_budget(config_, system, schemas);
@@ -659,8 +662,10 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
       size_t call_position = 0;
       for (const auto &call : response.message.calls) {
         cancel.check();
-        const std::vector<ToolCall> remaining(response.message.calls.begin() + call_position,
-                                              response.message.calls.end());
+        const std::vector<ToolCall> remaining(
+            response.message.calls.begin() +
+                static_cast<std::vector<ToolCall>::difference_type>(call_position),
+            response.message.calls.end());
         ++call_position;
         std::vector<Message> protected_messages;
         for (const auto i : protected_history(session.messages))

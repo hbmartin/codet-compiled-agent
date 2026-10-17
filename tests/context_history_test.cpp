@@ -1291,6 +1291,93 @@ TEST_F(History, SchemaFourBackfillsJournalReferencesEvenWhenTranscriptWasCompact
   EXPECT_NO_THROW(resumed.restore_references(upgraded.references(id)));
   EXPECT_TRUE(read(resumed, capture).error);
 }
+
+TEST_F(History, SoftFailureCanPromoteOnceWithinSharedHookAndSummaryLimits) {
+  config.hooks["PreCompact"] = Json::array({{{"command", "printf x >> fallback-hook"}}});
+  for (bool fail_checkpoint : {false, true}) {
+    Tools tools(config, files, processes, http, clock);
+    StateStore state(config.home);
+    auto session = state.create();
+    codet::Message old, user;
+    old.role = "assistant";
+    old.text = std::string(20000, 'o');
+    user.role = "user";
+    user.origin = "human";
+    user.text = "continue";
+    session.messages = {old};
+    state.save(session);
+    config.context_tokens =
+        test::context_tokens(tools, config, tools.history_bytes({old, user}) + 128);
+    Scripted provider;
+    size_t summaries = 0, ordinary = 0;
+    provider.script = [&](const auto &, const auto &, const auto &, const Json &schemas) {
+      if (schemas.empty()) {
+        ++summaries;
+        if (summaries == 1 || fail_checkpoint)
+          throw Error("fixture summary failure");
+        return text_result("done");
+      }
+      ++ordinary;
+      return text_result("done");
+    };
+    Agent agent(config, provider, tools, state, {});
+    if (fail_checkpoint)
+      EXPECT_THROW(agent.run(session, "continue", cancel), Error);
+    else
+      EXPECT_EQ(agent.run(session, "continue", cancel).text, "done");
+    EXPECT_EQ(summaries, 2u);
+    EXPECT_EQ(ordinary, fail_checkpoint ? 0u : 1u);
+    EXPECT_EQ(files.read(config.cwd / "fallback-hook", 1024), fail_checkpoint ? "xx" : "x");
+  }
+}
+TEST_F(History, PublishedIndexGrowthPromotesToCheckpointWithOneHookAndSummary) {
+  Tools tools(config, files, processes, http, clock);
+  StateStore state(config.home);
+  auto calibration = state.create();
+  codet::Message old, human, call, result;
+  old.role = "assistant";
+  old.text = "older completed work";
+  human.role = "user";
+  human.origin = "human";
+  human.text = "latest steering";
+  call.role = "assistant";
+  call.calls = {{"large", "exec_command", {{"cmd", std::string(6400, 'x')}}}};
+  result.role = "tool";
+  result.tool_call_id = "large";
+  result.text = "completed";
+  const std::vector<codet::Message> original{old, human, call, result};
+  calibration.messages = original;
+  state.save(calibration);
+  Scripted provider;
+  size_t summaries = 0;
+  provider.script = [&](const auto &, const auto &, const auto &, const auto &) {
+    ++summaries;
+    return text_result("done");
+  };
+  Agent agent(config, provider, tools, state, {});
+  EXPECT_EQ(agent.compact(calibration, cancel).text, "Conversation compacted.");
+  const auto required = tools.history_bytes(calibration.messages);
+  auto session = state.create();
+  session.messages = original;
+  state.save(session);
+  tools.use_session(session.id);
+  config.hooks["PreCompact"] = Json::array({{{"command", "printf x >> growth-hook"}}});
+  config.context_tokens = test::context_tokens(tools, config, required + 512 + 64);
+  bool checkpoint = false;
+  Agent bounded(config, provider, tools, state, [&](const Json &event) {
+    if (event.value("type", "") == "codet.compacted")
+      checkpoint = event.value("checkpoint", false);
+  });
+  summaries = 0;
+  EXPECT_EQ(bounded.compact(session, cancel).text, "Conversation compacted.");
+  EXPECT_TRUE(checkpoint);
+  EXPECT_EQ(summaries, 1u);
+  EXPECT_EQ(files.read(config.cwd / "growth-hook", 1024), "x");
+  for (const auto &message : session.messages) {
+    EXPECT_TRUE(message.calls.empty());
+    EXPECT_NE(message.role, "tool");
+  }
+}
 TEST_F(History, SummaryRetryRunsHookOnceAndCancellationPreservesDurableHistory) {
   config.hooks["PreCompact"] = Json::array({{{"command", "printf x >> compact-count"}}});
   for (bool interrupted : {false, true}) {

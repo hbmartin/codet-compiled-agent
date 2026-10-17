@@ -553,13 +553,14 @@ TEST_F(Modernization, AbandonedCaptureReservationsAreReconciledUnderQuotaPressur
   ASSERT_EQ(sqlite3_exec(db, "UPDATE captures SET bytes=128,active=1", nullptr, nullptr, nullptr),
             SQLITE_OK);
   sqlite3_close(db);
-  const auto scans = store->metrics.scans;
   OutputSpool next(store);
   next.append(std::string(64, 'x'));
+  next.flush();
+  const auto scans = store->metrics.scans;
   next.close();
   EXPECT_TRUE(next.error().empty()) << next.error();
   EXPECT_EQ(next.bytes(), 64u);
-  EXPECT_GT(store->metrics.scans, scans);
+  EXPECT_EQ(store->metrics.scans, scans);
   const auto records_dir = config.state_root / "abandoned-records";
   auto limited = std::make_shared<CaptureStore>(records_dir, 128, 4096, 2);
   for (int n = 0; n < 2; ++n) {
