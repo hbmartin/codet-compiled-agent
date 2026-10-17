@@ -56,6 +56,15 @@ class BuildIntegrity(unittest.TestCase):
         with self.assertRaises(ValueError):
             extract_verified(valid, file_hash(valid), destination)
 
+    def test_finder_metadata_does_not_change_input_or_output_hashes(self):
+        (self.root / 'library').write_text('verified bytes')
+        before = tree_hashes(self.root)
+        (self.root / '.DS_Store').write_text('Finder view state')
+        self.assertEqual(tree_hashes(self.root), before)
+        (self.root / 'manifest.json').write_text('build record')
+        self.assertNotEqual(tree_hashes(self.root), before)
+        self.assertEqual(tree_hashes(self.root, exclude_manifest=True), before)
+
     def runtime(self):
         for name in ['lib/libcurl.dylib', 'lib/libsqlite3.dylib', 'lib/libz.dylib',
                      'lib/libncurses.dylib', 'lib/libedit.dylib',

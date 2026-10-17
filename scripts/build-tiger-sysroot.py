@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline cross build. Run inside the pinned toolchain image; never executes PPC code."""
 import hashlib,json,os,pathlib,shutil,subprocess,sys,fcntl
-from verified_sources import extract_verified, file_hash, tree_hashes
+from verified_sources import extract_verified, file_hash, tree_hashes, remove_tree
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 BUILD=ROOT/'build/tiger-deps'
 STAGE=ROOT/'build/tiger-sysroot'
@@ -39,11 +39,11 @@ def main():
     final = STAGE
     if (final/'manifest.json').is_file():
         prior = json.loads((final/'manifest.json').read_text())
-        if prior.get('source_hash') == fingerprint and prior.get('outputs') == tree_hashes(final):
+        if prior.get('source_hash') == fingerprint and prior.get('outputs') == tree_hashes(final, exclude_manifest=True):
             print('Verified sysroot cache: ' + str(final), flush=True)
             return
     STAGE = final.with_name('.tiger-sysroot-staging')
-    if STAGE.exists(): shutil.rmtree(STAGE)
+    if STAGE.exists(): remove_tree(STAGE)
     STAGE.mkdir()
     installed=STAGE/PREFIX.lstrip('/');installed.mkdir(parents=True,exist_ok=True)
     include=installed/'include';lib=installed/'lib'
@@ -87,16 +87,16 @@ def main():
         if name=='ncurses':args+=['--with-shared','--without-debug','--without-ada','--without-cxx','--without-cxx-binding','--enable-widec','--disable-lib-suffixes','--enable-overwrite','--without-progs','--without-tests','--disable-stripping','--disable-mixed-case']
         if name=='libedit':args+=['--disable-examples'];e['LIBS']='-lncurses -lMacportsLegacySupport'
         run(args,source,e);run(['make','-j'+JOBS],source,e);run(['make','install',f'DESTDIR={STAGE}'],source,e)
-    manifest=dict(lock,toolchain=CC,toolchain_image=os.environ.get("CODET_TOOLCHAIN_ID", ""),flags=FLAGS,prefix=PREFIX,source_hash=source_hash,source_trees=source_trees,outputs=tree_hashes(STAGE))
+    manifest=dict(lock,toolchain=CC,toolchain_image=os.environ.get("CODET_TOOLCHAIN_ID", ""),flags=FLAGS,prefix=PREFIX,source_hash=source_hash,source_trees=source_trees,outputs=tree_hashes(STAGE, exclude_manifest=True))
     (STAGE/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     previous = final.with_name('.tiger-sysroot-previous')
-    if previous.exists(): shutil.rmtree(previous)
+    if previous.exists(): remove_tree(previous)
     if final.exists(): final.rename(previous)
     try: STAGE.rename(final)
     except BaseException:
         if previous.exists(): previous.rename(final)
         raise
-    if previous.exists(): shutil.rmtree(previous)
+    if previous.exists(): remove_tree(previous)
     print('Cross sysroot ready: '+str(final),flush=True)
 
 if __name__=='__main__':main()

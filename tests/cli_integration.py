@@ -368,7 +368,7 @@ class CliTests(unittest.TestCase):
                 if select.select([master],[],[],.03)[0]:received+=os.read(master,65536)
             self.assertEqual(p.poll(),0,repr(received))
         finally:
-            if p.poll() is None:p.kill();p.wait()
+            if p.poll() is None:p.kill();p.wait(timeout=5)
             os.close(master);os.close(slave)
 
     def test_small_core_commands_in_both_terminals_and_effort_resume(self):
@@ -403,7 +403,7 @@ class CliTests(unittest.TestCase):
                     if select.select([master],[],[],.03)[0]:received+=os.read(master,65536)
                 self.assertEqual(p.poll(),0,repr(received))
             finally:
-                if p.poll() is None:p.kill();p.wait()
+                if p.poll() is None:p.kill();p.wait(timeout=5)
                 os.close(master);os.close(slave)
             resumed=self.run_cli('exec','resume','--last','--json','fixture')
             self.assertEqual(resumed.returncode,0,resumed.stderr)
@@ -445,7 +445,7 @@ class CliTests(unittest.TestCase):
                     if select.select([master],[],[],.03)[0]:received+=os.read(master,65536)
                 self.assertEqual(process.poll(),0,repr(received))
             finally:
-                if process.poll() is None:process.kill();process.wait()
+                if process.poll() is None:process.kill();process.wait(timeout=5)
                 os.close(master);os.close(slave)
             (self.home/'config.toml').write_text("model_reasoning_effort='medium'\n"+base)
             result=self.run_cli('exec','resume','--last','fixture')
@@ -476,7 +476,7 @@ class CliTests(unittest.TestCase):
                 if select.select([master],[],[],.03)[0]:received+=os.read(master,65536)
             self.assertEqual(p.poll(),0,repr(received))
         finally:
-            if p.poll() is None:p.kill();p.wait()
+            if p.poll() is None:p.kill();p.wait(timeout=5)
             os.close(master);os.close(slave)
 
     def test_image_arguments_validate_before_provider_and_allow_image_only(self):
@@ -549,7 +549,7 @@ class CliTests(unittest.TestCase):
                     if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
                 self.assertEqual(p.poll(),0,repr(received))
             finally:
-                if p.poll() is None:p.kill();p.wait()
+                if p.poll() is None:p.kill();p.wait(timeout=5)
                 os.close(master);os.close(slave)
 
     def test_curses_progress_clears_after_success_failure_and_cancellation(self):
@@ -590,7 +590,7 @@ class CliTests(unittest.TestCase):
                 if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
             self.assertEqual(p.poll(),0,repr(received))
         finally:
-            if p.poll() is None:p.kill();p.wait()
+            if p.poll() is None:p.kill();p.wait(timeout=5)
             os.close(master);os.close(slave)
 
     def test_cleanup_diagnostics_follow_curses_restoration(self):
@@ -618,7 +618,7 @@ class CliTests(unittest.TestCase):
             restored[3]&=~getattr(termios,'PENDIN',0);original[3]&=~getattr(termios,'PENDIN',0)
             self.assertEqual(restored,original)
         finally:
-            if p.poll() is None:p.kill();p.wait()
+            if p.poll() is None:p.kill();p.wait(timeout=5)
             os.close(master);os.close(slave)
 
     def test_export_fork_and_resume_of_a_live_session(self):
@@ -722,7 +722,7 @@ class CliTests(unittest.TestCase):
                 if mode=='curses':self.assertEqual(stderr.count(b'hook-visible'),1)
                 else:self.assertIn(b'hook-visible',stderr)
             finally:
-                if p.poll() is None:p.kill();p.wait()
+                if p.poll() is None:p.kill();p.wait(timeout=5)
                 p.stderr.close();os.close(master);os.close(slave)
 
     def test_curses_replay_and_cleanup_are_ordered_after_success_error_and_interrupt(self):
@@ -756,7 +756,7 @@ class CliTests(unittest.TestCase):
                     self.assertLess(stderr.index(b'live-before'),stderr.index(b'end-warning'));self.assertLess(stderr.index(b'end-warning'),stderr.index(b'end-error'))
                     self.assertIn(b'SessionEnd hook warning:',stderr);self.assertIn(b'SessionEnd hook cleanup failed:',stderr)
                 finally:
-                    if p.poll() is None:p.kill();p.wait()
+                    if p.poll() is None:p.kill();p.wait(timeout=5)
                     p.stderr.close();os.close(master);os.close(slave)
 
     def test_curses_replay_and_cleanup_have_independent_budgets_and_omission_notices(self):
@@ -782,7 +782,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(stderr.count(b'[Additional diagnostics omitted or truncated]'),2)
             self.assertLessEqual(len(stderr),1024)
         finally:
-            if p.poll() is None:p.kill();p.wait()
+            if p.poll() is None:p.kill();p.wait(timeout=5)
             p.stderr.close();os.close(master);os.close(slave)
 
     def test_ephemeral_capture_is_pageable_and_removed_after_success_or_error(self):
@@ -817,7 +817,7 @@ class CliTests(unittest.TestCase):
             self.assertFalse(list(temporary.glob('codet-ephemeral-*')))
             self.assertFalse((self.home/'tool-output').exists())
         finally:
-            if p.poll() is None:p.kill();p.wait()
+            if p.poll() is None:p.kill();p.wait(timeout=5)
             p.stdout.close();p.stderr.close()
 
     def test_new_session_lifecycle_and_invalid_hook_bytes_in_both_terminals(self):
@@ -857,7 +857,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual([x['hook_event_name'] for x in events],['SessionStart','SessionEnd'])
                 self.assertEqual(events[0]['session_id'],events[1]['session_id'])
             finally:
-                if p.poll() is None:p.kill();p.wait()
+                if p.poll() is None:p.kill();p.wait(timeout=5)
                 os.close(master);os.close(slave)
 
     def test_jsonl_real_tool_roundtrip_and_state(self):
@@ -954,7 +954,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(before[3]&~pending,after[3]&~pending)
                 self.assertEqual(before[:3],after[:3])
             finally:
-                if p.poll() is None:p.kill();p.wait()
+                if p.poll() is None:p.kill();p.wait(timeout=5)
                 os.close(master);os.close(slave)
     def test_interactive_interrupt_restores_terminal(self):
         import pty,termios,select
@@ -971,7 +971,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(p.poll(),130,repr(received));after=termios.tcgetattr(slave);pending=getattr(termios,'PENDIN',0)
                 self.assertEqual(before[3]&~pending,after[3]&~pending)
             finally:
-                if p.poll() is None:p.kill();p.wait()
+                if p.poll() is None:p.kill();p.wait(timeout=5)
                 os.close(master);os.close(slave)
     def test_both_terminal_modes_answer_questions(self):
         import pty,select
@@ -993,7 +993,7 @@ class CliTests(unittest.TestCase):
                     if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
                 self.assertEqual(p.poll(),0,repr(received))
             finally:
-                if p.poll() is None:p.kill();p.wait()
+                if p.poll() is None:p.kill();p.wait(timeout=5)
                 os.close(master);os.close(slave)
 
     def test_async_questions_and_sleep_wake_in_both_terminal_modes(self):
@@ -1016,7 +1016,7 @@ class CliTests(unittest.TestCase):
                     if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
                 self.assertEqual(p.poll(),0,repr(received))
             finally:
-                if p.poll() is None:p.kill();p.wait()
+                if p.poll() is None:p.kill();p.wait(timeout=5)
                 os.close(master);os.close(slave)
 
     def test_late_slash_steering_runs_before_a_deferred_new_session(self):
@@ -1056,7 +1056,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(process.poll(),0,repr(received))
             finally:
                 release.touch()
-                if process.poll() is None:process.kill();process.wait()
+                if process.poll() is None:process.kill();process.wait(timeout=5)
                 process.stderr.close();os.close(master);os.close(slave)
 
 if __name__=='__main__':unittest.main()
