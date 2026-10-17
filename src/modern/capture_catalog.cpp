@@ -65,9 +65,9 @@ struct Query {
     sqlite3_finalize(s);
   }
   void text(int i, const std::string &v) {
+    const auto bytes = static_cast<int>(v.size());
     // NOLINTNEXTLINE(performance-no-int-to-ptr): SQLite copies the bound bytes.
-    const auto status =
-        sqlite3_bind_text(s, i, v.c_str(), static_cast<int>(v.size()), SQLITE_TRANSIENT);
+    const auto status = sqlite3_bind_text(s, i, v.c_str(), bytes, SQLITE_TRANSIENT);
     if (status != SQLITE_OK)
       throw CatalogError(sqlite3_db_handle(s), status);
   }
