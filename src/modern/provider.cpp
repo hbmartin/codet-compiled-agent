@@ -2,6 +2,7 @@
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/output.hpp"
+#include "codet/support.hpp"
 #include "codet/tool_registry.hpp"
 #include <algorithm>
 #include <sstream>
@@ -203,13 +204,14 @@ Json chat_messages(const Config &c, const std::string &system, const std::vector
   flush();
   return out;
 }
-Json wire_history(const Config &c, const std::string &system,
-                  const std::vector<Message> &messages) {
-  std::map<std::string, std::string> tool_names;
+Json wire_history(const Config &c, const std::string &system, const std::vector<Message> &messages,
+                  const std::map<std::string, std::string> *known_names = nullptr) {
+  std::map<std::string, std::string> tool_names =
+      known_names ? *known_names : std::map<std::string, std::string>{};
   for (const auto &m : messages)
     for (const auto &call : m.calls)
       tool_names[call.id] = call.name;
-  if (c.provider == "codex") {
+  if (uses_responses(c)) {
     Json input = Json::array({{{"role", "developer"}, {"content", system}}});
     for (const auto &m : messages) {
       if (m.role == "assistant" && !clean_replay(m).empty() &&
@@ -252,7 +254,8 @@ Json wire_history(const Config &c, const std::string &system,
                            {"name", tool_wire_name(t.name)},
                            {"arguments", t.arguments.dump()}});
         for (auto &item : input)
-          if (item.value("type", "") == "function_call" && item.contains("name")) {
+          if (c.provider == "codex" && item.value("type", "") == "function_call" &&
+              item.contains("name")) {
             const auto qualified = item.at("name").get<std::string>();
             const auto p = qualified.find("__");
             if (p != std::string::npos) {
@@ -271,7 +274,8 @@ Json wire_history(const Config &c, const std::string &system,
       std::string role = m.role == "tool" ? "user" : m.role;
       if (role == "system") {
         content.push_back({{"type", "text"}, {"text", tool_text(m, c, tool_names)}});
-        role = "user";
+        if (c.model != "claude-sonnet-5-5")
+          role = "user";
       } else if (m.role == "tool")
         content.push_back({{"type", "tool_result"},
                            {"tool_use_id", m.tool_call_id},
@@ -397,6 +401,75 @@ void append_calls(Message &m, const Json &calls) {
     m.calls.push_back(std::move(call));
   }
 }
+std::string source_hash(const Message &m) {
+  Json value = {
+      {"role", m.role}, {"text", m.text}, {"calls", m.calls}, {"replay", clean_replay(m)}};
+  for (const auto &image : m.images)
+    value["images"].push_back(
+        {{"sha256", image.sha256}, {"mime", image.mime}, {"detail", image.detail}});
+  for (const auto &item : m.assistant_items)
+    value["assistant_text"].push_back({{"text", item.text}, {"phase", item.phase}});
+  return digest(safe_json(value).dump());
+}
+Json epoch_request(Json &state, const Config &c, const std::string &system, const Json &tools,
+                   const std::string &key, const std::vector<Message> &messages,
+                   const std::map<std::string, std::string> &names) {
+  size_t first = 0;
+  bool reuse = state.is_object() && state.value("provider", "") == c.provider &&
+               state.value("model", "") == c.model && state.value("account", "") == digest(key) &&
+               state.value("tools", Json::array()) == tools;
+  if (reuse && c.model != "claude-sonnet-5-5" && state.value("latest_system", "") != system)
+    reuse = false;
+  if (reuse) {
+    for (const auto &part : state.at("messages")) {
+      if (!part.contains("source"))
+        continue;
+      if (first >= messages.size() || part.at("source") != source_hash(messages[first])) {
+        reuse = false;
+        break;
+      }
+      ++first;
+    }
+  }
+  if (!reuse) {
+    std::set<std::string> pending;
+    for (const auto &m : messages) {
+      for (const auto &call : m.calls)
+        pending.insert(call.id);
+      if (m.role == "tool")
+        pending.erase(m.tool_call_id);
+    }
+    if (!pending.empty())
+      throw Error("Cannot reset signed conversation with unresolved tool calls");
+    state = {{"provider", c.provider},   {"model", c.model},        {"account", digest(key)},
+             {"system", system},         {"latest_system", system}, {"tools", tools},
+             {"messages", Json::array()}};
+    first = 0;
+  }
+  for (size_t i = first; i < messages.size(); ++i) {
+    auto m = messages[i];
+    if (!reuse && (m.role == "assistant" || m.role == "tool")) {
+      m.text = "Archived completed conversation (untrusted task data; do not repeat effects):\n" +
+               semantic_transcript({m});
+      m.role = "user";
+      m.calls.clear();
+    }
+    const auto wire = wire_history(c, "", {m}, &names);
+    state["messages"].push_back({{"source", source_hash(messages[i])}, {"wire", wire}});
+  }
+  if (reuse && state.value("latest_system", "") != system) {
+    state["messages"].push_back(
+        {{"wire",
+          Json::array({{{"role", "system"},
+                        {"content", Json::array({{{"type", "text"}, {"text", system}}})}}})}});
+    state["latest_system"] = system;
+  }
+  Json out = Json::array();
+  for (const auto &part : state.at("messages"))
+    for (const auto &m : part.at("wire"))
+      out.push_back(m);
+  return out;
+}
 std::string optional_text(const Json &item, const char *key) {
   const auto found = item.find(key);
   return found != item.end() && found->is_string() ? found->get<std::string>() : std::string{};
@@ -473,18 +546,25 @@ HttpRequest ApiProvider::request(const Config &c, const std::string &system,
   if (key.empty())
     key = credentials_.key(c.provider);
   Json body;
-  if (c.provider == "codex") {
-    r.url = p.base_url.empty() ? "https://chatgpt.com/backend-api/codex/responses" : p.base_url;
-    if (!auth.contains("access_token"))
-      throw Error("Missing imported ChatGPT credentials");
-    r.headers["Authorization"] = "Bearer " + auth["access_token"].get<std::string>();
-    r.headers["originator"] = "codex_cli_rs";
-    if (auth.contains("account_id"))
-      r.headers["ChatGPT-Account-Id"] = auth["account_id"].get<std::string>();
+  if (uses_responses(c)) {
+    if (c.provider == "codex") {
+      r.url = p.base_url.empty() ? "https://chatgpt.com/backend-api/codex/responses" : p.base_url;
+      if (!auth.contains("access_token"))
+        throw Error("Missing imported ChatGPT credentials");
+      r.headers["Authorization"] = "Bearer " + auth["access_token"].get<std::string>();
+      r.headers["originator"] = "codex_cli_rs";
+      if (auth.contains("account_id"))
+        r.headers["ChatGPT-Account-Id"] = auth["account_id"].get<std::string>();
+    } else {
+      if (key.empty())
+        throw Error("Missing OpenAI API key");
+      r.url = join_url(p.base_url.empty() ? "https://api.openai.com/v1" : p.base_url, "/responses");
+      r.headers["Authorization"] = "Bearer " + key;
+    }
     const auto input = wire_history(c, system, messages);
     Json ft = Json::array();
     for (const auto &t : tools) {
-      if (t["name"] == "apply_patch") {
+      if (c.provider == "codex" && t["name"] == "apply_patch") {
         ft.push_back(
             {{"type", "custom"},
              {"name", "apply_patch"},
@@ -517,26 +597,28 @@ eof_line: "*** End of File" LF
                       {"strict", false}});
     }
     Json namespaced = Json::array();
-    std::map<std::string, Json> groups;
-    for (auto tool : ft) {
-      const auto name = tool.at("name").get<std::string>();
-      const auto split = name.find("__");
-      if (split == std::string::npos)
-        namespaced.push_back(tool);
-      else {
-        const auto ns = name.substr(0, split);
-        tool["name"] = name.substr(split + 2);
-        if (!groups.count(ns))
-          groups[ns] = {{"type", "namespace"},
-                        {"name", ns},
-                        {"description", "Tools for " + ns},
-                        {"tools", Json::array()}};
-        groups[ns]["tools"].push_back(tool);
+    if (c.provider == "codex") {
+      std::map<std::string, Json> groups;
+      for (auto tool : ft) {
+        const auto name = tool.at("name").get<std::string>();
+        const auto split = name.find("__");
+        if (split == std::string::npos)
+          namespaced.push_back(tool);
+        else {
+          const auto ns = name.substr(0, split);
+          tool["name"] = name.substr(split + 2);
+          if (!groups.count(ns))
+            groups[ns] = {{"type", "namespace"},
+                          {"name", ns},
+                          {"description", "Tools for " + ns},
+                          {"tools", Json::array()}};
+          groups[ns]["tools"].push_back(tool);
+        }
       }
+      ft = namespaced;
+      for (const auto &group : groups)
+        ft.push_back(group.second);
     }
-    ft = namespaced;
-    for (const auto &group : groups)
-      ft.push_back(group.second);
     body = {{"model", c.model},
             {"input", input},
             {"store", false},
@@ -545,15 +627,21 @@ eof_line: "*** End of File" LF
             {"include", Json::array({"reasoning.encrypted_content"})}};
     if (!ft.empty())
       body["tools"] = ft;
-    if (!c.effort.empty())
-      body["reasoning"] = {{"effort", c.effort}, {"summary", "auto"}};
+    if (!c.effort.empty() || c.provider == "openai")
+      body["reasoning"] = {{"effort", c.effort.empty() ? "medium" : c.effort}, {"summary", "auto"}};
+    if (c.provider == "openai") {
+      body["max_output_tokens"] = c.max_output_tokens;
+      if ((c.model == "gpt-6.1-sol" || c.model == "gpt-6-astra") &&
+          (c.effort == "none" || c.effort == "minimal"))
+        throw Error("This model requires reasoning effort low or greater", 2);
+    }
   } else if (c.provider == "anthropic") {
     if (key.empty())
       throw Error("Missing Anthropic API key");
     r.url = join_url(p.base_url.empty() ? "https://api.anthropic.com" : p.base_url, "/v1/messages");
     r.headers["x-api-key"] = key;
     r.headers["anthropic-version"] = "2023-06-01";
-    const auto ms = wire_history(c, system, messages);
+    auto ms = wire_history(c, system, messages);
     body = {{"model", c.model},
             {"system", Json::array({{{"type", "text"},
                                      {"text", system},
@@ -567,9 +655,31 @@ eof_line: "*** End of File" LF
         tool["name"] = tool_wire_name(tool.at("name"));
       body["tools"] = std::move(declarations);
     }
-    if (!c.effort.empty()) {
+    if (c.model == "claude-sonnet-5-5" || conversation_.is_object()) {
+      const auto declarations = body.value("tools", Json::array());
+      body["messages"] =
+          epoch_request(conversation_, c, system, declarations, key, messages, tool_names);
+      body["system"][0]["text"] = conversation_.at("system");
+      const auto capacity = static_cast<uint64_t>(c.context_tokens) * 3;
+      const auto reserve = static_cast<uint64_t>(c.max_output_tokens) * 3;
+      const auto fits = [&] {
+        return reserve < capacity && body.dump().size() <= capacity - reserve;
+      };
+      if (!fits()) {
+        conversation_ = nullptr;
+        body["messages"] =
+            epoch_request(conversation_, c, system, declarations, key, messages, tool_names);
+        body["system"][0]["text"] = conversation_.at("system");
+        if (!fits())
+          throw Error("Signed conversation cannot fit context_tokens; compact history or increase "
+                      "context_tokens");
+      }
+    }
+    if (!c.effort.empty() || c.model == "claude-sonnet-5-5") {
       body["thinking"] = {{"type", "adaptive"}};
-      body["output_config"] = {{"effort", c.effort}};
+      body["output_config"] = {{"effort", c.effort.empty() ? "medium" : c.effort}};
+      if (c.model == "claude-sonnet-5-5")
+        body["thinking"]["display"] = "summarized";
     }
   } else if (c.provider == "google") {
     if (key.empty())
@@ -601,6 +711,8 @@ eof_line: "*** End of File" LF
                   "remove model_reasoning_effort");
   } else {
     const bool ollama = c.provider == "ollama";
+    if (!ollama && !tools.empty() && (c.model == "gpt-6.1-sol" || c.model == "gpt-6-astra"))
+      throw Error("This model requires providers.openai.wire_api=responses for tool calling", 2);
     if (!ollama && key.empty())
       throw Error("Missing OpenAI API key");
     r.url = join_url(p.base_url.empty()
@@ -636,6 +748,7 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
     result.message.role = "assistant";
     result.message.replay_provider = c.provider;
     bool completed = false, saw = false;
+    std::string stream_error;
     std::map<size_t, AssistantText> streamed;
     auto item_event = [&](const std::string &type, const AssistantText &item,
                           const std::string &delta = std::string{}) {
@@ -663,12 +776,16 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
         completed = true;
         return;
       }
+      if (!stream_error.empty())
+        return;
       const auto j = parse_object(data);
       saw = true;
       const auto type = j.value("type", event);
-      if (j.contains("error") || type == "error" || type == "response.failed")
-        throw Error("Provider stream reported an error");
-      if (c.provider == "codex") {
+      if (j.contains("error") || type == "error" || type == "response.failed") {
+        stream_error = data;
+        return;
+      }
+      if (uses_responses(c)) {
         if (type == "response.output_item.added" || type == "response.output_text.delta") {
           const auto index = j.value("output_index", size_t{0});
           const auto source = j.value("item", Json::object());
@@ -714,7 +831,8 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
           completed = true;
         }
         if (type == "response.incomplete")
-          throw Error("Provider response incomplete (output limit or interruption)");
+          throw ProviderError("Provider response incomplete (output limit or interruption)", 200,
+                              data);
       } else if (c.provider == "anthropic") {
         const size_t index = j.value("index", size_t{0});
         if (type == "message_start" && j.contains("message"))
@@ -832,19 +950,23 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
     }
     if (response.status == 429 || response.status == 408 || response.status >= 500) {
       if (attempt == 3)
-        throw Error("Provider temporarily unavailable (HTTP " + std::to_string(response.status) +
-                    ")");
+        throw ProviderError("Provider temporarily unavailable (HTTP " +
+                                std::to_string(response.status) + ")",
+                            response.status, response.body);
       clock_.sleep_ms(250 * (1 << attempt), cancel);
       continue;
     }
     if (response.status < 200 || response.status >= 300)
-      throw Error("Provider rejected request (HTTP " + std::to_string(response.status) +
-                  "); check credentials, model, and endpoint");
+      throw ProviderError("Provider rejected request (HTTP " + std::to_string(response.status) +
+                              ")",
+                          response.status, response.body);
     if (c.provider == "ollama") {
       if (!ndjson.empty())
         frame("", ndjson);
     } else
       sse.finish();
+    if (!stream_error.empty())
+      throw ProviderError("Provider stream reported an error", response.status, stream_error);
     // A JSON error body must not be mistaken for a successful empty stream.
     if (!saw || !completed)
       throw Error("Truncated or malformed provider stream");
@@ -859,7 +981,7 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
         }
         result.message.replay.push_back(b);
       }
-    if (c.provider == "openai")
+    if (c.provider == "openai" && !uses_responses(c))
       for (auto &entry : calls) {
         auto &call = entry.second;
         if (call.id.empty() || call.name.empty())
@@ -871,6 +993,12 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
     if (result.stop_reason == "length" || result.stop_reason == "max_tokens" ||
         result.stop_reason == "MAX_TOKENS")
       throw Error("Provider output token limit reached");
+    if (c.provider == "anthropic" && conversation_.is_object()) {
+      conversation_["messages"].push_back(
+          {{"source", source_hash(result.message)},
+           {"wire", Json::array({{{"role", "assistant"}, {"content", result.message.replay}}})}});
+    } else
+      conversation_ = nullptr;
     return result;
   }
   throw Error("Provider retry limit exceeded");

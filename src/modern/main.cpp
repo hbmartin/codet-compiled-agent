@@ -25,6 +25,11 @@ int main(int argc, char **argv) {
     args.emplace_back(argv[i]);
   try {
     return codet::cli_main(args, c);
+  } catch (const codet::ProviderError &e) {
+    std::cerr << "codet: " << e.what() << "\n";
+    std::cerr.write(e.body.data(), static_cast<std::streamsize>(e.body.size()));
+    std::cerr << "\n";
+    return e.code;
   } catch (const codet::Error &e) {
     std::cerr << "codet: " << codet::safe_text(e.what()) << '\n';
     return e.code;
