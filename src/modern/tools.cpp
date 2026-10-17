@@ -1,5 +1,6 @@
 #include "codet/artifacts.hpp"
 #include "codet/computer.hpp"
+#include "codet/context.hpp"
 #include "codet/core.hpp"
 #include "codet/interaction.hpp"
 #include "codet/output.hpp"
@@ -303,9 +304,6 @@ Decision Permissions::decide(const PermissionRequest &r,
     for (const auto &root : config_.roots)
       if (within(p, paths.canonical(root)))
         found = true;
-    const auto spill = capture_directory(config_);
-    if (r.tool == "read_file" && !fs::is_symlink(spill) && within(p, paths.canonical(spill)))
-      found = true;
     if (!found &&
         !(r.internal_read && !r.mutation && (r.tool == "read_file" || r.tool == "view_image")))
       return Decision::deny;
@@ -361,6 +359,8 @@ Tools::Tools(const Config &c, FileSystem &f, Processes &p, HttpTransport &h, Clo
       computer_(computer ? std::move(computer) : native_computer()),
       images_(images ? std::move(images) : native_images()) {
   (void)h;
+  for (const auto &root : {config_.home, config_.cwd, artifact_directory(c), capture_directory(c)})
+    private_anchors_[fs::absolute(root).lexically_normal()] = files_.canonical(root);
 }
 PermissionRequest Tools::execution_request(const ToolCall &call) const {
   const auto &a = call.arguments;
@@ -369,16 +369,37 @@ PermissionRequest Tools::execution_request(const ToolCall &call) const {
   request.context = a;
   if (call.name == "read_file" || call.name == "view_image") {
     const auto value = a.at("path").get<std::string>();
+    if (value.find('\0') != std::string::npos)
+      throw Error("Path must not contain NUL");
     request.target = value;
     request.path = (config_.cwd / fs::path(value)).lexically_normal();
-    const auto p = files_.canonical(*request.path);
-    const auto root = artifact_directory(config_);
-    if (call.name == "read_file" && !session_id_.empty()) {
-      const auto index = artifact_index_path(root, session_id_);
-      request.internal_read = !fs::is_symlink(root) && !fs::is_symlink(index.parent_path()) &&
-                              !fs::is_symlink(*request.path) && p == files_.canonical(index);
-    } else if (call.name == "view_image")
-      request.internal_read = generated_image(config_, files_, p, false);
+    if (call.name == "read_file" && capture_name(value)) {
+      const auto candidate =
+          fs::absolute(capture_directory(config_) / fs::path(value).filename()).lexically_normal();
+      if (!fs::exists(*request.path) && referenced_results_.count(candidate) &&
+          (fs::path(value).is_absolute() || fs::path(value) == fs::path(value).filename()))
+        request.path = candidate;
+    }
+    if (call.name == "view_image") {
+      const auto filename = fs::path(value).filename();
+      ImageArtifact identity;
+      identity.path = value;
+      identity.sha256 = filename.stem().string();
+      identity.mime = filename.extension() == ".png" ? "image/png" : "image/jpeg";
+      if (!fs::exists(*request.path) &&
+          (fs::path(value).is_absolute() || fs::path(value) == filename)) {
+        try {
+          request.path = resolve_image(artifact_directory(config_), identity);
+        } catch (const Error &) {
+          request.path = (config_.cwd / fs::path(value)).lexically_normal();
+        }
+      }
+    }
+    request.internal_read =
+        call.name == "read_file"
+            ? private_read(*request.path)
+            : private_anchor(artifact_directory(config_)) &&
+                  generated_image(config_, files_, files_.canonical(*request.path), false);
   } else if (call.name == "exec_command") {
     const auto configured_shell = default_shell();
     const auto shell = a.value("shell", configured_shell);
@@ -431,6 +452,65 @@ PermissionRequest Tools::execution_request(const ToolCall &call) const {
     request.target = a.dump();
   }
   return request;
+}
+namespace {
+bool private_regular(const FileSystem &files, const fs::path &root, const fs::path &p,
+                     bool directory = false) {
+  const auto base = fs::absolute(root).lexically_normal();
+  const auto value = fs::absolute(p).lexically_normal();
+  if (!within(value, base) || !within(files.canonical(value), files.canonical(base)) ||
+      fs::is_symlink(base))
+    return false;
+  auto current = base;
+  for (const auto &part : value.lexically_relative(base)) {
+    if (part == ".")
+      continue;
+    current /= part;
+    if (fs::is_symlink(current))
+      return false;
+  }
+  return fs::is_regular_file(value) || (directory && fs::is_directory(value));
+}
+} // namespace
+bool Tools::private_anchor(const fs::path &root) const {
+  const auto key = fs::absolute(root).lexically_normal();
+  const auto found = private_anchors_.find(key);
+  return found != private_anchors_.end() && files_.canonical(root) == found->second;
+}
+bool Tools::private_read(const fs::path &p) const {
+  auto value = fs::absolute(p).lexically_normal();
+  // Recognize stable OS aliases (for example Tiger's /var -> /private/var),
+  // preserving every component beneath the trusted anchor for symlink checks.
+  for (const auto &anchor : private_anchors_)
+    if (within(value, anchor.second) && !within(value, anchor.first)) {
+      value = anchor.first / value.lexically_relative(anchor.second);
+      break;
+    }
+  const auto artifacts = artifact_directory(config_);
+  if (!session_id_.empty() &&
+      value == fs::absolute(artifact_index_path(artifacts, session_id_)).lexically_normal())
+    return private_anchor(artifacts) && private_regular(files_, artifacts, value);
+  const auto plans = config_.home / "plans";
+  if (!session_id_.empty() &&
+      value == fs::absolute(plans / (session_id_ + ".json")).lexically_normal())
+    return private_anchor(config_.home) && private_regular(files_, config_.home, value);
+  const auto memory = fs::absolute(config_.home / "memory").lexically_normal();
+  if ((value == memory || (value.parent_path() == memory && value.extension() == ".md")) &&
+      private_anchor(config_.home) && private_regular(files_, config_.home, value, value == memory))
+    return true;
+  for (const auto &skill : skill_directories_)
+    if (within(value, fs::absolute(skill).lexically_normal())) {
+      const auto anchor = within(fs::absolute(skill).lexically_normal(),
+                                 fs::absolute(config_.home).lexically_normal())
+                              ? config_.home
+                              : config_.cwd;
+      if (private_anchor(anchor) && private_regular(files_, anchor, value, true))
+        return true;
+    }
+  const auto captures = fs::absolute(capture_directory(config_)).lexically_normal();
+  return referenced_results_.count(value) && value.parent_path() == captures &&
+         capture_name(value) && private_anchor(captures) &&
+         private_regular(files_, captures, value);
 }
 void Tools::reference_results(const std::vector<Message> &messages) {
   const auto accept = [&](const std::string &value) {
@@ -593,7 +673,9 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
           throw Error("Permission denied for " + candidate.name + ": " + value);
       };
       if (candidate.name == "read_file" || candidate.name == "view_image") {
-        if (permissions_.decide(request) == Decision::deny)
+        if ((candidate.name == "read_file" && config_.permission_mode != "plan" &&
+             !request.internal_read) ||
+            permissions_.decide(request) == Decision::deny)
           throw Error("Permission denied for " + candidate.name + ": " + request.target);
       } else if (candidate.name == "apply_patch") {
         for (const auto &line : patch_lines(candidate.arguments.at("patch")))
@@ -759,6 +841,7 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
                 {{"hook_event_name", "PostToolUseFailure"},
                  {"tool_name",
                   tool_definition(call.name) ? tool_definition(call.name)->hook_name : call.name},
+                 {"tool", call.name},
                  {"tool_input", invocation},
                  {"cwd", invocation_cwd},
                  {"error", e.what()}},
@@ -792,8 +875,16 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
   const auto *definition = tool_definition(name);
   const auto structured = [](Json data) { return ToolResult{data.dump(), false, std::move(data)}; };
   if (definition->handler == ToolHandler::read) {
-    const auto p = path(a.at("path"));
-    authorize(request);
+    auto fresh = execution_request(call);
+    if (config_.permission_mode != "plan" && !fresh.internal_read)
+      throw Error("read_file outside Plan mode is limited to advertised private context");
+    authorize(fresh);
+    // Approval hooks/callbacks may change paths or rules without updatedInput.
+    fresh = execution_request(call);
+    if ((config_.permission_mode != "plan" && !fresh.internal_read) ||
+        permissions_.decide(fresh) == Decision::deny)
+      throw Error("Permission denied for read_file: " + fresh.target);
+    const auto p = files_.canonical(*fresh.path);
     if (fs::is_directory(p)) {
       Json entries = Json::array();
       size_t visited = 0;
@@ -802,8 +893,10 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
         cancel.check();
         if (++visited > 10000)
           break;
-        if (permissions_.decide({name, entry.path().string(), entry.path(), false}, context) ==
-            Decision::deny)
+        PermissionRequest candidate{"read_file", entry.path().string(), entry.path(), false};
+        candidate.internal_read = private_read(entry.path());
+        if ((config_.permission_mode != "plan" && !candidate.internal_read) ||
+            permissions_.decide(candidate, context) == Decision::deny)
           continue;
         entries.push_back({{"name", safe_text(entry.path().filename().string())},
                            {"type", entry.is_symlink()     ? "symlink"
@@ -814,21 +907,109 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
       }
       return structured({{"entries", entries}, {"truncated", visited > entries.size()}});
     }
-    const auto content = files_.read(p);
-    if (content.find('\0') != std::string::npos)
-      throw Error("Binary file cannot be read as text");
-    const auto ls = lines(content);
-    const auto first = a.value("offset", 1), count = a.value("limit", 2000);
-    if (first < 1 || count < 1 || count > 100000)
-      throw Error("Invalid line range");
+    auto opened = files_.open_read(p);
+    fresh = execution_request(call);
+    if (opened->path() != files_.canonical(*fresh.path) ||
+        (config_.permission_mode != "plan" && !fresh.internal_read) ||
+        permissions_.decide(fresh) == Decision::deny)
+      throw Error("Inspection target changed or permission denied while opening");
+    auto actual = fresh;
+    actual.path = opened->path();
+    if (permissions_.decide(actual) == Decision::deny)
+      throw Error("Permission denied for opened inspection target");
+    const bool bytes = a.contains("byte_offset") || a.contains("byte_limit");
+    if (bytes && (a.contains("offset") || a.contains("limit")))
+      throw Error("Choose line paging or byte paging");
+    const auto number = [&](const char *key, uint64_t fallback, uint64_t maximum) {
+      if (!a.contains(key))
+        return fallback;
+      if (!a.at(key).is_number_unsigned() && (!a.at(key).is_number_integer() || a.at(key) < 0))
+        throw Error("Invalid inspection range");
+      const auto value = a.at(key).get<uint64_t>();
+      if (value > maximum)
+        throw Error("Inspection range exceeds supported limit");
+      return value;
+    };
+    const auto offset = bytes ? number("byte_offset", 0, uint64_t{1} << 62)
+                              : number("offset", 1, uint64_t{1} << 62);
+    const auto count = bytes ? number("byte_limit", 65536, 1048576) : number("limit", 2000, 100000);
+    if (!count || (!bytes && !offset))
+      throw Error("Invalid inspection range");
+    const auto cap = std::max<size_t>(
+        4, std::min(config_.tool_output_limit / 8,
+                    inspection_budget_ ? *inspection_budget_ / 16 : config_.tool_output_limit / 8));
+    if (bytes)
+      opened->seek(offset);
     std::string text;
-    for (size_t i = static_cast<size_t>(first - 1);
-         i < ls.size() && i - static_cast<size_t>(first - 1) < static_cast<size_t>(count); ++i) {
-      text += std::to_string(i + 1) + "\t" + ls[i] + "\n";
-      if (text.size() > config_.tool_output_limit)
+    uint64_t consumed = 0, line = 1, next_line = offset;
+    bool eof = false;
+    char buffer[4096];
+    // Line scans consume a bounded buffer, including very long skipped lines.
+    while (text.size() < cap && (bytes ? consumed < count : line < offset + count)) {
+      cancel.check();
+      const auto want = bytes ? static_cast<size_t>(std::min<uint64_t>(
+                                    {sizeof buffer, cap - text.size(), count - consumed}))
+                              : sizeof buffer;
+      const auto n = opened->read(buffer, want);
+      if (!n) {
+        eof = true;
         break;
+      }
+      for (size_t i = 0; i < n; ++i) {
+        if (text.size() >= cap || (!bytes && line >= offset + count))
+          break;
+        const char ch = buffer[i];
+        if (ch == '\0')
+          throw Error("Binary file cannot be read as text");
+        ++consumed;
+        if (bytes)
+          text += ch;
+        else {
+          if (line >= offset) {
+            if (text.empty() || text.back() == '\n')
+              text += std::to_string(line) + "\t";
+            text += ch;
+            next_line = line;
+          }
+          if (ch == '\n') {
+            ++line;
+            next_line = line;
+          }
+        }
+      }
     }
-    return {text, false, {{"total_lines", ls.size()}}};
+    auto position = (bytes ? offset : 0) + consumed;
+    eof = eof || position >= opened->size();
+    if (!eof && !text.empty()) {
+      size_t lead = text.size() - 1;
+      while (lead && (static_cast<unsigned char>(text[lead]) & 0xc0) == 0x80)
+        --lead;
+      const auto ch = static_cast<unsigned char>(text[lead]);
+      const size_t width = ch >= 0xc2 && ch <= 0xdf   ? 2
+                           : ch >= 0xe0 && ch <= 0xef ? 3
+                           : ch >= 0xf0 && ch <= 0xf4 ? 4
+                                                      : 0;
+      if (width && text.size() - lead < width) {
+        const auto pending = text.size() - lead;
+        text.resize(lead);
+        consumed -= pending;
+        position -= pending;
+        if (!consumed)
+          throw Error("byte_limit is too small for a Unicode character; use at least 4");
+      }
+    }
+    auto out = ToolResult{safe_text(text),
+                          false,
+                          {{"total_bytes", opened->size()},
+                           {"next_byte_offset", position},
+                           {"bytes_read", consumed},
+                           {"eof", eof}}};
+    if (!bytes) {
+      out.metadata["next_line"] = next_line;
+      if (eof)
+        out.metadata["total_lines"] = line - (text.empty() || text.back() == '\n' ? 1 : 0);
+    }
+    return out;
   }
   if (definition->handler == ToolHandler::patch) {
     // Snapshot only within this call. A prior model-facing read is not required.
@@ -1079,12 +1260,34 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
     return {result.output, false, data, result.preview, result.capture};
   }
   if (definition->handler == ToolHandler::image) {
-    const auto p = path(a.at("path"));
-    authorize(request);
-    if (request.internal_read && !generated_image(config_, files_, p))
+    auto fresh = execution_request(call);
+    authorize(fresh);
+    auto opened = files_.open_read(files_.canonical(*fresh.path));
+    fresh = execution_request(call);
+    if (opened->path() != files_.canonical(*fresh.path) ||
+        permissions_.decide(fresh) == Decision::deny)
+      throw Error("Image target changed or permission denied while opening");
+    auto actual = fresh;
+    actual.path = opened->path();
+    if (permissions_.decide(actual) == Decision::deny)
+      throw Error("Permission denied for opened image");
+    if (opened->size() > image_file_limit)
+      throw Error("Image file exceeds 8 MiB");
+    std::string bytes;
+    char buffer[8192];
+    for (;;) {
+      cancel.check();
+      const auto n = opened->read(buffer, sizeof buffer);
+      if (!n)
+        break;
+      if (bytes.size() + n > image_file_limit)
+        throw Error("Image grew beyond 8 MiB");
+      bytes.append(buffer, n);
+    }
+    if (fresh.internal_read && digest(bytes) != opened->path().stem().string())
       throw Error("Generated image artifact checksum mismatch");
     const auto detail = a.value("detail", std::string("high"));
-    auto artifact = persist_image(config_, files_, images_->load(p, detail), detail);
+    auto artifact = persist_image(config_, files_, images_->load_bytes(bytes, detail), detail);
     auto out = structured({{"detail", detail}, {"artifact", artifact}});
     out.images.push_back(artifact);
     return out;
@@ -1220,7 +1423,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
   throw Error("Unavailable tool handler");
 }
 std::string Tools::instructions() const {
-  const std::string inspection = config_.permission_mode == "plan" ? "read_file" : "exec_command";
+  const std::string inspection = "read_file";
   const auto cwd = files_.canonical(config_.cwd), home = files_.canonical(config_.home);
   fs::path root = cwd;
   for (auto p = cwd; !p.empty(); p = p.parent_path()) {
@@ -1332,16 +1535,18 @@ std::string Tools::instructions() const {
       }
     }
   }
-  out += "\n# Available skills (read SKILL.md through " +
-         std::string(config_.permission_mode == "plan" ? "read_file" : "exec_command") + ")\n";
+  out += "\n# Available skills (read SKILL.md through " + inspection + ")\n";
   count = 0;
+  skill_directories_.clear();
   for (const auto &dir :
        std::vector<fs::path>{config_.cwd / ".codet/skills", config_.cwd / ".agents/skills",
                              config_.cwd / ".claude/skills", config_.home / "skills"})
     if (fs::exists(dir))
       for (const auto &entry : fs::directory_iterator(dir))
-        if (++count <= 100 && !entry.is_symlink() && fs::exists(entry.path() / "SKILL.md"))
+        if (++count <= 100 && !entry.is_symlink() && fs::exists(entry.path() / "SKILL.md")) {
+          skill_directories_.push_back(entry.path());
           out += entry.path().string() + "\n";
+        }
   return out;
 }
 std::string Tools::dynamic_context() const {

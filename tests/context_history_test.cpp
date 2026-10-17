@@ -1,0 +1,283 @@
+#include "codet/artifacts.hpp"
+#include "codet/computer.hpp"
+#include "codet/context.hpp"
+#include "codet/interaction.hpp"
+#include "codet/prompt.hpp"
+#include "prompt_support.hpp"
+#include "temp.hpp"
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include <limits>
+#include <sqlite3.h>
+using namespace codet;
+using namespace testing;
+namespace {
+struct Offline : HttpTransport {
+  HttpResponse perform(const HttpRequest &, const Cancellation &, const ChunkSink &) override {
+    throw Error("Unexpected network");
+  }
+};
+struct InspectFiles : FileSystem {
+  NativeFileSystem native;
+  mutable size_t calls = 0, bytes = 0, largest = 0;
+  mutable std::function<void()> after_open;
+  struct Handle : ReadHandle {
+    std::unique_ptr<ReadHandle> input;
+    const InspectFiles &owner;
+    Handle(std::unique_ptr<ReadHandle> file, const InspectFiles &o)
+        : input(std::move(file)), owner(o) {}
+    fs::path path() const override {
+      return input->path();
+    }
+    uint64_t size() const override {
+      return input->size();
+    }
+    void seek(uint64_t n) override {
+      input->seek(n);
+    }
+    size_t read(char *p, size_t n) override {
+      ++owner.calls;
+      owner.largest = std::max(owner.largest, n);
+      const auto got = input->read(p, n);
+      owner.bytes += got;
+      return got;
+    }
+  };
+  std::unique_ptr<ReadHandle> open_read(const fs::path &p) const override {
+    auto handle = native.open_read(p);
+    if (after_open) {
+      auto callback = std::move(after_open);
+      after_open = {};
+      callback();
+    }
+    return std::make_unique<Handle>(std::move(handle), *this);
+  }
+  std::string read(const fs::path &p, size_t n) const override {
+    return native.read(p, n);
+  }
+  void atomic_write(const fs::path &p, const std::string &s, bool secret) override {
+    native.atomic_write(p, s, secret);
+  }
+  void atomic_stream(const fs::path &p, const std::function<void(const Writer &)> &f,
+                     bool secret) override {
+    native.atomic_stream(p, f, secret);
+  }
+  void remove(const fs::path &p) override {
+    native.remove(p);
+  }
+  fs::path canonical(const fs::path &p) const override {
+    return native.canonical(p);
+  }
+};
+struct Scripted : Provider {
+  std::function<ProviderResult(const Config &, const std::string &,
+                               const std::vector<codet::Message> &, const Json &)>
+      script;
+  ProviderResult complete(const Config &c, const std::string &s,
+                          const std::vector<codet::Message> &m, const Json &schemas,
+                          const Cancellation &, const ChunkSink &) override {
+    EXPECT_LE(Json(m).dump().size(), prompt_budget(c, s, schemas).available());
+    return script(c, s, m, schemas);
+  }
+};
+ProviderResult text_result(std::string text) {
+  ProviderResult out;
+  out.message.role = "assistant";
+  out.message.text = std::move(text);
+  return out;
+}
+struct History : Test {
+  TempDirectory temp;
+  Config config;
+  InspectFiles files;
+  NativeProcesses processes;
+  Offline http;
+  SystemClock clock;
+  Cancellation cancel;
+  void SetUp() override {
+    config.home = temp.root / "home";
+    config.cwd = temp.root / "work[1]";
+    config.roots = {config.cwd};
+    config.approval = "never";
+    fs::create_directories(config.home);
+    fs::create_directories(config.cwd);
+  }
+  ToolResult read(Tools &t, const fs::path &p, Json args = Json::object()) {
+    args["path"] = p.string();
+    return t.execute({unique_id(), "read_file", args}, cancel);
+  }
+  void put(const fs::path &p, const std::string &s) {
+    fs::create_directories(p.parent_path());
+    files.native.atomic_write(p, s);
+  }
+};
+TEST_F(History, PrivateInspectionIsAvailableHeadlesslyInEveryModeButWorkspaceInspectionIsPlanOnly) {
+  const auto memory = config.home / "memory/note.md";
+  const auto skill = config.home / "skills/demo";
+  put(memory, "private memory");
+  put(skill / "SKILL.md", "skill instructions");
+  put(skill / "support/data.txt", "support");
+  put(config.home / "credentials.json", "secret");
+  put(config.cwd / "ordinary.txt", "workspace");
+  for (const auto *mode : {"default", "plan", "accept-edits", "bypass"}) {
+    config.permission_mode = mode;
+    Tools t(config, files, processes, http, clock);
+    t.instructions();
+    t.use_session("active");
+    EXPECT_FALSE(read(t, memory).error) << mode;
+    EXPECT_FALSE(read(t, skill / "support/data.txt").error) << mode;
+    EXPECT_EQ(read(t, config.cwd / "ordinary.txt").error, std::string(mode) != "plan");
+    EXPECT_TRUE(read(t, config.home / "credentials.json").error);
+    config.set_deny({"read_file(*note.md)"});
+    EXPECT_TRUE(read(t, memory).error) << mode;
+    config.set_deny({});
+  }
+}
+TEST_F(History, OnlyAdvertisedSkillsAndReferencedCapturesGainPrivateAccess) {
+  put(config.home / "skills/demo/SKILL.md", "advertised");
+  Tools t(config, files, processes, http, clock);
+  t.instructions();
+  t.use_session("active");
+  put(config.home / "skills/late/SKILL.md", "unadvertised");
+  EXPECT_TRUE(read(t, config.home / "skills/late/SKILL.md").error);
+  codet::Message result;
+  result.role = "tool";
+  result.tool_call_id = "done";
+  result.text =
+      Json(
+          {{"content", std::string(30000, 'x')}, {"is_error", false}, {"metadata", Json::object()}})
+          .dump();
+  const auto path = t.retain_result(result);
+  EXPECT_FALSE(read(t, path, {{"byte_offset", 0}, {"byte_limit", 100}}).error);
+  Tools foreign(config, files, processes, http, clock);
+  foreign.use_session("foreign");
+  EXPECT_TRUE(read(foreign, path).error);
+  foreign.reference_results({result});
+  EXPECT_FALSE(read(foreign, path).error); // Explicit inherited result reference grants access.
+  config.set_deny({"read_file(*capture-*)"});
+  EXPECT_TRUE(read(t, path).error);
+}
+TEST_F(History, HooksCannotExchangePrivateFilesOrAncestorDirectoriesForSymlinks) {
+  const auto memory = config.home / "memory/note.md";
+  const auto foreign = temp.root / "foreign";
+  put(memory, "original");
+  put(foreign / "note.md", "foreign secret");
+  config.hooks["PreToolUse"] = Json::array(
+      {{{"matcher", "read_file"},
+        {"command", "mv '" + memory.string() + "' '" + memory.string() + ".old'; ln -s '" +
+                        (foreign / "note.md").string() + "' '" + memory.string() + "'"}}});
+  Tools t(config, files, processes, http, clock);
+  EXPECT_TRUE(read(t, memory).error);
+  fs::remove(memory);
+  fs::rename(memory.string() + ".old", memory);
+  config.hooks["PreToolUse"][0]["command"] =
+      "mv '" + memory.parent_path().string() + "' '" + memory.parent_path().string() +
+      ".old'; ln -s '" + foreign.string() + "' '" + memory.parent_path().string() + "'";
+  EXPECT_TRUE(read(t, memory).error);
+  EXPECT_EQ(files.bytes, 0u);
+}
+TEST_F(History, FinalValidationHonorsNewDeniesAndConsumesTheOpenedHandle) {
+  const auto memory = config.home / "memory/note.md";
+  put(memory, "original permitted bytes");
+  Tools t(config, files, processes, http, clock);
+  files.after_open = [&] { config.set_deny({"read_file(*note.md)"}); };
+  EXPECT_TRUE(read(t, memory).error);
+  EXPECT_EQ(files.bytes, 0u);
+  config.set_deny({});
+  files.after_open = [&] { files.native.atomic_write(memory, "replacement bytes"); };
+  const auto result = read(t, memory);
+  ASSERT_FALSE(result.error) << result.content;
+  EXPECT_THAT(result.content, HasSubstr("original permitted bytes"));
+  EXPECT_THAT(result.content, Not(HasSubstr("replacement bytes")));
+}
+TEST_F(History, BytePagesReturnActualUtf8BoundariesAndUseBoundedReads) {
+  const auto memory = config.home / "memory/long.md";
+  put(memory, "a雪🌲z" + std::string(2 * 1024 * 1024, 'x'));
+  Tools t(config, files, processes, http, clock);
+  auto page = read(t, memory, {{"byte_offset", 0}, {"byte_limit", 3}});
+  ASSERT_FALSE(page.error) << page.content;
+  EXPECT_EQ(page.content, "a");
+  EXPECT_EQ(page.metadata["next_byte_offset"], 1);
+  page = read(t, memory, {{"byte_offset", 1}, {"byte_limit", 7}});
+  EXPECT_EQ(page.content, "雪🌲");
+  EXPECT_EQ(page.metadata["next_byte_offset"], 8);
+  page = read(t, memory, {{"byte_offset", 8}, {"byte_limit", 1048576}});
+  EXPECT_LE(page.content.size(), config.tool_output_limit / 8);
+  EXPECT_EQ(page.metadata["next_byte_offset"], 8 + page.content.size());
+  EXPECT_LE(files.largest, 4096u);
+  EXPECT_LT(files.bytes, 20000u);
+  EXPECT_TRUE(read(t, memory, {{"byte_offset", 0}, {"offset", 1}}).error);
+  EXPECT_TRUE(read(t, memory, {{"byte_offset", -1}}).error);
+  EXPECT_TRUE(read(t, memory, {{"byte_limit", 0}}).error);
+  EXPECT_FALSE(read(t, memory, {{"byte_offset", 3000000}}).error);
+}
+TEST_F(History, PrivateDirectoriesKeepTheirChildrenInPlanMode) {
+  config.permission_mode = "plan";
+  put(config.home / "memory/note.md", "memory");
+  put(config.home / "skills/demo/SKILL.md", "skill");
+  put(config.home / "skills/demo/support.txt", "support");
+  Tools t(config, files, processes, http, clock);
+  t.instructions();
+  EXPECT_THAT(read(t, config.home / "memory").content, HasSubstr("note.md"));
+  EXPECT_THAT(read(t, config.home / "skills/demo").content, HasSubstr("support.txt"));
+}
+TEST_F(History, HooksCannotReplaceHomeOrAdvertisedSkillAncestors) {
+  const auto foreign = temp.root / "foreign";
+  put(config.home / "memory/note.md", "allowed");
+  put(foreign / "memory/note.md", "foreign secret");
+  config.hooks["PreToolUse"] =
+      Json::array({{{"matcher", "read_file"},
+                    {"command", "mv '" + config.home.string() + "' '" + config.home.string() +
+                                    ".old'; ln -s '" + foreign.string() + "' '" +
+                                    config.home.string() + "'"}}});
+  Tools t(config, files, processes, http, clock);
+  EXPECT_TRUE(read(t, config.home / "memory/note.md").error);
+  EXPECT_EQ(files.bytes, 0u);
+  fs::remove(config.home);
+  fs::rename(config.home.string() + ".old", config.home);
+  const auto skills = config.cwd / ".agents/skills";
+  put(skills / "demo/SKILL.md", "advertised");
+  put(skills / "demo/secret.txt", "allowed");
+  put(foreign / "demo/secret.txt", "foreign secret");
+  t.instructions();
+  config.hooks["PreToolUse"][0]["command"] = "mv '" + skills.string() + "' '" + skills.string() +
+                                             ".old'; ln -s '" + foreign.string() + "' '" +
+                                             skills.string() + "'";
+  EXPECT_TRUE(read(t, skills / "demo/secret.txt").error);
+  EXPECT_EQ(files.bytes, 0u);
+}
+TEST_F(History, GeneratedLookingNamesDoNotShadowExistingWorkspaceFiles) {
+  config.permission_mode = "plan";
+  struct Images : ImageBackend {
+    std::string decoded;
+    bool available() const override {
+      return true;
+    }
+    ImageData load(const fs::path &, const std::string &) override {
+      throw Error("Path reopen is forbidden");
+    }
+    ImageData load_bytes(const std::string &data, const std::string &) override {
+      decoded = data;
+      return {"rendered", "image/png", 1, 1};
+    }
+  };
+  auto images = std::make_shared<Images>();
+  Tools t(config, files, processes, http, clock, {}, {}, {}, {}, {}, images);
+  const auto name = std::string(64, 'a') + ".png";
+  put(config.cwd / name, "workspace pixels");
+  for (const auto &spelling : {name, "./" + name, (config.cwd / name).string()}) {
+    const auto result = t.execute({unique_id(), "view_image", {{"path", spelling}}}, cancel);
+    EXPECT_FALSE(result.error) << result.content;
+    EXPECT_EQ(images->decoded, "workspace pixels");
+  }
+  codet::Message m;
+  m.role = "tool";
+  m.text = R"({"content":"retained","is_error":false,"metadata":{}})";
+  const fs::path archive = t.retain_result(m);
+  put(config.cwd / archive.filename(), "workspace text");
+  for (const auto &spelling : {archive.filename().string(), "./" + archive.filename().string(),
+                               (config.cwd / archive.filename()).string()})
+    EXPECT_THAT(read(t, spelling).content, HasSubstr("workspace text"));
+}
+
+} // namespace
