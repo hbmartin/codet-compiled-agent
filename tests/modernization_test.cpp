@@ -183,6 +183,44 @@ TEST_F(Modernization, PublicResponsesSharesReplayWithoutPrivateHeaders) {
   EXPECT_EQ(answer.message.calls[0].name, "read_file");
   EXPECT_THAT(Json(answer.message.replay).dump(), HasSubstr("opaque"));
 }
+TEST_F(Modernization, PublicResponsesReasoningDefaultsAreModelAware) {
+  CredentialStore credentials(config.home, files, clock);
+  ApiProvider provider(http, credentials, clock);
+  for (const auto *model : {"gpt-6.1-sol", "gpt-6-astra", "gpt-4o-mini", "unknown-model"}) {
+    config.model = model;
+    for (const auto *effort : {"", "high"}) {
+      config.effort = effort;
+      const auto body = Json::parse(provider.request(config, "hello", {}, Json::array()).body);
+      const bool expected = !config.effort.empty() || config.model == "gpt-6.1-sol" ||
+                            config.model == "gpt-6-astra";
+      EXPECT_EQ(body.contains("reasoning"), expected) << model << ":" << effort;
+      EXPECT_EQ(body.contains("include"), expected) << model << ":" << effort;
+      if (expected) {
+        EXPECT_EQ(body["reasoning"]["effort"], config.effort.empty() ? "medium" : effort);
+        EXPECT_EQ(body["include"], Json::array({"reasoning.encrypted_content"}));
+      }
+    }
+  }
+  config.provider = "codex";
+  config.effort.clear();
+  auto body = Json::parse(provider.request(config, "hello", {}, Json::array(),
+                                         {{"access_token", "fixture"}}).body);
+  EXPECT_FALSE(body.contains("reasoning"));
+  EXPECT_TRUE(body.contains("include"));
+  config.effort = "high";
+  body = Json::parse(provider.request(config, "hello", {}, Json::array(),
+                                     {{"access_token", "fixture"}}).body);
+  EXPECT_EQ(body["reasoning"]["effort"], "high");
+  EXPECT_TRUE(body.contains("include"));
+  config.provider = "openai";
+  config.providers["openai"].base_url = "http://127.0.0.1:1/v1";
+  const auto custom = provider.request(config, "hello", {}, Json::array());
+  EXPECT_THAT(custom.url, HasSubstr("/chat/completions"));
+  body = Json::parse(custom.body);
+  EXPECT_FALSE(body.contains("reasoning"));
+  EXPECT_FALSE(body.contains("include"));
+  EXPECT_EQ(body["reasoning_effort"], "high");
+}
 TEST_F(Modernization, SignedPrefixesPersistAndEpochChangesDiscardSignatures) {
   config.provider = "anthropic";
   config.model = "claude-sonnet-5-5";

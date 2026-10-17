@@ -53,6 +53,10 @@ void SseDecoder::finish() {
   line("");
 }
 namespace {
+bool public_responses_reasoning(const Config &c) {
+  return c.provider == "openai" &&
+         (!c.effort.empty() || c.model == "gpt-6.1-sol" || c.model == "gpt-6-astra");
+}
 std::string join_url(std::string base, const std::string &suffix) {
   while (!base.empty() && base.back() == '/')
     base.pop_back();
@@ -727,12 +731,15 @@ eof_line: "*** End of File" LF
             {"input", input},
             {"store", false},
             {"stream", true},
-            {"parallel_tool_calls", false},
-            {"include", Json::array({"reasoning.encrypted_content"})}};
+            {"parallel_tool_calls", false}};
     if (!ft.empty())
       body["tools"] = ft;
-    if (!c.effort.empty() || c.provider == "openai")
+    const bool reasoning =
+        c.provider == "openai" ? public_responses_reasoning(c) : !c.effort.empty();
+    if (reasoning)
       body["reasoning"] = {{"effort", c.effort.empty() ? "medium" : c.effort}, {"summary", "auto"}};
+    if (reasoning || c.provider == "codex")
+      body["include"] = Json::array({"reasoning.encrypted_content"});
     if (c.provider == "openai") {
       body["max_output_tokens"] = c.max_output_tokens;
       if ((c.model == "gpt-6.1-sol" || c.model == "gpt-6-astra") &&

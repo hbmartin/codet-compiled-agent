@@ -898,6 +898,22 @@ class CliTests(unittest.TestCase):
         self.assertEqual(self.server.requests[-1]['path'],'/v1/responses')
         self.assertEqual(self.server.requests[-1]['body']['reasoning']['effort'],'medium')
 
+    def test_nonreasoning_responses_model_survives_saved_session_resume(self):
+        flags=['--model','gpt-4o-mini','-c','providers.openai.wire_api="responses"']
+        r=self.run_cli('exec',*flags,'--output-format=json','simple')
+        self.assertEqual(r.returncode,0,r.stderr)
+        session=json.loads(r.stdout)['session_id']
+        for extra in [[],['-c','model_reasoning_effort="high"']]:
+            r=self.run_cli('exec','resume',session,'-c','providers.openai.wire_api="responses"',
+                           *extra,'--output-format=json','continue')
+            self.assertEqual(r.returncode,0,r.stderr)
+            body=self.server.requests[-1]['body']
+            self.assertEqual(body['model'],'gpt-4o-mini')
+            self.assertEqual('reasoning' in body,bool(extra))
+            self.assertEqual('include' in body,bool(extra))
+            if extra:
+                self.assertEqual(body['reasoning']['effort'],'high')
+
     def test_deterministic_failures_do_not_create_sessions(self):
         for flags in [('--durability','invalid','simple'),('-c','hooks.PreToolUse=[{command="true",on_error="invalid"}]','simple'),('/missing-command',)]:
             r=self.run_cli('exec',*flags)
