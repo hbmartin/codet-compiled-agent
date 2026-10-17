@@ -435,6 +435,7 @@ public:
   void save_provider_state(const Session &);
   void sync();
   uint64_t serialized_bytes() const;
+  size_t provider_cache_bytes() const;
   void remember_references(const std::string &, const std::vector<Message> &);
   std::vector<std::string> references(const std::string &);
   Json list();

@@ -19,6 +19,62 @@ Json stored_json(const std::string &bytes) {
     throw Error("Stored JSON contains an embedded NUL");
   return Json::parse(bytes);
 }
+constexpr size_t provider_cache_limit = size_t{8} * 1024 * 1024;
+[[noreturn]] void corrupt_provider() {
+  throw Error(
+      "Corrupt provider conversation cache; transcript preserved; explicit repair required");
+}
+Json provider_json(const std::string &text) {
+  try {
+    return stored_json(text);
+  } catch (const Json::exception &) {
+    corrupt_provider();
+  } catch (const Error &) {
+    corrupt_provider();
+  }
+}
+void validate_provider_part(const Json &part) {
+  if (!part.is_object() || !part.contains("wire") || !part.at("wire").is_array() ||
+      (part.contains("source") && !part.at("source").is_string()))
+    corrupt_provider();
+  for (const auto &message : part.at("wire")) {
+    if (!message.is_object() || !message.contains("role") || !message.at("role").is_string() ||
+        !message.contains("content") ||
+        (!message.at("content").is_array() && !message.at("content").is_string()) ||
+        (message.at("role") == "assistant" && message.at("content").empty()))
+      corrupt_provider();
+  }
+}
+const Json &provider_messages(const Json &state) {
+  static const Json empty = Json::array();
+  if (state.is_null())
+    return empty;
+  if (!state.is_object())
+    corrupt_provider();
+  const auto found = state.find("messages");
+  if (found == state.end())
+    return empty;
+  if (!found->is_array())
+    corrupt_provider();
+  return *found;
+}
+Json provider_header(const Json &state) {
+  if (state.is_null())
+    return nullptr;
+  if (!state.is_object())
+    corrupt_provider();
+  for (const auto *key : {"provider", "model", "account", "endpoint", "artifacts", "captures",
+                          "system", "latest_system"})
+    if (state.contains(key) && !state.at(key).is_string())
+      corrupt_provider();
+  if (state.contains("tools") && !state.at("tools").is_array())
+    corrupt_provider();
+  Json header = Json::object();
+  for (auto i = state.begin(); i != state.end(); ++i)
+    if (i.key() != "messages")
+      header[i.key()] = i.value();
+  return header;
+}
 struct Statement {
   sqlite3_stmt *p = nullptr;
   Statement(sqlite3 *db, const char *sql) {
@@ -74,7 +130,19 @@ struct StateStore::Impl {
   fs::path home, artifact_root;
   std::map<std::string, std::weak_ptr<void>> owners;
   std::map<std::string, std::set<std::string>> known_references;
-  std::map<std::string, Json> provider_states;
+  std::string cached_session;
+  Json cached_provider = nullptr;
+  size_t cached_bytes = 0, pending_provider_bytes = 0;
+  void cache_provider(const Session &session, size_t bytes) {
+    cached_session.clear();
+    cached_provider = nullptr;
+    cached_bytes = 0;
+    if (bytes <= provider_cache_limit) {
+      cached_provider = session.provider_state;
+      cached_session = session.id;
+      cached_bytes = bytes;
+    }
+  }
   std::string durability;
   uint64_t serialized = 0;
   ~Impl() {
@@ -120,132 +188,181 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
         ::close(fd);
     }
   } migration_locks;
-  const auto old_version = version();
-  if (old_version > 0 && old_version < 6) {
-    const auto locks = home / "session-locks";
-    if (fs::exists(locks))
-      for (const auto &entry : fs::directory_iterator(locks)) {
-        const int fd = ::open(entry.path().c_str(), O_RDWR | O_NOFOLLOW | O_NONBLOCK);
-        if (fd < 0)
-          throw Error("Cannot inspect session ownership before migration");
-        const bool busy = ::flock(fd, LOCK_EX | LOCK_NB) != 0;
-        if (busy) {
-          ::close(fd);
-          throw Error("Stop active Codet sessions before upgrading the database");
-        }
-        migration_locks.descriptors.push_back(fd);
-      }
-    const auto target = home / ("state.sqlite3.pre-v6-" + unique_id());
-    sqlite3 *backup_db = nullptr;
-    if (sqlite3_open(target.c_str(), &backup_db) != SQLITE_OK) {
-      if (backup_db)
-        sqlite3_close(backup_db);
-      throw Error("Cannot create migration backup");
+  const auto acquire_migration = [&] {
+    if (!migration_locks.descriptors.empty())
+      return;
+    const auto migration_path = home / ".migration.lock";
+    const int migration_fd =
+        ::open(migration_path.c_str(), O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0600);
+    struct stat migration_stat{};
+    if (migration_fd < 0)
+      throw Error("Cannot open database migration lock");
+    migration_locks.descriptors.push_back(migration_fd);
+    if (::fstat(migration_fd, &migration_stat) || !S_ISREG(migration_stat.st_mode) ||
+        migration_stat.st_uid != ::geteuid() || ::fchmod(migration_fd, 0600) ||
+        ::fcntl(migration_fd, F_SETFD, FD_CLOEXEC) < 0)
+      throw Error("Database migration lock must be an owned regular file");
+    if (::flock(migration_fd, LOCK_EX)) {
+      if (errno == EINTR)
+        throw Error("Interrupted waiting for database migration", 130);
+      throw Error("Cannot acquire database migration lock");
     }
-    const auto protection = ::chmod(target.c_str(), 0600);
-    auto *backup = sqlite3_backup_init(backup_db, "main", impl_->db, "main");
-    const int copied = backup ? sqlite3_backup_step(backup, -1) : SQLITE_ERROR;
-    if (backup)
-      sqlite3_backup_finish(backup);
-    sqlite3_close(backup_db);
-    if (protection || copied != SQLITE_DONE)
-      throw Error("Cannot complete migration backup");
+  };
+  if (version() < 6) {
+    acquire_migration();
+    const auto old_version = version();
+    if (old_version > 0 && old_version < 6) {
+      const auto locks = home / "session-locks";
+      if (fs::exists(locks))
+        for (const auto &entry : fs::directory_iterator(locks)) {
+          const int fd = ::open(entry.path().c_str(), O_RDWR | O_NOFOLLOW | O_NONBLOCK);
+          if (fd < 0)
+            throw Error("Cannot inspect session ownership before migration");
+          const bool busy = ::flock(fd, LOCK_EX | LOCK_NB) != 0;
+          if (busy) {
+            ::close(fd);
+            throw Error("Stop active Codet sessions before upgrading the database");
+          }
+          migration_locks.descriptors.push_back(fd);
+        }
+      const auto target = home / ("state.sqlite3.pre-v6-" + unique_id());
+      sqlite3 *backup_db = nullptr;
+      if (sqlite3_open(target.c_str(), &backup_db) != SQLITE_OK) {
+        if (backup_db)
+          sqlite3_close(backup_db);
+        throw Error("Cannot create migration backup");
+      }
+      const auto protection = ::chmod(target.c_str(), 0600);
+      auto *backup = sqlite3_backup_init(backup_db, "main", impl_->db, "main");
+      const int copied = backup ? sqlite3_backup_step(backup, -1) : SQLITE_ERROR;
+      if (backup)
+        sqlite3_backup_finish(backup);
+      sqlite3_close(backup_db);
+      if (protection || copied != SQLITE_DONE)
+        throw Error("Cannot complete migration backup");
+    }
+    if (version() < 6) {
+      Transaction migration(impl_->db);
+      const int n = version(); // Another starter may have migrated while we waited for the lock.
+      sql(impl_->db,
+          "CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,name TEXT NOT NULL,parent "
+          "TEXT,updated INTEGER NOT NULL,messages TEXT NOT NULL,status TEXT NOT NULL DEFAULT "
+          "'idle');"
+          "CREATE TABLE IF NOT EXISTS tools(session TEXT NOT NULL,call_id TEXT NOT NULL,name TEXT "
+          "NOT "
+          "NULL,args TEXT NOT NULL,result TEXT,status TEXT NOT NULL,PRIMARY "
+          "KEY(session,call_id),FOREIGN KEY(session) REFERENCES sessions(id));");
+      if (n < 2)
+        sql(impl_->db,
+            "ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT '';ALTER "
+            "TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT '';PRAGMA user_version=2;");
+      if (n < 3)
+        sql(impl_->db, "PRAGMA user_version=3;");
+      if (n < 4)
+        sql(impl_->db, "ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT;"
+                       "PRAGMA user_version=4;");
+      if (n < 5) {
+        sql(impl_->db,
+            "CREATE TABLE session_references("
+            "session TEXT NOT NULL,kind TEXT NOT NULL,path TEXT NOT NULL,"
+            "PRIMARY KEY(session,kind,path),FOREIGN KEY(session) REFERENCES sessions(id));");
+        {
+          Statement sessions(impl_->db, "SELECT id,messages FROM sessions");
+          int status;
+          while ((status = sqlite3_step(sessions.p)) == SQLITE_ROW) {
+            std::vector<Message> parsed;
+            try {
+              parsed = stored_json(column(sessions.p, 1)).get<std::vector<Message>>();
+            } catch (const Error &) {
+              continue;
+            } catch (const Json::exception &) {
+              continue; // Loading this session still reports its corrupt transcript.
+            }
+            remember_references(column(sessions.p, 0), parsed);
+          }
+          if (status != SQLITE_DONE)
+            throw Error("Cannot backfill session references: " +
+                        std::string(sqlite3_errmsg(impl_->db)));
+          Statement journal(impl_->db, "SELECT session,result FROM tools WHERE result IS NOT NULL");
+          while ((status = sqlite3_step(journal.p)) == SQLITE_ROW) {
+            Message parsed;
+            try {
+              parsed = stored_json(column(journal.p, 1)).get<Message>();
+            } catch (const Error &) {
+              continue;
+            } catch (const Json::exception &) {
+              continue; // Reconciliation retains its existing corrupt-record handling.
+            }
+            remember_references(column(journal.p, 0), {parsed});
+          }
+          if (status != SQLITE_DONE)
+            throw Error("Cannot backfill journal references: " +
+                        std::string(sqlite3_errmsg(impl_->db)));
+          sql(impl_->db, "PRAGMA user_version=5;");
+          impl_->known_references.clear();
+        }
+      }
+      if (n < 6) {
+        sql(impl_->db,
+            "ALTER TABLE sessions ADD COLUMN message_format INTEGER NOT NULL DEFAULT 0;"
+            "CREATE TABLE session_messages(session TEXT NOT NULL,position INTEGER NOT NULL,"
+            "payload TEXT NOT NULL,PRIMARY KEY(session,position),"
+            "FOREIGN KEY(session) REFERENCES sessions(id));"
+            "CREATE TABLE provider_parts(session TEXT NOT NULL,position INTEGER NOT NULL,"
+            "payload TEXT NOT NULL,PRIMARY KEY(session,position),"
+            "FOREIGN KEY(session) REFERENCES sessions(id));");
+        Statement sessions(impl_->db, "SELECT id,messages FROM sessions");
+        int status;
+        while ((status = sqlite3_step(sessions.p)) == SQLITE_ROW) {
+          std::vector<Message> messages;
+          try {
+            messages = stored_json(column(sessions.p, 1)).get<std::vector<Message>>();
+          } catch (const Error &) {
+            continue;
+          } catch (const Json::exception &) {
+            continue;
+          }
+          const auto id = column(sessions.p, 0);
+          ensure_message_ids(messages);
+          for (size_t i = 0; i < messages.size(); ++i) {
+            Statement insert(impl_->db, "INSERT INTO session_messages VALUES(?,?,?)");
+            insert.text(1, id);
+            sqlite3_bind_int64(insert.p, 2, static_cast<sqlite3_int64>(i));
+            insert.text(3, safe_json(Json(messages[i])).dump());
+            insert.run();
+          }
+          Statement mark(impl_->db,
+                         "UPDATE sessions SET message_format=1,messages='[]' WHERE id=?");
+          mark.text(1, id);
+          mark.run();
+        }
+        if (status != SQLITE_DONE)
+          throw Error("Cannot migrate session messages");
+        sql(impl_->db, "PRAGMA user_version=6");
+      }
+      migration.commit();
+    }
   }
-  Transaction migration(impl_->db);
-  const int n = version(); // Another starter may have migrated while we waited for the lock.
-  sql(impl_->db,
-      "CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,name TEXT NOT NULL,parent "
-      "TEXT,updated INTEGER NOT NULL,messages TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'idle');"
-      "CREATE TABLE IF NOT EXISTS tools(session TEXT NOT NULL,call_id TEXT NOT NULL,name TEXT NOT "
-      "NULL,args TEXT NOT NULL,result TEXT,status TEXT NOT NULL,PRIMARY "
-      "KEY(session,call_id),FOREIGN KEY(session) REFERENCES sessions(id));");
-  if (n < 2)
-    sql(impl_->db,
-        "ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT '';ALTER "
-        "TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT '';PRAGMA user_version=2;");
-  if (n < 3)
-    sql(impl_->db, "PRAGMA user_version=3;");
-  if (n < 4)
-    sql(impl_->db, "ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT;"
-                   "PRAGMA user_version=4;");
-  if (n < 5) {
-    sql(impl_->db, "CREATE TABLE session_references("
-                   "session TEXT NOT NULL,kind TEXT NOT NULL,path TEXT NOT NULL,"
-                   "PRIMARY KEY(session,kind,path),FOREIGN KEY(session) REFERENCES sessions(id));");
+  bool wal = false;
+  {
+    Statement mode(impl_->db, "PRAGMA journal_mode");
+    if (sqlite3_step(mode.p) != SQLITE_ROW)
+      throw Error("Cannot read database journal mode");
+    wal = column(mode.p, 0) == "wal";
+  }
+  if (!wal) {
+    acquire_migration();
+    // A concurrent initializer may have changed journal mode while we waited.
+    bool changed = false;
     {
-      Statement sessions(impl_->db, "SELECT id,messages FROM sessions");
-      int status;
-      while ((status = sqlite3_step(sessions.p)) == SQLITE_ROW) {
-        std::vector<Message> parsed;
-        try {
-          parsed = stored_json(column(sessions.p, 1)).get<std::vector<Message>>();
-        } catch (const Error &) {
-          continue;
-        } catch (const Json::exception &) {
-          continue; // Loading this session still reports its corrupt transcript.
-        }
-        remember_references(column(sessions.p, 0), parsed);
-      }
-      if (status != SQLITE_DONE)
-        throw Error("Cannot backfill session references: " +
-                    std::string(sqlite3_errmsg(impl_->db)));
-      Statement journal(impl_->db, "SELECT session,result FROM tools WHERE result IS NOT NULL");
-      while ((status = sqlite3_step(journal.p)) == SQLITE_ROW) {
-        Message parsed;
-        try {
-          parsed = stored_json(column(journal.p, 1)).get<Message>();
-        } catch (const Error &) {
-          continue;
-        } catch (const Json::exception &) {
-          continue; // Reconciliation retains its existing corrupt-record handling.
-        }
-        remember_references(column(journal.p, 0), {parsed});
-      }
-      if (status != SQLITE_DONE)
-        throw Error("Cannot backfill journal references: " +
-                    std::string(sqlite3_errmsg(impl_->db)));
-      sql(impl_->db, "PRAGMA user_version=5;");
-      impl_->known_references.clear();
+      Statement mode(impl_->db, "PRAGMA journal_mode");
+      if (sqlite3_step(mode.p) != SQLITE_ROW)
+        throw Error("Cannot read database journal mode");
+      changed = column(mode.p, 0) == "wal";
     }
+    if (!changed)
+      sql(impl_->db, "PRAGMA journal_mode=WAL");
   }
-  if (n < 6) {
-    sql(impl_->db, "ALTER TABLE sessions ADD COLUMN message_format INTEGER NOT NULL DEFAULT 0;"
-                   "CREATE TABLE session_messages(session TEXT NOT NULL,position INTEGER NOT NULL,"
-                   "payload TEXT NOT NULL,PRIMARY KEY(session,position),"
-                   "FOREIGN KEY(session) REFERENCES sessions(id));"
-                   "CREATE TABLE provider_parts(session TEXT NOT NULL,position INTEGER NOT NULL,"
-                   "payload TEXT NOT NULL,PRIMARY KEY(session,position),"
-                   "FOREIGN KEY(session) REFERENCES sessions(id));");
-    Statement sessions(impl_->db, "SELECT id,messages FROM sessions");
-    int status;
-    while ((status = sqlite3_step(sessions.p)) == SQLITE_ROW) {
-      std::vector<Message> messages;
-      try {
-        messages = stored_json(column(sessions.p, 1)).get<std::vector<Message>>();
-      } catch (const Error &) {
-        continue;
-      } catch (const Json::exception &) {
-        continue;
-      }
-      const auto id = column(sessions.p, 0);
-      ensure_message_ids(messages);
-      for (size_t i = 0; i < messages.size(); ++i) {
-        Statement insert(impl_->db, "INSERT INTO session_messages VALUES(?,?,?)");
-        insert.text(1, id);
-        sqlite3_bind_int64(insert.p, 2, static_cast<sqlite3_int64>(i));
-        insert.text(3, safe_json(Json(messages[i])).dump());
-        insert.run();
-      }
-      Statement mark(impl_->db, "UPDATE sessions SET message_format=1,messages='[]' WHERE id=?");
-      mark.text(1, id);
-      mark.run();
-    }
-    if (status != SQLITE_DONE)
-      throw Error("Cannot migrate session messages");
-    sql(impl_->db, "PRAGMA user_version=6");
-  }
-  migration.commit();
-  sql(impl_->db, "PRAGMA journal_mode=WAL");
   sql(impl_->db, durability == "fast" ? "PRAGMA synchronous=NORMAL" : "PRAGMA synchronous=FULL");
 }
 StateStore::~StateStore() {
@@ -304,7 +421,7 @@ std::shared_ptr<void> StateStore::acquire(const std::string &id) {
   auto lease = std::make_shared<Lease>();
   lease->fd = ::open((directory / (id + ".lock")).c_str(),
                      O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0600);
-  struct stat status {};
+  struct stat status{};
   if (lease->fd < 0 || ::fstat(lease->fd, &status) || !S_ISREG(status.st_mode) ||
       ::fchmod(lease->fd, 0600) || ::fcntl(lease->fd, F_SETFD, FD_CLOEXEC) < 0)
     throw Error("Cannot open private session ownership lock");
@@ -367,16 +484,34 @@ Session StateStore::load_id(const std::string &id, bool repair) {
     Statement parts(
         impl_->db, "SELECT position,payload FROM provider_parts WHERE session=? ORDER BY position");
     parts.text(1, s.id);
+    impl_->cached_session.clear();
+    impl_->cached_provider = nullptr;
+    impl_->cached_bytes = 0;
     int status;
+    size_t position = 0, bytes = 0;
     while ((status = sqlite3_step(parts.p)) == SQLITE_ROW) {
-      if (sqlite3_column_int64(parts.p, 0) == 0)
-        s.provider_state = stored_json(column(parts.p, 1));
-      else
-        s.provider_state["messages"].push_back(stored_json(column(parts.p, 1)));
+      if (sqlite3_column_int64(parts.p, 0) != static_cast<sqlite3_int64>(position))
+        corrupt_provider();
+      const auto payload = column(parts.p, 1);
+      bytes += payload.size();
+      auto part = provider_json(payload);
+      if (position == 0) {
+        if (!part.is_null() && (!part.is_object() || part.contains("messages")))
+          corrupt_provider();
+        s.provider_state = provider_header(part);
+      } else {
+        validate_provider_part(part);
+        if (!s.provider_state.is_object())
+          corrupt_provider();
+        s.provider_state["messages"].push_back(std::move(part));
+      }
+      ++position;
     }
     if (status != SQLITE_DONE)
-      throw Error("Cannot load provider conversation");
-    impl_->provider_states[s.id] = s.provider_state;
+      throw Error("Cannot load provider conversation: " + std::string(sqlite3_errmsg(impl_->db)));
+    if (s.provider_state.is_object() && !s.provider_state.contains("messages"))
+      s.provider_state["messages"] = Json::array();
+    impl_->cache_provider(s, bytes);
   }
   portable_messages(s.messages, s.id);
   ensure_message_ids(s.messages);
@@ -609,31 +744,70 @@ void StateStore::update_metadata(const Session &s) {
   q.run();
 }
 void StateStore::save_provider_state(const Session &s) {
+  const auto &messages = provider_messages(s.provider_state);
+  for (const auto &part : messages)
+    validate_provider_part(part);
+  const auto next = provider_header(s.provider_state);
   auto owner = acquire(s.id);
   Transaction tx(impl_->db);
-  Json next = s.provider_state;
-  Json messages = next.is_object() ? next.value("messages", Json::array()) : Json::array();
-  if (next.is_object())
-    next.erase("messages");
-  const auto old = impl_->provider_states.find(s.id);
-  const Json previous = old == impl_->provider_states.end() ? Json() : old->second;
-  Json previous_base = previous;
-  if (previous_base.is_object())
-    previous_base.erase("messages");
-  const Json previous_messages =
-      previous.is_object() ? previous.value("messages", Json::array()) : Json::array();
+  Json previous_base;
+  size_t previous_count = 0, first = 0, bytes = 0;
+  if (impl_->cached_session == s.id) {
+    previous_base = provider_header(impl_->cached_provider);
+    const auto &previous_messages = provider_messages(impl_->cached_provider);
+    previous_count = previous_messages.size();
+    while (first < messages.size() && first < previous_count &&
+           messages[first] == previous_messages[first])
+      ++first;
+    bytes = impl_->cached_bytes;
+    // Only the changed suffix is serialized; prefix bytes are known from the cached snapshot.
+    for (size_t i = first; i < previous_count; ++i)
+      bytes -= previous_messages[i].dump().size();
+    if (!previous_base.is_null())
+      bytes -= previous_base.dump().size();
+  } else {
+    Statement rows(impl_->db,
+                   "SELECT position,payload FROM provider_parts WHERE session=? ORDER BY position");
+    rows.text(1, s.id);
+    int status;
+    size_t position = 0;
+    while ((status = sqlite3_step(rows.p)) == SQLITE_ROW) {
+      if (sqlite3_column_int64(rows.p, 0) != static_cast<sqlite3_int64>(position))
+        corrupt_provider();
+      const auto payload = column(rows.p, 1);
+      const auto part = provider_json(payload);
+      if (!position) {
+        if (!part.is_null() && (!part.is_object() || part.contains("messages")))
+          corrupt_provider();
+        previous_base = provider_header(part);
+      } else {
+        validate_provider_part(part);
+        if (!previous_base.is_object())
+          corrupt_provider();
+        if (first == previous_count && first < messages.size() && messages[first] == part) {
+          ++first;
+          bytes += payload.size();
+        }
+        ++previous_count;
+      }
+      ++position;
+    }
+    if (status != SQLITE_DONE)
+      throw Error("Cannot compare provider conversation: " +
+                  std::string(sqlite3_errmsg(impl_->db)));
+  }
+  const auto header = next.dump();
   if (next != previous_base) {
     Statement q(impl_->db, "INSERT INTO provider_parts VALUES(?,0,?) ON CONFLICT(session,position) "
                            "DO UPDATE SET payload=excluded.payload");
     q.text(1, s.id);
-    q.text(2, next.dump());
+    q.text(2, header);
     q.run();
+    impl_->serialized += header.size();
   }
-  size_t first = 0;
-  while (first < messages.size() && first < previous_messages.size() &&
-         messages[first] == previous_messages[first])
-    ++first;
-  if (first < previous_messages.size()) {
+  if (!next.is_null() || !previous_base.is_null())
+    bytes += header.size();
+  if (first < previous_count) {
     Statement q(impl_->db, "DELETE FROM provider_parts WHERE session=? AND position>?");
     q.text(1, s.id);
     sqlite3_bind_int64(q.p, 2, static_cast<sqlite3_int64>(first));
@@ -644,13 +818,18 @@ void StateStore::save_provider_state(const Session &s) {
     q.text(1, s.id);
     sqlite3_bind_int64(q.p, 2, static_cast<sqlite3_int64>(i) + 1);
     const auto text = messages[i].dump();
+    bytes += text.size();
     impl_->serialized += text.size();
     q.text(3, text);
     q.run();
   }
   tx.commit();
+  impl_->pending_provider_bytes = bytes;
   if (tx.owner)
-    impl_->provider_states[s.id] = s.provider_state;
+    impl_->cache_provider(s, bytes);
+}
+size_t StateStore::provider_cache_bytes() const {
+  return impl_->cached_bytes;
 }
 void StateStore::append_messages(const Session &s, size_t first, bool provider_state) {
   if (first > s.messages.size())
@@ -677,7 +856,7 @@ void StateStore::append_messages(const Session &s, size_t first, bool provider_s
     save_provider_state(s);
   tx.commit();
   if (provider_state && tx.owner)
-    impl_->provider_states[s.id] = s.provider_state;
+    impl_->cache_provider(s, impl_->pending_provider_bytes);
 }
 void StateStore::revise_messages(const Session &s, const std::vector<size_t> &positions) {
   auto owner = acquire(s.id);
@@ -708,7 +887,7 @@ void StateStore::replace_history(const Session &s) {
   append_messages(s, 0);
   save_provider_state(s);
   tx.commit();
-  impl_->provider_states[s.id] = s.provider_state;
+  impl_->cache_provider(s, impl_->pending_provider_bytes);
 }
 void StateStore::save(const Session &s) {
   replace_history(s);
@@ -792,7 +971,7 @@ void StateStore::finish_turn(const std::string &id, const std::string &status) {
   q.text(1, status);
   q.text(2, id);
   q.run();
-  if (status == "complete")
+  if (status == "complete" && impl_->durability == "fast")
     sync();
 }
 void StateStore::tool_started(const std::string &id, const ToolCall &t) {

@@ -5,12 +5,14 @@
 #include "codet/prompt.hpp"
 #include "prompt_support.hpp"
 #include "temp.hpp"
+#include <fcntl.h>
 #include <fstream>
 #include <future>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <limits>
 #include <sqlite3.h>
+#include <sys/file.h>
 #include <thread>
 using namespace codet;
 using namespace testing;
@@ -842,6 +844,37 @@ TEST_F(History, PlanAndReadBatchesReserveFuturePromptGrowthInEitherOrder) {
   }
 }
 
+TEST_F(History, MigrationWaitsBeyondSqliteTimeoutWithoutMistakingMigratorsForSessions) {
+  {
+    StateStore initial(config.home);
+  }
+  sqlite3 *db = nullptr;
+  ASSERT_EQ(sqlite3_open((config.home / "state.sqlite3").c_str(), &db), SQLITE_OK);
+  legacy_layout(db);
+  ASSERT_EQ(sqlite3_exec(db, "PRAGMA user_version=5", nullptr, nullptr, nullptr), SQLITE_OK);
+  sqlite3_close(db);
+  fs::create_directories(config.home / "session-locks");
+  put(config.home / "session-locks/existing.lock", "");
+  const int fd = ::open((config.home / ".migration.lock").c_str(), O_RDWR | O_CREAT, 0600);
+  ASSERT_GE(fd, 0);
+  ASSERT_EQ(::flock(fd, LOCK_EX), 0);
+  auto open = [&] {
+    StateStore state(config.home);
+    return state.list().size();
+  };
+  auto first = std::async(std::launch::async, open);
+  auto second = std::async(std::launch::async, open);
+  EXPECT_EQ(first.wait_for(std::chrono::milliseconds(5200)), std::future_status::timeout);
+  EXPECT_EQ(second.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
+  ASSERT_EQ(::flock(fd, LOCK_UN), 0);
+  ::close(fd);
+  EXPECT_EQ(first.get(), 0u);
+  EXPECT_EQ(second.get(), 0u);
+  size_t backups = 0;
+  for (const auto &entry : fs::directory_iterator(config.home))
+    backups += entry.path().filename().string().rfind("state.sqlite3.pre-v6-", 0) == 0;
+  EXPECT_EQ(backups, 1u);
+}
 } // namespace
 
 TEST_F(History, JsonBytePagesRemainVerbatimThroughSaveForkAndProviderFormatting) {

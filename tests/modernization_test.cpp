@@ -779,4 +779,132 @@ TEST_F(Modernization, IncompleteResponsesPreserveSpecificDiagnosticAndRawBody) {
     }
   }
 }
+
+Json conversation_fixture(const std::string &text) {
+  return {
+      {"provider", "anthropic"},
+      {"messages",
+       Json::array(
+           {{{"source", "source"},
+             {"wire",
+              Json::array({{{"role", "user"},
+                            {"content", Json::array({{{"type", "text"}, {"text", text}}})}}})}}})}};
+}
+TEST_F(Modernization, MalformedProviderCachesFailClearlyWithoutRepairingStoredBytes) {
+  StateStore state(config.state_root);
+  auto session = state.create();
+  codet::Message user;
+  user.role = "user";
+  user.text = "valid transcript";
+  session.messages = {user};
+  session.provider_state = conversation_fixture("valid");
+  state.append_messages(session, 0, true);
+  sqlite3 *db = nullptr;
+  ASSERT_EQ(sqlite3_open((config.state_root / "state.sqlite3").c_str(), &db), SQLITE_OK);
+  ASSERT_EQ(sqlite3_exec(db, "UPDATE provider_parts SET payload='{truncated' WHERE position=1",
+                         nullptr, nullptr, nullptr),
+            SQLITE_OK);
+  try {
+    (void)state.load_id(session.id, false);
+    FAIL();
+  } catch (const Error &e) {
+    EXPECT_THAT(e.what(), HasSubstr("Corrupt provider conversation cache; transcript preserved"));
+  }
+  sqlite3_stmt *q = nullptr;
+  ASSERT_EQ(sqlite3_prepare_v2(db, "SELECT payload FROM provider_parts WHERE position=1", -1, &q,
+                               nullptr),
+            SQLITE_OK);
+  ASSERT_EQ(sqlite3_step(q), SQLITE_ROW);
+  EXPECT_STREQ(reinterpret_cast<const char *>(sqlite3_column_text(q, 0)), "{truncated");
+  sqlite3_finalize(q);
+  ASSERT_EQ(sqlite3_exec(db, "UPDATE provider_parts SET position=2,payload='{}' WHERE position=1",
+                         nullptr, nullptr, nullptr),
+            SQLITE_OK);
+  EXPECT_THROW(state.load_id(session.id, false), Error);
+  sqlite3_close(db);
+}
+TEST_F(Modernization, ProviderCacheIsBoundedAndUncachedSavesWriteOnlyChangedParts) {
+  StateStore state(config.state_root);
+  auto session = state.create();
+  session.provider_state = conversation_fixture(std::string(9 * 1024 * 1024, 'x'));
+  state.save_provider_state(session);
+  EXPECT_EQ(state.provider_cache_bytes(), 0u);
+  const auto baseline = state.serialized_bytes();
+  session.provider_state["messages"].push_back(conversation_fixture("new")["messages"][0]);
+  state.save_provider_state(session);
+  EXPECT_LT(state.serialized_bytes() - baseline, 1000u);
+  EXPECT_EQ(state.provider_cache_bytes(), 0u);
+  auto small = state.create();
+  small.provider_state = conversation_fixture("small");
+  state.save_provider_state(small);
+  EXPECT_GT(state.provider_cache_bytes(), 0u);
+  EXPECT_EQ(state.load_id(session.id, false).provider_state, session.provider_state);
+  EXPECT_EQ(state.provider_cache_bytes(), 0u);
+  EXPECT_EQ(state.load_id(small.id, false).provider_state, small.provider_state);
+  EXPECT_LT(state.provider_cache_bytes(), 1000u);
+}
+TEST_F(Modernization, InvalidProviderWritesAndFailedCommitsDoNotPublishCachedState) {
+  StateStore state(config.state_root);
+  auto session = state.create();
+  session.provider_state = conversation_fixture("valid");
+  state.save_provider_state(session);
+  const auto valid = session.provider_state, bytes = Json(state.provider_cache_bytes());
+  for (const auto &invalid :
+       {Json::array(), Json{{"messages", 4}}, Json{{"provider", 4}},
+        Json{{"messages", Json::array({{{"wire", "bad"}}})}},
+        Json{{"messages",
+              Json::array({{{"wire", Json::array({{{"role", "assistant"},
+                                                   {"content", Json::array()}}})}}})}}}) {
+    session.provider_state = invalid;
+    EXPECT_THROW(state.save_provider_state(session), Error);
+    EXPECT_EQ(state.load_id(session.id, false).provider_state, valid);
+  }
+  session.provider_state = valid;
+  session.provider_state["messages"].push_back(conversation_fixture("next")["messages"][0]);
+  sqlite3 *db = nullptr;
+  ASSERT_EQ(sqlite3_open((config.state_root / "state.sqlite3").c_str(), &db), SQLITE_OK);
+  ASSERT_EQ(sqlite3_exec(db,
+                         "CREATE TRIGGER fail_provider BEFORE INSERT ON provider_parts WHEN "
+                         "NEW.position=2 BEGIN SELECT RAISE(FAIL,'provider rollback'); END",
+                         nullptr, nullptr, nullptr),
+            SQLITE_OK);
+  EXPECT_THROW(state.save_provider_state(session), Error);
+  EXPECT_EQ(Json(state.provider_cache_bytes()), bytes);
+  ASSERT_EQ(sqlite3_exec(db, "DROP TRIGGER fail_provider", nullptr, nullptr, nullptr), SQLITE_OK);
+  state.save_provider_state(session);
+  EXPECT_EQ(state.load_id(session.id, false).provider_state, session.provider_state);
+  sqlite3_close(db);
+}
+TEST_F(Modernization, DurableCompletionAvoidsBarrierWhileFastCompletionKeepsIt) {
+  for (const auto *mode : {"durable", "fast"}) {
+    StateStore state(config.state_root / mode, {}, mode);
+    auto session = state.create();
+    state.begin_turn(session.id);
+    state.finish_turn(session.id, "complete");
+    sqlite3 *db = nullptr;
+    ASSERT_EQ(sqlite3_open((config.state_root / mode / "state.sqlite3").c_str(), &db), SQLITE_OK);
+    sqlite3_stmt *q = nullptr;
+    ASSERT_EQ(
+        sqlite3_prepare_v2(db, "SELECT count(*) FROM sqlite_master WHERE name='durability_barrier'",
+                           -1, &q, nullptr),
+        SQLITE_OK);
+    ASSERT_EQ(sqlite3_step(q), SQLITE_ROW);
+    EXPECT_EQ(sqlite3_column_int(q, 0), std::string(mode) == "fast" ? 1 : 0);
+    sqlite3_finalize(q);
+    sqlite3_close(db);
+  }
+}
+TEST_F(Modernization, CurrentSchemaReadersDoNotNeedTheWriterLock) {
+  StateStore original(config.state_root);
+  original.create();
+  sqlite3 *db = nullptr;
+  ASSERT_EQ(sqlite3_open((config.state_root / "state.sqlite3").c_str(), &db), SQLITE_OK);
+  ASSERT_EQ(sqlite3_exec(db, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr), SQLITE_OK);
+  EXPECT_NO_THROW({
+    StateStore reader(config.state_root);
+    EXPECT_EQ(reader.list().size(), 1u);
+  });
+  ASSERT_EQ(sqlite3_exec(db, "ROLLBACK", nullptr, nullptr, nullptr), SQLITE_OK);
+  sqlite3_close(db);
+}
 } // namespace
