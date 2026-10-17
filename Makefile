@@ -89,7 +89,8 @@ test-semgrep: semgrep-ready
 	  { codet_status=$$?; $(SEMGREP_PYTHON) scripts/semgrep-report.py failure build/semgrep/tests.json; exit $$codet_status; }
 check-semgrep: semgrep-ready
 	@$(SEMGREP_RUN) scan $(SEMGREP_FLAGS) --error --config checks/semgrep --json \
-	  src/modern/instructions.cpp src/modern/state.cpp src/modern/tools.cpp > build/semgrep/scan.json || \
+	  src/modern/instructions.cpp src/modern/state.cpp src/modern/tools.cpp \
+	  src/modern/hooks.cpp src/modern/capture_catalog.cpp src/modern/provider.cpp > build/semgrep/scan.json || \
 	  { codet_status=$$?; $(SEMGREP_PYTHON) scripts/semgrep-report.py failure build/semgrep/scan.json; exit $$codet_status; }
 test-foundation:
 	cmake -S . -B build/foundation -DCODET_FOUNDATION_ONLY=ON

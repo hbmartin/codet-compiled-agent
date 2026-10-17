@@ -14,3 +14,14 @@ Json Tools::execution_fact(int id, const ExecSession &session) const {
     return {{"state", "unknown"}};
   }
 }
+void post_feedback() {
+  // ruleid: codet-post-tool-feedback-not-fatal
+  if (post.blocked)
+    throw HookFailure(post.reason);
+  // ok: codet-post-tool-feedback-not-fatal
+  if (post.blocked)
+    throw Error(post.reason);
+  // ok: codet-post-tool-feedback-not-fatal
+  if (post.stopped)
+    throw HookFailure(post.reason);
+}

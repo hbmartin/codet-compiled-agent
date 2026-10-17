@@ -156,7 +156,8 @@ Schema-5 reference backfill skips malformed JSON and incompatible message shapes
 a time, leaving the original transcript/journal bytes untouched. Other sessions can open;
 loading a corrupt session or reconciling a corrupt completed call retains its existing error.
 SQLite read/publication failures still roll back migration and fail startup, allowing retry
-after the database problem is repaired. No schema-6 migration is introduced.
+after the database problem is repaired. Schema 6 subsequently migrates versions 1–5 after a
+private consistent backup; see the migration and restore instructions above.
 
 Active-turn steering retains its classification across completion, so `/memory consolidate`
 accepted as steering remains model text in its follow-up turn. Explicit active `/quit`, `/new`
@@ -252,8 +253,9 @@ An explicit EFFORT pins the session selection. Omitted effort clears the pin and
 effort, using the known Codex model's captured default when no configured effort is set, or leaving
 effort unspecified for other/unknown models. Known Codex effort combinations are validated before saving;
 unknown model IDs remain valid. Catalog entries do not establish account availability.
-No runtime catalog request is made. Provider defaults and the 65,536-token context default
-remain unchanged.
+No runtime catalog request is made. API fallback defaults are now `gpt-6.1-sol`,
+`claude-sonnet-5-5` and `gemini-3.8-flash`; saved selections and explicit overrides take
+precedence. The context default remains 65,536 tokens.
 
 `/status` shows session identity, provider/model/effort, permissions and context limit.
 `last_turn_usage_this_invocation` is null until a turn completes; it is not lifetime usage.

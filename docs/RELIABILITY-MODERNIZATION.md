@@ -16,7 +16,7 @@ A syntactically or structurally invalid saved plan warns and resumes with no act
 
 ## API selection and signed history
 
-New API fallback defaults are `gpt-6.1-sol`, `claude-sonnet-5-5` and `gemini-3.8-flash`. OpenAI Responses and Sonnet 5.5 use medium effort when none is selected. Saved model selections and explicit overrides take precedence.
+New API fallback defaults are `gpt-6.1-sol`, `claude-sonnet-5-5` and `gemini-3.8-flash`. Public OpenAI Responses defaults to medium effort for `gpt-6.1-sol` and `gpt-6-astra`; other OpenAI model IDs send reasoning fields only with an explicit effort. Sonnet 5.5 uses medium effort when none is selected. Saved model selections and explicit overrides take precedence.
 
 ```toml
 [providers.openai]
@@ -45,7 +45,7 @@ durability = "durable" # durable | fast
 
 ## Capture and build accounting
 
-Each capture store has a rebuildable SQLite catalog under the existing store lock. It records identity, accounted bytes, active/completed state and eviction order. Bytes are reserved before writes; partial or abandoned reservations reconcile conservatively. Ordinary 64 KiB flushes update the active capture without opening every retained file. Startup, namespace changes, catalog damage and capacity reclamation trigger reconciliation. Eviction revalidates identity and ownership locks. The existing 8 MiB per-capture, 64 MiB total and completed-file limits remain, including active-file protection, legacy adoption and symlink defenses.
+Each capture store has a rebuildable SQLite catalog under the existing store lock. It records identity, accounted bytes, active/completed state and eviction order. Bytes are reserved before writes; partial or abandoned reservations reconcile conservatively. Ordinary 64 KiB flushes update the active capture without opening every retained file. Startup, namespace changes, a missing catalog, catalog damage and capacity reclamation trigger reconciliation. Corrupt databases and sidecars are validated as owned regular files before removal, with at most one recovery attempt per catalog operation. Other failures remain capture errors, and recovery never repeats output writes. Eviction revalidates identity and ownership locks. The existing 8 MiB per-capture, 64 MiB total and completed-file limits remain, including active-file protection, legacy adoption and symlink defenses.
 
 Dependencies build from freshly extracted, hash-verified archives. A recipe/lock/toolchain fingerprint selects a clean stage, and only a completed build replaces the published sysroot. Its manifest records archive, patch, source-tree, recipe and output hashes. Mach-O verification requires all expected libraries, PPC architecture and a resolvable transitive dependency closure under the stage or approved system paths.
 

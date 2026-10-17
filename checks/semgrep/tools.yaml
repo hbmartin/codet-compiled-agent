@@ -9,3 +9,12 @@ rules:
       - pattern-inside: |
           Json Tools::execution_state(...) const { ... }
       - pattern: processes_.status(...)
+  - id: codet-post-tool-feedback-not-fatal
+    languages: [cpp]
+    severity: ERROR
+    message: Return PostToolUse blocking feedback without creating a fatal hook failure.
+    paths:
+      include: ["**/tools.cpp"]
+    pattern: |
+      if (post.blocked)
+        throw HookFailure(...);

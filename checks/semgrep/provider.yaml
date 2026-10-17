@@ -1,0 +1,14 @@
+rules:
+  - id: codet-public-reasoning-model-aware
+    languages: [cpp]
+    severity: ERROR
+    message: Gate default public Responses reasoning by model capability, not just provider.
+    paths:
+      include: ["**/provider.cpp"]
+    pattern-either:
+      - pattern: |
+          if (!$CONFIG.effort.empty() || $CONFIG.provider == "openai")
+            $BODY["reasoning"] = $VALUE;
+      - pattern: |
+          if ($CONFIG.provider == "openai" || !$CONFIG.effort.empty())
+            $BODY["reasoning"] = $VALUE;

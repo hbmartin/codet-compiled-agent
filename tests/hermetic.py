@@ -13,7 +13,8 @@ def environment(home):
             'GOOGLE_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY', 'OLLAMA_API_KEY', 'SEARXNG_URL',
         }:
             result.pop(key)
-    result.update(HOME=str(home), SHELL='/bin/sh', NO_PROXY='127.0.0.1,localhost')
+    result.update(HOME=str(home), CODET_HOME=str(pathlib.Path(home) / '.codet'),
+                  SHELL='/bin/sh', NO_PROXY='127.0.0.1,localhost')
     return result
 
 if __name__ == '__main__':

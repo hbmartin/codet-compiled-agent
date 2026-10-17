@@ -1,0 +1,25 @@
+rules:
+  - id: codet-catalog-split-transaction-start
+    languages: [cpp]
+    severity: ERROR
+    message: Start the transaction separately so later SQL errors cannot escape rollback protection.
+    paths:
+      include: ["**/capture_catalog.cpp"]
+    patterns:
+      - pattern: execute($DB, $SQL);
+      - metavariable-regex:
+          metavariable: $SQL
+          regex: '(?is)^"\s*BEGIN\b[^";]*;'
+  - id: codet-catalog-guarded-transaction
+    languages: [cpp]
+    severity: ERROR
+    message: Start catalog write transactions only inside the RAII transaction guard.
+    paths:
+      include: ["**/capture_catalog.cpp"]
+    patterns:
+      - pattern: execute($DB, $SQL);
+      - metavariable-regex:
+          metavariable: $SQL
+          regex: '(?is)^"\s*BEGIN\b'
+      - pattern-not-inside: |
+          explicit CatalogTransaction(...) : db(...) { ... }
