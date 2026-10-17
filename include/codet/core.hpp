@@ -456,6 +456,7 @@ class Tools {
   Json todos_ = Json::array();
   std::string session_id_;
   std::set<fs::path> referenced_results_;
+  std::string result_owner_ = unique_id();
   mutable std::vector<fs::path> skill_directories_;
   bool large_plan_ = false;
   std::optional<size_t> inspection_budget_;

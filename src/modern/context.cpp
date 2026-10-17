@@ -62,7 +62,7 @@ Json essential(const Json &metadata) {
 Message clipped(const Message &source, const std::string &name, const std::string &reference,
                 size_t limit, bool minimum) {
   auto out = source;
-  out.result_file = fs::path(reference).filename().string();
+  out.result_file = source.result_file.empty() ? reference : source.result_file;
   auto envelope = Json::parse(source.text, nullptr, false);
   if (!envelope.is_object())
     envelope = {{"content", source.text}, {"is_error", false}, {"metadata", Json::object()}};
@@ -182,6 +182,7 @@ std::vector<size_t> protected_history(const std::vector<Message> &messages) {
 }
 std::vector<Message> project_history(std::vector<Message> &messages, size_t available,
                                      Tools &tools) {
+  ensure_message_ids(messages);
   const auto names = call_names(messages);
   std::vector<Message> result = messages;
   size_t fixed = result.empty() ? 2 : result.size() + 1, minimum = 0, count = 0;

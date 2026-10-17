@@ -373,12 +373,16 @@ PermissionRequest Tools::execution_request(const ToolCall &call) const {
       throw Error("Path must not contain NUL");
     request.target = value;
     request.path = (config_.cwd / fs::path(value)).lexically_normal();
-    if (call.name == "read_file" && capture_name(value)) {
-      const auto candidate =
-          fs::absolute(capture_directory(config_) / fs::path(value).filename()).lexically_normal();
-      if (!fs::exists(*request.path) && referenced_results_.count(candidate) &&
-          (fs::path(value).is_absolute() || fs::path(value) == fs::path(value).filename()))
-        request.path = candidate;
+    if (call.name == "read_file" && !fs::exists(*request.path)) {
+      for (const auto &candidate : referenced_results_)
+        if (value == candidate.string() ||
+            fs::path(value) == candidate.lexically_relative(
+                                   fs::absolute(artifact_directory(config_)).lexically_normal()) ||
+            (capture_name(value) && fs::path(value).filename() == candidate.filename() &&
+             (fs::path(value).is_absolute() || fs::path(value) == fs::path(value).filename()))) {
+          request.path = candidate;
+          break;
+        }
     }
     if (call.name == "view_image") {
       const auto filename = fs::path(value).filename();
@@ -454,6 +458,18 @@ PermissionRequest Tools::execution_request(const ToolCall &call) const {
   return request;
 }
 namespace {
+bool result_name(const fs::path &ref) {
+  const auto components = std::vector<fs::path>(ref.begin(), ref.end());
+  const auto identity = [](const std::string &value) {
+    return !value.empty() && value.size() <= 128 &&
+           value.find_first_not_of(
+               "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-") ==
+               std::string::npos;
+  };
+  return !ref.is_absolute() && components.size() == 3 && components[0] == "results" &&
+         identity(components[1].string()) && components[2].extension() == ".json" &&
+         identity(components[2].stem().string());
+}
 bool private_regular(const FileSystem &files, const fs::path &root, const fs::path &p,
                      bool directory = false) {
   const auto base = fs::absolute(root).lexically_normal();
@@ -508,9 +524,12 @@ bool Tools::private_read(const fs::path &p) const {
         return true;
     }
   const auto captures = fs::absolute(capture_directory(config_)).lexically_normal();
-  return referenced_results_.count(value) && value.parent_path() == captures &&
-         capture_name(value) && private_anchor(captures) &&
-         private_regular(files_, captures, value);
+  if (!referenced_results_.count(value))
+    return false;
+  if (value.parent_path() == captures && capture_name(value))
+    return private_anchor(captures) && private_regular(files_, captures, value);
+  return within(value, fs::absolute(artifacts / "results").lexically_normal()) &&
+         private_anchor(artifacts) && private_regular(files_, artifacts, value);
 }
 void Tools::reference_results(const std::vector<Message> &messages) {
   const auto accept = [&](const std::string &value) {
@@ -525,8 +544,14 @@ void Tools::reference_results(const std::vector<Message> &messages) {
   for (const auto &message : messages) {
     if (message.role != "tool")
       continue;
-    if (!message.result_file.empty())
-      accept(message.result_file);
+    if (!message.result_file.empty()) {
+      const fs::path ref(message.result_file);
+      if (result_name(ref))
+        referenced_results_.insert(
+            fs::absolute(artifact_directory(config_) / ref).lexically_normal());
+      else
+        accept(message.result_file);
+    }
     const auto envelope = Json::parse(message.text, nullptr, false);
     if (!envelope.is_object())
       continue;
@@ -536,23 +561,38 @@ void Tools::reference_results(const std::vector<Message> &messages) {
   }
 }
 std::string Tools::result_reference(const Message &message) const {
-  return (capture_directory(config_) / (message.result_file.empty()
-                                            ? "capture-00000000-0000-0000-0000-000000000000.txt"
-                                            : fs::path(message.result_file).filename().string()))
-      .string();
+  if (!message.result_file.empty()) {
+    const fs::path ref(message.result_file);
+    if (capture_name(ref))
+      return (capture_directory(config_) / ref.filename()).string();
+    if (!result_name(ref))
+      throw Error("Invalid private result reference");
+    return (artifact_directory(config_) / ref).string();
+  }
+  const auto ref =
+      fs::path("results") / (session_id_.empty() ? result_owner_ : session_id_) /
+      ((message.message_id.empty() ? "00000000-0000-0000-0000-000000000000" : message.message_id) +
+       ".json");
+  if (!result_name(ref))
+    throw Error("Invalid private result identity");
+  return (artifact_directory(config_) / ref).string();
 }
 std::string Tools::retain_result(Message &message) {
   if (message.result_file.empty()) {
-    OutputCapture capture(capture_store_, 1);
-    const auto payload = safe_json(Json(message)).dump();
-    capture.append(payload);
-    capture.retain();
-    capture.finish();
-    ProcessResult stored;
-    capture.metadata(stored, payload.size());
-    if (stored.spill_path.empty() || stored.spill_truncated || !stored.capture_error.empty())
-      throw Error("Cannot retain full tool result for paging: " + stored.capture_error);
-    message.result_file = fs::path(stored.spill_path).filename().string();
+    if (message.message_id.empty())
+      message.message_id = unique_id();
+    const auto root = artifact_directory(config_);
+    const fs::path path = result_reference(message);
+    const auto ref = path.lexically_relative(root);
+    if (!private_anchor(root) || fs::is_symlink(root) || fs::is_symlink(root / "results") ||
+        fs::is_symlink(path.parent_path()))
+      throw Error("Invalid private result storage");
+    fs::create_directories(path.parent_path());
+    for (const auto &dir : {root, root / "results", path.parent_path()})
+      if (::chmod(dir.c_str(), 0700))
+        throw Error("Cannot protect private result directory");
+    files_.atomic_write(path, safe_json(Json(message)).dump(), true);
+    message.result_file = ref.string();
   }
   const auto path = result_reference(message);
   referenced_results_.insert(fs::absolute(path).lexically_normal());
@@ -1591,6 +1631,11 @@ fs::path Tools::archive_images(const std::vector<Message> &messages) {
 void Tools::use_session(const std::string &id) {
   if (id == session_id_)
     return;
+  const auto root = artifact_directory(config_);
+  if (fs::exists(artifact_index_path(root, id))) {
+    if (!private_anchor(root)) throw Error("Artifact storage changed before session inspection");
+    archive_image_history(root, files_, id, {});
+  }
   session_id_ = id;
   referenced_results_.clear();
   large_plan_ = false;

@@ -37,6 +37,17 @@ void check_index(const fs::path &root, const fs::path &target) {
   if (fs::is_symlink(root) || fs::is_symlink(target.parent_path()) || fs::is_symlink(target))
     throw Error("Artifact index storage must not be a symlink");
 }
+bool current_index(const FileSystem &files, const fs::path &target) {
+  auto input = files.open_read(target);
+  if (input->path() != files.canonical(target)) throw Error("Artifact index changed while opening");
+  char buffer[512];
+  const auto count = input->read(buffer, sizeof buffer);
+  const std::string prefix(buffer, count);
+  const auto first = Json::parse(prefix.substr(0, prefix.find('\n')), nullptr, false);
+  if (!first.is_object() || first.value("kind", "") != "header") return false;
+  if (first.value("version", 0) != 2) throw Error("Unsupported artifact index version; use a compatible Codet version");
+  return true;
+}
 } // namespace
 std::string artifact_index_reference(const std::string &session) {
   if (session.empty() || session.size() > 128 ||
@@ -58,6 +69,49 @@ fs::path resolve_image(const fs::path &root, const ImageArtifact &image) {
                             fs::path(image.path) != fs::path(image.path).filename()))
     throw Error("Invalid generated image reference");
   return root / fs::path(image.path).filename();
+}
+void portable_messages(std::vector<Message> &messages, const std::string &session) {
+  for (auto &message : messages) {
+    for (auto &image : message.images)
+      image = portable_image(std::move(image));
+    if (!message.result_file.empty() && capture_name(message.result_file))
+      message.result_file = fs::path(message.result_file).filename().string();
+    if (message.role == "tool") {
+      auto envelope = Json::parse(message.text, nullptr, false);
+      const auto normalize = [](Json &value) {
+        if (!value.is_object())
+          return;
+        if (value.value("spill_path", Json()).is_string() &&
+            capture_name(value.at("spill_path").get<std::string>()))
+          value["spill_path"] =
+              fs::path(value.at("spill_path").get<std::string>()).filename().string();
+        if (value.value("artifact", Json()).is_object()) {
+          try {
+            value["artifact"] = portable_image(value.at("artifact").get<ImageArtifact>());
+          } catch (const Json::exception &) {
+            return; // Preserve unrelated tool metadata without interpreting it as an image.
+          }
+        }
+      };
+      if (envelope.is_object()) {
+        if (envelope.contains("metadata"))
+          normalize(envelope["metadata"]);
+        if (envelope.value("content", Json()).is_string()) {
+          auto content = Json::parse(envelope.at("content").get<std::string>(), nullptr, false);
+          if (content.is_object()) {
+            normalize(content);
+            envelope["content"] = content.dump();
+          }
+        }
+        message.text = envelope.dump();
+      }
+    }
+    if (!message.artifact_index.empty()) {
+      if (fs::path(message.artifact_index).filename() != session + ".jsonl")
+        throw Error("Artifact index belongs to another session");
+      message.artifact_index = artifact_index_reference(session);
+    }
+  }
 }
 fs::path archive_image_history(const fs::path &root, FileSystem &files, const std::string &session,
                                const std::vector<Message> &messages) {
@@ -88,7 +142,7 @@ fs::path archive_image_history(const fs::path &root, FileSystem &files, const st
   if (!fs::exists(target) && referenced)
     throw Error("Historical image index is missing under the active artifact root; restore its "
                 "indexes directory");
-  if (pending.empty())
+  if (pending.empty() && (!fs::exists(target) || current_index(files, target)))
     return fs::exists(target) ? target : fs::path{};
   fs::create_directories(target.parent_path());
   if (::chmod(root.c_str(), 0700) || ::chmod(target.parent_path().c_str(), 0700))
@@ -167,6 +221,8 @@ void copy_image_history(const fs::path &root, FileSystem &files, const std::stri
         });
       },
       true);
+  // Migrate legacy rows in the child only; a fork must not rewrite its live parent.
+  archive_image_history(root, files, child, {});
 }
 Json image_history_position(const fs::path &root, const FileSystem &files,
                             const std::string &session) {
