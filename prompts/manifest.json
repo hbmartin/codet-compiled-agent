@@ -912,8 +912,8 @@
         }
       ]
     },
-    "c1ae889e7fc9057708d2a3dd7b8e80450b587a3c739e1a9860fad934cfd3c1f3": {
-      "adapted_sha256": "c1ae889e7fc9057708d2a3dd7b8e80450b587a3c739e1a9860fad934cfd3c1f3",
+    "3ec03e8e1b8cd9ad2727f32dae589da5389933f8ccf7956f9a13fc031a304026": {
+      "adapted_sha256": "3ec03e8e1b8cd9ad2727f32dae589da5389933f8ccf7956f9a13fc031a304026",
       "origins": [
         {
           "upstream_sha256": "2351631dfc5644dc5a45eaaca4139475bd02810ee6cb792d058b551559b3242e",
@@ -922,6 +922,12 @@
               "reason": "Codet identity without a model-family claim",
               "before": "You are Codex, a coding agent based on GPT-5. You and the user share one workspace, and your job is to collaborate with them until their goal is genuinely handled.",
               "after": "You are Codet, a terminal coding assistant. You and the user share one workspace, and your job is to collaborate with them until their intended goal is completely handled.",
+              "count": 1
+            },
+            {
+              "reason": "Codet identity",
+              "before": "as Codex:",
+              "after": "as Codet:",
               "count": 1
             },
             {
@@ -1170,7 +1176,7 @@
       "approval_never": null
     },
     "gpt-5.5": {
-      "instructions": "c1ae889e7fc9057708d2a3dd7b8e80450b587a3c739e1a9860fad934cfd3c1f3",
+      "instructions": "3ec03e8e1b8cd9ad2727f32dae589da5389933f8ccf7956f9a13fc031a304026",
       "default": null,
       "plan": null,
       "approval_on_request": null,
