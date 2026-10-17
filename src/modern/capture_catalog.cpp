@@ -112,6 +112,56 @@ void record(sqlite3 *db, const std::string &name, const struct stat &st, uint64_
   q.number(8, readable);
   q.run();
 }
+// Capacity checks inspect catalogued active files, never enumerate the store.
+void reconcile_active(sqlite3 *db, const fs::path &directory,
+                      const std::function<void(const std::string &)> &warn) {
+  struct Active {
+    std::string name;
+    sqlite3_int64 device, inode;
+  };
+  std::vector<Active> active;
+  {
+    Query rows(db, "SELECT name,device,inode FROM captures WHERE active=1");
+    while (rows.step() == SQLITE_ROW) {
+      const auto *name = sqlite3_column_text(rows.s, 0);
+      active.push_back({name ? reinterpret_cast<const char *>(name) : "",
+                        sqlite3_column_int64(rows.s, 1), sqlite3_column_int64(rows.s, 2)});
+    }
+  }
+  for (const auto &row : active) {
+    if (!eligible(row.name) || fs::path(row.name) != fs::path(row.name).filename())
+      throw Error("Invalid active capture catalog entry");
+    const auto path = directory / row.name;
+    try {
+      struct stat link{};
+      if (::lstat(path.c_str(), &link)) {
+        if (errno != ENOENT)
+          throw Error("Cannot inspect active output capture");
+        Query erase(db, "DELETE FROM captures WHERE name=?");
+        erase.text(1, row.name);
+        erase.run();
+        continue;
+      }
+      File file(path);
+      if (::flock(file.fd, LOCK_EX | LOCK_NB)) {
+        if (errno == EWOULDBLOCK || errno == EAGAIN)
+          continue;
+        throw Error("Cannot inspect active output ownership");
+      }
+      struct stat opened{}, current{};
+      if (::fstat(file.fd, &opened) || ::lstat(path.c_str(), &current) ||
+          opened.st_dev != static_cast<dev_t>(row.device) ||
+          opened.st_ino != static_cast<ino_t>(row.inode) || opened.st_dev != current.st_dev ||
+          opened.st_ino != current.st_ino || opened.st_size < 0)
+        throw Error("Active capture identity changed");
+      record(db, row.name, opened, static_cast<uint64_t>(opened.st_size), false, true);
+    } catch (const CatalogError &) {
+      throw;
+    } catch (const Error &error) {
+      warn(row.name + ": " + error.what());
+    }
+  }
+}
 } // namespace
 struct CaptureStore::Catalog {
   sqlite3 *db = nullptr;
@@ -284,6 +334,17 @@ size_t CaptureStore::account_reservation(OutputSpool &spool, size_t requested) {
     record(db, spool.path_.filename().string(), own, static_cast<uint64_t>(own.st_size), true,
            true);
   }
+  bool pressure = false;
+  {
+    Query count(db, "SELECT count(*),coalesce(sum(bytes),0) FROM captures");
+    if (count.step() != SQLITE_ROW)
+      throw Error("Cannot inspect capture capacity");
+    const auto total = static_cast<uint64_t>(sqlite3_column_int64(count.s, 1));
+    pressure = sqlite3_column_int64(count.s, 0) > static_cast<sqlite3_int64>(records_) ||
+               total > quota_ || requested > quota_ - std::min<uint64_t>(total, quota_);
+  }
+  if (pressure)
+    reconcile_active(db, directory_, [&](const auto &message) { warn(message); });
   for (unsigned pass = 0; pass < 2; ++pass) {
     Query totals(db, "SELECT coalesce(sum(bytes),0),coalesce(sum(active=0),0) FROM captures");
     if (totals.step() != SQLITE_ROW)
@@ -364,17 +425,6 @@ void CaptureStore::account_closed(OutputSpool &spool) {
   if (::flock(lock.fd, LOCK_EX))
     throw Error("Cannot lock output store");
   with_catalog([&] {
-    bool crowded = false;
-    {
-      Query count(catalog_->db, "SELECT count(*) FROM captures");
-      if (count.step() != SQLITE_ROW)
-        throw Error("Cannot count capture catalog");
-      crowded = sqlite3_column_int64(count.s, 0) > static_cast<sqlite3_int64>(records_);
-    }
-    // An abandoned active flag must not bypass completed-file capacity after its owner dies.
-    if (crowded)
-      rebuild_catalog();
-
     struct stat st{};
     if (spool.bytes_ && ::lstat(spool.path_.c_str(), &st) == 0 && S_ISREG(st.st_mode))
       record(catalog_->db, spool.path_.filename().string(), st, static_cast<uint64_t>(st.st_size),

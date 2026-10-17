@@ -184,4 +184,52 @@ TEST_F(CatalogRecovery, IoErrorsDoNotDeleteOrRetryTheCatalog) {
   EXPECT_EQ(opened_catalogs, 1);
   EXPECT_TRUE(fs::exists(dir / "catalog.sqlite3"));
 }
+
+TEST_F(CatalogRecovery, AtCapacityClosesDoNotScanAndAbandonedFlagsAreReclaimed) {
+  for (int retained : {40, 64}) {
+    auto bounded = std::make_shared<CaptureStore>(temp.root / std::to_string(retained));
+    for (int i = 0; i < retained; ++i) {
+      OutputSpool old(bounded);
+      old.append("old");
+      old.close();
+    }
+    for (int i = 0; i < 10; ++i) {
+      OutputSpool next(bounded);
+      next.append("new");
+      next.flush();
+      const auto before = bounded->metrics.scans;
+      next.close();
+      EXPECT_TRUE(next.error().empty()) << next.error();
+      EXPECT_EQ(bounded->metrics.scans, before);
+    }
+    Database db(temp.root / std::to_string(retained) / "catalog.sqlite3");
+    db.exec("UPDATE captures SET active=1");
+    OutputSpool next(bounded);
+    next.append("after abandoned writer");
+    next.flush();
+    const auto before = bounded->metrics.scans;
+    next.close();
+    EXPECT_TRUE(next.error().empty()) << next.error();
+    EXPECT_EQ(bounded->metrics.scans, before);
+    EXPECT_LE(db.integer("SELECT count(*) FROM captures"), 64);
+    EXPECT_EQ(db.integer("SELECT sum(active) FROM captures"), 0);
+  }
+}
+TEST_F(CatalogRecovery, AccountingFailureKeepsCompleteBytesAndBoundsItsDiagnostic) {
+  OutputSpool active(store);
+  active.append("fully retained");
+  active.flush();
+  Database db(dir / "catalog.sqlite3");
+  const auto trigger =
+      "CREATE TRIGGER fail_account BEFORE INSERT ON captures BEGIN SELECT RAISE(FAIL,'" +
+      std::string(3000, 'e') + "'); END";
+  db.exec(trigger.c_str());
+  active.close();
+  EXPECT_EQ(active.bytes(), 14u);
+  EXPECT_FALSE(active.truncated());
+  EXPECT_FALSE(active.error().empty());
+  EXPECT_LE(active.error().size(), 1024u);
+  NativeFileSystem files;
+  EXPECT_EQ(files.read(active.path(), 1024), "fully retained");
+}
 } // namespace
