@@ -55,10 +55,16 @@ const std::vector<ToolDefinition> &tool_registry() {
         {{"patch", field("string")}}, {"patch"}, ToolHandler::patch, true, "", "apply_patch",
         "file_change");
     add("read_file",
-        "Codet Plan-mode extension: read numbered text lines or list directory entries. Paths are "
-        "workspace-relative or absolute. offset starts at 1; limit defaults to 2000.",
-        {{"path", field("string")}, {"offset", field("integer")}, {"limit", field("integer")}},
-        {"path"}, ToolHandler::read, false, "plan");
+        "Read numbered lines or directory entries in Plan mode; in other modes only advertised "
+        "private context is readable. offset is one-based; limit defaults to 2000. Alternatively "
+        "use zero-based byte_offset and byte_limit for long lines. Continue using "
+        "next_byte_offset.",
+        {{"path", field("string")},
+         {"offset", field("integer")},
+         {"limit", field("integer")},
+         {"byte_offset", field("integer")},
+         {"byte_limit", field("integer")}},
+        {"path"}, ToolHandler::read);
     add("view_image",
         "View a local image as pixels. high (default) resizes to 1280 pixels; original preserves "
         "dimensions within memory limits.",

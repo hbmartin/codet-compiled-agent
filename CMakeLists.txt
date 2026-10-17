@@ -53,7 +53,7 @@ add_library(codet_core STATIC
   src/modern/platform.cpp src/modern/failure.cpp src/modern/support.cpp src/modern/config.cpp src/modern/provider.cpp
   src/modern/state.cpp src/modern/output.cpp src/modern/hooks.cpp src/modern/patch.cpp src/modern/tools.cpp
   src/modern/tool_registry.cpp src/modern/interaction.cpp src/modern/images.cpp
-  src/modern/computer.cpp src/modern/artifacts.cpp src/modern/prompts.cpp src/modern/agent.cpp src/modern/cli.cpp)
+  src/modern/computer.cpp src/modern/artifacts.cpp src/modern/context.cpp src/modern/inspection.cpp src/modern/prompts.cpp src/modern/agent.cpp src/modern/cli.cpp)
 target_include_directories(codet_core PUBLIC include PRIVATE "${CMAKE_BINARY_DIR}/generated" ${CURSES_INCLUDE_DIRS} ${EDIT_INCLUDE_DIR})
 target_link_libraries(codet_core PUBLIC nlohmann_json::nlohmann_json tomlplusplus::tomlplusplus
   nlohmann_json_schema_validator::validator CURL::libcurl OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB ${CODET_SQLITE_TARGET} Threads::Threads
@@ -86,7 +86,7 @@ if(CODET_BUILD_TESTS)
   set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
   set(BUILD_GMOCK ON CACHE BOOL "" FORCE)
   add_subdirectory("${CODET_DEPENDENCY_ROOT}/googletest" "deps/gtest" EXCLUDE_FROM_ALL)
-  add_executable(codet_tests tests/runtime_test.cpp tests/foundation_test.cpp tests/core_test.cpp tests/review_test.cpp tests/remaining_test.cpp tests/tool_contract_test.cpp tests/followup_test.cpp tests/final_review_test.cpp tests/output_test.cpp tests/process_policy_test.cpp tests/prompt_test.cpp)
+  add_executable(codet_tests tests/runtime_test.cpp tests/foundation_test.cpp tests/core_test.cpp tests/review_test.cpp tests/remaining_test.cpp tests/tool_contract_test.cpp tests/followup_test.cpp tests/final_review_test.cpp tests/output_test.cpp tests/process_policy_test.cpp tests/prompt_test.cpp tests/context_history_test.cpp)
   file(READ "${CMAKE_SOURCE_DIR}/tests/fixtures/core-tools-v1.json" CODET_CORE_CONTRACT)
   configure_file(tests/core_contract.hpp.in generated/core_contract.hpp @ONLY)
   target_include_directories(codet_tests PRIVATE "${CMAKE_BINARY_DIR}/generated")

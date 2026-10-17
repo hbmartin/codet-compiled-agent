@@ -570,13 +570,14 @@ TEST_F(Runtime, EphemeralArtifactRootIsUsedForPersistenceAndReplay) {
   tools.use_session(session.id);
   codet::Message message;
   message.role = "system";
+  message.message_id = unique_id();
   message.images = {image};
   message.artifact_index = tools.archive_images({message}).string();
   EXPECT_TRUE(within(message.artifact_index, config.artifact_root));
   session.messages = {message};
   state.save(session);
   const auto fork = state.fork(session);
-  EXPECT_TRUE(within(fork.messages[0].artifact_index, config.artifact_root));
+  EXPECT_EQ(fork.messages[0].artifact_index, artifact_index_reference(fork.id));
   EXPECT_NE(fork.messages[0].artifact_index, message.artifact_index);
   fs::remove_all(config.artifact_root.parent_path());
   EXPECT_THROW(image_data_url(image, config), Error);

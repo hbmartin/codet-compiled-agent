@@ -94,3 +94,14 @@ For the follow-up runtime changes, also verify:
 - Run enough screenshot-led TextEdit/browser interactions to compact. Verify the continuation contains no automatic images, inspect the paged index and reload a chosen image with `view_image`. Resume and fork; repeat with `--ephemeral` and confirm indexes disappear with the temporary images.
 - Exercise small context settings and large first prompts; verify actionable fixed/input/summary diagnostics, current task-plan updates and Plan-mode memory inspection guidance.
 - Repeat cleanup with observer/reap fault fixtures, then run new jobs; confirm capacity is recovered without per-job refresh waits. Check invalid display bounds fail before capture arithmetic where a display fixture is available.
+
+
+Context/history follow-up acceptance (native Tiger execution required):
+
+- With default context_tokens=65536, run a command producing 45 KiB and a multi-command batch; verify status survives projection, inspect metadata.result_path with headless read_file, and confirm commands are not repeated to recover omitted output.
+- Exercise line pages and byte_offset/byte_limit on a long UTF-8 line, a capture and memory Markdown. Resume at next_byte_offset and verify no gaps or repeated bytes. Confirm explicit read_file denies and symlink-changing hooks block private reads in all permission modes.
+- Save a long plan; verify active/pending steps and original numbers appear in its bounded view, then inspect the full file by byte pages. Confirm a >1 MiB update preserves the prior plan and a legacy oversized saved plan does not block resume.
+- Capture repeated identical TextEdit/browser screenshots, force compaction, and verify every observation is in chronological sequence while the continuation has no attachments. Page the latest_line, explicitly reload with view_image, resume, fork and relocate state plus artifact storage. Legacy rows must say chronology unknown.
+- Repeat index/result paging with --ephemeral and verify automatic storage is removed after hooks/process cleanup.
+- With a valid and invalid display entry, explicitly capture the valid display and automatically capture a window/region on it; verify warnings for skipped invalid entries, unchanged IDs, correct pointer mapping and rejection of spans across valid displays.
+- Force summary output exhaustion and a persistence failure; verify durable history/results survive and completed side effects are never replayed. Run screenshot-led TextEdit and browser workflows after explicit image reload.

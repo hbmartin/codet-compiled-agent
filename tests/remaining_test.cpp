@@ -186,15 +186,16 @@ TEST_F(Remaining, AutomaticSqliteRollbackPreservesOriginalFailure) {
   EXPECT_EQ(session.messages.size(), 1u);
   sqlite3_close(db);
 }
-TEST_F(Remaining, BoundedToolOutputRetainsItsSpillNoticeAndFullContent) {
+TEST_F(Remaining, FileInspectionPagesLongLinesWithoutSpilling) {
   config.tool_output_limit = 256;
   files.atomic_write(config.cwd / "long", std::string(2000, 'x') + "\n");
   const auto result = execute("read_file", {{"path", "long"}});
   ASSERT_FALSE(result.error) << result.content;
   EXPECT_LE(result.content.size(), 256u);
-  EXPECT_THAT(result.content, HasSubstr("bytes omitted"));
-  ASSERT_TRUE(result.metadata.contains("spill_path"));
-  EXPECT_GT(files.read(result.metadata["spill_path"].get<std::string>()).size(), 2000u);
+  EXPECT_THAT(result.content, StartsWith("1\tx"));
+  EXPECT_FALSE(result.metadata.contains("spill_path"));
+  EXPECT_GT(result.metadata.at("next_byte_offset"), 0);
+  EXPECT_LT(result.metadata.at("next_byte_offset"), 2001);
   EXPECT_NO_THROW(Json(result.content).dump());
 }
 TEST_F(Remaining, SnapshotLoadAndForkCannotModifyAnOwnedLiveBatch) {

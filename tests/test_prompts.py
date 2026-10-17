@@ -2,6 +2,7 @@
 import hashlib
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -13,6 +14,27 @@ spec.loader.exec_module(importer)
 
 
 class PromptBundle(unittest.TestCase):
+    def test_cmake_embeds_literal_bytes_and_keeps_unchanged_header(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            text = "Literal @VAR@ ${interpolation}\n#cmakedefine ENABLED\n雪🌲\n"
+            key = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            (root / "prompts/assets").mkdir(parents=True)
+            (root / "prompts/assets" / (key + ".md")).write_bytes(text.encode("utf-8"))
+            manifest = {"assets": {key: {}}, "models": {"gpt-5.5": {name: key for name in
+                        ("instructions", "default", "plan", "approval_on_request", "approval_never")}},
+                        "bundled": {name: key for name in
+                        ("compact", "summary_prefix", "default", "plan", "approval_on_request", "approval_never")}}
+            (root / "prompts/manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            (root / "CMakeLists.txt").write_text('cmake_minimum_required(VERSION 3.20)\nproject(fixture NONE)\nset(VAR changed)\nset(ENABLED 1)\ninclude("' + str(ROOT / "cmake/prompts.cmake") + '")\n', encoding="utf-8")
+            command = ["cmake", "-S", str(root), "-B", str(root / "build")]
+            subprocess.run(command, check=True, capture_output=True)
+            header = root / "build/generated/prompts.hpp"
+            self.assertIn(text.encode("utf-8"), header.read_bytes())
+            timestamp = header.stat().st_mtime_ns
+            subprocess.run(command, check=True, capture_output=True)
+            self.assertEqual(header.stat().st_mtime_ns, timestamp)
+
     def test_adaptation_preserves_distinct_skill_steps_and_permission_explanations(self):
         originals = [(p, p.read_text(encoding="utf-8")) for p in (ROOT / "prompts/upstream").glob("*.md")]
         for path, original in originals:

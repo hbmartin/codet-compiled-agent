@@ -32,6 +32,9 @@ std::string png() {
   return out;
 }
 struct Images : ImageBackend {
+  ImageData load_bytes(const std::string &, const std::string &detail) override {
+    return load({}, detail);
+  }
   bool available() const override {
     return true;
   }
@@ -100,12 +103,11 @@ TEST_F(Contracts, RegistryNamesRequiredFieldsAndModeGatesMatchFrozenContract) {
     EXPECT_NE(tool_definition(name), nullptr);
   }
   for (const auto &name :
-       {"exec_command", "write_stdin", "apply_patch", "view_image", "update_plan",
+       {"read_file", "exec_command", "write_stdin", "apply_patch", "view_image", "update_plan",
         "clock.curr_time", "clock.sleep", "computer.get_state", "computer.screenshot"})
     EXPECT_TRUE(seen.count(name)) << name;
-  for (const auto &name :
-       {"Read", "Edit", "Write", "Bash", "TaskCreate", "ApplyPatch", "Memory", "Skill", "WebSearch",
-        "read_file", "request_user_input", "request_user_input_async"})
+  for (const auto &name : {"Read", "Edit", "Write", "Bash", "TaskCreate", "ApplyPatch", "Memory",
+                           "Skill", "WebSearch", "request_user_input", "request_user_input_async"})
     EXPECT_FALSE(seen.count(name)) << name;
   const auto fixture = Json::parse(core_contract_json);
   for (auto it = fixture.begin(); it != fixture.end(); ++it) {
@@ -496,7 +498,7 @@ TEST_F(Contracts, CompactionRetainsReloadableImageReferences) {
   session.messages = {first, second};
   state.save(session);
   auto t = tools();
-  config.context_tokens = codet::test::context_tokens(t, config, 1200);
+  config.context_tokens = codet::test::context_tokens(t, config, 5000);
   ScriptProvider provider;
   int summaries = 0;
   provider.next = [&](const auto &, const Json &schemas) {
@@ -516,15 +518,16 @@ TEST_F(Contracts, CompactionRetainsReloadableImageReferences) {
   EXPECT_TRUE(session.messages[1].images.empty());
   const auto index = artifact_index_path(artifact_directory(config), session.id);
   const auto text = files.read(index);
-  EXPECT_EQ(std::count(text.begin(), text.end(), '\n'), 201);
-  EXPECT_EQ(session.messages[0].artifact_index, index.string());
+  EXPECT_EQ(std::count(text.begin(), text.end(), '\n'), 204);
+  EXPECT_EQ(session.messages[0].artifact_index, artifact_index_reference(session.id));
   EXPECT_THAT(t.dynamic_context(), HasSubstr(index.string()));
   const auto restored = state.load_id(session.id);
-  EXPECT_EQ(restored.messages[0].artifact_index, index.string());
+  EXPECT_EQ(restored.messages[0].artifact_index, artifact_index_reference(session.id));
   const auto fork = state.fork(restored);
   const auto child_index = artifact_index_path(artifact_directory(config), fork.id);
-  EXPECT_EQ(fork.messages[0].artifact_index, child_index.string());
-  EXPECT_EQ(files.read(child_index), text);
+  EXPECT_EQ(fork.messages[0].artifact_index, artifact_index_reference(fork.id));
+  EXPECT_EQ(image_history_position(artifact_directory(config), files, fork.id),
+            image_history_position(artifact_directory(config), files, session.id));
   config.permission_mode = "plan";
   EXPECT_FALSE(
       t.execute(call("read_file", {{"path", index.string()}, {"offset", 2}, {"limit", 2}}), cancel)

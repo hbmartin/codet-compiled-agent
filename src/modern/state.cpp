@@ -1,5 +1,7 @@
 #include "codet/artifacts.hpp"
+#include "codet/context.hpp"
 #include "codet/core.hpp"
+#include <algorithm>
 #include <cerrno>
 #include <fcntl.h>
 #include <set>
@@ -154,11 +156,15 @@ Session StateStore::load_id(const std::string &id, bool repair) {
   } catch (const std::exception &) {
     throw Error("Corrupt session messages");
   }
+  portable_messages(s.messages, s.id);
+  ensure_message_ids(s.messages);
   if (repair)
     reconcile(s, false);
   return s;
 }
 void StateStore::reconcile(Session &session, bool persist) {
+  portable_messages(session.messages, session.id);
+  ensure_message_ids(session.messages);
   auto owner = persist ? acquire(session.id) : std::shared_ptr<void>{};
   std::map<std::string, ToolCall> calls;
   std::map<std::string, Message> answers;
@@ -183,7 +189,10 @@ void StateStore::reconcile(Session &session, bool persist) {
       current.text(1, session.id);
       if (sqlite3_step(current.p) != SQLITE_ROW)
         throw Error("Session no longer exists");
-      stored_messages = Json(Json::parse(column(current.p, 0)).get<std::vector<Message>>());
+      auto stored = Json::parse(column(current.p, 0)).get<std::vector<Message>>();
+      portable_messages(stored, session.id);
+      ensure_message_ids(stored);
+      stored_messages = Json(stored);
       const auto non_tools = [](const Json &messages) {
         Json history = Json::array();
         for (const auto &message : messages)
@@ -267,9 +276,22 @@ void StateStore::reconcile(Session &session, bool persist) {
                   .dump();
           recoveries.emplace(call.id, std::make_pair(result, recovery));
         }
+        // Presentation state is durable separately from the canonical completed payload.
+        if (answers.count(call.id)) {
+          const auto &answer = answers.at(call.id);
+          if (!answer.message_id.empty())
+            result.message_id = answer.message_id;
+          if (!answer.result_file.empty())
+            result.result_file = answer.result_file;
+          result.images_archived = answer.images_archived;
+        }
+        if (result.images_archived)
+          result.images.clear();
         repaired.push_back(result);
       }
     }
+    portable_messages(repaired, session.id);
+    ensure_message_ids(repaired);
     if (Json(repaired) == Json(session.messages) && recoveries.empty() &&
         (!persist || Json(repaired) == stored_messages)) {
       sql(impl_->db, "COMMIT");
@@ -311,16 +333,22 @@ Session StateStore::last() {
 }
 Session StateStore::fork(const Session &parent) {
   auto recovered = parent;
+  portable_messages(recovered.messages, parent.id);
+  ensure_message_ids(recovered.messages);
   reconcile(recovered, false);
   Session s{unique_id(), parent.name.empty() ? "" : parent.name + " (fork)", recovered.messages};
   s.provider = parent.provider;
   s.model = parent.model;
   auto owner = acquire(s.id);
   NativeFileSystem files;
-  const auto index = archive_image_history(impl_->artifact_root, files, s.id, s.messages);
+  if (std::any_of(s.messages.begin(), s.messages.end(),
+                  [](const auto &m) { return !m.artifact_index.empty(); }) &&
+      !fs::exists(artifact_index_path(impl_->artifact_root, parent.id)))
+    throw Error("Historical image index missing; restore the active artifact root");
+  copy_image_history(impl_->artifact_root, files, parent.id, s.id);
   for (auto &message : s.messages)
     if (!message.artifact_index.empty())
-      message.artifact_index = index.string();
+      message.artifact_index = artifact_index_reference(s.id);
   save(s);
   reconcile(s);
   Statement q(impl_->db, "UPDATE sessions SET parent=? WHERE id=?");
@@ -337,7 +365,10 @@ void StateStore::save(const Session &s) {
                          "provider=excluded.provider,model=excluded.model");
   q.text(1, s.id);
   q.text(2, s.name);
-  q.text(3, safe_json(Json(s.messages)).dump());
+  auto messages = s.messages;
+  portable_messages(messages, s.id);
+  ensure_message_ids(messages);
+  q.text(3, safe_json(Json(messages)).dump());
   q.text(4, s.provider);
   q.text(5, s.model);
   q.run();
@@ -388,7 +419,11 @@ void StateStore::tool_finished(const std::string &id, const ToolCall &t, const J
   auto owner = acquire(id);
   Statement q(impl_->db, "UPDATE tools SET status='complete',result=? WHERE session=? AND "
                          "call_id=? AND status='running'");
-  q.text(1, safe_json(result).dump());
+  auto message = result.get<Message>();
+  std::vector<Message> portable{message};
+  portable_messages(portable, id);
+  ensure_message_ids(portable);
+  q.text(1, safe_json(Json(portable.front())).dump());
   q.text(2, id);
   q.text(3, t.id);
   q.run();

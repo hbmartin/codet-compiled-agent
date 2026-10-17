@@ -1,3 +1,4 @@
+#include "codet/artifacts.hpp"
 #include "codet/computer.hpp"
 #include "codet/support.hpp"
 #include <algorithm>
@@ -52,14 +53,17 @@ public:
     return true;
   }
   ImageData load(const fs::path &path, const std::string &detail) override {
+    NativeFileSystem files;
+    return load_bytes(files.read(path, image_file_limit), detail);
+  }
+  ImageData load_bytes(const std::string &bytes, const std::string &detail) override {
     if (detail != "high" && detail != "original")
       throw Error("detail must be high or original");
-    if (!fs::is_regular_file(path) || fs::file_size(path) > image_file_limit)
-      throw Error("Image file exceeds 8 MiB or is not a regular file");
-    const auto filename = path.string();
-    CF<CFURLRef> url(CFURLCreateFromFileSystemRepresentation(
-        nullptr, reinterpret_cast<const UInt8 *>(filename.data()), filename.size(), false));
-    CF<CGImageSourceRef> source(CGImageSourceCreateWithURL(url, nullptr));
+    if (bytes.empty() || bytes.size() > image_file_limit)
+      throw Error("Image file exceeds 8 MiB or is empty");
+    CF<CFDataRef> data(
+        CFDataCreate(nullptr, reinterpret_cast<const UInt8 *>(bytes.data()), bytes.size()));
+    CF<CGImageSourceRef> source(CGImageSourceCreateWithData(data, nullptr));
     if (!static_cast<CGImageSourceRef>(source))
       throw Error("Invalid or unsupported image data");
     CF<CFDictionaryRef> props(CGImageSourceCopyPropertiesAtIndex(source, 0, nullptr));
@@ -198,8 +202,9 @@ std::string image_data_url(const ImageArtifact &a, const Config &c) {
     throw Error("Unsupported artifact MIME type");
   NativeFileSystem files;
   const auto root = files.canonical(artifact_directory(c));
-  const auto p = files.canonical(a.path);
-  if (!within(p, root) || fs::is_symlink(a.path))
+  const auto authored = resolve_image(artifact_directory(c), a);
+  const auto p = files.canonical(authored);
+  if (!within(p, root) || fs::is_symlink(authored))
     throw Error("Image artifact is outside private storage");
   const auto bytes = files.read(p, image_file_limit);
   if (digest(bytes) != a.sha256)

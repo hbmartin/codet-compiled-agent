@@ -1,60 +1,252 @@
 #include "codet/artifacts.hpp"
 #include "codet/computer.hpp"
+#include "codet/output.hpp"
 #include "codet/support.hpp"
-#include <limits>
-#include <sstream>
 #include <sys/stat.h>
-
 namespace codet {
-fs::path artifact_index_path(const fs::path &root, const std::string &session) {
+namespace {
+bool blob_name(const ImageArtifact &a) {
+  return a.sha256.size() == 64 &&
+         a.sha256.find_first_not_of("0123456789abcdef") == std::string::npos &&
+         fs::path(a.path).filename() == a.sha256 + (a.mime == "image/png" ? ".png" : ".jpg") &&
+         (a.mime == "image/png" || a.mime == "image/jpeg");
+}
+void lines(ReadHandle &input, const std::function<void(const std::string &)> &visit) {
+  std::string line;
+  char buffer[8192];
+  for (;;) {
+    const auto n = input.read(buffer, sizeof buffer);
+    if (!n)
+      break;
+    for (size_t i = 0; i < n; ++i) {
+      if (buffer[i] == '\n') {
+        if (!line.empty())
+          visit(line);
+        line.clear();
+      } else {
+        line += buffer[i];
+        if (line.size() > 1048576)
+          throw Error("Artifact index record exceeds 1 MiB");
+      }
+    }
+  }
+  if (!line.empty())
+    visit(line);
+}
+void check_index(const fs::path &root, const fs::path &target) {
+  if (fs::is_symlink(root) || fs::is_symlink(target.parent_path()) || fs::is_symlink(target))
+    throw Error("Artifact index storage must not be a symlink");
+}
+bool current_index(const FileSystem &files, const fs::path &target) {
+  auto input = files.open_read(target);
+  if (input->path() != files.canonical(target))
+    throw Error("Artifact index changed while opening");
+  char buffer[512];
+  const auto count = input->read(buffer, sizeof buffer);
+  const std::string prefix(buffer, count);
+  const auto first = Json::parse(prefix.substr(0, prefix.find('\n')), nullptr, false);
+  if (!first.is_object() || first.value("kind", "") != "header")
+    return false;
+  if (first.value("version", 0) != 2)
+    throw Error("Unsupported artifact index version; use a compatible Codet version");
+  return true;
+}
+} // namespace
+std::string artifact_index_reference(const std::string &session) {
   if (session.empty() || session.size() > 128 ||
       session.find_first_not_of(
           "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-") != std::string::npos)
     throw Error("Invalid artifact index session");
-  return root / "indexes" / (session + ".jsonl");
+  return "indexes/" + session + ".jsonl";
+}
+fs::path artifact_index_path(const fs::path &root, const std::string &session) {
+  return root / artifact_index_reference(session);
+}
+ImageArtifact portable_image(ImageArtifact image) {
+  if (blob_name(image))
+    image.path = fs::path(image.path).filename().string();
+  return image;
+}
+fs::path resolve_image(const fs::path &root, const ImageArtifact &image) {
+  if (!blob_name(image) || (!fs::path(image.path).is_absolute() &&
+                            fs::path(image.path) != fs::path(image.path).filename()))
+    throw Error("Invalid generated image reference");
+  return root / fs::path(image.path).filename();
+}
+void portable_messages(std::vector<Message> &messages, const std::string &session) {
+  for (auto &message : messages) {
+    for (auto &image : message.images)
+      image = portable_image(std::move(image));
+    if (!message.result_file.empty() && capture_name(message.result_file))
+      message.result_file = fs::path(message.result_file).filename().string();
+    if (message.role == "tool") {
+      auto envelope = Json::parse(message.text, nullptr, false);
+      const auto normalize = [](Json &value) {
+        if (!value.is_object())
+          return;
+        if (value.value("spill_path", Json()).is_string() &&
+            capture_name(value.at("spill_path").get<std::string>()))
+          value["spill_path"] =
+              fs::path(value.at("spill_path").get<std::string>()).filename().string();
+        if (value.value("artifact", Json()).is_object()) {
+          try {
+            value["artifact"] = portable_image(value.at("artifact").get<ImageArtifact>());
+          } catch (const Json::exception &) {
+            return; // Preserve unrelated tool metadata without interpreting it as an image.
+          }
+        }
+      };
+      if (envelope.is_object()) {
+        if (envelope.contains("metadata"))
+          normalize(envelope["metadata"]);
+        if (envelope.value("content", Json()).is_string()) {
+          auto content = Json::parse(envelope.at("content").get<std::string>(), nullptr, false);
+          if (content.is_object()) {
+            normalize(content);
+            envelope["content"] = content.dump();
+          }
+        }
+        message.text = envelope.dump();
+      }
+    }
+    if (!message.artifact_index.empty()) {
+      if (fs::path(message.artifact_index).filename() != session + ".jsonl")
+        throw Error("Artifact index belongs to another session");
+      message.artifact_index = artifact_index_reference(session);
+    }
+  }
 }
 fs::path archive_image_history(const fs::path &root, FileSystem &files, const std::string &session,
                                const std::vector<Message> &messages) {
   auto target = artifact_index_path(root, session);
-  const auto directory = target.parent_path();
-  if (fs::is_symlink(root) || fs::is_symlink(directory) || fs::is_symlink(target))
-    throw Error("Artifact index storage must not be a symlink");
-  std::map<std::pair<std::string, std::string>, ImageArtifact> entries;
-  const auto load = [&](const fs::path &path) {
-    if (fs::is_symlink(path) || files.canonical(path.parent_path()) != files.canonical(directory))
-      throw Error("Artifact index is outside active private storage");
-    std::istringstream input(files.read(path, std::numeric_limits<size_t>::max()));
-    std::string line;
-    while (std::getline(input, line)) {
-      if (line.empty())
-        continue;
-      try {
-        const auto image = Json::parse(line).get<ImageArtifact>();
-        entries.emplace(std::make_pair(image.path, image.sha256), image);
-      } catch (const Json::exception &error) {
-        throw Error("Invalid artifact index: " + std::string(error.what()));
-      }
-    }
-  };
-  if (fs::exists(target))
-    load(target);
+  check_index(root, target);
+  std::vector<Json> pending;
+  std::set<std::string> ids;
+  bool referenced = false;
   for (const auto &message : messages) {
-    if (!message.artifact_index.empty() && fs::path(message.artifact_index) != target)
-      load(message.artifact_index);
-    for (const auto &image : message.images)
-      entries.emplace(std::make_pair(image.path, image.sha256), image);
+    referenced = referenced || !message.artifact_index.empty();
+    if (!message.artifact_index.empty() &&
+        fs::path(message.artifact_index).filename() != target.filename())
+      throw Error("Artifact index belongs to another session");
+    for (size_t i = 0; i < message.images.size(); ++i) {
+      if (message.message_id.empty())
+        throw Error("Persist message IDs before archiving images");
+      const auto id = message.message_id + ":" + std::to_string(i);
+      if (!ids.insert(id).second)
+        continue;
+      pending.push_back({{"version", 2},
+                         {"kind", "observation"},
+                         {"observation_id", id},
+                         {"message_id", message.message_id},
+                         {"tool_call_id", message.tool_call_id},
+                         {"artifact", portable_image(message.images[i])}});
+    }
   }
-  if (entries.empty())
-    return {};
-  fs::create_directories(directory);
-  if (chmod(root.c_str(), 0700) || chmod(directory.c_str(), 0700))
+  if (!fs::exists(target) && referenced)
+    throw Error("Historical image index is missing under the active artifact root; restore its "
+                "indexes directory");
+  if (pending.empty() && (!fs::exists(target) || current_index(files, target)))
+    return fs::exists(target) ? target : fs::path{};
+  fs::create_directories(target.parent_path());
+  if (::chmod(root.c_str(), 0700) || ::chmod(target.parent_path().c_str(), 0700))
     throw Error("Cannot protect artifact index directory");
-  std::string text;
-  for (const auto &entry : entries)
-    text += safe_json(Json(entry.second)).dump() + '\n';
-  if (!fs::exists(target) || files.read(target, std::numeric_limits<size_t>::max()) != text)
-    files.atomic_write(target, text, true);
+  // Only IDs in this pending batch are retained in memory. The old ledger streams through.
+  files.atomic_stream(
+      target,
+      [&](const FileSystem::Writer &write) {
+        uint64_t sequence = 0, observations = 0, legacy = 0, line_number = 1, latest_line = 0;
+        write(Json({{"version", 2}, {"kind", "header"}, {"session_id", session}}).dump() + '\n');
+        if (fs::exists(target)) {
+          auto input = files.open_read(target);
+          if (input->path() != files.canonical(target))
+            throw Error("Artifact index changed while opening");
+          lines(*input, [&](const std::string &line) {
+            auto record = Json::parse(line);
+            const auto kind = record.value("kind", "");
+            if (kind == "header" || kind == "position")
+              return;
+            if (kind == "observation") {
+              ids.erase(record.at("observation_id").get<std::string>());
+              sequence = std::max(sequence, record.at("sequence").get<uint64_t>());
+              record["artifact"] = portable_image(record.at("artifact").get<ImageArtifact>());
+              ++observations;
+              latest_line = line_number + 1;
+            } else {
+              if (kind != "legacy")
+                record = {{"version", 2},
+                          {"kind", "legacy"},
+                          {"chronology", "unknown"},
+                          {"artifact", portable_image(record.get<ImageArtifact>())}};
+              ++legacy;
+            }
+            write(safe_json(record).dump() + '\n');
+            ++line_number;
+          });
+        }
+        for (auto &record : pending)
+          if (ids.count(record.at("observation_id"))) {
+            record["sequence"] = ++sequence;
+            write(safe_json(record).dump() + '\n');
+            ++observations;
+            latest_line = ++line_number;
+          }
+        write(Json({{"version", 2},
+                    {"kind", "position"},
+                    {"observations", observations},
+                    {"legacy_unknown", legacy},
+                    {"last_sequence", sequence},
+                    {"latest_line", latest_line}})
+                  .dump() +
+              '\n');
+      },
+      true);
   return target;
+}
+void copy_image_history(const fs::path &root, FileSystem &files, const std::string &parent,
+                        const std::string &child) {
+  const auto source = artifact_index_path(root, parent), target = artifact_index_path(root, child);
+  check_index(root, source);
+  check_index(root, target);
+  if (!fs::exists(source))
+    return;
+  fs::create_directories(target.parent_path());
+  files.atomic_stream(
+      target,
+      [&](const FileSystem::Writer &write) {
+        auto input = files.open_read(source);
+        if (input->path() != files.canonical(source))
+          throw Error("Artifact index changed while opening");
+        lines(*input, [&](const std::string &line) {
+          auto record = Json::parse(line);
+          if (record.value("kind", "") == "header")
+            record["session_id"] = child;
+          write(safe_json(record).dump() + '\n');
+        });
+      },
+      true);
+  // Migrate legacy rows in the child only; a fork must not rewrite its live parent.
+  archive_image_history(root, files, child, {});
+}
+Json image_history_position(const fs::path &root, const FileSystem &files,
+                            const std::string &session) {
+  const auto target = artifact_index_path(root, session);
+  check_index(root, target);
+  auto input = files.open_read(target);
+  if (input->path() != files.canonical(target))
+    throw Error("Artifact index changed while opening");
+  const auto size = input->size();
+  input->seek(size > 4096 ? size - 4096 : 0);
+  std::string tail;
+  char buffer[4096];
+  const auto n = input->read(buffer, sizeof buffer);
+  tail.assign(buffer, n);
+  if (!tail.empty() && tail.back() == '\n')
+    tail.pop_back();
+  const auto pos = tail.rfind('\n');
+  auto value = Json::parse(tail.substr(pos == std::string::npos ? 0 : pos + 1), nullptr, false);
+  return value.is_object() && value.value("kind", "") == "position"
+             ? value
+             : Json({{"chronology", "unknown"}});
 }
 bool generated_image(const Config &config, const FileSystem &files, const fs::path &path,
                      bool verify) {

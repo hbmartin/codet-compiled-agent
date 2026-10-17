@@ -52,4 +52,12 @@ foreach(_name compact summary_prefix default plan approval_on_request approval_n
 endforeach()
 string(APPEND _header "}\n")
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
-file(CONFIGURE OUTPUT "${CMAKE_BINARY_DIR}/generated/prompts.hpp" CONTENT "${_header}" @ONLY)
+set(_target "${CMAKE_BINARY_DIR}/generated/prompts.hpp")
+if(EXISTS "${_target}")
+  file(READ "${_target}" _existing_header)
+  if("${_existing_header}" STREQUAL "${_header}")
+    return()
+  endif()
+endif()
+# Prompt assets are literal data: CONFIGURE would expand @...@ and #cmakedefine.
+file(WRITE "${_target}" "${_header}")

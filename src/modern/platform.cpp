@@ -362,7 +362,19 @@ std::string NativeFileSystem::read_prefix(const fs::path &path, size_t limit,
   truncated = bytes.size() > limit || text.size() > limit;
   return bounded_text(text, limit);
 }
+void FileSystem::atomic_stream(const fs::path &p,
+                               const std::function<void(const Writer &)> &produce,
+                               bool private_file) {
+  std::string text;
+  produce([&](const std::string &chunk) { text += chunk; });
+  atomic_write(p, text, private_file);
+}
 void NativeFileSystem::atomic_write(const fs::path &p, const std::string &text, bool private_file) {
+  atomic_stream(p, [&](const Writer &write) { write(text); }, private_file);
+}
+void NativeFileSystem::atomic_stream(const fs::path &p,
+                                     const std::function<void(const Writer &)> &produce,
+                                     bool private_file) {
   if (!fs::exists(p.parent_path()))
     throw Error("Parent directory does not exist: " + p.parent_path().string());
   struct stat old{};
@@ -379,15 +391,29 @@ void NativeFileSystem::atomic_write(const fs::path &p, const std::string &text, 
     const mode_t mode = private_file ? 0600 : (exists ? (old.st_mode & 0777) : 0644);
     if (fchmod(fd.n, mode) != 0)
       throw Error(system_error("Set file permissions"));
-    size_t offset = 0;
-    while (offset < text.size()) {
-      ssize_t n = ::write(fd.n, text.data() + offset, text.size() - offset);
-      if (n < 0 && errno == EINTR)
-        continue;
-      if (n <= 0)
-        throw Error(system_error("Write atomic file"));
-      offset += static_cast<size_t>(n);
-    }
+    std::string pending;
+    const auto flush = [&] {
+      size_t offset = 0;
+      while (offset < pending.size()) {
+        const auto n = ::write(fd.n, pending.data() + offset, pending.size() - offset);
+        if (n < 0 && errno == EINTR)
+          continue;
+        if (n <= 0)
+          throw Error(system_error("Write atomic file"));
+        offset += static_cast<size_t>(n);
+      }
+      pending.clear();
+    };
+    produce([&](const std::string &chunk) {
+      for (size_t offset = 0; offset < chunk.size();) {
+        const auto n = std::min<size_t>(65536 - pending.size(), chunk.size() - offset);
+        pending.append(chunk, offset, n);
+        offset += n;
+        if (pending.size() == 65536)
+          flush();
+      }
+    });
+    flush();
     if (::fsync(fd.n) != 0)
       throw Error(system_error("Sync file"));
     struct stat current{};
@@ -1296,6 +1322,12 @@ void to_json(Json &j, const Message &m) {
     j["origin"] = m.origin;
   if (!m.artifact_index.empty())
     j["artifact_index"] = m.artifact_index;
+  if (!m.message_id.empty())
+    j["message_id"] = m.message_id;
+  if (!m.result_file.empty())
+    j["result_file"] = m.result_file;
+  if (m.images_archived)
+    j["images_archived"] = true;
 }
 void from_json(const Json &j, Message &m) {
   m.role = j.at("role");
@@ -1307,5 +1339,8 @@ void from_json(const Json &j, Message &m) {
   m.images = j.value("images", std::vector<ImageArtifact>{});
   m.origin = j.value("origin", "");
   m.artifact_index = j.value("artifact_index", "");
+  m.message_id = j.value("message_id", "");
+  m.result_file = j.value("result_file", "");
+  m.images_archived = j.value("images_archived", false);
 }
 } // namespace codet

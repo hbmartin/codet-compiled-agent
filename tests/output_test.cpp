@@ -1,3 +1,4 @@
+#include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/output.hpp"
 #include "core_tools.hpp"
@@ -262,16 +263,23 @@ TEST_F(OutputReview, GenericSpillsShareTheManagedQuotaAndNewPerFileLimit) {
   ASSERT_GE(fd, 0);
   ASSERT_EQ(::ftruncate(fd, 64 * 1024 * 1024), 0);
   ::close(fd);
-  files.atomic_write(config.cwd / "longline", std::string(9 * 1024 * 1024, 'x'));
-  Tools tools(config, files, processes, http, clock);
-  const auto r = execute_core(tools, config, {"read", "read_file", {{"path", "longline"}}}, cancel);
-  ASSERT_FALSE(r.error);
+  struct Desktop : ComputerBackend {
+    Json capabilities() const override {
+      return {{"available", true}, {"clipboard", true}};
+    }
+    DesktopResult invoke(const std::string &, const Json &, const Cancellation &) override {
+      return {{{"text", std::string(9 * 1024 * 1024, 'x')}}, {}};
+    }
+  };
+  Tools tools(config, files, processes, http, clock, {}, {}, {}, {}, std::make_shared<Desktop>());
+  const auto result =
+      tools.execute({"clipboard", "computer.clipboard_read", Json::object()}, cancel);
+  ASSERT_FALSE(result.error) << result.content;
   EXPECT_FALSE(fs::exists(legacy));
-  const auto path = r.metadata["spill_path"].get<std::string>();
-  EXPECT_THAT(fs::path(path).filename().string(), StartsWith("capture-"));
+  const auto path = result.metadata.at("spill_path").get<std::string>();
   EXPECT_EQ(fs::file_size(path), 8u * 1024 * 1024);
-  EXPECT_EQ(r.metadata["spill_truncated"], true);
-  EXPECT_EQ(r.metadata["total_output_bytes"], 9u * 1024 * 1024 + 3);
+  EXPECT_EQ(result.metadata["spill_truncated"], true);
+  EXPECT_GT(result.metadata["total_output_bytes"], 9u * 1024 * 1024);
 }
 TEST_F(OutputReview, HookFeedbackCanActivateCaptureWithoutLosingOriginalBytes) {
   const std::string source(490, 'x');

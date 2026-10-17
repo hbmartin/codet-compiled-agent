@@ -75,6 +75,7 @@ struct RenderedOutput {
 };
 RenderedOutput render_output(const OutputSnapshot &, size_t limit);
 fs::path capture_directory(const Config &);
+bool capture_name(const fs::path &);
 // Owns raw windows and the optional lazy capture through process and tool lifetimes.
 class OutputCapture {
   std::shared_ptr<CaptureStore> store_;

@@ -59,9 +59,15 @@ std::string tool_text(const Message &m) {
   std::string text = m.text;
   if (m.role == "tool") {
     const auto value = Json::parse(m.text, nullptr, false);
-    if (value.is_object() && value.contains("content") && value.contains("is_error"))
-      text = (value.value("is_error", false) ? std::string("Tool error: ") : std::string{}) +
-             value.at("content").get<std::string>();
+    if (value.is_object() && value.contains("content") && value.contains("is_error")) {
+      const auto metadata = value.value("metadata", Json::object());
+      if (metadata.is_object() &&
+          (metadata.value("projection_truncated", false) || metadata.contains("next_byte_offset")))
+        text = value.dump(); // Paging and projection controls must reach every adapter.
+      else
+        text = (value.value("is_error", false) ? std::string("Tool error: ") : std::string{}) +
+               value.at("content").get<std::string>();
+    }
   }
   if (!m.replay.empty() && m.replay.back().contains("codet_image_notes"))
     for (const auto &note : m.replay.back().at("codet_image_notes"))
