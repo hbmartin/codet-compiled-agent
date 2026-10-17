@@ -378,11 +378,13 @@ class CliTests(unittest.TestCase):
             fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',40,120,0,0))
             p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
             received=b''
-            def wait_for(text):
+            def wait_for(text,retry=None):
                 nonlocal received
                 deadline=time.monotonic()+7
                 while text not in received and time.monotonic()<deadline:
                     if select.select([master],[],[],.03)[0]:received+=os.read(master,65536)
+                    if retry and b'after the active turn completes.' in received:
+                        received=b'';os.write(master,retry)
                 self.assertIn(text,received)
                 received=b''
             try:
@@ -394,7 +396,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(len(self.server.requests),count)
                 os.write(master,b'fixture\n');wait_for(b'fixture done')
                 self.assertEqual(self.server.requests[-1]['body']['reasoning_effort'],'high')
-                os.write(master,b'/status\n');wait_for(b'last_turn_usage_this_invocation')
+                os.write(master,b'/status\n');wait_for(b'last_turn_usage_this_invocation',b'/status\n')
                 os.write(master,b'/new\n');wait_for(b'Started ')
                 os.write(master,b'/status\n');wait_for(b'"last_turn_usage_this_invocation": null')
                 os.write(master,b'/quit\n')
