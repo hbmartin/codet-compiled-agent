@@ -230,6 +230,22 @@ TEST_F(Modernization, SignedPrefixesPersistAndEpochChangesDiscardSignatures) {
   config.capture_root = temp.root / "relocated-captures";
   body = Json::parse(provider.request(config, "moved references", history, Json::array()).body);
   EXPECT_THAT(body.dump(), Not(HasSubstr("signed-empty")));
+  provider.restore_conversation(state);
+  config.capture_root.clear();
+  auto with_new_images = history;
+  codet::Message new_images;
+  new_images.role = "user";
+  new_images.text = "more images";
+  new_images.images = std::vector<ImageArtifact>(4, user.images.front());
+  with_new_images.push_back(new_images);
+  body = Json::parse(provider.request(config, "more images", with_new_images, Json::array()).body);
+  EXPECT_THAT(body.dump(), Not(HasSubstr("signed-empty")));
+  size_t delivered = 0;
+  for (const auto &message : body["messages"])
+    for (const auto &block : message["content"])
+      if (block.value("type", Json()) == "image")
+        ++delivered;
+  EXPECT_EQ(delivered, 4u);
 }
 TEST_F(Modernization, SemanticProjectionOmitsReplayAndKeepsRecoveryAndReferences) {
   codet::Message m;

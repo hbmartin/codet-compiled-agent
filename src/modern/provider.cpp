@@ -412,7 +412,7 @@ void append_calls(Message &m, const Json &calls) {
     m.calls.push_back(std::move(call));
   }
 }
-size_t anthropic_image_bytes(const Json &content) {
+size_t anthropic_image_bytes(const Json &content, size_t &images) {
   if (!content.is_array())
     return 0;
   size_t bytes = 0;
@@ -420,12 +420,14 @@ size_t anthropic_image_bytes(const Json &content) {
     if (!block.is_object())
       continue;
     if (block.value("type", Json()) == "tool_result" && block.contains("content"))
-      bytes += anthropic_image_bytes(block.at("content"));
+      bytes += anthropic_image_bytes(block.at("content"), images);
     else if (block.value("type", Json()) == "image" && block.contains("source")) {
       const auto &source = block.at("source");
       if (source.is_object() && source.value("type", Json()) == "base64" &&
-          source.contains("data") && source.at("data").is_string())
+          source.contains("data") && source.at("data").is_string()) {
+        ++images;
         bytes += source.at("data").get_ref<const std::string &>().size();
+      }
     }
   }
   return bytes;
@@ -700,9 +702,12 @@ eof_line: "*** End of File" LF
       const auto reserve = static_cast<uint64_t>(c.max_output_tokens) * 3;
       const auto fits = [&] {
         auto text_bytes = body.dump().size();
+        size_t images = 0, image_bytes = 0;
         for (const auto &message : body.at("messages"))
-          text_bytes -= anthropic_image_bytes(message.at("content"));
-        return reserve < capacity && text_bytes <= capacity - reserve;
+          image_bytes += anthropic_image_bytes(message.at("content"), images);
+        text_bytes -= image_bytes;
+        return images <= 4 && image_bytes / 4 * 3 <= image_file_limit && reserve < capacity &&
+               text_bytes <= capacity - reserve;
       };
       if (!fits()) {
         conversation_ = nullptr;
