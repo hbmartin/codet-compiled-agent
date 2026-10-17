@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline cross build. Run inside the pinned toolchain image; never executes PPC code."""
-import hashlib,json,os,pathlib,shutil,subprocess,sys
+import hashlib,json,os,pathlib,shutil,subprocess,sys,fcntl
+from verified_sources import extract_verified, file_hash, tree_hashes
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 BUILD=ROOT/'build/tiger-deps'
 STAGE=ROOT/'build/tiger-sysroot'
@@ -20,36 +21,47 @@ def run(args,cwd,env=None):
       raise SystemExit(result.returncode)
 
 def main():
+    global STAGE
     if not PREFIX.startswith('/') or '..' in pathlib.Path(PREFIX).parts:
       raise SystemExit('TIGERPORTS_PREFIX must be an absolute logical install prefix')
-    BUILD.mkdir(parents=True,exist_ok=True);STAGE.mkdir(parents=True,exist_ok=True)
+    BUILD.mkdir(parents=True,exist_ok=True)
+    build_lock = (BUILD / "sysroot.lock").open("a")
+    fcntl.flock(build_lock, fcntl.LOCK_EX)
     lock=json.loads((ROOT/'tiger-dependencies.lock.json').read_text())
     for dep in lock['dependencies']:
       archive=ROOT/'.deps'/('tiger-'+dep['name']+'.tar')
       if not archive.exists() or hashlib.sha256(archive.read_bytes()).hexdigest()!=dep['sha256']:
         raise SystemExit('Fetch/verify dependencies first: '+dep['name'])
+    fingerprint = hashlib.sha256((ROOT/'tiger-dependencies.lock.json').read_bytes() +
+        pathlib.Path(__file__).read_bytes() + (ROOT/'scripts/verified_sources.py').read_bytes() +
+        PREFIX.encode() + FLAGS.encode() + os.environ.get('CODET_TOOLCHAIN_ID', '').encode() +
+        file_hash(CC).encode()).hexdigest()
+    final = STAGE
+    if (final/'manifest.json').is_file():
+        prior = json.loads((final/'manifest.json').read_text())
+        if prior.get('source_hash') == fingerprint and prior.get('outputs') == tree_hashes(final):
+            print('Verified sysroot cache: ' + str(final), flush=True)
+            return
+    STAGE = final.with_name('.tiger-sysroot-staging')
+    if STAGE.exists(): shutil.rmtree(STAGE)
+    STAGE.mkdir()
     installed=STAGE/PREFIX.lstrip('/');installed.mkdir(parents=True,exist_ok=True)
     include=installed/'include';lib=installed/'lib'
     environment=os.environ.copy();environment.update(CC=CC,CXX=CC.replace('gcc','g++'),AR=CC.replace('gcc','ar'),RANLIB=CC.replace('gcc','ranlib'),NM=CC.replace('gcc','nm'),STRIP=CC.replace('gcc','strip'),CFLAGS=FLAGS,CXXFLAGS=FLAGS,CPPFLAGS=f'-I{include}/LegacySupport -I{include}',LDFLAGS=f'{FLAGS} -L{lib}',PKG_CONFIG_LIBDIR=str(lib/'pkgconfig'),ZERO_AR_DATE='1')
-    source_hash=hashlib.sha256((ROOT/'tiger-dependencies.lock.json').read_bytes()+pathlib.Path(__file__).read_bytes()+PREFIX.encode()).hexdigest()
+    source_hash=fingerprint
+    source_trees={}
     for dep in lock['dependencies']:
-      name=dep['name'];source=BUILD/name;stamp=BUILD/(name+'.stamp')
-      if stamp.exists() and stamp.read_text()==source_hash:continue
-      prepared=source/'.codet-prepared'
-      prepare_hash=hashlib.sha256((dep['sha256']+json.dumps([p for p in lock['patches'] if p['name']==name],sort_keys=True)).encode()).hexdigest()
-      prepare=not prepared.exists() or prepared.read_text()!=prepare_hash
-      if prepare:
-        if source.exists():shutil.rmtree(source)
-        shutil.copytree(ROOT/'.deps'/('tiger-'+name),source,symlinks=True)
-      for patch in lock['patches'] if prepare else []:
+      name=dep['name'];source=BUILD/name
+      extract_verified(ROOT/'.deps'/('tiger-'+name+'.tar'), dep['sha256'], source)
+      for patch in lock['patches']:
         if patch['name']!=name:continue
         p=ROOT/'.deps/tiger-patches'/name/patch['path']
-        if hashlib.sha256(p.read_bytes()).hexdigest()!=patch['sha256']:raise SystemExit('Patch checksum mismatch')
+        if file_hash(p)!=patch['sha256']:raise SystemExit('Patch checksum mismatch')
         if patch.get('destination'):
           target=source/patch['destination'];target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(p,target);continue
         data=p.read_text();strip=1 if '--- a/' in data else 0
         run(['patch','--batch','--forward',f'-p{strip}','-i',p],source)
-      prepared.write_text(prepare_hash)
+      source_trees[name]=hashlib.sha256(json.dumps(tree_hashes(source),sort_keys=True).encode()).hexdigest()
       e=environment.copy()
       if name=='legacy-support':
         run(['make','-j'+JOBS,'lib/libMacportsLegacySupport.a',f'CC={CC}',f'ARX={e["AR"]}',f'CFLAGS={FLAGS}','ARCHFLAGS='],source,e)
@@ -75,9 +87,16 @@ def main():
         if name=='ncurses':args+=['--with-shared','--without-debug','--without-ada','--without-cxx','--without-cxx-binding','--enable-widec','--disable-lib-suffixes','--enable-overwrite','--without-progs','--without-tests','--disable-stripping','--disable-mixed-case']
         if name=='libedit':args+=['--disable-examples'];e['LIBS']='-lncurses -lMacportsLegacySupport'
         run(args,source,e);run(['make','-j'+JOBS],source,e);run(['make','install',f'DESTDIR={STAGE}'],source,e)
-      stamp.write_text(source_hash)
-    manifest=dict(lock,toolchain=CC,flags=FLAGS,prefix=PREFIX,source_hash=source_hash)
+    manifest=dict(lock,toolchain=CC,toolchain_image=os.environ.get("CODET_TOOLCHAIN_ID", ""),flags=FLAGS,prefix=PREFIX,source_hash=source_hash,source_trees=source_trees,outputs=tree_hashes(STAGE))
     (STAGE/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
-    print('Cross sysroot ready: '+str(STAGE),flush=True)
+    previous = final.with_name('.tiger-sysroot-previous')
+    if previous.exists(): shutil.rmtree(previous)
+    if final.exists(): final.rename(previous)
+    try: STAGE.rename(final)
+    except BaseException:
+        if previous.exists(): previous.rename(final)
+        raise
+    if previous.exists(): shutil.rmtree(previous)
+    print('Cross sysroot ready: '+str(final),flush=True)
 
 if __name__=='__main__':main()

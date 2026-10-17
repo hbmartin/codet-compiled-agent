@@ -20,6 +20,16 @@ modern: tiger
 host:
 	cmake -S . -B build/host -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 	cmake --build build/host -j4
+.PHONY: benchmark test-build-integrity developer-image
+benchmark: host
+	cmake --build build/host --target codet_persistence_bench -j4
+	./build/host/codet_persistence_bench 512 durable
+	./build/host/codet_persistence_bench 512 fast
+	./build/host/codet_persistence_bench captures
+test-build-integrity:
+	python3 -m unittest discover -s tests -p test_build_integrity.py -v
+developer-image:
+	docker build --no-cache --platform linux/amd64 -f cmake/Dockerfile.host-tests -t codet-host-tests:local .
 test: host
 	ctest --test-dir build/host --output-on-failure
 MODERN_ANALYSIS_BUILD ?= build/modern-checks
