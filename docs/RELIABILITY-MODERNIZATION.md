@@ -55,4 +55,15 @@ Tests use private homes, controlled environments and explicit non-login `/bin/sh
 
 Run `make benchmark` for growing transcript appends in both durability modes and repeated capture flushes. The executable asserts serialized append work scales with new messages and ordinary capture flushes do not scan the store. It records wall time, peak RSS and process I/O block counters. These host observations do not establish G4 performance.
 
-The Tiger bundle includes the same benchmark executable. `tiger-acceptance.sh` records both durability runs, capture flushes, `/usr/bin/time -l`, runtime tests and machine details. G4 execution, power-loss testing and live account/provider acceptance remain owner-run checks. See [Tiger acceptance](TIGER-ACCEPTANCE.md) and the validation evidence accompanying this change.
+
+The recorded macOS arm64 Debug run used 512-byte payloads:
+
+| Results | Serialized append bytes | Durable elapsed | Fast elapsed |
+| --- | ---: | ---: | ---: |
+| 100 | 72,292 | 0.024 s | 0.020 s |
+| 200 | 144,692 | 0.047 s | 0.037 s |
+| 300 | 217,092 | 0.072 s | 0.055 s |
+
+Both modes serialize the same changed-message bytes. One hundred 64 KiB flushes with 40 retained files perform zero store scans. [The source-hashed validation record](validation/reliability-modernization.json) includes memory, WAL size, Linux I/O counters, analyzer coverage and verification details.
+
+The Tiger bundle includes the same benchmark executable. `tiger-acceptance.sh` records both durability runs, capture flushes, `/usr/bin/time -l`, runtime tests and machine details. G4 execution, power-loss testing and live account/provider acceptance remain owner-run checks. See [Tiger acceptance](TIGER-ACCEPTANCE.md) and the [validation record](validation/reliability-modernization.json).
