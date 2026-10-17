@@ -1,0 +1,19 @@
+rules:
+  - id: codet-discovery-throwing-filesystem
+    languages: [cpp]
+    severity: ERROR
+    message: Use error_code overloads and local diagnostics in optional instruction discovery.
+    paths:
+      include: ["**/instructions.cpp"]
+    pattern-either:
+      - pattern: fs::directory_iterator($PATH)
+      - pattern: fs::directory_iterator $ITER($PATH);
+      - pattern: fs::exists($PATH)
+      - pattern: fs::is_symlink($PATH)
+      - pattern: fs::is_directory($PATH)
+      - pattern: fs::is_regular_file($PATH)
+      - pattern: fs::status($PATH)
+      - pattern: fs::symlink_status($PATH)
+      - pattern: $ENTRY.is_symlink()
+      - pattern: $ENTRY.is_directory()
+      - pattern: $ENTRY.is_regular_file()

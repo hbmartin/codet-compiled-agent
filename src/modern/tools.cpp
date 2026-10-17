@@ -981,16 +981,16 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
       std::sort(candidates.begin(), candidates.end(), [](const auto &left, const auto &right) {
         return left.path().filename().native() < right.path().filename().native();
       });
+      // False is the longer JSON spelling, reserving room for either flag value.
+      const Json page_meta = {{"next_entry_offset", UINT64_MAX},
+                              {"eof", false},
+                              {"truncated", false},
+                              {"scan_limited", false}};
       const auto budget =
-          std::min(context_budget,
-                   config_.tool_output_limit + encoded("", {{"next_entry_offset", UINT64_MAX},
-                                                            {"eof", false},
-                                                            {"truncated", true}}));
+          std::min(context_budget, config_.tool_output_limit + encoded("", page_meta));
       Json entries = Json::array();
       const auto start = std::min<uint64_t>(offset - 1, candidates.size());
       size_t at = static_cast<size_t>(start);
-      const Json page_meta = {
-          {"next_entry_offset", UINT64_MAX}, {"eof", false}, {"truncated", true}};
       const auto empty_cost = encoded("", page_meta);
       size_t page_cost =
           encoded(Json({{"entries", entries}, {"truncated", false}}).dump(), page_meta);
@@ -1009,10 +1009,13 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
       }
       if (at == start && at < candidates.size())
         throw Error("Inspection budget cannot fit one directory entry; increase context_tokens");
-      const bool more = bounded || at < candidates.size();
-      return {Json({{"entries", entries}, {"truncated", more}}).dump(),
+      const bool more = at < candidates.size();
+      return {Json({{"entries", entries}, {"truncated", more || bounded}}).dump(),
               false,
-              {{"next_entry_offset", at + 1}, {"eof", !more}, {"truncated", more}}};
+              {{"next_entry_offset", at + 1},
+               {"eof", !more},
+               {"truncated", more || bounded},
+               {"scan_limited", bounded}}};
     }
     auto opened = files_.open_read(p);
     fresh = execution_request(call);

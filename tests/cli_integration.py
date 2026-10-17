@@ -422,6 +422,22 @@ class CliTests(unittest.TestCase):
                     if select.select([master],[],[],.05)[0]:received+=os.read(master,65536)
                 self.assertIn(text,received)
                 received=b''
+            def after_turn(command,text):
+                # Curses can show streamed answer text before the worker becomes idle.
+                # Synchronize on the documented command response, not that progress text.
+                nonlocal received
+                deadline=time.monotonic()+5
+                busy=b'Change permission modes after the active turn completes.'
+                while time.monotonic()<deadline:
+                    os.write(master,command)
+                    while text not in received and busy not in received and time.monotonic()<deadline:
+                        if select.select([master],[],[],.05)[0]:received+=os.read(master,65536)
+                    if text in received:
+                        received=b''
+                        return
+                    self.assertIn(busy,received)
+                    received=b''
+                self.fail('Turn did not become idle before permission command')
             try:
                 wait_for(b'codet>')
                 os.write(master,b'/permissions bypass\n');wait_for(b'Permissions: bypass')
@@ -430,12 +446,12 @@ class CliTests(unittest.TestCase):
                 outcome=json.loads(tool['content'])
                 self.assertEqual(outcome['exit_code'],0)
                 self.assertEqual(outcome['output'],'approved')
-                os.write(master,b'/permissions invalid\n');wait_for(b'Use /permissions')
+                after_turn(b'/permissions invalid\n',b'Use /permissions')
                 os.write(master,b'/permissions\n');wait_for(b'Permissions: bypass')
                 os.write(master,b'/permissions plan\n');wait_for(b'Permissions: plan')
                 os.write(master,b'fixture-command\n');wait_for(b'fixture done')
                 self.assertIn('Permission denied for exec_command',json.dumps(self.server.requests[-1]['body']))
-                os.write(master,b'/permissions default\n');wait_for(b'Permissions: default')
+                after_turn(b'/permissions default\n',b'Permissions: default')
                 os.write(master,b'/quit\n');deadline=time.monotonic()+5
                 while p.poll() is None and time.monotonic()<deadline:
                     if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)

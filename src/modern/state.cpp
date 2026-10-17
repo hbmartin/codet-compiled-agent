@@ -115,13 +115,32 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root)
                    "PRIMARY KEY(session,kind,path),FOREIGN KEY(session) REFERENCES sessions(id));");
     try {
       Statement sessions(impl_->db, "SELECT id,messages FROM sessions");
-      while (sqlite3_step(sessions.p) == SQLITE_ROW)
-        remember_references(column(sessions.p, 0),
-                            Json::parse(column(sessions.p, 1)).get<std::vector<Message>>());
+      int status;
+      while ((status = sqlite3_step(sessions.p)) == SQLITE_ROW) {
+        std::vector<Message> parsed;
+        try {
+          parsed = Json::parse(column(sessions.p, 1)).get<std::vector<Message>>();
+        } catch (const Json::exception &) {
+          continue; // Loading this session still reports its corrupt transcript.
+        }
+        remember_references(column(sessions.p, 0), parsed);
+      }
+      if (status != SQLITE_DONE)
+        throw Error("Cannot backfill session references: " +
+                    std::string(sqlite3_errmsg(impl_->db)));
       Statement journal(impl_->db, "SELECT session,result FROM tools WHERE result IS NOT NULL");
-      while (sqlite3_step(journal.p) == SQLITE_ROW)
-        remember_references(column(journal.p, 0),
-                            {Json::parse(column(journal.p, 1)).get<Message>()});
+      while ((status = sqlite3_step(journal.p)) == SQLITE_ROW) {
+        Message parsed;
+        try {
+          parsed = Json::parse(column(journal.p, 1)).get<Message>();
+        } catch (const Json::exception &) {
+          continue; // Reconciliation retains its existing corrupt-record handling.
+        }
+        remember_references(column(journal.p, 0), {parsed});
+      }
+      if (status != SQLITE_DONE)
+        throw Error("Cannot backfill journal references: " +
+                    std::string(sqlite3_errmsg(impl_->db)));
       sql(impl_->db, "PRAGMA user_version=5; COMMIT;");
       impl_->known_references.clear();
     } catch (...) {

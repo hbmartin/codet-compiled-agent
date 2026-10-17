@@ -14,6 +14,9 @@ make test-foundation  # GoogleTest 1.17.0 + GoogleMock, existing text-helper tes
 make test             # Host unit, integration, CLI and terminal tests
 make test-sanitize    # ASan + UBSan
 make analyze-modern  # Separate Clang configuration; GCC host cache is preserved
+make fetch-semgrep    # Explicit network step; development-only Semgrep 1.177.0
+make test-semgrep     # Positive/negative local rule fixtures
+make check-semgrep    # Scoped production checks; no tool or rule downloads
 ./build/host/codet --help
 ```
 
@@ -22,6 +25,16 @@ Host dependencies: CMake 3.20+, C++17 compiler, Python 3.12+, curl 7.85+, OpenSS
 `make analyze-modern` runs Clang-Tidy, Cppcheck and Clang Static Analyzer against the modern
 application and shared C text helpers in a separate Clang build. Ubuntu GitHub Actions runs the
 same checks and host tests. See [analysis setup, reports and enforcement](docs/MODERN-ANALYSIS.md).
+
+Semgrep uses an ignored `build/semgrep-venv` environment; provisioning requires Python with
+`venv`/pip support (`python3-venv` on Ubuntu). Select another interpreter with
+`SEMGREP_PYTHON=/path/to/python3`, or an existing pinned tool with `SEMGREP=/path/to/semgrep`.
+Checks require version 1.177.0, use only checked-in rules, disable metrics/version checks,
+and fail on findings or analysis errors. They guard optional discovery filesystem calls and
+inline JSON decoding in reference writes; runtime regressions cover recovery semantics.
+Rule fixtures are separate from the two scoped production inputs. Reports live under
+`build/semgrep/` and are uploaded by the existing Ubuntu workflow. Application builds and
+Tiger binaries have no Semgrep dependency.
 
 ## Cross-build for Tiger
 

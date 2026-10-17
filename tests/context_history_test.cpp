@@ -5,6 +5,7 @@
 #include "codet/prompt.hpp"
 #include "prompt_support.hpp"
 #include "temp.hpp"
+#include <fstream>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <limits>
@@ -21,6 +22,7 @@ struct InspectFiles : FileSystem {
   NativeFileSystem native;
   mutable size_t calls = 0, bytes = 0, largest = 0;
   bool fail_results = false;
+  std::optional<fs::path> unavailable;
   mutable std::function<void()> after_open;
   struct Handle : ReadHandle {
     std::unique_ptr<ReadHandle> input;
@@ -69,7 +71,11 @@ struct InspectFiles : FileSystem {
     native.remove(p);
   }
   fs::path canonical(const fs::path &p) const override {
-    return native.canonical(p);
+    const auto value = native.canonical(p);
+    if (unavailable && value == *unavailable)
+      throw fs::filesystem_error("injected discovery failure", p,
+                                 std::make_error_code(std::errc::io_error));
+    return value;
   }
 };
 struct Scripted : Provider {
@@ -645,6 +651,7 @@ TEST_F(History, AllFiveAdaptersPreserveProjectionReferencesAndPagingControls) {
                        {{"next_byte_offset", 12345},
                         {"result_path", "private-reference.txt"},
                         {"projection_truncated", true},
+                        {"scan_limited", true},
                         {"action_completed", true}}}})
                     .dump();
   for (const auto *name : {"codex", "openai", "anthropic", "google", "ollama"}) {
@@ -658,6 +665,7 @@ TEST_F(History, AllFiveAdaptersPreserveProjectionReferencesAndPagingControls) {
     EXPECT_THAT(body, HasSubstr("12345")) << name;
     EXPECT_THAT(body, HasSubstr("private-reference.txt")) << name;
     EXPECT_THAT(body, HasSubstr("action_completed")) << name;
+    EXPECT_THAT(body, HasSubstr("scan_limited")) << name;
   }
 }
 
@@ -811,6 +819,16 @@ TEST_F(History, DirectoryPagesRespectContextBudgetAndResumeInSortedOrder) {
     const auto page = read(t, dir, {{"offset", offset}, {"limit", 25}});
     ASSERT_FALSE(page.error) << page.content;
     EXPECT_LT(page.content.size(), 2000u);
+    codet::Message encoded;
+    encoded.role = "tool";
+    encoded.message_id = "00000000-0000-0000-0000-000000000000";
+    encoded.tool_call_id = encoded.message_id;
+    encoded.previewed = true;
+    encoded.text =
+        Json({{"content", page.content}, {"is_error", page.error}, {"metadata", page.metadata}})
+            .dump();
+    EXPECT_LE(Json(encoded).dump().size(), 2000u);
+    EXPECT_EQ(page.metadata["scan_limited"], false);
     const auto entries = Json::parse(page.content)["entries"];
     ASSERT_FALSE(entries.empty());
     for (const auto &entry : entries) {
@@ -824,6 +842,84 @@ TEST_F(History, DirectoryPagesRespectContextBudgetAndResumeInSortedOrder) {
       break;
   } while (total < 250);
   EXPECT_EQ(total, 200u);
+}
+TEST_F(History, DirectoryScanLimitHasFinitePartialPagesAndFilteredEof) {
+  config.permission_mode = "plan";
+  const auto dir = config.cwd / "bounded-listing";
+  fs::create_directories(dir);
+  for (size_t i = 0; i < 9999; ++i)
+    std::ofstream(dir / ("entry-" + std::to_string(i)));
+  Tools tools(config, files, processes, http, clock);
+  tools.inspection_budget(2000);
+  for (size_t size = 9999; size <= 10001; ++size) {
+    SCOPED_TRACE(size);
+    if (size != 9999)
+      std::ofstream(dir / ("entry-" + std::to_string(size - 1)));
+    const auto first = read(tools, dir, {{"limit", 2}});
+    ASSERT_FALSE(first.error) << first.content;
+    EXPECT_EQ(first.metadata["next_entry_offset"], 3);
+    EXPECT_EQ(first.metadata["eof"], false);
+    EXPECT_EQ(first.metadata["scan_limited"], size > 10000);
+    const auto tail = read(tools, dir, {{"offset", 9999}});
+    ASSERT_FALSE(tail.error) << tail.content;
+    EXPECT_EQ(Json::parse(tail.content)["entries"].size(), size == 9999 ? 1u : 2u);
+    EXPECT_EQ(tail.metadata["eof"], true);
+    EXPECT_EQ(tail.metadata["truncated"], size > 10000);
+    EXPECT_EQ(tail.metadata["scan_limited"], size > 10000);
+    const auto end = read(tools, dir, {{"offset", tail.metadata["next_entry_offset"]}});
+    EXPECT_FALSE(end.error) << end.content;
+    EXPECT_TRUE(Json::parse(end.content)["entries"].empty());
+    EXPECT_EQ(end.metadata["eof"], true);
+    const auto past = read(tools, dir, {{"offset", 20000}});
+    EXPECT_EQ(past.metadata["eof"], true);
+    EXPECT_EQ(past.metadata["scan_limited"], size > 10000);
+  }
+  config.set_deny({"read_file(*entry-*)"});
+  const auto empty = read(tools, dir);
+  EXPECT_FALSE(empty.error) << empty.content;
+  EXPECT_TRUE(Json::parse(empty.content)["entries"].empty());
+  EXPECT_EQ(empty.metadata["eof"], true);
+  EXPECT_EQ(empty.metadata["truncated"], true);
+  EXPECT_EQ(empty.metadata["scan_limited"], true);
+}
+TEST_F(History, DirectoryScanMetadataSurvivesBoundedProjection) {
+  Tools tools(config, files, processes, http, clock);
+  tools.use_session("scan-projection");
+  codet::Message call, result;
+  call.role = "assistant";
+  call.calls = {{"listing", "read_file", {{"path", "."}}}};
+  result.role = "tool";
+  result.tool_call_id = "listing";
+  result.text = Json({{"content", std::string(30000, 'x')},
+                      {"is_error", false},
+                      {"metadata",
+                       {{"scan_limited", true},
+                        {"eof", true},
+                        {"truncated", true},
+                        {"next_entry_offset", 10001}}}})
+                    .dump();
+  std::vector<codet::Message> messages{call, result};
+  const auto projected = project_history(messages, 5000, tools);
+  const auto metadata = Json::parse(projected.back().text)["metadata"];
+  EXPECT_EQ(metadata["scan_limited"], true);
+  EXPECT_EQ(metadata["eof"], true);
+  EXPECT_EQ(metadata["next_entry_offset"], 10001);
+  EXPECT_LE(Json(projected).dump().size(), 5000u);
+}
+TEST_F(History, OptionalCanonicalizationFailureKeepsOtherInstructionAndSkillContext) {
+  put(config.cwd / "AGENTS.md", "retained instructions");
+  const auto bad = config.cwd / ".agents/skills";
+  put(bad / "bad/SKILL.md", "---\nname: bad\ndescription: omitted-skill\n---");
+  put(config.home / "skills/good/SKILL.md", "---\nname: good\ndescription: retained-skill\n---");
+  files.unavailable = files.native.canonical(bad);
+  std::vector<std::string> warnings;
+  Tools tools(config, files, processes, http, clock, {}, {},
+              [&](const auto &s) { warnings.push_back(s); });
+  const auto text = tools.instructions();
+  EXPECT_THAT(text, HasSubstr("retained instructions"));
+  EXPECT_THAT(text, HasSubstr("retained-skill"));
+  EXPECT_THAT(text, Not(HasSubstr("omitted-skill")));
+  EXPECT_THAT(warnings, Contains(HasSubstr("Discovery path unavailable")));
 }
 TEST_F(History, PastEndLineCountsAndCaseAndHardLinkInspectionUseActualFiles) {
   config.permission_mode = "plan";
@@ -1129,4 +1225,96 @@ TEST_F(History, ReferencePublicationRollsBackAndRetryDoesNotUseUncommittedCache)
   sqlite3_close(db);
   EXPECT_NO_THROW(state.remember_references(session.id, {capture, result}));
   EXPECT_EQ(state.references(session.id).size(), 2u);
+}
+TEST_F(History, SchemaFiveSkipsCorruptRowsWithoutChangingThemOrLosingValidReferences) {
+  const std::string capture = "01234567-1234-1234-1234-0123456789ab.txt";
+  std::string good;
+  {
+    StateStore state(config.home);
+    auto session = state.create("good");
+    good = session.id;
+    codet::Message user;
+    user.role = "user";
+    user.text = "preserved";
+    user.result_file = "results/valid/message.json";
+    session.messages = {user};
+    state.save(session);
+    ToolCall call{"valid-journal", "exec_command", {{"cmd", "test"}}};
+    state.tool_started(good, call);
+    codet::Message result;
+    result.role = "tool";
+    result.tool_call_id = call.id;
+    result.text = Json({{"content", "preview"}, {"metadata", {{"spill_path", capture}}}}).dump();
+    state.tool_finished(good, call, Json(result));
+  }
+  sqlite3 *db = nullptr;
+  ASSERT_EQ(sqlite3_open((config.home / "state.sqlite3").c_str(), &db), SQLITE_OK);
+  const auto exec = [&](const char *sql) {
+    EXPECT_EQ(sqlite3_exec(db, sql, nullptr, nullptr, nullptr), SQLITE_OK) << sqlite3_errmsg(db);
+  };
+  exec("DROP TABLE session_references; PRAGMA user_version=4;"
+       "INSERT INTO sessions(id,name,updated,messages) "
+       "VALUES('syntax','syntax',1,'[{'),('shape','shape',1,'{}'),('journal','journal',1,'[]');"
+       "INSERT INTO tools "
+       "VALUES('journal','syntax','read_file','{}','{','complete'),('journal','shape','read_file','"
+       "{}','[]','complete');");
+  const auto rows = [&] {
+    sqlite3_stmt *statement = nullptr;
+    EXPECT_EQ(
+        sqlite3_prepare_v2(db,
+                           "SELECT messages FROM sessions WHERE id IN ('syntax','shape') UNION ALL "
+                           "SELECT result FROM tools WHERE session='journal' ORDER BY 1",
+                           -1, &statement, nullptr),
+        SQLITE_OK);
+    std::vector<std::string> values;
+    while (sqlite3_step(statement) == SQLITE_ROW)
+      values.emplace_back(reinterpret_cast<const char *>(sqlite3_column_text(statement, 0)));
+    sqlite3_finalize(statement);
+    return values;
+  };
+  const auto before = rows();
+  {
+    StateStore upgraded(config.home);
+    EXPECT_EQ(upgraded.load(good).messages.front().text, "preserved");
+    EXPECT_THAT(upgraded.references(good),
+                UnorderedElementsAre(capture, "results/valid/message.json"));
+    EXPECT_THROW(upgraded.load("syntax"), Error);
+    EXPECT_THROW(upgraded.load("shape"), Error);
+  }
+  EXPECT_EQ(rows(), before);
+  sqlite3_close(db);
+  StateStore reopened(config.home);
+  EXPECT_EQ(reopened.list().size(), 4u);
+  EXPECT_EQ(reopened.references(good).size(), 2u);
+}
+TEST_F(History, SchemaFiveDatabaseFailureRollsBackAndCanRetry) {
+  { StateStore initial(config.home); }
+  sqlite3 *db = nullptr;
+  ASSERT_EQ(sqlite3_open((config.home / "state.sqlite3").c_str(), &db), SQLITE_OK);
+  // An orphan journal row injects a real foreign-key failure during reference publication.
+  ASSERT_EQ(sqlite3_exec(db,
+                         "DROP TABLE session_references; PRAGMA user_version=4;"
+                         "INSERT INTO tools "
+                         "VALUES('missing','orphan','read_file','{}','{\"role\":\"tool\",\"result_"
+                         "file\":\"results/valid/message.json\"}','complete');",
+                         nullptr, nullptr, nullptr),
+            SQLITE_OK);
+  EXPECT_THROW(StateStore failed(config.home), Error);
+  sqlite3_stmt *q = nullptr;
+  ASSERT_EQ(sqlite3_prepare_v2(db, "PRAGMA user_version", -1, &q, nullptr), SQLITE_OK);
+  ASSERT_EQ(sqlite3_step(q), SQLITE_ROW);
+  EXPECT_EQ(sqlite3_column_int(q, 0), 4);
+  sqlite3_finalize(q);
+  ASSERT_EQ(sqlite3_prepare_v2(db,
+                               "SELECT count(*) FROM sqlite_master WHERE name='session_references'",
+                               -1, &q, nullptr),
+            SQLITE_OK);
+  ASSERT_EQ(sqlite3_step(q), SQLITE_ROW);
+  EXPECT_EQ(sqlite3_column_int(q, 0), 0);
+  sqlite3_finalize(q);
+  ASSERT_EQ(
+      sqlite3_exec(db, "DELETE FROM tools WHERE session='missing'", nullptr, nullptr, nullptr),
+      SQLITE_OK);
+  sqlite3_close(db);
+  EXPECT_NO_THROW(StateStore retry(config.home));
 }

@@ -55,6 +55,7 @@ Json essential(const Json &metadata) {
                           "application_success_observed",
                           "next_byte_offset",
                           "next_entry_offset",
+                          "scan_limited",
                           "bytes_read",
                           "next_line",
                           "total_lines",

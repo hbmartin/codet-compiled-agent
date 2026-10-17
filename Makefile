@@ -55,6 +55,25 @@ build-analysis-tools:
 	$(ANALYSIS_PYTHON) scripts/analysis-tools.py build --jobs $(MODERN_ANALYSIS_JOBS)
 test-modern-analysis-runner:
 	$(ANALYSIS_PYTHON) -m unittest discover -s tests -p test_analyze_modern.py -v
+SEMGREP_VERSION := 1.177.0
+SEMGREP_PYTHON ?= python3
+SEMGREP ?= $(CURDIR)/build/semgrep-venv/bin/semgrep
+SEMGREP_RUN = SEMGREP_ENABLE_VERSION_CHECK=0 SEMGREP_SEND_METRICS=off $(SEMGREP)
+SEMGREP_FLAGS = --metrics=off --disable-version-check --strict --no-rewrite-rule-ids
+.PHONY: fetch-semgrep semgrep-ready test-semgrep check-semgrep
+# Provisioning is explicit; neither check target downloads tools or rules.
+fetch-semgrep:
+	$(SEMGREP_PYTHON) -m venv build/semgrep-venv
+	build/semgrep-venv/bin/python -m pip install --disable-pip-version-check 'semgrep==$(SEMGREP_VERSION)'
+semgrep-ready:
+	@test -x '$(SEMGREP)' || { echo 'Run make fetch-semgrep first (or set SEMGREP to the pinned executable).'; exit 1; }
+	@codet_semgrep_version=$$($(SEMGREP_RUN) --version) && test "$$codet_semgrep_version" = '$(SEMGREP_VERSION)' || { echo 'Semgrep $(SEMGREP_VERSION) is required.'; exit 1; }
+	@mkdir -p build/semgrep
+test-semgrep: semgrep-ready
+	$(SEMGREP_RUN) scan $(SEMGREP_FLAGS) --test checks/semgrep --json > build/semgrep/tests.json
+check-semgrep: semgrep-ready
+	$(SEMGREP_RUN) scan $(SEMGREP_FLAGS) --error --config checks/semgrep --json \
+	  src/modern/instructions.cpp src/modern/state.cpp > build/semgrep/scan.json
 test-foundation:
 	cmake -S . -B build/foundation -DCODET_FOUNDATION_ONLY=ON
 	cmake --build build/foundation -j4
@@ -115,6 +134,8 @@ help:
 	  'make analyze-modern Configure a dedicated Clang database and run all three analyzers without building.' \
 	  'make analyze-modern-{clang-tidy,cppcheck,clang-analyzer} Run one modern analyzer.' \
 	  'make analyze-modern-selftest / test-modern-analysis-runner Verify detection and runner failure handling.' \
+	  'make fetch-semgrep Explicitly provision development-only Semgrep 1.177.0.' \
+	  'make test-semgrep / check-semgrep Test local rules / gate scoped application patterns offline.' \
 	  'make fetch-tiger-deps / toolchain-image Fetch pinned sources / prepare build utilities (network).' \
 	  'make tiger-sysroot Build pinned target dependencies offline.' \
 	  'make verify-tiger / tiger-package Statically verify / package the modern PPC artifacts.' \

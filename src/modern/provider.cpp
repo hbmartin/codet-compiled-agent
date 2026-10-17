@@ -246,6 +246,12 @@ std::string optional_text(const Json &item, const char *key) {
   const auto found = item.find(key);
   return found != item.end() && found->is_string() ? found->get<std::string>() : std::string{};
 }
+std::string assistant_phase(const Json &item) {
+  const auto phase = optional_text(item, "phase");
+  return phase == "commentary" || phase == "partial_answer" || phase == "final_answer"
+             ? phase
+             : std::string{};
+}
 void codex_output(ProviderResult &result, const Json &response) {
   result.message.assistant_items.clear();
   result.message.text.clear();
@@ -254,10 +260,7 @@ void codex_output(ProviderResult &result, const Json &response) {
   for (const auto &item : response.value("output", Json::array())) {
     const auto type = item.value("type", "");
     if (type == "message") {
-      AssistantText message{optional_text(item, "id"), "", optional_text(item, "phase")};
-      if (message.phase != "commentary" && message.phase != "partial_answer" &&
-          message.phase != "final_answer")
-        message.phase.clear();
+      AssistantText message{optional_text(item, "id"), "", assistant_phase(item)};
       for (const auto &c : item.value("content", Json::array()))
         if (c.value("type", "") == "output_text")
           message.text += c.value("text", "");
@@ -651,7 +654,7 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
                 id = optional_text(j, "item_id");
               if (id.empty())
                 id = unique_id();
-              AssistantText item{id, "", optional_text(source, "phase")};
+              AssistantText item{id, "", assistant_phase(source)};
               found = streamed.emplace(index, std::move(item)).first;
               item_event("item.started", found->second);
             }
