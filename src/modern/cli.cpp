@@ -27,6 +27,7 @@ Usage: codet [OPTIONS] [PROMPT]
        codet [exec] fork [SESSION] [--last] [PROMPT]
        codet login --import FILE | --with-api-key | status
        codet sessions | export SESSION | doctor
+       codet repair SESSION [--last] [--provider-cache] [--recovery]
        codet memory consolidate
 
   -i, --image PATH              Attach an image (repeatable, up to four)
@@ -58,7 +59,7 @@ Native sign-in, multiagent, goals, MCP, ACP, LSP and plugins are deferred.
 )";
 struct Options {
   bool exec = false, last = false, json = false, ephemeral = false, key = false;
-  bool help = false, version = false;
+  bool help = false, version = false, repair_provider = false, repair_recovery = false;
   std::string command, action, session, profile, provider, model,
       format = "text", ui, mode, approval, durability, color = "auto";
   fs::path cwd = fs::current_path(), schema, output, import;
@@ -123,6 +124,10 @@ Options parse(const std::vector<std::string> &args) {
           o.json = true;
         } else if (a == "--last")
           o.last = true;
+        else if (a == "--provider-cache")
+          o.repair_provider = true;
+        else if (a == "--recovery")
+          o.repair_recovery = true;
         else if (a == "--ephemeral")
           o.ephemeral = true;
         else if (a == "--durability")
@@ -183,7 +188,7 @@ Options parse(const std::vector<std::string> &args) {
       if (!literal && o.positionals.empty() &&
           (o.command.empty() || (o.command == "exec" && (a == "resume" || a == "fork"))) &&
           (a == "resume" || a == "fork" || a == "login" || a == "sessions" || a == "export" ||
-           a == "doctor" || a == "memory")) {
+           a == "doctor" || a == "memory" || a == "repair")) {
         o.command = a;
         continue;
       }
@@ -203,7 +208,8 @@ Options parse(const std::vector<std::string> &args) {
     throw Error("--json conflicts with --output-format", 2);
   if (o.color != "auto" && o.color != "always" && o.color != "never")
     throw Error("Invalid color policy", 2);
-  if (o.command == "resume" || o.command == "fork" || o.command == "export") {
+  if (o.command == "resume" || o.command == "fork" || o.command == "export" ||
+      o.command == "repair") {
     if (!o.last && !o.positionals.empty()) {
       o.session = o.positionals.front();
       o.positionals.erase(o.positionals.begin());
@@ -215,6 +221,12 @@ Options parse(const std::vector<std::string> &args) {
       o.positionals.erase(o.positionals.begin());
     }
   }
+  if ((o.repair_provider || o.repair_recovery) && o.command != "repair")
+    throw Error("--provider-cache and --recovery require repair", 2);
+  if (o.command == "repair" &&
+      ((!o.last && o.session.empty()) || !o.positionals.empty() || o.ephemeral))
+    throw Error("Use repair SESSION or repair --last with optional --provider-cache / --recovery",
+                2);
   return o;
 }
 class Terminal {
@@ -700,7 +712,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     }
   }
   std::string prompt = combined(o.positionals);
-  const bool will_run = o.command != "sessions" && o.command != "export";
+  const bool will_run = o.command != "sessions" && o.command != "export" && o.command != "repair";
   const bool headless = o.exec || !isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO);
   if (will_run && headless && !isatty(STDIN_FILENO)) {
     auto input = stdin_text();
@@ -733,6 +745,13 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   StateStore state(state_home, artifact_directory(config), config.durability);
   if (o.command == "sessions") {
     std::cout << state.list().dump(2) << '\n';
+    return 0;
+  }
+  if (o.command == "repair") {
+    Tools inspection(config, files, processes, http, clock);
+    std::cout
+        << state.repair(o.session, o.last, o.repair_provider, o.repair_recovery, inspection).dump(2)
+        << '\n';
     return 0;
   }
   Session session;

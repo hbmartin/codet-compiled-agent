@@ -494,6 +494,11 @@ bool Tools::private_read(const fs::path &p) const {
       value ==
           fs::absolute(artifacts / "indexes" / (session_id_ + ".results.jsonl")).lexically_normal())
     return private_anchor(artifacts) && private_regular(files_, artifacts, value);
+  const auto runtime =
+      invocation_directory(config_) / "runtime" / (session_id_ + ".execution.json");
+  if (!session_id_.empty() && value == fs::absolute(runtime).lexically_normal())
+    return private_anchor(invocation_directory(config_)) &&
+           private_regular(files_, invocation_directory(config_), value);
   const auto plans = invocation_directory(config_) / "plans";
   if (!session_id_.empty() &&
       value == fs::absolute(plans / (session_id_ + ".json")).lexically_normal())
@@ -579,14 +584,14 @@ void Tools::reference_results(const std::vector<Message> &messages) {
       accept(metadata.at("spill_path"));
   }
 }
-std::string Tools::result_reference(const Message &message) const {
+std::string Tools::result_identifier(const Message &message) const {
   if (!message.result_file.empty()) {
     const fs::path ref(message.result_file);
-    if (capture_name(ref))
-      return (capture_directory(config_) / ref.filename()).string();
+    if (capture_name(ref) && ref == ref.filename())
+      return ref.string();
     if (!result_name(ref))
       throw Error("Invalid private result reference");
-    return (artifact_directory(config_) / ref).string();
+    return ref.string();
   }
   const auto ref =
       fs::path("results") / (session_id_.empty() ? result_owner_ : session_id_) /
@@ -594,7 +599,12 @@ std::string Tools::result_reference(const Message &message) const {
        ".json");
   if (!result_name(ref))
     throw Error("Invalid private result identity");
-  return (artifact_directory(config_) / ref).string();
+  return ref.string();
+}
+std::string Tools::result_reference(const Message &message) const {
+  const auto ref = result_identifier(message);
+  return ((capture_name(ref) ? capture_directory(config_) : artifact_directory(config_)) / ref)
+      .string();
 }
 Json Tools::execution_fact(int id, const ExecSession &session) const {
   Json fact = {{"session_id", id}};
@@ -616,29 +626,59 @@ Json Tools::execution_fact(int id, const ExecSession &session) const {
   }
   return fact;
 }
-Json Tools::execution_state(const std::vector<Message> &messages) const {
-  std::map<std::string, Json> recovery;
+Json Tools::execution_state(const std::vector<Message> &messages,
+                            const std::function<Json()> &recover) const {
+  std::map<std::string, Json> recovery, unavailable;
+  Json journal;
   const auto collect = [&](const Json &facts) {
     if (!facts.is_array())
       throw Error("Invalid checkpoint recovery state");
     for (const auto &fact : facts)
-      if (fact.is_object() && fact.value("call_id", Json()).is_string() &&
-          fact.contains("recovery"))
+      if (fact.is_object() && fact.value("kind", Json()) == "recovery_unavailable")
+        unavailable[fact.dump()] = fact;
+      else if (fact.is_object() && fact.value("call_id", Json()).is_string() &&
+               fact.contains("recovery"))
         recovery[fact.at("call_id").get<std::string>()] = fact;
   };
   for (const auto &message : messages) {
     if (!message.checkpoint_state.is_null()) {
       const auto &saved = message.checkpoint_state;
-      if (saved.is_array())
-        collect(saved);
-      else {
-        const auto ref = saved.at("recovery_record").get<std::string>();
-        const auto path = artifact_directory(config_) / ref;
-        if (!result_name(ref) || !private_anchor(artifact_directory(config_)) ||
-            !private_regular(files_, artifact_directory(config_), path))
-          throw Error("Invalid checkpoint recovery reference");
-        const auto archive = Json::parse(files_.read(path, size_t{8} * 1024 * 1024)).get<Message>();
-        collect(Json::parse(archive.text));
+      try {
+        if (saved.is_array())
+          collect(saved);
+        else {
+          const auto ref = saved.at("recovery_record").get<std::string>();
+          const auto path = artifact_directory(config_) / ref;
+          if (!result_name(ref) || !private_anchor(artifact_directory(config_)) ||
+              !private_regular(files_, artifact_directory(config_), path))
+            throw Error("Invalid checkpoint recovery reference");
+          const auto bytes = files_.read(path, size_t{8} * 1024 * 1024);
+          if (bytes.find('\0') != std::string::npos)
+            throw Error("Invalid checkpoint recovery JSON");
+          const auto archive = Json::parse(bytes).get<Message>();
+          if (archive.role != "system" || archive.origin != "recovery" ||
+              archive.message_id != path.stem().string() ||
+              digest(archive.text) != archive.message_id)
+            throw Error("Invalid checkpoint recovery archive identity");
+          collect(Json::parse(archive.text));
+        }
+      } catch (const std::bad_alloc &) {
+        throw;
+      } catch (const std::exception &error) {
+        if (journal.is_null())
+          journal = recover ? recover() : Json::array();
+        collect(journal);
+        // The archive's membership cannot be proven from a fork's surviving
+        // journal. Keep the original reference even when some facts are rebuilt.
+        Json missing = {
+            {"kind", "recovery_unavailable"},
+            {"recovery", "unknown"},
+            {"checkpoint_state", saved},
+            {"reason", bounded_text(error.what(), 512)},
+            {"instruction",
+             "Historical outcomes are incomplete; inspect effects before repeating actions."}};
+        const auto identity = missing.dump();
+        unavailable[identity] = std::move(missing);
       }
     }
     if (message.role != "tool")
@@ -658,11 +698,36 @@ Json Tools::execution_state(const std::vector<Message> &messages) const {
   Json facts = Json::array();
   for (const auto &entry : recovery)
     facts.push_back(entry.second);
+  for (const auto &entry : unavailable)
+    facts.push_back(entry.second);
   // Only this Tools instance owns execution handles. Historical IDs are never live after resume.
   for (const auto &entry : exec_sessions_)
     if (!entry.second.completed)
       facts.push_back(execution_fact(entry.first, entry.second));
   return facts;
+}
+std::string Tools::execution_context(const Json &facts) {
+  auto text = facts.dump();
+  if (text.size() > 2048) {
+    const auto root = invocation_directory(config_);
+    const auto dir = root / "runtime";
+    const auto path = dir / (session_id_ + ".execution.json");
+    if (session_id_.empty() || !private_anchor(root) || fs::is_symlink(dir) || fs::is_symlink(path))
+      throw Error("Invalid live execution storage");
+    fs::create_directories(dir);
+    if (::chmod(dir.c_str(), 0700))
+      throw Error("Cannot protect live execution directory");
+    if (!private_regular(files_, root, path) || fs::file_size(path) != text.size() ||
+        files_.read(path, text.size() + 1) != text)
+      files_.atomic_write(path, text, true);
+    text =
+        Json(
+            {{"records", facts.size()}, {"sha256", digest(text)}, {"live_snapshot", path.string()}})
+            .dump();
+  }
+  return "Current execution and recovery facts (fresh runtime observation). "
+         "Saved checkpoints are historical; historical handles are never live.\n" +
+         text;
 }
 std::string Tools::retain_result(Message &message) {
   if (message.result_file.empty()) {

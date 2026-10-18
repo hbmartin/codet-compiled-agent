@@ -194,7 +194,7 @@ TEST_F(Modernization, PublicResponsesReasoningDefaultsAreModelAware) {
       const bool expected =
           !config.effort.empty() || config.model == "gpt-6.1-sol" || config.model == "gpt-6-astra";
       EXPECT_EQ(body.contains("reasoning"), expected) << model << ":" << effort;
-      EXPECT_EQ(body.contains("include"), expected) << model << ":" << effort;
+      EXPECT_EQ(body["include"], Json::array({"reasoning.encrypted_content"}));
       if (expected) {
         EXPECT_EQ(body["reasoning"]["effort"], config.effort.empty() ? "medium" : effort);
         EXPECT_EQ(body["include"], Json::array({"reasoning.encrypted_content"}));
@@ -854,9 +854,9 @@ TEST_F(Modernization, InvalidProviderWritesAndFailedCommitsDoNotPublishCachedSta
   auto session = state.create();
   session.provider_state = conversation_fixture("valid");
   state.save_provider_state(session);
-  const auto valid = session.provider_state, bytes = Json(state.provider_cache_bytes());
+  const auto valid = session.provider_state;
   for (const auto &invalid :
-       {Json::array(), Json{{"messages", 4}}, Json{{"provider", 4}},
+       {Json::array(), Json{{"messages", 4}}, Json{{"provider", 4}}, Json{{"execution_digest", 4}},
         Json{{"messages", Json::array({{{"wire", "bad"}}})}},
         Json{{"messages",
               Json::array({{{"wire", Json::array({{{"role", "assistant"},
@@ -875,7 +875,7 @@ TEST_F(Modernization, InvalidProviderWritesAndFailedCommitsDoNotPublishCachedSta
                          nullptr, nullptr, nullptr),
             SQLITE_OK);
   EXPECT_THROW(state.save_provider_state(session), Error);
-  EXPECT_EQ(Json(state.provider_cache_bytes()), bytes);
+  EXPECT_EQ(state.provider_cache_bytes(), 0u);
   ASSERT_EQ(sqlite3_exec(db, "DROP TRIGGER fail_provider", nullptr, nullptr, nullptr), SQLITE_OK);
   state.save_provider_state(session);
   EXPECT_EQ(state.load_id(session.id, false).provider_state, session.provider_state);
@@ -975,5 +975,269 @@ TEST_F(Modernization, CurrentSchemaReadersDoNotNeedTheWriterLock) {
   });
   ASSERT_EQ(sqlite3_exec(db, "ROLLBACK", nullptr, nullptr, nullptr), SQLITE_OK);
   sqlite3_close(db);
+}
+
+TEST_F(Modernization, LegacyEmptyAnthropicPartsNormalizeReadOnlyThenRewriteOnSave) {
+  StateStore state(config.state_root);
+  auto session = state.create();
+  session.provider_state = conversation_fixture("before");
+  state.save_provider_state(session);
+  sqlite3 *raw = nullptr;
+  ASSERT_EQ(sqlite3_open((config.state_root / "state.sqlite3").c_str(), &raw), SQLITE_OK);
+  const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(raw, sqlite3_close);
+  ASSERT_EQ(sqlite3_exec(raw,
+                         "UPDATE provider_parts SET "
+                         "payload='{\"source\":\"source\",\"wire\":[{\"role\":\"assistant\","
+                         "\"content\":[]}]}' WHERE position=1",
+                         nullptr, nullptr, nullptr),
+            SQLITE_OK);
+  session = state.load_id(session.id, false);
+  EXPECT_TRUE(session.provider_state["messages"][0]["wire"].empty());
+  EXPECT_EQ(state.provider_cache_bytes(), 0u);
+  EXPECT_EQ(state.provider_revision(session.id), 0u);
+  sqlite3_stmt *row = nullptr;
+  ASSERT_EQ(sqlite3_prepare_v2(raw, "SELECT payload FROM provider_parts WHERE position=1", -1, &row,
+                               nullptr),
+            SQLITE_OK);
+  ASSERT_EQ(sqlite3_step(row), SQLITE_ROW);
+  EXPECT_THAT(reinterpret_cast<const char *>(sqlite3_column_text(row, 0)), HasSubstr("assistant"));
+  sqlite3_finalize(row);
+  ASSERT_EQ(
+      sqlite3_exec(
+          raw,
+          "CREATE TABLE parent(id INTEGER PRIMARY KEY);"
+          "CREATE TABLE poison(id INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED);"
+          "CREATE TRIGGER fail_outer AFTER INSERT ON provider_parts WHEN NEW.position=1 "
+          "BEGIN INSERT INTO poison VALUES(1); END;",
+          nullptr, nullptr, nullptr),
+      SQLITE_OK);
+  EXPECT_THROW(state.save_provider_state(session), Error);
+  ASSERT_EQ(sqlite3_exec(raw, "DROP TRIGGER fail_outer", nullptr, nullptr, nullptr), SQLITE_OK);
+  state.save_provider_state(session); // Deliberately no reload before the retry.
+  EXPECT_EQ(state.load_id(session.id, false).provider_state, session.provider_state);
+  ASSERT_EQ(sqlite3_prepare_v2(raw, "SELECT payload FROM provider_parts WHERE position=1", -1, &row,
+                               nullptr),
+            SQLITE_OK);
+  ASSERT_EQ(sqlite3_step(row), SQLITE_ROW);
+  EXPECT_THAT(reinterpret_cast<const char *>(sqlite3_column_text(row, 0)),
+              Not(HasSubstr("assistant")));
+  sqlite3_finalize(row);
+}
+TEST_F(Modernization, LargeProviderHintsAvoidPrefixReadsAndRejectExternalChanges) {
+  StateStore state(config.state_root);
+  auto session = state.create();
+  session.provider_state = conversation_fixture(std::string(9 * 1024 * 1024, 'x'));
+  state.save_provider_state(session);
+  const auto before = state.serialized_bytes(), reads = state.provider_rows_read();
+  for (int i = 0; i < 4; ++i) {
+    const ProviderStateUpdate hint{state.provider_revision(session.id),
+                                   session.provider_state["messages"].size()};
+    session.provider_state["messages"].push_back(conversation_fixture("new")["messages"][0]);
+    state.append_messages(session, 0, true, hint);
+  }
+  EXPECT_EQ(state.provider_rows_read(), reads);
+  EXPECT_LT(state.serialized_bytes() - before, 4000u);
+  EXPECT_EQ(state.provider_cache_bytes(), 0u);
+  const ProviderStateUpdate stale{state.provider_revision(session.id),
+                                  session.provider_state["messages"].size()};
+  sqlite3 *raw = nullptr;
+  ASSERT_EQ(sqlite3_open((config.state_root / "state.sqlite3").c_str(), &raw), SQLITE_OK);
+  ASSERT_EQ(sqlite3_exec(raw, "UPDATE provider_parts SET payload='{broken' WHERE position=1",
+                         nullptr, nullptr, nullptr),
+            SQLITE_OK);
+  EXPECT_EQ(state.provider_revision(session.id), 0u);
+  session.provider_state["messages"].push_back(conversation_fixture("last")["messages"][0]);
+  EXPECT_THROW(state.save_provider_state(session, stale), Error);
+  EXPECT_GT(state.provider_rows_read(), reads);
+  sqlite3_close(raw);
+}
+TEST_F(Modernization, ProviderHintRollbackInvalidatesTicketBeforeNextSave) {
+  StateStore state(config.state_root);
+  auto session = state.create();
+  session.provider_state = conversation_fixture("old");
+  state.save_provider_state(session);
+  sqlite3 *raw = nullptr;
+  ASSERT_EQ(sqlite3_open((config.state_root / "state.sqlite3").c_str(), &raw), SQLITE_OK);
+  ASSERT_EQ(
+      sqlite3_exec(
+          raw,
+          "CREATE TABLE parent(id INTEGER PRIMARY KEY);"
+          "CREATE TABLE poison(id INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED);"
+          "CREATE TRIGGER fail_outer AFTER INSERT ON provider_parts WHEN NEW.position=2 "
+          "BEGIN INSERT INTO poison VALUES(1); END;",
+          nullptr, nullptr, nullptr),
+      SQLITE_OK);
+  session = state.load_id(session.id, false);
+  const ProviderStateUpdate hint{state.provider_revision(session.id), 1};
+  session.provider_state["messages"].push_back(conversation_fixture("new")["messages"][0]);
+  EXPECT_THROW(state.append_messages(session, 0, true, hint), Error);
+  EXPECT_EQ(state.provider_revision(session.id), 0u);
+  ASSERT_EQ(sqlite3_exec(raw, "DROP TRIGGER fail_outer", nullptr, nullptr, nullptr), SQLITE_OK);
+  state.save_provider_state(session, hint);
+  EXPECT_EQ(state.load_id(session.id, false).provider_state, session.provider_state);
+  sqlite3_close(raw);
+}
+TEST_F(Modernization, StatelessReasoningIncludeDoesNotChangeEffortDefaults) {
+  config.model = "gpt-5.5";
+  config.effort.clear();
+  CredentialStore credentials(config.home, files, clock);
+  ApiProvider provider(http, credentials, clock);
+  const auto body = Json::parse(provider.request(config, "", {}, Json::array()).body);
+  EXPECT_EQ(body["include"], Json::array({"reasoning.encrypted_content"}));
+  EXPECT_FALSE(body.contains("reasoning"));
+  http.status = 200;
+  http.stream =
+      "data: " +
+      Json({{"type", "response.completed"},
+            {"response",
+             {{"status", "completed"},
+              {"output",
+               Json::array(
+                   {{{"type", "reasoning"}, {"id", "reason"}, {"encrypted_content", "secret"}},
+                    {{"type", "function_call"},
+                     {"call_id", "call"},
+                     {"name", "read_file"},
+                     {"arguments", "{}"}}})}}}})
+          .dump() +
+      "\n\n";
+  auto response = provider.complete(config, "", {}, Json::array(), cancel, {});
+  codet::Message result;
+  result.role = "tool";
+  result.tool_call_id = "call";
+  result.text = "done";
+  const auto next =
+      Json::parse(provider.request(config, "", {response.message, result}, Json::array()).body);
+  EXPECT_EQ(next["input"][1]["encrypted_content"], "secret");
+  EXPECT_EQ(next["input"][2]["call_id"], "call");
+}
+TEST_F(Modernization, ExecutionOnlyEpochUpdatesKeepSystemAndDeduplicateWireParts) {
+  config.provider = "anthropic";
+  config.model = "claude-sonnet-5-5";
+  config.providers["anthropic"].api_key = "fixture";
+  CredentialStore credentials(config.home, files, clock);
+  ApiProvider provider(http, credentials, clock);
+  codet::Message user, runtime;
+  user.role = "user";
+  user.text = "continue";
+  runtime.role = "system";
+  runtime.origin = "runtime";
+  runtime.text = "running";
+  const auto first =
+      Json::parse(provider.request(config, "stable system", {user, runtime}, Json::array()).body);
+  auto saved = provider.conversation_state();
+  provider.restore_conversation(saved);
+  (void)provider.request(config, "stable system", {user, runtime}, Json::array());
+  EXPECT_EQ(provider.conversation_state(), saved);
+  runtime.text = "no live handles";
+  auto next =
+      Json::parse(provider.request(config, "stable system", {user, runtime}, Json::array()).body);
+  EXPECT_EQ(next["system"], first["system"]);
+  EXPECT_EQ(provider.conversation_state()["messages"].size(), saved["messages"].size() + 1);
+  EXPECT_FALSE(provider.conversation_state()["messages"].back().contains("source"));
+  EXPECT_THAT(next["messages"].dump(), HasSubstr("no live handles"));
+  EXPECT_EQ(next["messages"].dump().find("stable system"), std::string::npos);
+}
+
+TEST_F(Modernization, ExplicitRepairRollsBackAfterBackupAndNeverChangesJournal) {
+  StateStore state(config.state_root);
+  auto session = state.create();
+  session.provider_state = conversation_fixture("valid");
+  state.save(session);
+  state.tool_started(session.id, {"retired", "exec_command", {{"cmd", "old effect"}}});
+  sqlite3 *raw = nullptr;
+  ASSERT_EQ(sqlite3_open((config.state_root / "state.sqlite3").c_str(), &raw), SQLITE_OK);
+  ASSERT_EQ(sqlite3_exec(raw,
+                         "UPDATE provider_parts SET payload='{broken' WHERE position=1;"
+                         "CREATE TRIGGER refuse_repair BEFORE DELETE ON provider_parts BEGIN "
+                         "SELECT RAISE(FAIL,'repair rollback'); END;",
+                         nullptr, nullptr, nullptr),
+            SQLITE_OK);
+  Tools tools(config, files, processes, http, clock);
+  const auto journal = state.recovery_facts(session.id);
+  EXPECT_THROW(state.repair(session.id, false, true, false, tools), Error);
+  EXPECT_EQ(state.recovery_facts(session.id), journal);
+  EXPECT_THROW(state.load_id(session.id, false), Error);
+  EXPECT_EQ(std::distance(fs::directory_iterator(config.state_root / "repairs"),
+                          fs::directory_iterator()),
+            1);
+  ASSERT_EQ(sqlite3_exec(raw, "DROP TRIGGER refuse_repair", nullptr, nullptr, nullptr), SQLITE_OK);
+  const auto repaired = state.repair(session.id, false, true, false, tools);
+  EXPECT_TRUE(repaired["changed"]);
+  EXPECT_EQ(state.recovery_facts(session.id), journal);
+  EXPECT_TRUE(state.load_id(session.id, false).provider_state.is_null());
+  sqlite3_close(raw);
+}
+
+TEST_F(Modernization, LegacyEmptyPartsAllowResumeCompactionAndProviderSwitch) {
+  struct Summary : Provider {
+    ProviderResult complete(const Config &, const std::string &,
+                            const std::vector<codet::Message> &, const Json &, const Cancellation &,
+                            const ChunkSink &, const ItemSink &) override {
+      ProviderResult result;
+      result.message.role = "assistant";
+      result.message.text = "done";
+      return result;
+    }
+  } provider;
+  for (const auto *action : {"resume", "compact", "switch"}) {
+    SCOPED_TRACE(action);
+    StateStore state(config.state_root / action);
+    auto session = state.create();
+    codet::Message old, user, empty;
+    old.role = "assistant";
+    old.text = "completed older work";
+    user.role = "user";
+    user.text = "continue";
+    empty.role = "assistant";
+    session.messages = {old, user, empty};
+    session.provider = "anthropic";
+    session.model = "claude-sonnet-5-5";
+    session.provider_state = conversation_fixture("legacy");
+    state.save(session);
+    sqlite3 *raw = nullptr;
+    ASSERT_EQ(sqlite3_open((config.state_root / action / "state.sqlite3").c_str(), &raw),
+              SQLITE_OK);
+    ASSERT_EQ(sqlite3_exec(raw,
+                           "UPDATE provider_parts SET "
+                           "payload='{\"source\":\"source\",\"wire\":[{\"role\":\"assistant\","
+                           "\"content\":[]}]}' WHERE position=1",
+                           nullptr, nullptr, nullptr),
+              SQLITE_OK);
+    sqlite3_close(raw);
+    config.provider = std::string(action) == "switch" ? "openai" : "anthropic";
+    config.model = config.provider == "openai" ? "gpt-6.1-sol" : "claude-sonnet-5-5";
+    Tools tools(config, files, processes, http, clock);
+    Agent agent(config, provider, tools, state, {});
+    if (std::string(action) == "compact")
+      EXPECT_EQ(agent.compact(session, cancel).text, "Conversation compacted.");
+    else
+      EXPECT_EQ(agent.run(session, "new turn", cancel).text, "done");
+    EXPECT_FALSE(state.load_id(session.id, false).messages.empty());
+  }
+}
+TEST_F(Modernization, RepairBackupRetainsMalformedUtf8Bytes) {
+  StateStore state(config.state_root);
+  auto session = state.create();
+  session.provider_state = conversation_fixture("valid");
+  state.save(session);
+  sqlite3 *raw = nullptr;
+  ASSERT_EQ(sqlite3_open((config.state_root / "state.sqlite3").c_str(), &raw), SQLITE_OK);
+  sqlite3_stmt *update = nullptr;
+  ASSERT_EQ(sqlite3_prepare_v2(raw, "UPDATE provider_parts SET payload=? WHERE position=1", -1,
+                               &update, nullptr),
+            SQLITE_OK);
+  const std::string invalid("bad\xff\0suffix", 11);
+  ASSERT_EQ(
+      sqlite3_bind_text(update, 1, invalid.data(), static_cast<int>(invalid.size()), SQLITE_STATIC),
+      SQLITE_OK);
+  ASSERT_EQ(sqlite3_step(update), SQLITE_DONE);
+  sqlite3_finalize(update);
+  sqlite3_close(raw);
+  Tools tools(config, files, processes, http, clock);
+  const auto report = state.repair(session.id, false, true, false, tools);
+  const auto backup = Json::parse(files.read(report["backup"].get<std::string>(), 100000));
+  EXPECT_EQ(backup["provider_parts"][1]["payload"]["encoding"], "base64");
+  EXPECT_EQ(backup["provider_parts"][1]["payload"]["bytes"], base64_encode(invalid));
+  EXPECT_TRUE(state.load_id(session.id, false).provider_state.is_null());
 }
 } // namespace

@@ -49,3 +49,12 @@ void StateStore::replace_history(const Session &session) {
   } else
     impl_->clear_provider_cache();
 }
+
+void StateStore::save_provider_state(const Session &session, const Hint &hint) {
+  tx.commit();
+  // ruleid: codet-provider-cache-owning-commit
+  impl_->publish_provider(session, bytes);
+  if (tx.owner)
+    // ok: codet-provider-cache-owning-commit
+    impl_->publish_provider(session, bytes);
+}

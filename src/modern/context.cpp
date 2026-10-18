@@ -190,6 +190,31 @@ std::vector<size_t> protected_history(const std::vector<Message> &messages) {
       keep.push_back(i);
   return keep;
 }
+std::optional<size_t> fit_result_preview(Message &floor, Message preview, size_t allowance,
+                                         const std::string &name, Tools &tools) {
+  (void)tools.result_identifier(floor);
+  (void)tools.result_identifier(preview);
+  const auto minimum = tools.result_bytes(floor, name), bytes = tools.result_bytes(preview, name);
+  if (bytes < minimum || bytes - minimum > allowance)
+    return std::nullopt;
+  floor = std::move(preview);
+  return bytes - minimum;
+}
+bool reduce_completed_result(Message &message, const std::string &name, Tools &tools) {
+  if (message.role != "tool" || message.previewed)
+    return false;
+  const auto envelope = Json::parse(message.text, nullptr, false);
+  if (name == "read_file" && envelope.is_object() &&
+      envelope.value("metadata", Json()).is_object() &&
+      envelope["metadata"].contains("next_byte_offset"))
+    return false;
+  auto floor = clipped(message, name, tools.result_identifier(message), 0);
+  if (tools.result_bytes(floor, name) >= tools.result_bytes(message, name))
+    return false;
+  tools.retain_result(message);
+  message = std::move(floor);
+  return true;
+}
 std::vector<Message> project_history(std::vector<Message> &messages, size_t available,
                                      Tools &tools) {
   ensure_message_ids(messages);
@@ -218,7 +243,7 @@ std::vector<Message> project_history(std::vector<Message> &messages, size_t avai
                            envelope.value("metadata", Json::object()).contains("next_byte_offset");
     if (name(i) == "read_file" && file_page)
       continue; // Contiguous source pages must retire as a whole, never skip their middle.
-    auto floor = clipped(messages[i], name(i), tools.result_reference(messages[i]), 0);
+    auto floor = clipped(messages[i], name(i), tools.result_identifier(messages[i]), 0);
     payloads[i] = tools.result_bytes(floor, name(i));
     if (payloads[i] < tools.result_bytes(messages[i], name(i))) {
       result[i] = std::move(floor);
@@ -240,13 +265,13 @@ std::vector<Message> project_history(std::vector<Message> &messages, size_t avai
         result[i] = messages[i];
         used = restore;
       } else {
-        const auto reference = tools.retain_result(messages[i]);
+        tools.retain_result(messages[i]);
+        const auto reference = tools.result_identifier(messages[i]);
         auto preview = clipped(messages[i], name(i), reference, allowance);
-        const auto bytes = tools.result_bytes(preview, name(i));
-        if (bytes >= payloads[i] && bytes - payloads[i] <= allowance) {
-          used = bytes - payloads[i];
-          result[i] = std::move(preview);
-        }
+        const auto accepted =
+            fit_result_preview(result[i], std::move(preview), allowance, name(i), tools);
+        if (accepted)
+          used = *accepted;
       }
       extra -= used;
       --count;
@@ -259,6 +284,24 @@ std::vector<Message> project_history(std::vector<Message> &messages, size_t avai
   messages = result;
   return result;
 }
+std::vector<size_t> batch_result_reserves(const std::vector<ToolCall> &calls, Tools &tools) {
+  std::vector<size_t> suffix(calls.size() + 1);
+  for (size_t i = calls.size(); i > 0; --i) {
+    Message call, result;
+    call.role = "assistant";
+    call.calls = {{calls[i - 1].id, calls[i - 1].name, Json::object()}};
+    result.role = "tool";
+    result.message_id = "00000000-0000-0000-0000-000000000000";
+    result.tool_call_id = calls[i - 1].id;
+    result.text =
+        Json({{"content", ""}, {"is_error", false}, {"metadata", {{"action_completed", true}}}})
+            .dump();
+    result = clipped(result, calls[i - 1].name, tools.result_identifier(result), 0);
+    // Individual framing is an upper bound even when adjacent results coalesce.
+    suffix[i - 1] = suffix[i] + tools.history_size({call, result}).messages.at(1) + 1;
+  }
+  return suffix;
+}
 size_t minimal_batch_bytes(const std::vector<Message> &protected_messages,
                            const std::vector<ToolCall> &calls, Tools &tools) {
   auto messages = protected_messages;
@@ -270,7 +313,7 @@ size_t minimal_batch_bytes(const std::vector<Message> &protected_messages,
     m.text =
         Json({{"content", ""}, {"is_error", false}, {"metadata", {{"action_completed", true}}}})
             .dump();
-    messages.push_back(clipped(m, c.name, tools.result_reference(m), 0));
+    messages.push_back(clipped(m, c.name, tools.result_identifier(m), 0));
   }
   return tools.history_bytes(messages);
 }

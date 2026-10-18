@@ -28,12 +28,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         self.server.requests.append({'path':self.path,'body':body})
+        callback=self.server.before_reply
+        self.server.before_reply=None
+        if callback:callback()
         if self.path == '/api/chat':
             data=(json.dumps({'message':{'role':'assistant','content':'fixture done'},'done':True})+'\n').encode()
             self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
         if self.path in ('/codex','/v1/responses'):
             prompt=next((m.get('content','') for m in reversed(body['input']) if m.get('role')=='user'),'')
-            items=[{'type':'message','id':'progress-'+str(len(self.server.requests)),'phase':'commentary','role':'assistant','content':[{'type':'output_text','text':'Checking fixture'}]}]
+            if prompt.startswith('fixture-incomplete-'):
+                malformed=prompt.endswith('malformed')
+                payload='{broken' if malformed else json.dumps({'type':'response.incomplete','response':{'incomplete_details':{'reason':'max_output_tokens'}}})
+                named='' if prompt.endswith('unnamed') else 'event: response.incomplete\n'
+                data=(named+'data: '+payload+'\n\n').encode()
+                self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+            items=[{'type':'message' ,'id':'progress-'+str(len(self.server.requests)),'phase':'commentary','role':'assistant','content':[{'type':'output_text','text':'Checking fixture'}]}]
             if prompt!='commentary-only':
                 items.append({'type':'message','id':'final-'+str(len(self.server.requests)),'phase':'final_answer','role':'assistant','content':[{'type':'output_text','text':'Final fixture answer'}]})
             frames=[]
@@ -142,6 +151,7 @@ class CliTests(unittest.TestCase):
     def setUpClass(cls):
         cls.server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler)
         cls.server.requests=[]
+        cls.server.before_reply=None
         threading.Thread(target=cls.server.serve_forever,daemon=True).start()
     @classmethod
     def tearDownClass(cls):cls.server.shutdown();cls.server.server_close()
@@ -150,6 +160,7 @@ class CliTests(unittest.TestCase):
         (self.home/'config.toml').write_text(f"provider='openai'\nmodel='fixture'\n[providers.openai]\napi_key='fake-key'\nbase_url='http://127.0.0.1:{self.server.server_port}/v1'\n")
         self.env=dict(__import__("hermetic").environment(self.root/"user-home"),CODET_HOME=str(self.home));self.env.pop('SEARXNG_URL',None)
         self.server.requests=[]
+        self.server.before_reply=None
     def tearDown(self):self.tmp.cleanup()
     def run_cli(self,*args,input=''):
         return subprocess.run([BIN,'-C',str(self.workspace),*args],input=input,text=True,capture_output=True,env=self.env,timeout=15)
@@ -910,7 +921,7 @@ class CliTests(unittest.TestCase):
             body=self.server.requests[-1]['body']
             self.assertEqual(body['model'],'gpt-4o-mini')
             self.assertEqual('reasoning' in body,bool(extra))
-            self.assertEqual('include' in body,bool(extra))
+            self.assertEqual(body['include'],['reasoning.encrypted_content'])
             if extra:
                 self.assertEqual(body['reasoning']['effort'],'high')
 
@@ -931,6 +942,62 @@ class CliTests(unittest.TestCase):
         self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(json.loads(r.stdout)['structured_output'],{'answer':42})
     def test_provider_errors_preserve_raw_body(self):
         r=self.run_cli('exec','--output-format=json','fixture-error');self.assertEqual(r.returncode,1);self.assertEqual(json.loads(r.stdout)['status'],'error');self.assertEqual(json.loads(r.stdout)['provider_error']['body'],'{"error":{"message":"do-not-leak-fake-credential"}}')
+    def test_curl_incomplete_frames_keep_body_and_never_retry(self):
+        for mode in ('named','unnamed','malformed'):
+            with self.subTest(mode=mode):
+                self.server.requests=[]
+                r=self.run_cli('exec','--output-format=json','-c','providers.openai.wire_api="responses"','fixture-incomplete-'+mode)
+                self.assertEqual(r.returncode,1,r.stderr)
+                error=json.loads(r.stdout)['provider_error']
+                self.assertIn('output limit or interruption',error['message'])
+                self.assertEqual(error['body'],'{broken' if mode=='malformed' else json.dumps({'type':'response.incomplete','response':{'incomplete_details':{'reason':'max_output_tokens'}}}))
+                self.assertEqual(len(self.server.requests),1)
+
+    def test_repair_backs_up_corrupt_cache_and_preserves_failed_response(self):
+        import sqlite3
+        r=self.run_cli('exec','--json','simple');self.assertEqual(r.returncode,0,r.stderr)
+        session=json.loads(r.stdout.splitlines()[0])['thread_id']
+        database=self.home/'state.sqlite3'
+        def corrupt():
+            with sqlite3.connect(database) as db:
+                db.execute('UPDATE provider_parts SET payload=? WHERE session=? AND position=0',(json.dumps({'provider':'anthropic'}),session))
+                db.execute('INSERT INTO provider_parts VALUES(?,?,?)',(session,1,'{broken'))
+        self.server.before_reply=corrupt
+        r=self.run_cli('exec','resume',session,'simple')
+        self.assertEqual(r.returncode,1);self.assertIn('uncommitted response preserved at',r.stderr)
+        receipts=list((self.home/'repairs').glob('*-response-*.json'));self.assertEqual(len(receipts),1)
+        receipt=json.loads(receipts[0].read_text());self.assertFalse(receipt['dispatch_allowed'])
+        self.assertEqual(receipt['message']['text'],'fixture done')
+        self.assertEqual(receipts[0].stat().st_mode & 0o777,0o600)
+        before=len(self.server.requests)
+        r=self.run_cli('repair',session);self.assertEqual(r.returncode,0,r.stderr)
+        self.assertFalse(json.loads(r.stdout)['changed']);self.assertTrue(json.loads(r.stdout)['issues'])
+        r=self.run_cli('repair',session,'--provider-cache');self.assertEqual(r.returncode,0,r.stderr)
+        repair=json.loads(r.stdout);backup=pathlib.Path(repair['backup'])
+        self.assertEqual(backup.stat().st_mode & 0o777,0o600)
+        self.assertIn('{broken',backup.read_text());self.assertEqual(len(self.server.requests),before)
+        with sqlite3.connect(database) as db:
+            messages=[json.loads(row[0]) for row in db.execute('SELECT payload FROM session_messages WHERE session=? ORDER BY position',(session,))]
+        self.assertEqual(sum(m['role']=='assistant' for m in messages),1)
+        r=self.run_cli('exec','resume',session,'simple');self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual(self.run_cli('exec','--provider-cache','simple').returncode,2)
+
+    def test_repair_recovery_preserves_unknowns_without_provider_requests(self):
+        import sqlite3
+        r=self.run_cli('exec','--json','simple');self.assertEqual(r.returncode,0,r.stderr)
+        session=json.loads(r.stdout.splitlines()[0])['thread_id']
+        checkpoint={'role':'system','origin':'compaction','text':'historical checkpoint','checkpoint_state':{'records':1,'recovery_record':'results/ancestor/missing.json'}}
+        with sqlite3.connect(self.home/'state.sqlite3') as db:
+            db.execute('UPDATE session_messages SET payload=? WHERE session=? AND position=0',(json.dumps(checkpoint),session))
+        self.server.requests=[]
+        r=self.run_cli('repair','--last','--recovery');self.assertEqual(r.returncode,0,r.stderr)
+        report=json.loads(r.stdout);self.assertTrue(report['changed']);self.assertIn('recovery_unavailable',r.stdout)
+        self.assertFalse(self.server.requests)
+        with sqlite3.connect(self.home/'state.sqlite3') as db:
+            saved=json.loads(db.execute('SELECT payload FROM session_messages WHERE session=? AND position=0',(session,)).fetchone()[0])
+        self.assertEqual(saved['checkpoint_state'][0]['checkpoint_state'],checkpoint['checkpoint_state'])
+        r=self.run_cli('exec','resume',session,'simple');self.assertEqual(r.returncode,0,r.stderr)
+
     def test_ephemeral_session_not_saved(self):
         r=self.run_cli('exec','--ephemeral','simple');self.assertEqual(r.returncode,0,r.stderr)
         r=self.run_cli('sessions');self.assertEqual(json.loads(r.stdout),[])

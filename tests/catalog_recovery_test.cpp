@@ -210,7 +210,7 @@ TEST_F(CatalogRecovery, RepeatedCorruptionHasOneRecoveryAttempt) {
   EXPECT_EQ(failed.bytes(), 0u);
   EXPECT_EQ(opened_catalogs, 2);
   failed.close();
-  EXPECT_EQ(opened_catalogs, 4); // Closing is a separate bounded accounting operation.
+  EXPECT_EQ(opened_catalogs, 2); // Catalog admission failed before any capture file existed.
 }
 TEST_F(CatalogRecovery, IoErrorsDoNotDeleteOrRetryTheCatalog) {
   FailingVfs injection(SQLITE_IOERR);
@@ -231,10 +231,10 @@ TEST_F(CatalogRecovery, AtCapacityClosesDoNotScanAndAbandonedFlagsAreReclaimed) 
       old.close();
     }
     for (int i = 0; i < 10; ++i) {
+      const auto before = bounded->metrics.scans;
       OutputSpool next(bounded);
       next.append("new");
       next.flush();
-      const auto before = bounded->metrics.scans;
       next.close();
       EXPECT_TRUE(next.error().empty()) << next.error();
       EXPECT_EQ(bounded->metrics.scans, before);

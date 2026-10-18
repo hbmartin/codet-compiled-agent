@@ -875,6 +875,80 @@ TEST_F(History, MigrationWaitsBeyondSqliteTimeoutWithoutMistakingMigratorsForSes
     backups += entry.path().filename().string().rfind("state.sqlite3.pre-v6-", 0) == 0;
   EXPECT_EQ(backups, 1u);
 }
+
+TEST_F(History, RejectedPreviewKeepsPortableFloorAcrossReloadRelocationAndCompaction) {
+  config.permission_mode = "bypass";
+  Tools tools(config, files, processes, http, clock);
+  StateStore state(config.home);
+  auto session = state.create();
+  tools.use_session(session.id);
+  codet::Message call, result;
+  call.role = "assistant";
+  call.calls = {{"call", "exec_command", {{"cmd", "fixture"}}}};
+  result.role = "tool";
+  result.tool_call_id = "call";
+  result.message_id = "result-id";
+  result.text = Json({{"content", std::string(12000, 'x')},
+                      {"is_error", false},
+                      {"metadata", {{"action_completed", true}}}})
+                    .dump();
+  const auto full = result;
+  ASSERT_TRUE(reduce_completed_result(result, "exec_command", tools));
+  EXPECT_FALSE(fs::path(result.result_file).is_absolute());
+  EXPECT_FALSE(fit_result_preview(result, full, 0, "exec_command", tools));
+  EXPECT_FALSE(fs::path(result.result_file).is_absolute());
+  session.messages = {call, result};
+  state.save(session);
+  auto loaded = state.load_id(session.id, false);
+  EXPECT_EQ(loaded.messages[1].result_file, result.result_file);
+  const auto moved = temp.root / "moved";
+  fs::copy(artifact_directory(config), moved, fs::copy_options::recursive);
+  config.artifact_root = moved;
+  Tools relocated(config, files, processes, http, clock);
+  relocated.use_session(session.id);
+  relocated.restore_references(state.references(session.id));
+  EXPECT_TRUE(fs::is_regular_file(relocated.result_reference(loaded.messages[1])));
+  EXPECT_NO_THROW(
+      project_history(loaded.messages, relocated.history_bytes(loaded.messages), relocated));
+  Scripted provider;
+  provider.script = [](const auto &, const auto &, const auto &, const auto &) {
+    return text_result("Completed work preserved.");
+  };
+  Agent agent(config, provider, relocated, state, {});
+  EXPECT_NO_THROW(agent.compact(loaded, cancel));
+}
+TEST_F(History, ExhaustedSoftSummaryBudgetDoesNotStartAnotherCheckpointAttempt) {
+  Tools tools(config, files, processes, http, clock);
+  StateStore state(config.home);
+  auto session = state.create();
+  codet::Message old, human;
+  old.role = "assistant";
+  old.text = std::string(20000, 'o');
+  human.role = "user";
+  human.origin = "human";
+  human.text = "continue";
+  session.messages = {old};
+  state.save(session);
+  config.context_tokens =
+      test::context_tokens(tools, config, tools.history_bytes({old, human}) + 128);
+  Scripted provider;
+  size_t summaries = 0;
+  provider.script = [&](const auto &, const auto &, const auto &, const auto &schemas) {
+    EXPECT_TRUE(schemas.empty());
+    ++summaries;
+    return text_result(std::string(10000, 's'));
+  };
+  Agent agent(config, provider, tools, state, {});
+  try {
+    agent.run(session, "continue", cancel);
+    FAIL();
+  } catch (const Error &error) {
+    EXPECT_THAT(error.what(), HasSubstr("shared budget of two summary requests"));
+    EXPECT_THAT(error.what(), Not(HasSubstr("after one retry")));
+  }
+  EXPECT_EQ(summaries, 2u);
+  EXPECT_EQ(state.load_id(session.id, false).messages[0].text, old.text);
+}
 } // namespace
 
 TEST_F(History, JsonBytePagesRemainVerbatimThroughSaveForkAndProviderFormatting) {

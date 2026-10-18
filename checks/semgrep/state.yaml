@@ -20,7 +20,9 @@ rules:
               void StateStore::append_messages(...) { ... }
           - pattern-inside: |
               void StateStore::replace_history(...) { ... }
-      - pattern: $IMPL->cache_provider(...);
+      - pattern-either:
+          - pattern: $IMPL->cache_provider(...);
+          - pattern: $IMPL->publish_provider(...);
       - pattern-not-inside: |
           if ($TX.owner) { ... }
       - pattern-not-inside: |

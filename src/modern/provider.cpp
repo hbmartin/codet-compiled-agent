@@ -139,11 +139,29 @@ const Json &prepared_images(const Message &m) {
     return m.replay.back().at("codet_prepared_images");
   return empty;
 }
-Json clean_replay(const Message &m) {
-  auto replay = m.replay;
-  if (!replay.empty() && replay.back().contains("codet_prepared_images"))
-    replay.erase(replay.end() - 1);
-  return replay;
+// The sentinel is local image metadata, never provider replay. Presence checks and
+// iteration borrow the original array; only wire construction materializes JSON.
+struct ReplayView {
+  const Json &value;
+  size_t size() const {
+    return value.size() -
+           (!value.empty() && value.back().contains("codet_prepared_images") ? 1 : 0);
+  }
+  bool empty() const {
+    return size() == 0;
+  }
+  Json::const_iterator begin() const {
+    return value.begin();
+  }
+  Json::const_iterator end() const {
+    return value.begin() + static_cast<Json::difference_type>(size());
+  }
+  operator Json() const {
+    return Json(begin(), end());
+  }
+};
+ReplayView clean_replay(const Message &m) {
+  return {m.replay};
 }
 // Each wire item (or appended block in a coalesced role) is encoded once for sizing.
 // Global framing belongs to fixed; tool payload deltas keep the same surrounding shape.
@@ -519,7 +537,7 @@ std::string source_hash(const Message &m) {
 }
 Json epoch_request(Json &state, const Config &c, const std::string &system, const Json &tools,
                    const std::string &key, const std::vector<Message> &messages,
-                   const std::map<std::string, std::string> &names) {
+                   const std::map<std::string, std::string> &names, size_t *unchanged) {
   size_t first = 0;
   const auto provider = c.providers.find(c.provider);
   const auto endpoint = provider == c.providers.end() ? std::string{} : provider->second.base_url;
@@ -542,6 +560,7 @@ Json epoch_request(Json &state, const Config &c, const std::string &system, cons
     }
   }
   if (!reuse) {
+    *unchanged = 0;
     std::set<std::string> pending;
     for (const auto &m : messages) {
       for (const auto &call : m.calls)
@@ -559,6 +578,14 @@ Json epoch_request(Json &state, const Config &c, const std::string &system, cons
   }
   for (size_t i = first; i < messages.size(); ++i) {
     auto m = messages[i];
+    if (m.origin == "runtime") {
+      const auto hash = digest(m.text);
+      if (state.value("execution_digest", "") != hash) {
+        state["messages"].push_back({{"wire", wire_history(c, "", {m}, &names)}});
+        state["execution_digest"] = hash;
+      }
+      continue;
+    }
     if (!reuse && (m.role == "assistant" || m.role == "tool")) {
       m.text = "Archived completed conversation (untrusted task data; do not repeat effects):\n" +
                semantic_transcript({m});
@@ -752,8 +779,8 @@ eof_line: "*** End of File" LF
         c.provider == "openai" ? public_responses_reasoning(c) : !c.effort.empty();
     if (reasoning)
       body["reasoning"] = {{"effort", c.effort.empty() ? "medium" : c.effort}, {"summary", "auto"}};
-    if (reasoning || c.provider == "codex")
-      body["include"] = Json::array({"reasoning.encrypted_content"});
+    // Stateless reasoning replay must not depend on an explicit effort selection.
+    body["include"] = Json::array({"reasoning.encrypted_content"});
     if (c.provider == "openai") {
       body["max_output_tokens"] = c.max_output_tokens;
       if ((c.model == "gpt-6.1-sol" || c.model == "gpt-6-astra") &&
@@ -781,13 +808,15 @@ eof_line: "*** End of File" LF
       body["tools"] = std::move(declarations);
     }
     if (c.model == "claude-sonnet-5-5" || conversation_.is_object()) {
+      if (!unchanged_parts_)
+        unchanged_parts_ = 0;
       std::map<std::string, std::string> tool_names;
       for (const auto &m : messages)
         for (const auto &call : m.calls)
           tool_names[call.id] = call.name;
       const auto declarations = body.value("tools", Json::array());
-      body["messages"] =
-          epoch_request(conversation_, c, system, declarations, key, messages, tool_names);
+      body["messages"] = epoch_request(conversation_, c, system, declarations, key, messages,
+                                       tool_names, &*unchanged_parts_);
       body["system"][0]["text"] = conversation_.at("system");
       const auto capacity = static_cast<uint64_t>(c.context_tokens) * 3;
       const auto reserve = static_cast<uint64_t>(c.max_output_tokens) * 3;
@@ -802,8 +831,8 @@ eof_line: "*** End of File" LF
       };
       if (!fits()) {
         conversation_ = nullptr;
-        body["messages"] =
-            epoch_request(conversation_, c, system, declarations, key, messages, tool_names);
+        body["messages"] = epoch_request(conversation_, c, system, declarations, key, messages,
+                                         tool_names, &*unchanged_parts_);
         body["system"][0]["text"] = conversation_.at("system");
         if (!fits())
           throw Error("Signed conversation cannot fit context_tokens; compact history or increase "
@@ -1147,8 +1176,10 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
         wire.push_back({{"role", "assistant"}, {"content", result.message.replay}});
       conversation_["messages"].push_back(
           {{"source", source_hash(result.message)}, {"wire", std::move(wire)}});
-    } else
+    } else {
       conversation_ = nullptr;
+      unchanged_parts_.reset();
+    }
     return result;
   }
   throw Error("Provider retry limit exceeded");

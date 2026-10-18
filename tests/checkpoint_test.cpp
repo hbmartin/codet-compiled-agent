@@ -3,6 +3,7 @@
 #include "codet/context.hpp"
 #include "codet/core.hpp"
 #include "codet/process_control.hpp"
+#include "codet/support.hpp"
 #include "prompt_support.hpp"
 #include "temp.hpp"
 #include <fstream>
@@ -516,11 +517,17 @@ TEST_F(Checkpoint, LiveFactsRefreshAfterCheckpointWithoutPersistingRunningProse)
   } provider;
   int requests = 0;
   provider.reply = [&](const auto &system, const auto &messages, const auto &schemas) {
-    if (schemas.empty())
+    if (schemas.empty()) {
+      EXPECT_THAT(system, Not(HasSubstr("\"state\":\"running\"")));
+      EXPECT_EQ(messages.back().origin, "runtime");
+      EXPECT_THAT(messages.back().text, HasSubstr("\"state\":\"running\""));
       return answer("Completed work; collect output.");
+    }
     EXPECT_THAT(messages[0].text, Not(HasSubstr("\"state\":\"running\"")));
     if (requests++ == 0) {
-      EXPECT_THAT(system, HasSubstr("\"state\":\"running\""));
+      EXPECT_THAT(system, Not(HasSubstr("\"state\":\"running\"")));
+      EXPECT_EQ(messages.back().origin, "runtime");
+      EXPECT_THAT(messages.back().text, HasSubstr("\"state\":\"running\""));
       processes.running = false;
       auto r = answer("");
       r.message.calls = {{"collect", "write_stdin", {{"session_id", id}}}};
@@ -652,4 +659,167 @@ TEST_P(WireBudget, QuotedFilePagesUseWireAllowanceAndKeepContiguousUnicode) {
 }
 INSTANTIATE_TEST_SUITE_P(AllAdapters, WireBudget,
                          Values("codex", "openai", "chat", "anthropic", "google", "ollama"));
+
+TEST_F(Checkpoint, MissingAndMalformedArchivesPreserveUnknownsAndReconstructJournalFacts) {
+  Tools tools(config, files, processes, http, clock);
+  StateStore state(config.home);
+  auto session = state.create();
+  tools.use_session(session.id);
+  codet::Message saved;
+  saved.role = "system";
+  saved.origin = "compaction";
+  saved.text = "old checkpoint";
+  saved.checkpoint_state = {{"records", 3}, {"recovery_record", "results/parent/lost.json"}};
+  session.messages = {saved};
+  state.save(session);
+  state.tool_started(session.id, {"lost-call", "apply_patch", {{"patch", "old"}}});
+  for (int i = 0; i < 2; ++i) {
+    const auto facts =
+        tools.execution_state(session.messages, [&] { return state.recovery_facts(session.id); });
+    ASSERT_EQ(facts.size(), 2u);
+    EXPECT_EQ(facts[0]["call_id"], "lost-call");
+    EXPECT_EQ(facts[0]["recovery"], "uncertain");
+    EXPECT_EQ(facts[1]["kind"], "recovery_unavailable");
+    EXPECT_EQ(facts[1]["checkpoint_state"]["recovery_record"], "results/parent/lost.json");
+    session.messages[0].checkpoint_state = facts;
+    state.save(session);
+  }
+  const auto child = state.fork(state.load_id(session.id));
+  tools.use_session(child.id);
+  EXPECT_EQ(tools.execution_state(child.messages).size(), 2u);
+  Reply provider;
+  provider.reply = [&](const auto &messages, const auto &) {
+    EXPECT_EQ(messages.back().origin, "runtime");
+    EXPECT_THAT(messages.back().text, HasSubstr("recovery_unavailable"));
+    return answer("new work remains possible");
+  };
+  Agent agent(config, provider, tools, state, {});
+  auto resumed = state.load_id(child.id);
+  EXPECT_EQ(agent.run(resumed, "inspect status", cancel).text, "new work remains possible");
+  EXPECT_EQ(processes.starts, 0u);
+  auto malformed = saved;
+  const auto path = artifact_directory(config) / "results/parent/lost.json";
+  fs::create_directories(path.parent_path());
+  files.atomic_write(path, "{broken", true);
+  EXPECT_EQ(tools.execution_state({malformed}).back()["kind"], "recovery_unavailable");
+  auto second = saved;
+  second.checkpoint_state["recovery_record"] = "results/parent/another.json";
+  EXPECT_EQ(tools.execution_state({malformed, second}).size(), 2u);
+}
+TEST_F(Checkpoint, OversizedLiveSnapshotsReplaceOneFileWithoutPermanentReferences) {
+  Tools tools(config, files, processes, http, clock);
+  StateStore state(config.home);
+  auto session = state.create();
+  tools.use_session(session.id);
+  Json facts = Json::array();
+  for (int i = 0; i < 100; ++i)
+    facts.push_back({{"session_id", i}, {"state", "running"}});
+  std::string previous;
+  for (int i = 0; i < 20; ++i) {
+    facts[0]["session_id"] = i;
+    const auto context = tools.execution_context(facts);
+    EXPECT_THAT(context, HasSubstr("sha256"));
+    EXPECT_NE(context, previous);
+    previous = context;
+    EXPECT_TRUE(state.references(session.id).empty());
+  }
+  const auto dir = invocation_directory(config) / "runtime";
+  EXPECT_EQ(std::distance(fs::directory_iterator(dir), fs::directory_iterator()), 1);
+  const auto path = dir / (session.id + ".execution.json");
+  EXPECT_EQ(Json::parse(files.read(path, 100000)), facts);
+  config.permission_mode = "plan";
+  const auto read = tools.execute({"read-live", "read_file", {{"path", path.string()}}}, cancel);
+  EXPECT_FALSE(read.error) << read.content;
+}
+TEST_F(Checkpoint, CompletedSiblingResultsAreTrimmedBeforeNextBatchAdmission) {
+  struct OutputProcesses : OwnedProcess {
+    std::string start(const ProcessSpec &) override {
+      return std::to_string(++starts);
+    }
+    ProcessStatus status(const std::string &id) override {
+      return {id, false, 0, ""};
+    }
+    ProcessResult poll(const std::string &) override {
+      return {0, std::string(5000, 'z'), false, false};
+    }
+  } output;
+  Tools tools(config, files, output, http, clock);
+  config.context_tokens = test::context_tokens(tools, config, 8500);
+  config.max_output_tokens = 128;
+  StateStore state(config.home);
+  auto session = state.create();
+  Reply provider;
+  int requests = 0;
+  provider.reply = [&](const auto &messages, const auto &schemas) {
+    EXPECT_FALSE(schemas.empty());
+    if (!requests++) {
+      auto response = answer("");
+      for (int i = 0; i < 3; ++i)
+        response.message.calls.push_back(
+            {"call" + std::to_string(i),
+             "exec_command",
+             {{"cmd", "fixture"}, {"shell", "/bin/sh"}, {"login", false}}});
+      return response;
+    }
+    EXPECT_EQ(std::count_if(messages.begin(), messages.end(),
+                            [](const auto &m) { return m.role == "tool"; }),
+              3);
+    return answer("done");
+  };
+  Agent agent(config, provider, tools, state, {});
+  EXPECT_EQ(agent.run(session, "run three commands", cancel).text, "done");
+  EXPECT_EQ(output.starts, 3u);
+  EXPECT_EQ(state.load_id(session.id).messages.size(), session.messages.size());
+}
+
+TEST_F(Checkpoint, FailedCheckpointRemovesOnlyItsUnreferencedRecoveryCandidate) {
+  Tools tools(config, files, processes, http, clock);
+  StateStore state(config.home);
+  auto session = state.create();
+  tools.use_session(session.id);
+  Json facts = Json::array();
+  for (int i = 0; i < 100; ++i)
+    facts.push_back({{"call_id", "call-" + std::to_string(i)}, {"recovery", "uncertain"}});
+  codet::Message checkpoint, old;
+  checkpoint.role = "system";
+  checkpoint.origin = "compaction";
+  checkpoint.text = "saved checkpoint";
+  checkpoint.checkpoint_state = facts;
+  old.role = "assistant";
+  old.text = "older completed work";
+  session.messages = {checkpoint, old};
+  state.save(session);
+  config.context_tokens = test::context_tokens(tools, config, 14000);
+  const auto ref = "results/" + session.id + "/" + digest(facts.dump()) + ".json";
+  Reply provider;
+  provider.reply = [&](const auto &, const auto &) -> ProviderResult {
+    throw Error("summary failed");
+  };
+  Agent agent(config, provider, tools, state, {});
+  EXPECT_THROW(agent.compact(session, cancel), Error);
+  EXPECT_FALSE(fs::exists(artifact_directory(config) / ref));
+  const auto references = state.references(session.id);
+  EXPECT_EQ(std::find(references.begin(), references.end(), ref), references.end());
+  EXPECT_EQ(state.load_id(session.id, false).messages[0].checkpoint_state, facts);
+}
+
+TEST_F(Checkpoint, LegacySystemExecutionFactsReceiveAnExplicitEmptyRuntimeUpdate) {
+  Tools tools(config, files, processes, http, clock);
+  StateStore state(config.home);
+  auto session = state.create();
+  session.provider_state = {
+      {"provider", "anthropic"},
+      {"messages", Json::array()},
+      {"system", "# Current execution and recovery facts\n[{\"state\":\"running\"}]"}};
+  state.save(session);
+  Reply provider;
+  provider.reply = [](const auto &messages, const auto &) {
+    EXPECT_EQ(messages.back().origin, "runtime");
+    EXPECT_THAT(messages.back().text, HasSubstr("[]"));
+    EXPECT_THAT(messages.back().text, Not(HasSubstr("\"state\":\"running\"")));
+    return answer("done");
+  };
+  Agent agent(config, provider, tools, state, {});
+  EXPECT_EQ(agent.run(session, "continue after upgrade", cancel).text, "done");
+}
 } // namespace
