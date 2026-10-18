@@ -352,7 +352,14 @@ public:
   Json codex(HttpTransport &, const Cancellation &);
 };
 using ItemSink = std::function<void(const Json &)>;
+struct ProviderHistorySize {
+  size_t total = 2, fixed = 2, encoded_parts = 0;
+  size_t aggregate_items = 0;
+  std::vector<size_t> messages;
+};
+ProviderHistorySize provider_history_size(const Config &, const std::vector<Message> &);
 size_t provider_history_bytes(const Config &, const std::vector<Message> &);
+size_t provider_result_bytes(const Config &, const Message &, const std::string &tool_name);
 struct Provider {
   virtual ~Provider() = default;
   virtual void restore_conversation(const Json &) {}
@@ -428,6 +435,7 @@ public:
   void save_provider_state(const Session &);
   void sync();
   uint64_t serialized_bytes() const;
+  size_t provider_cache_bytes() const;
   void remember_references(const std::string &, const std::vector<Message> &);
   std::vector<std::string> references(const std::string &);
   Json list();
@@ -526,6 +534,7 @@ class Tools {
     bool completed = false;
     std::optional<int> exit_code;
   };
+  Json execution_fact(int, const ExecSession &) const;
   std::map<int, ExecSession> exec_sessions_;
   std::map<std::string, std::pair<std::string, std::string>> archived_results_;
   fs::path path(const std::string &) const;
@@ -551,13 +560,19 @@ public:
   size_t history_bytes(const std::vector<Message> &messages) const {
     return provider_history_bytes(config_, messages);
   }
+  ProviderHistorySize history_size(const std::vector<Message> &messages) const {
+    return provider_history_size(config_, messages);
+  }
+  size_t result_bytes(const Message &message, const std::string &name) const {
+    return provider_result_bytes(config_, message, name);
+  }
   void inspection_budget(size_t bytes) {
     inspection_budget_ = bytes;
   }
   std::string result_reference(const Message &) const;
   ToolResult execute(const ToolCall &, const Cancellation &);
   std::string instructions() const;
-  std::string dynamic_context() const;
+  std::string dynamic_context(bool anticipate_indexes = false) const;
   fs::path archive_images(const std::vector<Message> &);
   std::string expand_command(const std::string &) const;
   std::vector<std::string> take_input();
@@ -590,9 +605,14 @@ public:
         diagnostics_(std::move(diagnostics)) {}
 
 private:
+  struct CompactionCycle {
+    bool hook_called = false, checkpoint = false;
+    unsigned summaries = 0;
+  };
+  std::string execution_context(const Session &);
   bool compact_history(Session &, const Cancellation &, const std::string &project,
                        const Json &schemas, const std::string &trigger, Usage &,
-                       size_t *requests = nullptr);
+                       size_t *requests = nullptr, CompactionCycle *cycle = nullptr);
 
 public:
   RunResult compact(Session &, const Cancellation &);

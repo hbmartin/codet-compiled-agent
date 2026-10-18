@@ -1,0 +1,36 @@
+// Semgrep fixtures, intentionally uncompiled. Runtime tests validate helper semantics.
+Json Tools::execution_state(const std::vector<Message> &messages) const {
+  // ruleid: codet-checkpoint-direct-status
+  processes_.status("unguarded");
+  // ok: codet-checkpoint-direct-status
+  return execution_fact(1, session);
+}
+Json Tools::execution_fact(int id, const ExecSession &session) const {
+  try {
+    // ok: codet-checkpoint-direct-status
+    return processes_.status(session.process);
+  } catch (const std::exception &error) {
+    if (fatal(std::current_exception())) throw;
+    return {{"state", "unknown"}};
+  }
+}
+void post_feedback() {
+  // ruleid: codet-post-tool-feedback-not-fatal
+  if (post.blocked)
+    throw HookFailure(post.reason);
+  // ok: codet-post-tool-feedback-not-fatal
+  if (post.blocked)
+    throw Error(post.reason);
+  // ok: codet-post-tool-feedback-not-fatal
+  if (post.stopped)
+    throw HookFailure(post.reason);
+}
+
+size_t inspection_page() {
+  // ruleid: codet-inspection-wire-size
+  return Json(page).dump().size();
+}
+size_t wire_page() {
+  // ok: codet-inspection-wire-size
+  return result_bytes(page, call.name);
+}

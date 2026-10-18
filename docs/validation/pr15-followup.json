@@ -1,0 +1,481 @@
+{
+  "recorded_utc": "2026-10-17T21:33:02.384332+00:00",
+  "branch": "codex/fix-checkpoint-context",
+  "implementation_commit": "da151fefd2ce2159b83a3bdf8e6290624e0d5846",
+  "checkpoint_baseline": "b3ccc898fcde97cfa9448469e79e230e87ced2df",
+  "merged_pr15_main": "711fcce65463c5eb0247c3c8acd8dfe65650f43d",
+  "addressed_feedback_items": 8,
+  "public_interface_changes": false,
+  "schema_changes": false,
+  "preserved_contracts": [
+    "Anthropic semantic epoch changes and signed-prefix rules",
+    "Codex private transport behavior",
+    "Capture quotas, owned-file checks and active-file locks",
+    "Checkpoint recovery and exact combined provider wire sizing"
+  ],
+  "checks": {
+    "macos_host": {
+      "passed": true,
+      "ctest_suites": 7,
+      "unit_cases": 332,
+      "unit_passed": 330,
+      "unit_skipped": [
+        "2",
+        "Contracts.NativeTigerDesktopAcceptance",
+        "NetworkOptIn.TlsHandshake"
+      ],
+      "python_case_counts": [
+        47,
+        7,
+        6,
+        5,
+        3
+      ],
+      "log": "build/pr15-host-final.log"
+    },
+    "macos_asan_ubsan": {
+      "passed": true,
+      "ctest_suites": 7,
+      "unit_cases": 332,
+      "unit_passed": 330,
+      "unit_skipped": [
+        "2",
+        "Contracts.NativeTigerDesktopAcceptance",
+        "NetworkOptIn.TlsHandshake"
+      ],
+      "python_case_counts": [
+        47,
+        7,
+        6,
+        5,
+        3
+      ],
+      "log": "build/pr15-sanitize-final.log"
+    },
+    "linux_amd64": {
+      "passed": true,
+      "ctest_suites": 7,
+      "unit_cases": 332,
+      "unit_passed": 328,
+      "unit_skipped": [
+        "4",
+        "Contracts.NativeImageIoCanEncodeAndReloadPixelsWithoutAConsole",
+        "Contracts.NativeTigerDesktopAcceptance",
+        "NetworkOptIn.TlsHandshake",
+        "OutputReview.UnreadableRegularEntryCountsWithoutDisablingHealthyCapture"
+      ],
+      "python_case_counts": [
+        47,
+        7,
+        6,
+        5,
+        3
+      ],
+      "log": "build/pr15-linux-final.log"
+    },
+    "analyzers": {
+      "clang-tidy": {
+        "passed": true,
+        "findings": 0,
+        "sources": 25,
+        "versions": [
+          "Ubuntu LLVM version 18.1.3\n  Optimized build."
+        ]
+      },
+      "cppcheck": {
+        "passed": true,
+        "findings": 0,
+        "sources": 25,
+        "versions": [
+          "Cppcheck 2.22.0"
+        ]
+      },
+      "clang-analyzer": {
+        "passed": true,
+        "findings": 0,
+        "sources": 25,
+        "versions": [
+          "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin",
+          "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin"
+        ]
+      }
+    },
+    "analyzer_detection": {
+      "clang-tidy": true,
+      "cppcheck": true,
+      "clang-analyzer": true
+    },
+    "analyzer_runner": {
+      "passed": true,
+      "cases": 33
+    },
+    "semgrep": {
+      "passed": true,
+      "version": "1.177.0",
+      "fixture_checks": 8,
+      "fixture_positive_matches": 23,
+      "production_inputs": 6,
+      "findings": 0,
+      "analysis_errors": 0,
+      "environment": {
+        "python": "3.12.15 (main, Sep 30 2026, 22:04:19) [Clang 17.0.0 (clang-1700.6.4.2)]",
+        "executable": "/Users/haroldmartin/Downloads/Tiger/compiled-agent/codet-context-history/build/semgrep-venv/bin/python",
+        "platform": "macOS-15.8-arm64-arm-64bit",
+        "semgrep": "1.177.0"
+      }
+    },
+    "powerpc": {
+      "passed": true,
+      "log": "build/pr15-tiger-final.log",
+      "verification": {
+        "target_runtime_verified": false,
+        "compiler": "14.2.0",
+        "binaries": [
+          {
+            "name": "codet",
+            "bytes": 5597528,
+            "sha256": "967fe61208a5446a156e741bee45b1e44ef7aa902f13943b261157677710b891",
+            "dependencies": "/project/build/tiger/codet:\n\t/opt/tigr/lib/libcurl.4.dylib (compatibility version 13.0.0, current version 13.0.0)\n\t/opt/tigr/libexec/openssl3/lib/libssl.3.dylib (compatibility version 3.0.0, current version 3.0.0)\n\t/opt/tigr/libexec/openssl3/lib/libcrypto.3.dylib (compatibility version 3.0.0, current version 3.0.0)\n\t/opt/tigr/lib/libz.1.dylib (compatibility version 1.0.0, current version 1.3.2)\n\t/opt/tigr/lib/libsqlite3.0.dylib (compatibility version 9.0.0, current version 9.54.0)\n\t/opt/tigr/lib/libncurses.6.dylib (compatibility version 6.0.0, current version 6.0.0)\n\t/opt/tigr/lib/libform.6.dylib (compatibility version 6.0.0, current version 6.0.0)\n\t/opt/tigr/lib/libedit.0.dylib (compatibility version 1.0.0, current version 1.78.0)\n\t/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices (compatibility version 1.0.0, current version 22.0.0)\n\t/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon (compatibility version 2.0.0, current version 128.0.0)\n\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 368.33.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.3.10)\n",
+            "imports": "_AXAPIEnabled\n_AXIsProcessTrusted\n_AXUIElementCopyActionNames\n_AXUIElementCopyAttributeValue\n_AXUIElementCopyAttributeValues\n_AXUIElementCreateApplication\n_AXUIElementGetAttributeValueCount\n_AXUIElementGetTypeID\n_AXUIElementIsAttributeSettable\n_AXUIElementPerformAction\n_AXUIElementSetAttributeValue\n_AXUIElementSetMessagingTimeout\n_AXValueGetTypeID\n_AXValueGetValue\n_CFArrayContainsValue\n_CFArrayGetCount\n_CFArrayGetTypeID\n_CFArrayGetValueAtIndex\n_CFBooleanGetTypeID\n_CFBooleanGetValue\n_CFDataCreate\n_CFDataCreateMutable\n_CFDataGetBytePtr\n_CFDataGetLength\n_CFDictionaryGetValue\n_CFEqual\n_CFGetTypeID\n_CFNumberCreate\n_CFNumberGetTypeID\n_CFNumberGetValue\n_CFRelease\n_CFRetain\n_CFStringCreateWithBytes\n_CFStringCreateWithCString\n_CFStringGetCString\n_CFStringGetCharacters\n_CFStringGetLength\n_CFStringGetMaximumSizeForEncoding\n_CFStringGetTypeID\n_CFURLCreateFromFileSystemRepresentation\n_CFURLCreateWithString\n_CGBitmapContextCreate\n_CGBitmapContextCreateImage\n_CGColorSpaceCreateDeviceRGB\n_CGContextDrawImage\n_CGDataProviderCreateWithData\n_CGDisplayBaseAddress\n_CGDisplayBitsPerPixel\n_CGDisplayBitsPerSample\n_CGDisplayBounds\n_CGDisplayBytesPerRow\n_CGEventCreateKeyboardEvent\n_CGEventCreateMouseEvent\n_CGEventKeyboardSetUnicodeString\n_CGEventPost\n_CGEventSetFlags\n_CGEventSetIntegerValueField\n_CGGetActiveDisplayList\n_CGImageCreate\n_CGImageDestinationAddImage\n_CGImageDestinationCreateWithData\n_CGImageDestinationFinalize\n_CGImageGetHeight\n_CGImageGetWidth\n_CGImageSourceCopyPropertiesAtIndex\n_CGImageSourceCreateImageAtIndex\n_CGImageSourceCreateWithData\n_CGPostScrollWheelEvent\n_CGSessionCopyCurrentDictionary\n_CopyProcessName\n_GetFrontProcess\n_GetNextProcess\n_GetProcessPID\n_LSOpenCFURLRef\n_PasteboardClear\n_PasteboardCopyItemFlavorData\n_PasteboardCreate\n_PasteboardGetItemCount\n_PasteboardGetItemIdentifier\n_PasteboardPutItemFlavor\n_PasteboardSynchronize\n_SHA256\n_SetFrontProcess\n__DefaultRuneLocale\n___CFConstantStringClassReference\n___error\n___keymgr_dwarf2_register_sections\n___keymgr_global\n___maskrune\n___mb_cur_max\n___sF\n__cpu_has_altivec\n__cthread_init_routine\n__exit\n__keymgr_get_and_lock_processwide_ptr\n__keymgr_set_and_unlock_processwide_ptr\n__keymgr_unlock_processwide_ptr\n_abort\n_arc4random\n_btowc\n_calloc\n_cbreak\n_chdir\n_chmod\n_close\n_closedir\n_curl_easy_cleanup\n_curl_easy_getinfo\n_curl_easy_init\n_curl_easy_perform\n_curl_easy_setopt\n_curl_easy_strerror\n_curl_global_init\n_curl_slist_append\n_curl_slist_free_all\n_dlopen\n_dlsym\n_dup2\n_el_end\n_el_get\n_el_gets\n_el_init\n_el_set\n_endwin\n_erase\n_errno\n_execvp\n_exit\n_fchmod\n_fclose\n_fcntl\n_fdopen\n_fflush\n_fileno\n_flock\n_floorf\n_fnmatch\n_fopen\n_fork\n_fprintf$LDBL128\n_fputc\n_fputs\n_fread\n_free\n_fseek\n_fstat\n_fsync\n_ftell\n_futimes\n_fwrite\n_getc\n_getcwd\n_getenv\n_geteuid\n_getmaxx\n_getmaxy\n_getsectdatafromheader\n_gettimeofday\n_getuid\n_getwc\n_gmtime_r\n_has_colors\n_history\n_history_end\n_history_init\n_init_pair\n_initscr\n_ioctl\n_isatty\n_kCFBooleanFalse\n_kCFBooleanTrue\n_kCGImagePropertyPixelHeight\n_kCGImagePropertyPixelWidth\n_kevent\n_keypad\n_kill\n_kqueue\n_link\n_localeconv\n_lseek\n_lstat\n_mach_init_routine\n_malloc\n_mbrtowc\n_memchr\n_memcmp\n_memcpy\n_memmove\n_memset\n_mkdir\n_mkdtemp\n_mkstemp\n_nanosleep\n_nextafter\n_noecho\n_open\n_opendir\n_openpty\n_pathconf\n_pipe\n_poll\n_pthread_cond_broadcast\n_pthread_cond_destroy\n_pthread_cond_signal\n_pthread_cond_timedwait\n_pthread_cond_wait\n_pthread_create\n_pthread_detach\n_pthread_getspecific\n_pthread_join\n_pthread_key_create\n_pthread_key_delete\n_pthread_mutex_init\n_pthread_mutex_lock\n_pthread_mutex_unlock\n_pthread_mutexattr_destroy\n_pthread_mutexattr_init\n_pthread_mutexattr_settype\n_pthread_once\n_pthread_self\n_pthread_setspecific\n_putc\n_putwc\n_read\n_readdir\n_readlink\n_realloc\n_refresh\n_remainder\n_remove\n_rename\n_send\n_setenv\n_setlocale\n_setsid\n_setsockopt\n_setvbuf\n_sigaction\n_signal\n_sigprocmask\n_snprintf$LDBL128\n_socketpair\n_sprintf$LDBL128\n_sqlite3_backup_finish\n_sqlite3_backup_init\n_sqlite3_backup_step\n_sqlite3_bind_int64\n_sqlite3_bind_text\n_sqlite3_busy_timeout\n_sqlite3_changes\n_sqlite3_close\n_sqlite3_column_bytes\n_sqlite3_column_int\n_sqlite3_column_int64\n_sqlite3_column_text\n_sqlite3_column_type\n_sqlite3_db_handle\n_sqlite3_errmsg\n_sqlite3_exec\n_sqlite3_finalize\n_sqlite3_get_autocommit\n_sqlite3_open\n_sqlite3_prepare_v2\n_sqlite3_step\n_start_color\n_stat\n_statvfs\n_stdscr\n_strchr\n_strcmp\n_strcoll\n_strerror\n_strerror_r\n_strftime\n_strlen\n_strncmp\n_strtod\n_strtof\n_strtold$LDBL128\n_strtoll\n_strtoul\n_strtoull\n_strxfrm\n_symlink\n_sysctl\n_tcgetattr\n_tcsetattr\n_tolower\n_toupper\n_towlower\n_towupper\n_truncate\n_ungetc\n_ungetwc\n_unlink\n_use_default_colors\n_utime\n_vsnprintf$LDBL128\n_waddnstr\n_waitpid\n_wattr_on\n_wcrtomb\n_wcscoll\n_wcsftime\n_wcslen\n_wcsxfrm\n_wctob\n_wgetch\n_wmemchr\n_wmemcmp\n_wmemcpy\n_wmemmove\n_wmemset\n_wmove\n_write\n_writev\n_wtimeout\n"
+          },
+          {
+            "name": "codet_tests",
+            "bytes": 10973568,
+            "sha256": "1eaae8490c4d3ed96fa943beac78848f662f615fa776f451eea656ab0ea08481",
+            "dependencies": "/project/build/tiger/codet_tests:\n\t/opt/tigr/lib/libcurl.4.dylib (compatibility version 13.0.0, current version 13.0.0)\n\t/opt/tigr/libexec/openssl3/lib/libssl.3.dylib (compatibility version 3.0.0, current version 3.0.0)\n\t/opt/tigr/libexec/openssl3/lib/libcrypto.3.dylib (compatibility version 3.0.0, current version 3.0.0)\n\t/opt/tigr/lib/libz.1.dylib (compatibility version 1.0.0, current version 1.3.2)\n\t/opt/tigr/lib/libsqlite3.0.dylib (compatibility version 9.0.0, current version 9.54.0)\n\t/opt/tigr/lib/libncurses.6.dylib (compatibility version 6.0.0, current version 6.0.0)\n\t/opt/tigr/lib/libform.6.dylib (compatibility version 6.0.0, current version 6.0.0)\n\t/opt/tigr/lib/libedit.0.dylib (compatibility version 1.0.0, current version 1.78.0)\n\t/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices (compatibility version 1.0.0, current version 22.0.0)\n\t/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon (compatibility version 2.0.0, current version 128.0.0)\n\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 368.33.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.3.10)\n",
+            "imports": "_AXAPIEnabled\n_AXIsProcessTrusted\n_AXUIElementCopyActionNames\n_AXUIElementCopyAttributeValue\n_AXUIElementCopyAttributeValues\n_AXUIElementCreateApplication\n_AXUIElementGetAttributeValueCount\n_AXUIElementGetTypeID\n_AXUIElementIsAttributeSettable\n_AXUIElementPerformAction\n_AXUIElementSetAttributeValue\n_AXUIElementSetMessagingTimeout\n_AXValueGetTypeID\n_AXValueGetValue\n_CFArrayContainsValue\n_CFArrayGetCount\n_CFArrayGetTypeID\n_CFArrayGetValueAtIndex\n_CFBooleanGetTypeID\n_CFBooleanGetValue\n_CFDataCreate\n_CFDataCreateMutable\n_CFDataGetBytePtr\n_CFDataGetLength\n_CFDictionaryGetValue\n_CFEqual\n_CFGetTypeID\n_CFNumberCreate\n_CFNumberGetTypeID\n_CFNumberGetValue\n_CFRelease\n_CFRetain\n_CFStringCreateWithBytes\n_CFStringCreateWithCString\n_CFStringGetCString\n_CFStringGetCharacters\n_CFStringGetLength\n_CFStringGetMaximumSizeForEncoding\n_CFStringGetTypeID\n_CFURLCreateFromFileSystemRepresentation\n_CFURLCreateWithString\n_CGBitmapContextCreate\n_CGBitmapContextCreateImage\n_CGColorSpaceCreateDeviceRGB\n_CGContextDrawImage\n_CGDataProviderCreateWithData\n_CGDisplayBaseAddress\n_CGDisplayBitsPerPixel\n_CGDisplayBitsPerSample\n_CGDisplayBounds\n_CGDisplayBytesPerRow\n_CGEventCreateKeyboardEvent\n_CGEventCreateMouseEvent\n_CGEventKeyboardSetUnicodeString\n_CGEventPost\n_CGEventSetFlags\n_CGEventSetIntegerValueField\n_CGGetActiveDisplayList\n_CGImageCreate\n_CGImageDestinationAddImage\n_CGImageDestinationCreateWithData\n_CGImageDestinationFinalize\n_CGImageGetHeight\n_CGImageGetWidth\n_CGImageSourceCopyPropertiesAtIndex\n_CGImageSourceCreateImageAtIndex\n_CGImageSourceCreateWithData\n_CGPostScrollWheelEvent\n_CGSessionCopyCurrentDictionary\n_CopyProcessName\n_EVP_DecodeBlock\n_GetFrontProcess\n_GetNextProcess\n_GetProcessPID\n_LSOpenCFURLRef\n_PasteboardClear\n_PasteboardCopyItemFlavorData\n_PasteboardCreate\n_PasteboardGetItemCount\n_PasteboardGetItemIdentifier\n_PasteboardPutItemFlavor\n_PasteboardSynchronize\n_SHA256\n_SetFrontProcess\n__DefaultRuneLocale\n__Exit\n__NSGetArgc\n__NSGetArgv\n___CFConstantStringClassReference\n___error\n___keymgr_dwarf2_register_sections\n___keymgr_global\n___maskrune\n___mb_cur_max\n___sF\n__cpu_has_altivec\n__cthread_init_routine\n__exit\n__keymgr_get_and_lock_processwide_ptr\n__keymgr_set_and_unlock_processwide_ptr\n__keymgr_unlock_processwide_ptr\n_abort\n_arc4random\n_btowc\n_calloc\n_chdir\n_chmod\n_close\n_closedir\n_connect\n_curl_easy_cleanup\n_curl_easy_getinfo\n_curl_easy_init\n_curl_easy_perform\n_curl_easy_setopt\n_curl_easy_strerror\n_curl_global_init\n_curl_slist_append\n_curl_slist_free_all\n_dlopen\n_dlsym\n_dup\n_dup2\n_errno\n_execv\n_execvp\n_exit\n_fchmod\n_fclose\n_fcntl\n_fdopen\n_fflush\n_fileno\n_flock\n_floor\n_floorf\n_fnmatch\n_fopen\n_fork\n_fprintf$LDBL128\n_fputc\n_fputs\n_fread\n_free\n_freeaddrinfo\n_fseek\n_fstat\n_fsync\n_ftell\n_ftruncate\n_futimes\n_fwrite\n_gai_strerror\n_getaddrinfo\n_getc\n_getcwd\n_getenv\n_geteuid\n_getsectdatafromheader\n_gettimeofday\n_getuid\n_getwc\n_gmtime_r\n_ioctl\n_isalnum\n_isalpha\n_isatty\n_iscntrl\n_islower\n_isspace\n_isupper\n_isxdigit\n_kCFBooleanFalse\n_kCFBooleanTrue\n_kCGImagePropertyPixelHeight\n_kCGImagePropertyPixelWidth\n_kevent\n_kill\n_kqueue\n_link\n_localeconv\n_localtime_r\n_lseek\n_lstat\n_mach_init_routine\n_mach_task_self_\n_malloc\n_mbrtowc\n_memchr\n_memcmp\n_memcpy\n_memmove\n_memset\n_mkdir\n_mkdtemp\n_mkstemp\n_nanosleep\n_nextafter\n_open\n_opendir\n_openpty\n_pathconf\n_pipe\n_poll\n_printf$LDBL128\n_pthread_cond_broadcast\n_pthread_cond_destroy\n_pthread_cond_signal\n_pthread_cond_timedwait\n_pthread_cond_wait\n_pthread_create\n_pthread_detach\n_pthread_equal\n_pthread_getspecific\n_pthread_join\n_pthread_key_create\n_pthread_key_delete\n_pthread_mutex_destroy\n_pthread_mutex_init\n_pthread_mutex_lock\n_pthread_mutex_unlock\n_pthread_mutexattr_destroy\n_pthread_mutexattr_init\n_pthread_mutexattr_settype\n_pthread_once\n_pthread_self\n_pthread_setspecific\n_putc\n_putchar\n_puts\n_putwc\n_rand\n_read\n_readdir\n_readlink\n_realloc\n_regcomp\n_regexec\n_regfree\n_remainder\n_remove\n_rename\n_send\n_setenv\n_setlocale\n_setrlimit\n_setsid\n_setsockopt\n_setvbuf\n_sigaction\n_signal\n_sigprocmask\n_snprintf$LDBL128\n_socket\n_socketpair\n_sprintf$LDBL128\n_sqlite3_backup_finish\n_sqlite3_backup_init\n_sqlite3_backup_step\n_sqlite3_bind_int64\n_sqlite3_bind_text\n_sqlite3_busy_timeout\n_sqlite3_changes\n_sqlite3_close\n_sqlite3_column_bytes\n_sqlite3_column_int\n_sqlite3_column_int64\n_sqlite3_column_text\n_sqlite3_column_type\n_sqlite3_db_handle\n_sqlite3_errmsg\n_sqlite3_exec\n_sqlite3_finalize\n_sqlite3_get_autocommit\n_sqlite3_open\n_sqlite3_prepare_v2\n_sqlite3_step\n_sqlite3_vfs_find\n_sqlite3_vfs_register\n_sqlite3_vfs_unregister\n_stat\n_statvfs\n_strcasecmp\n_strchr\n_strcmp\n_strcoll\n_strerror\n_strerror_r\n_strftime\n_strlen\n_strncmp\n_strncpy\n_strrchr\n_strstr\n_strtod\n_strtof\n_strtol\n_strtold$LDBL128\n_strtoll\n_strtoul\n_strtoull\n_strxfrm\n_symlink\n_sysctl\n_task_threads\n_tolower\n_toupper\n_towlower\n_towupper\n_truncate\n_ungetc\n_ungetwc\n_unlink\n_unsetenv\n_utime\n_utimes\n_vm_deallocate\n_vprintf$LDBL128\n_vsnprintf$LDBL128\n_waitpid\n_wcrtomb\n_wcscmp\n_wcscoll\n_wcsftime\n_wcslen\n_wcsstr\n_wcsxfrm\n_wctob\n_wmemchr\n_wmemcmp\n_wmemcpy\n_wmemmove\n_wmemset\n_write\n_writev\n"
+          },
+          {
+            "name": "codet_persistence_bench",
+            "bytes": 5016848,
+            "sha256": "2bee7bee1619213f081d44074b5565fc676cfc6992f717bbce7fcf5e23ed4d88",
+            "dependencies": "/project/build/tiger/codet_persistence_bench:\n\t/opt/tigr/lib/libcurl.4.dylib (compatibility version 13.0.0, current version 13.0.0)\n\t/opt/tigr/libexec/openssl3/lib/libssl.3.dylib (compatibility version 3.0.0, current version 3.0.0)\n\t/opt/tigr/libexec/openssl3/lib/libcrypto.3.dylib (compatibility version 3.0.0, current version 3.0.0)\n\t/opt/tigr/lib/libz.1.dylib (compatibility version 1.0.0, current version 1.3.2)\n\t/opt/tigr/lib/libsqlite3.0.dylib (compatibility version 9.0.0, current version 9.54.0)\n\t/opt/tigr/lib/libncurses.6.dylib (compatibility version 6.0.0, current version 6.0.0)\n\t/opt/tigr/lib/libform.6.dylib (compatibility version 6.0.0, current version 6.0.0)\n\t/opt/tigr/lib/libedit.0.dylib (compatibility version 1.0.0, current version 1.78.0)\n\t/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices (compatibility version 1.0.0, current version 22.0.0)\n\t/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon (compatibility version 2.0.0, current version 128.0.0)\n\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 368.33.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.3.10)\n",
+            "imports": "_AXAPIEnabled\n_AXIsProcessTrusted\n_AXUIElementCopyActionNames\n_AXUIElementCopyAttributeValue\n_AXUIElementCopyAttributeValues\n_AXUIElementCreateApplication\n_AXUIElementGetAttributeValueCount\n_AXUIElementGetTypeID\n_AXUIElementIsAttributeSettable\n_AXUIElementPerformAction\n_AXUIElementSetAttributeValue\n_AXUIElementSetMessagingTimeout\n_AXValueGetTypeID\n_AXValueGetValue\n_CFArrayContainsValue\n_CFArrayGetCount\n_CFArrayGetTypeID\n_CFArrayGetValueAtIndex\n_CFBooleanGetTypeID\n_CFBooleanGetValue\n_CFDataCreate\n_CFDataCreateMutable\n_CFDataGetBytePtr\n_CFDataGetLength\n_CFDictionaryGetValue\n_CFEqual\n_CFGetTypeID\n_CFNumberCreate\n_CFNumberGetTypeID\n_CFNumberGetValue\n_CFRelease\n_CFRetain\n_CFStringCreateWithBytes\n_CFStringCreateWithCString\n_CFStringGetCString\n_CFStringGetCharacters\n_CFStringGetLength\n_CFStringGetMaximumSizeForEncoding\n_CFStringGetTypeID\n_CFURLCreateFromFileSystemRepresentation\n_CFURLCreateWithString\n_CGBitmapContextCreate\n_CGBitmapContextCreateImage\n_CGColorSpaceCreateDeviceRGB\n_CGContextDrawImage\n_CGDataProviderCreateWithData\n_CGDisplayBaseAddress\n_CGDisplayBitsPerPixel\n_CGDisplayBitsPerSample\n_CGDisplayBounds\n_CGDisplayBytesPerRow\n_CGEventCreateKeyboardEvent\n_CGEventCreateMouseEvent\n_CGEventKeyboardSetUnicodeString\n_CGEventPost\n_CGEventSetFlags\n_CGEventSetIntegerValueField\n_CGGetActiveDisplayList\n_CGImageCreate\n_CGImageDestinationAddImage\n_CGImageDestinationCreateWithData\n_CGImageDestinationFinalize\n_CGImageGetHeight\n_CGImageGetWidth\n_CGImageSourceCopyPropertiesAtIndex\n_CGImageSourceCreateImageAtIndex\n_CGImageSourceCreateWithData\n_CGPostScrollWheelEvent\n_CGSessionCopyCurrentDictionary\n_CopyProcessName\n_GetFrontProcess\n_GetNextProcess\n_GetProcessPID\n_LSOpenCFURLRef\n_PasteboardClear\n_PasteboardCopyItemFlavorData\n_PasteboardCreate\n_PasteboardGetItemCount\n_PasteboardGetItemIdentifier\n_PasteboardPutItemFlavor\n_PasteboardSynchronize\n_SHA256\n_SetFrontProcess\n__DefaultRuneLocale\n___CFConstantStringClassReference\n___error\n___keymgr_dwarf2_register_sections\n___keymgr_global\n___maskrune\n___mb_cur_max\n___sF\n__cpu_has_altivec\n__cthread_init_routine\n__exit\n__keymgr_get_and_lock_processwide_ptr\n__keymgr_set_and_unlock_processwide_ptr\n__keymgr_unlock_processwide_ptr\n_abort\n_arc4random\n_btowc\n_calloc\n_chdir\n_chmod\n_close\n_closedir\n_curl_easy_cleanup\n_curl_easy_getinfo\n_curl_easy_init\n_curl_easy_perform\n_curl_easy_setopt\n_curl_easy_strerror\n_curl_global_init\n_curl_slist_append\n_curl_slist_free_all\n_dlopen\n_dlsym\n_dup2\n_errno\n_execvp\n_exit\n_fchmod\n_fclose\n_fcntl\n_fdopen\n_fflush\n_fileno\n_flock\n_floorf\n_fnmatch\n_fopen\n_fork\n_fprintf$LDBL128\n_fputc\n_fputs\n_fread\n_free\n_fseek\n_fstat\n_fsync\n_ftell\n_futimes\n_fwrite\n_getc\n_getcwd\n_getenv\n_geteuid\n_getrusage\n_getsectdatafromheader\n_gettimeofday\n_getuid\n_getwc\n_gmtime_r\n_ioctl\n_kCFBooleanFalse\n_kCFBooleanTrue\n_kCGImagePropertyPixelHeight\n_kCGImagePropertyPixelWidth\n_kevent\n_kill\n_kqueue\n_link\n_localeconv\n_lseek\n_lstat\n_mach_init_routine\n_malloc\n_mbrtowc\n_memchr\n_memcmp\n_memcpy\n_memmove\n_memset\n_mkdir\n_mkdtemp\n_mkstemp\n_nanosleep\n_nextafter\n_open\n_opendir\n_openpty\n_pathconf\n_pipe\n_poll\n_pthread_cond_broadcast\n_pthread_cond_destroy\n_pthread_cond_signal\n_pthread_cond_timedwait\n_pthread_cond_wait\n_pthread_getspecific\n_pthread_key_create\n_pthread_key_delete\n_pthread_mutex_init\n_pthread_mutex_lock\n_pthread_mutex_unlock\n_pthread_mutexattr_destroy\n_pthread_mutexattr_init\n_pthread_mutexattr_settype\n_pthread_once\n_pthread_setspecific\n_putc\n_putwc\n_read\n_readdir\n_readlink\n_realloc\n_remainder\n_remove\n_rename\n_send\n_setenv\n_setlocale\n_setsid\n_setsockopt\n_setvbuf\n_sigaction\n_sigprocmask\n_snprintf$LDBL128\n_socketpair\n_sprintf$LDBL128\n_sqlite3_backup_finish\n_sqlite3_backup_init\n_sqlite3_backup_step\n_sqlite3_bind_int64\n_sqlite3_bind_text\n_sqlite3_busy_timeout\n_sqlite3_changes\n_sqlite3_close\n_sqlite3_column_bytes\n_sqlite3_column_int\n_sqlite3_column_int64\n_sqlite3_column_text\n_sqlite3_column_type\n_sqlite3_db_handle\n_sqlite3_errmsg\n_sqlite3_exec\n_sqlite3_finalize\n_sqlite3_get_autocommit\n_sqlite3_open\n_sqlite3_prepare_v2\n_sqlite3_step\n_stat\n_statvfs\n_strchr\n_strcmp\n_strcoll\n_strerror\n_strerror_r\n_strftime\n_strlen\n_strncmp\n_strtod\n_strtof\n_strtold$LDBL128\n_strtoll\n_strtoul\n_strtoull\n_strxfrm\n_symlink\n_tolower\n_toupper\n_towlower\n_towupper\n_truncate\n_ungetc\n_ungetwc\n_unlink\n_utime\n_vsnprintf$LDBL128\n_waitpid\n_wcrtomb\n_wcscoll\n_wcsftime\n_wcslen\n_wcsxfrm\n_wctob\n_wmemchr\n_wmemcmp\n_wmemcpy\n_wmemmove\n_wmemset\n_write\n_writev\n"
+          }
+        ],
+        "target_macros": "#define __DBL_MIN_EXP__ (-1021)\n#define __LDBL_MANT_DIG__ 106\n#define __builtin_vsx_xvmsubmsp __builtin_vsx_xvmsubsp\n#define __ATOMIC_ACQUIRE 2\n#define __WCHAR_MAX__ 0x7fffffff\n#define __GCC_IEC_559_COMPLEX 2\n#define __SIZEOF_LONG__ 4\n#define __UINT_LEAST8_TYPE__ unsigned char\n#define __INTMAX_C(c) c ## LL\n#define __FLT32X_IS_IEC_60559__ 1\n#define __CHAR_BIT__ 8\n#define _ARCH_PPCGR 1\n#define __UINT8_MAX__ 0xff\n#define __builtin_vsx_xvmsubmdp __builtin_vsx_xvmsubdp\n#define __builtin_vsx_xvnmaddadp __builtin_vsx_xvnmadddp\n#define __WINT_MAX__ 0x7fffffff\n#define __FLT32_MIN_EXP__ (-125)\n#define __RECIPF__ 1\n#define __builtin_vsx_xxlnor __builtin_vec_nor\n#define __builtin_vsx_xvnmsubmdp __builtin_vsx_xvnmsubdp\n#define __ORDER_LITTLE_ENDIAN__ 1234\n#define __SIZE_MAX__ 0xffffffffUL\n#define __GCC_HAVE_SYNC_COMPARE_AND_SWAP_1 1\n#define __GCC_HAVE_SYNC_COMPARE_AND_SWAP_2 1\n#define __GCC_HAVE_SYNC_COMPARE_AND_SWAP_4 1\n#define __DBL_DENORM_MIN__ ((double)4.94065645841246544176568792868221e-324L)\n#define __GCC_ATOMIC_CHAR_LOCK_FREE 2\n#define __GCC_IEC_559 2\n#define __FLT32X_DECIMAL_DIG__ 17\n#define __FLT_EVAL_METHOD__ 0\n#define __FLT64_DECIMAL_DIG__ 17\n#define __GCC_ATOMIC_CHAR32_T_LOCK_FREE 2\n#define pixel pixel\n#define bool bool\n#define __UINT_FAST64_MAX__ 0xffffffffffffffffULL\n#define __SIG_ATOMIC_TYPE__ int\n#define __FINITE_MATH_ONLY__ 0\n#define __UINT_LEAST64_MAX__ 0xffffffffffffffffULL\n#define __GNUC_PATCHLEVEL__ 0\n#define __FLT32_HAS_DENORM__ 1\n#define __builtin_vsx_xvnmaddasp __builtin_vsx_xvnmaddsp\n#define __UINT_FAST8_MAX__ 0xff\n#define __FLT32_MAX_10_EXP__ 38\n#define __INT8_C(c) c\n#define __INT_LEAST8_WIDTH__ 8\n#define __STDC_HOSTED__ 1\n#define __SHRT_MAX__ 0x7fff\n#define __LDBL_MAX__ 1.79769313486231580793728971405301e+308L\n#define __LDBL_IS_IEC_60559__ 0\n#define __UINT_LEAST8_MAX__ 0xff\n#define __GCC_ATOMIC_BOOL_LOCK_FREE 2\n#define __APPLE_CC__ 1\n#define __FLT_EVAL_METHOD_TS_18661_3__ 0\n#define __UINT32_MAX__ 0xffffffffU\n#define __LDBL_MAX_EXP__ 1024\n#define __WINT_MIN__ (-__WINT_MAX__ - 1)\n#define __builtin_vsx_xvmaddmdp __builtin_vsx_xvmadddp\n#define __builtin_vsx_vperm __builtin_vec_perm\n#define __INT_LEAST16_WIDTH__ 16\n#define __SCHAR_MAX__ 0x7f\n#define __WCHAR_MIN__ (-__WCHAR_MAX__ - 1)\n#define vector vector\n#define __builtin_vsx_xvnmsubmsp __builtin_vsx_xvnmsubsp\n#define __GCC_ATOMIC_POINTER_LOCK_FREE 2\n#define __FLT32X_MAX_EXP__ 1024\n#define __UINT_LEAST16_MAX__ 0xffff\n#define __SIZEOF_INT__ 4\n#define __FLT32X_MANT_DIG__ 53\n#define __builtin_vsx_xvmaddmsp __builtin_vsx_xvmaddsp\n#define __INT64_C(c) c ## LL\n#define __DBL_DIG__ 15\n#define __FLT_EPSILON__ 1.19209289550781250000000000000000e-7F\n#define __SHRT_WIDTH__ 16\n#define __FLT32_IS_IEC_60559__ 1\n#define __LDBL_MIN__ 2.00416836000897277799610805135016e-292L\n#define __STDC_UTF_16__ 1\n#define __DBL_IS_IEC_60559__ 1\n#define __strong \n#define __FP_FAST_FMA 1\n#define __LONG_MAX__ 0x7fffffffL\n#define __SIZEOF_IBM128__ 16\n#define __INT32_MAX__ 0x7fffffff\n#define __INT_WIDTH__ 32\n#define __APPLE__ 1\n#define __DECIMAL_DIG__ 33\n#define __FLT64_EPSILON__ 2.22044604925031308084726333618164e-16F64\n#define __INT16_MAX__ 0x7fff\n#define __LDBL_HAS_QUIET_NAN__ 1\n#define __FLT64_MANT_DIG__ 53\n#define __FLT_MIN__ 1.17549435082228750796873653722225e-38F\n#define __DYNAMIC__ 1\n#define __GNUC__ 14\n#define __FLT_HAS_DENORM__ 1\n#define __SIZEOF_LONG_DOUBLE__ 16\n#define __LDBL_MIN_EXP__ (-968)\n#define __BIGGEST_ALIGNMENT__ 16\n#define __FLT64_MAX_10_EXP__ 308\n#define __WCHAR_TYPE__ int\n#define __DBL_MAX__ ((double)1.79769313486231570814527423731704e+308L)\n#define __INT_FAST32_MAX__ 0x7fffffff\n#define __DBL_HAS_INFINITY__ 1\n#define __FLT64_DENORM_MIN__ 4.94065645841246544176568792868221e-324F64\n#define __builtin_vsx_xvnmaddmdp __builtin_vsx_xvnmadddp\n#define __HAVE_SPECULATION_SAFE_VALUE 1\n#define __builtin_vsx_xxlandc __builtin_vec_andc\n#define __INTPTR_WIDTH__ 32\n#define __UINT_LEAST32_MAX__ 0xffffffffU\n#define __FLT32X_HAS_DENORM__ 1\n#define __INT_FAST16_TYPE__ short int\n#define __LDBL_HAS_DENORM__ 1\n#define __INT_LEAST32_MAX__ 0x7fffffff\n#define __DBL_MAX_EXP__ 1024\n#define __WCHAR_WIDTH__ 32\n#define __FLT32_MAX__ 3.40282346638528859811704183484517e+38F32\n#define __GCC_ATOMIC_LONG_LOCK_FREE 2\n#define __PTRDIFF_MAX__ 0x7fffffff\n#define __FLT32_HAS_QUIET_NAN__ 1\n#define __LONG_LONG_MAX__ 0x7fffffffffffffffLL\n#define __SIZEOF_SIZE_T__ 4\n#define __builtin_vsx_xvnmaddmsp __builtin_vsx_xvnmaddsp\n#define __PPC__ 1\n#define __SIZEOF_WINT_T__ 4\n#define __LONG_LONG_WIDTH__ 64\n#define __FLT32_MAX_EXP__ 128\n#define __ATOMIC_SEQ_CST 5\n#define __GXX_ABI_VERSION 1019\n#define __FLT_MIN_EXP__ (-125)\n#define __FP_FAST_FMAF 1\n#define __DBL_MIN__ ((double)2.22507385850720138309023271733240e-308L)\n#define __FP_FAST_FMAF64 1\n#define __LONGDOUBLE128 1\n#define __SIZE_TYPE__ long unsigned int\n#define __DBL_HAS_QUIET_NAN__ 1\n#define __pixel __attribute__((altivec(pixel__))) unsigned short\n#define __FLT32X_EPSILON__ 2.22044604925031308084726333618164e-16F32x\n#define __FLT64_MIN_EXP__ (-1021)\n#define __FLT64_MIN_10_EXP__ (-307)\n#define __REGISTER_PREFIX__ \n#define __INTMAX_WIDTH__ 64\n#define __INTPTR_MAX__ 0x7fffffffL\n#define __LDBL_HAS_INFINITY__ 1\n#define __builtin_vsx_xxland __builtin_vec_and\n#define __FLT32_MIN__ 1.17549435082228750796873653722225e-38F32\n#define __UINT8_TYPE__ unsigned char\n#define __FLT_DIG__ 6\n#define __NO_INLINE__ 1\n#define __DEC_EVAL_METHOD__ 2\n#define __FLT_MANT_DIG__ 24\n#define __LDBL_DECIMAL_DIG__ 33\n#define __VERSION__ \"14.2.0\"\n#define __UINT64_C(c) c ## ULL\n#define __BIG_ENDIAN__ 1\n#define __GCC_ATOMIC_INT_LOCK_FREE 2\n#define __UINTMAX_TYPE__ long long unsigned int\n#define __FLT32_MANT_DIG__ 24\n#define __FLOAT_WORD_ORDER__ __ORDER_BIG_ENDIAN__\n#define __weak \n#define __SCHAR_WIDTH__ 8\n#define __UINT16_MAX__ 0xffff\n#define __INT32_C(c) c\n#define __ORDER_PDP_ENDIAN__ 3412\n#define __FLT32X_HAS_INFINITY__ 1\n#define __INT_FAST32_TYPE__ int\n#define __UINT_LEAST16_TYPE__ short unsigned int\n#define __SET_FPSCR_RN_RETURNS_FPSCR__ 1\n#define __DBL_HAS_DENORM__ 1\n#define __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ 1040\n#define __UINT64_MAX__ 0xffffffffffffffffULL\n#define __FLT_IS_IEC_60559__ 1\n#define __GNUC_WIDE_EXECUTION_CHARSET_NAME \"UTF-32BE\"\n#define __INT8_TYPE__ signed char\n#define __HAVE_BSWAP__ 1\n#define __FLT_RADIX__ 2\n#define __INT_LEAST16_TYPE__ short int\n#define __LDBL_EPSILON__ 4.94065645841246544176568792868221e-324L\n#define __UINTMAX_C(c) c ## ULL\n#define __ppc__ 1\n#define __UINT_FAST64_TYPE__ long long unsigned int\n#define __SIG_ATOMIC_MAX__ 0x7fffffff\n#define __GCC_ATOMIC_WCHAR_T_LOCK_FREE 2\n#define __USER_LABEL_PREFIX__ _\n#define __SIZEOF_PTRDIFF_T__ 4\n#define __NATURAL_ALIGNMENT__ 1\n#define __FLT32_HAS_INFINITY__ 1\n#define __DBL_MIN_10_EXP__ (-307)\n#define __LDBL_DIG__ 31\n#define __FLT64_IS_IEC_60559__ 1\n#define __FLT32X_MIN_EXP__ (-1021)\n#define __INT_FAST16_MAX__ 0x7fff\n#define __vector __attribute__((altivec(vector__)))\n#define __FLT64_DIG__ 15\n#define __UINT_FAST32_MAX__ 0xffffffffU\n#define __UINT_LEAST64_TYPE__ long long unsigned int\n#define __builtin_vsx_xvmsubadp __builtin_vsx_xvmsubdp\n#define __builtin_vsx_xxsel __builtin_vec_sel\n#define __FLT_HAS_QUIET_NAN__ 1\n#define __bool __attribute__((altivec(bool__))) unsigned\n#define __FLT_MAX_10_EXP__ 38\n#define __builtin_vsx_xxlxor __builtin_vec_xor\n#define __FLT_HAS_INFINITY__ 1\n#define __GNUC_EXECUTION_CHARSET_NAME \"UTF-8\"\n#define __UINT_FAST16_TYPE__ short unsigned int\n#define __INT_FAST32_WIDTH__ 32\n#define __CHAR16_TYPE__ short unsigned int\n#define __PRAGMA_REDEFINE_EXTNAME 1\n#define __SIZE_WIDTH__ 32\n#define __WINT_WIDTH__ 32\n#define __INT_LEAST16_MAX__ 0x7fff\n#define __LONG_DOUBLE_IBM128__ 1\n#define __INT64_MAX__ 0x7fffffffffffffffLL\n#define __FLT32_DENORM_MIN__ 1.40129846432481707092372958328992e-45F32\n#define __SIG_ATOMIC_WIDTH__ 32\n#define __INT_LEAST64_TYPE__ long long int\n#define __builtin_vsx_xvmsubasp __builtin_vsx_xvmsubsp\n#define __INT16_TYPE__ short int\n#define __INT_LEAST8_TYPE__ signed char\n#define __STDC_VERSION__ 201710L\n#define _BIG_ENDIAN 1\n#define __INT_FAST8_MAX__ 0x7f\n#define __SIZEOF_POINTER__ 4\n#define __FLT64_HAS_QUIET_NAN__ 1\n#define __PPC 1\n#define __FLT32_MIN_10_EXP__ (-37)\n#define __FLT32X_DIG__ 15\n#define __UINT16_C(c) c\n#define __PTRDIFF_WIDTH__ 32\n#define __builtin_vsx_xvmaddasp __builtin_vsx_xvmaddsp\n#define __builtin_vsx_xvmaddadp __builtin_vsx_xvmadddp\n#define __CONSTANT_CFSTRINGS__ 1\n#define __FLT64_HAS_INFINITY__ 1\n#define __SIG_ATOMIC_MIN__ (-__SIG_ATOMIC_MAX__ - 1)\n#define __INTPTR_TYPE__ long int\n#define __UINT16_TYPE__ short unsigned int\n#define __SIZEOF_FLOAT__ 4\n#define __pic__ 2\n#define __UINTPTR_MAX__ 0xffffffffUL\n#define __FLT32X_DENORM_MIN__ 4.94065645841246544176568792868221e-324F32x\n#define __INT_FAST64_WIDTH__ 64\n#define __FLT32_DECIMAL_DIG__ 9\n#define __INT_FAST64_MAX__ 0x7fffffffffffffffLL\n#define __GCC_ATOMIC_TEST_AND_SET_TRUEVAL 1\n#define __RSQRTE__ 1\n#define __FLT_NORM_MAX__ 3.40282346638528859811704183484517e+38F\n#define __INT_MAX__ 0x7fffffff\n#define __LONG_DOUBLE_128__ 1\n#define __FLT64_MAX_EXP__ 1024\n#define __INT64_TYPE__ long long int\n#define __FLT_MAX_EXP__ 128\n#define __builtin_vsx_xxlor __builtin_vec_or\n#define __INT_FAST64_TYPE__ long long int\n#define __DBL_MANT_DIG__ 53\n#define __INT_LEAST64_MAX__ 0x7fffffffffffffffLL\n#define __GCC_ATOMIC_CHAR16_T_LOCK_FREE 2\n#define __FP_FAST_FMAF32 1\n#define __WINT_TYPE__ int\n#define __UINT_LEAST32_TYPE__ unsigned int\n#define __SIZEOF_SHORT__ 2\n#define __FLT32_NORM_MAX__ 3.40282346638528859811704183484517e+38F32\n#define __FLT64_MAX__ 1.79769313486231570814527423731704e+308F64\n#define __INT_LEAST8_MAX__ 0x7f\n#define __INT_LEAST64_WIDTH__ 64\n#define __FLT32X_MAX_10_EXP__ 308\n#define __LDBL_MAX_10_EXP__ 308\n#define __ATOMIC_RELAXED 0\n#define __DBL_EPSILON__ ((double)2.22044604925031308084726333618164e-16L)\n#define __INT_LEAST32_TYPE__ int\n#define __UINT8_C(c) c\n#define PPC 1\n#define __SIZEOF_WCHAR_T__ 4\n#define __MACH__ 1\n#define __FLT64_NORM_MAX__ 1.79769313486231570814527423731704e+308F64\n#define __INTMAX_MAX__ 0x7fffffffffffffffLL\n#define __INT_FAST8_TYPE__ signed char\n#define _ARCH_PPC 1\n#define _CALL_DARWIN 1\n#define __GNUC_STDC_INLINE__ 1\n#define __FLT64_HAS_DENORM__ 1\n#define __FLT32_EPSILON__ 1.19209289550781250000000000000000e-7F32\n#define __FP_FAST_FMAF32x 1\n#define __DBL_DECIMAL_DIG__ 17\n#define __STDC_UTF_32__ 1\n#define __INT_FAST8_WIDTH__ 8\n#define __FLT32X_MAX__ 1.79769313486231570814527423731704e+308F32x\n#define __DBL_NORM_MAX__ ((double)1.79769313486231570814527423731704e+308L)\n#define __BYTE_ORDER__ __ORDER_BIG_ENDIAN__\n#define __VEC_ELEMENT_REG_ORDER__ __ORDER_BIG_ENDIAN__\n#define __ORDER_BIG_ENDIAN__ 4321\n#define __FLT32_DIG__ 6\n#define __UINT64_TYPE__ long long unsigned int\n#define __UINT32_C(c) c ## U\n#define __FLT32X_MIN__ 2.22507385850720138309023271733240e-308F32x\n#define __FLT_DENORM_MIN__ 1.40129846432481707092372958328992e-45F\n#define __builtin_vsx_xvnmsubasp __builtin_vsx_xvnmsubsp\n#define __INT8_MAX__ 0x7f\n#define __LONG_WIDTH__ 32\n#define __PIC__ 2\n#define __UINT_FAST32_TYPE__ unsigned int\n#define __FLT32X_NORM_MAX__ 1.79769313486231570814527423731704e+308F32x\n#define __CHAR32_TYPE__ unsigned int\n#define __FLT_MAX__ 3.40282346638528859811704183484517e+38F\n#define __builtin_vsx_xvnmsubadp __builtin_vsx_xvnmsubdp\n#define __INT32_TYPE__ int\n#define __SIZEOF_DOUBLE__ 8\n#define __FLT_MIN_10_EXP__ (-37)\n#define __FLT64_MIN__ 2.22507385850720138309023271733240e-308F64\n#define __INT_LEAST32_WIDTH__ 32\n#define __INTMAX_TYPE__ long long int\n#define __INT16_C(c) c\n#define __FLT32X_HAS_QUIET_NAN__ 1\n#define __ATOMIC_CONSUME 1\n#define __GNUC_MINOR__ 2\n#define __INT_FAST16_WIDTH__ 16\n#define __UINTMAX_MAX__ 0xffffffffffffffffULL\n#define __DBL_MAX_10_EXP__ 308\n#define __LDBL_DENORM_MIN__ 4.94065645841246544176568792868221e-324L\n#define __ATOMIC_RELEASE 3\n#define __STDC__ 1\n#define __PTRDIFF_TYPE__ int\n#define __UINT32_TYPE__ unsigned int\n#define __FLT32X_MIN_10_EXP__ (-307)\n#define __UINTPTR_TYPE__ long unsigned int\n#define __LDBL_MIN_10_EXP__ (-291)\n#define __SIZEOF_LONG_LONG__ 8\n#define _Bool _Bool\n#define __GCC_ATOMIC_LLONG_LOCK_FREE 1\n#define __POWERPC__ 1\n#define __FLT_DECIMAL_DIG__ 9\n#define __UINT_FAST16_MAX__ 0xffff\n#define __LDBL_NORM_MAX__ 8.98846567431157953864652595394501e+307L\n#define __GCC_ATOMIC_SHORT_LOCK_FREE 2\n#define __UINT_FAST8_TYPE__ unsigned char\n#define __ATOMIC_ACQ_REL 4\n",
+        "runtime_libraries": [
+          {
+            "name": "opt/tigr/lib/libcurl.4.dylib",
+            "dependencies": "/project/build/tiger-sysroot/opt/tigr/lib/libcurl.4.dylib:\n\t/opt/tigr/lib/libcurl.4.dylib (compatibility version 13.0.0, current version 13.0.0)\n\t/opt/tigr/libexec/openssl3/lib/libssl.3.dylib (compatibility version 3.0.0, current version 3.0.0)\n\t/opt/tigr/libexec/openssl3/lib/libcrypto.3.dylib (compatibility version 3.0.0, current version 3.0.0)\n\t/opt/tigr/lib/libz.1.dylib (compatibility version 1.0.0, current version 1.3.2)\n\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 368.33.0)\n\t/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices (compatibility version 1.0.0, current version 18.0.0)\n\t/System/Library/Frameworks/SystemConfiguration.framework/Versions/A/SystemConfiguration (compatibility version 1.0.0, current version 1.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.3.10)\n",
+            "sha256": "5e14c6a5f4ee8db1f8ded8155da204ad28012e9aeb4ce8262046dda3934d9b4c"
+          },
+          {
+            "name": "opt/tigr/lib/libedit.0.dylib",
+            "dependencies": "/project/build/tiger-sysroot/opt/tigr/lib/libedit.0.dylib:\n\t/opt/tigr/lib/libedit.0.dylib (compatibility version 1.0.0, current version 1.78.0)\n\t/opt/tigr/lib/libncurses.6.dylib (compatibility version 6.0.0, current version 6.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.3.10)\n",
+            "sha256": "1ef325e9539ddd536dff03499f1aeff975937ce25444a33f972ea73603607420"
+          },
+          {
+            "name": "opt/tigr/lib/libform.6.dylib",
+            "dependencies": "/project/build/tiger-sysroot/opt/tigr/lib/libform.6.dylib:\n\t/opt/tigr/lib/libform.6.dylib (compatibility version 6.0.0, current version 6.0.0)\n\t/opt/tigr/lib/libncurses.6.dylib (compatibility version 6.0.0, current version 6.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.3.10)\n",
+            "sha256": "5af06f9a474f0dc9464a7ed6d1c4ab8ba47ab838ae5fed00938316eafbad93c4"
+          },
+          {
+            "name": "opt/tigr/lib/libmenu.6.dylib",
+            "dependencies": "/project/build/tiger-sysroot/opt/tigr/lib/libmenu.6.dylib:\n\t/opt/tigr/lib/libmenu.6.dylib (compatibility version 6.0.0, current version 6.0.0)\n\t/opt/tigr/lib/libncurses.6.dylib (compatibility version 6.0.0, current version 6.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.3.10)\n",
+            "sha256": "d6ba66514fb72f8e289279d3bbf23c672f35bb0af920b3069a7b2adb03547d5c"
+          },
+          {
+            "name": "opt/tigr/lib/libncurses.6.dylib",
+            "dependencies": "/project/build/tiger-sysroot/opt/tigr/lib/libncurses.6.dylib:\n\t/opt/tigr/lib/libncurses.6.dylib (compatibility version 6.0.0, current version 6.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.3.10)\n",
+            "sha256": "7a48b0071d120cfed19977ee2f6bd8fdea5c5ee80d5f0adf9d19846e7c9b29f7"
+          },
+          {
+            "name": "opt/tigr/lib/libpanel.6.dylib",
+            "dependencies": "/project/build/tiger-sysroot/opt/tigr/lib/libpanel.6.dylib:\n\t/opt/tigr/lib/libpanel.6.dylib (compatibility version 6.0.0, current version 6.0.0)\n\t/opt/tigr/lib/libncurses.6.dylib (compatibility version 6.0.0, current version 6.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.3.10)\n",
+            "sha256": "d5cfda05c9603c44219bab0e808340748dba8af80c1fdda840683e666ad869c4"
+          },
+          {
+            "name": "opt/tigr/lib/libsqlite3.0.dylib",
+            "dependencies": "/project/build/tiger-sysroot/opt/tigr/lib/libsqlite3.0.dylib:\n\t/opt/tigr/lib/libsqlite3.0.dylib (compatibility version 9.0.0, current version 9.54.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.3.10)\n",
+            "sha256": "b239e3c764a53c2c01f42da92d1b60293f91d954bcfa2ce987005b8d041f799d"
+          },
+          {
+            "name": "opt/tigr/lib/libz.1.3.2.dylib",
+            "dependencies": "/project/build/tiger-sysroot/opt/tigr/lib/libz.1.3.2.dylib:\n\t/opt/tigr/lib/libz.1.dylib (compatibility version 1.0.0, current version 1.3.2)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.3.10)\n",
+            "sha256": "573349a093240d76516949e366b1ef3d288d77d3dbab2cf761036c1f2ebd1bee"
+          },
+          {
+            "name": "opt/tigr/libexec/openssl3/lib/engines-3/capi.dylib",
+            "dependencies": "/project/build/tiger-sysroot/opt/tigr/libexec/openssl3/lib/engines-3/capi.dylib:\n\t/opt/tigr/libexec/openssl3/lib/libcrypto.3.dylib (compatibility version 3.0.0, current version 3.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.3.10)\n",
+            "sha256": "2605dbb73f214da43ec14ceb5488901ba00f51e117d81f402d4a887954fb5f4a"
+          },
+          {
+            "name": "opt/tigr/libexec/openssl3/lib/engines-3/loader_attic.dylib",
+            "dependencies": "/project/build/tiger-sysroot/opt/tigr/libexec/openssl3/lib/engines-3/loader_attic.dylib:\n\t/opt/tigr/libexec/openssl3/lib/libcrypto.3.dylib (compatibility version 3.0.0, current version 3.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.3.10)\n",
+            "sha256": "93bad5cf5489822544e4256e2b7a5163b05d3e10e83a4d7619726b5fb4a1cfe6"
+          },
+          {
+            "name": "opt/tigr/libexec/openssl3/lib/engines-3/padlock.dylib",
+            "dependencies": "/project/build/tiger-sysroot/opt/tigr/libexec/openssl3/lib/engines-3/padlock.dylib:\n\t/opt/tigr/libexec/openssl3/lib/libcrypto.3.dylib (compatibility version 3.0.0, current version 3.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.3.10)\n",
+            "sha256": "2605dbb73f214da43ec14ceb5488901ba00f51e117d81f402d4a887954fb5f4a"
+          },
+          {
+            "name": "opt/tigr/libexec/openssl3/lib/libcrypto.3.dylib",
+            "dependencies": "/project/build/tiger-sysroot/opt/tigr/libexec/openssl3/lib/libcrypto.3.dylib:\n\t/opt/tigr/libexec/openssl3/lib/libcrypto.3.dylib (compatibility version 3.0.0, current version 3.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.3.10)\n",
+            "sha256": "803314d5741f500d90c1fe342f67b8446875b62c9e499ec327698049ac410dbd"
+          },
+          {
+            "name": "opt/tigr/libexec/openssl3/lib/libssl.3.dylib",
+            "dependencies": "/project/build/tiger-sysroot/opt/tigr/libexec/openssl3/lib/libssl.3.dylib:\n\t/opt/tigr/libexec/openssl3/lib/libssl.3.dylib (compatibility version 3.0.0, current version 3.0.0)\n\t/opt/tigr/libexec/openssl3/lib/libcrypto.3.dylib (compatibility version 3.0.0, current version 3.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.3.10)\n",
+            "sha256": "e052377b2dfe19dadfc44c8e82946104599685040c76333eb3c745dee6e57c55"
+          },
+          {
+            "name": "opt/tigr/libexec/openssl3/lib/ossl-modules/legacy.dylib",
+            "dependencies": "/project/build/tiger-sysroot/opt/tigr/libexec/openssl3/lib/ossl-modules/legacy.dylib:\n\t/opt/tigr/libexec/openssl3/lib/libcrypto.3.dylib (compatibility version 3.0.0, current version 3.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.3.10)\n",
+            "sha256": "fd0553f4398a75207a745b4c367e3a1dd7d8d6103330358f33c65b01043c241d"
+          }
+        ]
+      }
+    },
+    "capture_benchmark": {
+      "capture_batches": 141,
+      "capture_bytes": 6619136,
+      "capture_syncs": 41,
+      "flushes": 100,
+      "input_blocks": 0,
+      "ordinary_flush_scans": 0,
+      "output_blocks": 0,
+      "peak_rss_bytes": 8421376,
+      "retained_files": 40,
+      "seconds": 0.011729333
+    }
+  },
+  "regression_scenarios": [
+    "Missing catalog, removed directory and replaced inode recover in the same store",
+    "Valid-header corrupt table pages rebuild without losing retained capture bytes",
+    "Header corruption recovers during close accounting without duplicate output bytes",
+    "Injected DELETE failure rolls back; a second writer obtains BEGIN IMMEDIATE",
+    "Unsafe/dangling catalog and sidecar symlinks remain untouched",
+    "SQLite VFS corruption stops after one recovery retry; I/O errors do not retry/delete",
+    "Earlier hook stops survive later vetoes in both orders",
+    "Blocking PostToolUse feedback reaches the next model request; explicit stops reconcile calls",
+    "Known/unknown Responses models, explicit effort, saved-model resume and Codex compatibility",
+    "Inherited CODET_HOME is replaced and per-fixture overrides still work"
+  ],
+  "validation_notes": [
+    "The rollback fixture reopens the catalog instead of assuming shared-filesystem timestamp precision.",
+    "Linux tests execute temporary fixture scripts in an executable private /tmp; source stays read-only.",
+    "Provider fixtures use loopback or fake transports without paid requests.",
+    "The existing checkpoint validation record describes its original source snapshot."
+  ],
+  "limitations": [
+    "PPC binaries were cross-built and statically verified, not executed.",
+    "Owner-run Tiger/HFS+, power-loss, live-provider and 512 MB hardware acceptance remain pending.",
+    "PR16 already had failing Sonar checks on baseline b3ccc89; those earlier findings are outside the eight accepted PR15 fixes."
+  ],
+  "source_sha256": {
+    ".clang-format": "85b7cd21d813fd0c3860534b5ee44aa9b94d2c8783528be9d2de15a174b41035",
+    ".clang-tidy": "6f1c295e33a074232a79f234b9efc121030909758e1d9b0cb93d04c637aab1f5",
+    ".dockerignore": "04860c13875ef032aeeb9bd65606f8442c5de378e6cf3b947be3258fef7090b4",
+    ".gitattributes": "01a4a5e7cf7cff2a3c699dcf84e73953a861dc8510d5a936faf8b7475dd0ab73",
+    ".github/workflows/modern-checks.yml": "47f22294c1d0b1e67613fb467ff9ccc42f0995016d9b6ae3735f302608ace5cb",
+    ".gitignore": "98ca0fd82001e1f1d20c85b93e7bf5fd1fcf6511608367da56e1efd67c95a54c",
+    "CMakeLists.txt": "3f8f8c9e444d91bdab301efbf9c238348fb53fdcb78773e9b9690b9cc9f63d4c",
+    "LICENSE.md": "81cbae84a29ce7e770bf2bc7b178e50bda0ce8de6067aba661b0bc7b05b562f8",
+    "Makefile": "febbe8c917ec12080b55094de4b41b03e0020de6733529316ee9186ed3580d67",
+    "README.md": "cdecd93805f91df6c47947ea2e8d396b13a897c564e34a5652a4197ad3708b93",
+    "analysis-tools.lock.json": "3fb73266fc02ecf960f6d3e98b781be710dad38086dd7a3ebc9234d9e80694f0",
+    "build.mk": "a922245c3f659d896be248de5b477cbae75d03341f84407a72a3e3cdf08cb904",
+    "checks/app-symbols.txt": "13110bc8ac6b342322d84e9672a02d600e1c14753c5e31c677e09cec5ddd1748",
+    "checks/layout.c": "ecb329ec2d4cdbb3b76b6b451d29c071cdce144eea0c18b96260962e070310bc",
+    "checks/link.c": "80021ec27cee8444c6fa01e1bdf71d875c53a9dfede8b4d575cfcd7bc026971e",
+    "checks/semgrep/capture_catalog.cpp": "f9998f08d4d2d68c8f9e6a3a1aca2eee56f82b4d0b62f071ee9d551b21faafa1",
+    "checks/semgrep/capture_catalog.yaml": "a6a68a00363731e309969428b78f88204b164f13f715e5bc83a964eb9757f89d",
+    "checks/semgrep/hooks.cpp": "d6f6f3bc13c7cf0b7f411af6a7def8530d476310326f19cd8c69ad2ee83a63cc",
+    "checks/semgrep/hooks.yaml": "0bc3648effbc87cd82d2fda76f862bc41aef98e580206296cb98d0c7345ef1c6",
+    "checks/semgrep/instructions.cpp": "a2be6603e2e0f07011e381b20ab7a33fe47a7ecd51dc3a378317e1d0d9f42008",
+    "checks/semgrep/instructions.yaml": "06c7d5248d637f721f7c7e56eaf1927908d7b793ab3fbff2e734fa687e60986e",
+    "checks/semgrep/provider.cpp": "ac1d92583ee50acd74e364f90d34f06bf08e38a3228c475c4e9caadf1d21fa5a",
+    "checks/semgrep/provider.yaml": "67f5072ce49f9edce94cc613b24a24079397a878c5d05c1566a156ebcb16c5ae",
+    "checks/semgrep/state.cpp": "f9d857cb2e91d2f3526d7187c17734a0c047d93b9703c590c606ac74357897d6",
+    "checks/semgrep/state.yaml": "7650eaeeea4aa8f4b7c333c19b9047ffa380878fc2bbb6b76a63f32871ac67e9",
+    "checks/semgrep/tools.cpp": "7b8da71eae21eee3f086074161f079ddedfa3944ea15cc8b206d81fbb7d1aeea",
+    "checks/semgrep/tools.yaml": "84e3192670c91f0694f2f3279932893eff2c6f17ce4551eb21a1af8e718c009f",
+    "checks/text_compat.c": "ad8fc513335b4fc600ee1db849e7f76ae038c7692f685caff269d68b6ec607c6",
+    "cmake/Dockerfile.host-tests": "e4aa877f5eaf1662e76008d3e95766d5fe1ac77a7aa337e953e883d54912c74c",
+    "cmake/Dockerfile.tiger": "ed8c4bf552297de1b168c074947991b9e3abcdfb0077149bb256f764ada48192",
+    "cmake/patches/legacy-signal-gcc14.patch": "847e7f9adde485fa73eebad2ea7416b5fabfedb39aad095670672c1773c3e431",
+    "cmake/patches/libedit-size-max.patch": "aac931bf8b90321711c3ca362909235b6bb2eafd2aa4d2a731a27a3e3b8383b7",
+    "cmake/prompts.cmake": "b0cef80525ffeaaf532b3999efaac3e3089c38e3e0fa424adb98120a17fa80e9",
+    "cmake/tiger.cmake": "9ab358f3ad11b57586a6f7916558e76124af8e98bf9ed1b4d8f7668c03dec622",
+    "dependencies.lock.json": "d20d9c2114dedf0ab7116322e60b17a5b4a6ee4e45eaefaa2fe3c9e3353b793f",
+    "docs/ANALYSIS.md": "076766fd49b0a0c0ddab770d6c3cd79609bd4cc8eaf77b0585f4bb737010ac9e",
+    "docs/BUILD-NOTES.md": "f0db066a233e3cf7d99193c84c3987e824ffe8eb147402e53b9215a0b8efc0de",
+    "docs/CODEX-TOOLS.md": "640ecb7961d22b8fba45a050945afe8a7209e898784cff270dc3c79a055e78dc",
+    "docs/FEATURE-PORT.md": "5fcee58375583eead4590073fc5f01049f2e5b7901517a23f077154567e1d60a",
+    "docs/MODERN-AGENT.md": "9448ac6b927c8fa2cd49bb4f9ffaa06860639e7f93b99c6ce2d6c7149dd9c289",
+    "docs/MODERN-ANALYSIS.md": "d05414ac50b93f90ff94904ccd9e1fa5935116335991f30fa3e38b96f6dcbb21",
+    "docs/PROMPTS.md": "84ff175d6983c9781336cb32b6ee09d86ad38b69a883e2fd48c96ab17558edf3",
+    "docs/RELIABILITY-MODERNIZATION.md": "a00ef32a31d19330cf20bd0c72ab0f3a59e3359facf2ddcf670d33970432d4ee",
+    "docs/REVIEW-FOLLOWUP.md": "87728c9354aacdd1ed9553d32b9b5f145080fbb7a760fac18e377444ddc17d7b",
+    "docs/TIGER-ACCEPTANCE.md": "5c4e10f184dd39667387cf14fb619c412719eb56eac5b02ca4db524c72a6a9e2",
+    "include/app-functions.h": "8e363fc9efb6f09bed6e406c8cda95f46e18f7ca0412ee16654c9a40f26d9340",
+    "include/app-globals.h": "58b79e8bc8e47df7317aa276e7b63cd06b88f72a304e9d1ed9b7f1161b694d6c",
+    "include/app.h": "7b4aff9d8012d627b4ce9220436240b64d9a16bf9bc0b81653bf63ed753170a3",
+    "include/callback-contracts.h": "c9bd4045bd5fbb7ba1e43cbfe582281349dc1e54c7dddfcabf41b29734c3c3e8",
+    "include/codet/artifacts.hpp": "4a93be57d0098d80a2fc85bfd9cc5240e399e4e6b328feccb2349e1d3b785a06",
+    "include/codet/computer.hpp": "aa4e4ef2a400b761ed98f8dfe3b596d140eb06fa58ca7689ed927276c860eeb7",
+    "include/codet/context.hpp": "0d4ce59a92bcc8a76512f9e642e0ac569a63bd9c63728aa6b08b3b24810bd8d7",
+    "include/codet/core.hpp": "c5793661671314632994c7df0faa29db7238659bd222732a149f5bd2c40839f2",
+    "include/codet/diagnostics.hpp": "31ead6755d8a6ce63d365b1a3507b20d06b868bbc3ecbc2893a26f34db750da9",
+    "include/codet/interaction.hpp": "ac2bae0c6d600d8866c06090444b842acbcb5baa31475825a20d34e36b512f03",
+    "include/codet/output.hpp": "028140382180ab93554392230f771f4024cc687a84cab1c2e09c49a194a88554",
+    "include/codet/patch.hpp": "5852178d6a37ef71b560421c84543fe789e0fb5c87d45e337088f48008ec2915",
+    "include/codet/process_control.hpp": "144592cd14597dc1d52750f4eaff9b48be7b3c517991109e93d502300db1f8e6",
+    "include/codet/prompt.hpp": "92fc6bd03ad038af57fcd90ef04fff91e30722bf4ed8db1c25f0e28f32da9b24",
+    "include/codet/support.hpp": "3b67a474dc3b7373172807c0b1120f380379f1f46c8238d84d3aca3fbfc7b6dc",
+    "include/codet/tool_registry.hpp": "6024b8a00ec83280267cc9a874eff3d9d70b60a87dc5e2394e9f9aafa51e0771",
+    "include/embedded-strings.h": "6ffac0e9967e511dd10556aed94a2ef0201c926bd01d699208e4e26834ec2e86",
+    "include/imported-interfaces.h": "f28bc5576423cc04e2138d46b5accbdc64c3e294dcce7a080fcb4da6e16f2c8b",
+    "include/observed-abi.h": "a6526dee44e4e156cdc8f2cd8a9f5ea28cd1a25c8ea3a1deb31d0e28055f2d64",
+    "include/recovered-declarations.h": "328a2d82bcdb6bab00b171749643475b7e55f40ae7508fb305782a606ffa02a9",
+    "include/recovered-layouts.h": "68c1c0b0313d38632390b8919ddc297d6240bed0c2d1de307fce3f0cb431f195",
+    "include/recovered-storage.h": "a655bf2e2172d9293a2920b3f5ffb6ed6e7164e03b16d1c3400547d00648ce09",
+    "include/recovered-types.h": "22d85c337901a5b84de45b08c20409256586c6cc9e5ca4a13ec783788ca76caa",
+    "include/text_compat.h": "6ff5d6fe7251e3b156983ec5d1e4c2dea5bf08cdf40ac68734e1546850dd0da7",
+    "licenses/codex-APACHE-2.0.txt": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc",
+    "licenses/codex-NOTICE.txt": "0ca049709173166b3b4760cebe385436327ea2744ce265902807998180c98983",
+    "prompts/assets/073d19b1e99e9e2124e318059a3781f5dd845933023eb964294724bdfbd129fc.md": "073d19b1e99e9e2124e318059a3781f5dd845933023eb964294724bdfbd129fc",
+    "prompts/assets/3ec03e8e1b8cd9ad2727f32dae589da5389933f8ccf7956f9a13fc031a304026.md": "3ec03e8e1b8cd9ad2727f32dae589da5389933f8ccf7956f9a13fc031a304026",
+    "prompts/assets/60f2f8e2c3dafa1d8ea3f5f347457cbf372126e7b608aac63b0b0add4149058b.md": "60f2f8e2c3dafa1d8ea3f5f347457cbf372126e7b608aac63b0b0add4149058b",
+    "prompts/assets/7e62f4177edcca2c1b30e6e51069bbf25d924adff4d50cc89589f97871bea739.md": "7e62f4177edcca2c1b30e6e51069bbf25d924adff4d50cc89589f97871bea739",
+    "prompts/assets/95b93532e099cf8da05d53619fa528348aadf0f87a26115e1d81da56d573c89f.md": "95b93532e099cf8da05d53619fa528348aadf0f87a26115e1d81da56d573c89f",
+    "prompts/assets/966fe87f5f144cc7bef109fb8217a4ef818dc5274d5eff9f728fb16f2519257a.md": "966fe87f5f144cc7bef109fb8217a4ef818dc5274d5eff9f728fb16f2519257a",
+    "prompts/assets/aa30e9ba182262d5a6cfcd85e883c28af08fa2d1b9856faca997d176ea5e4503.md": "aa30e9ba182262d5a6cfcd85e883c28af08fa2d1b9856faca997d176ea5e4503",
+    "prompts/assets/ab0c334d4faca17e3afbb9b16967c1b2fdcc7242a9a0880af57949fa236d6d07.md": "ab0c334d4faca17e3afbb9b16967c1b2fdcc7242a9a0880af57949fa236d6d07",
+    "prompts/assets/b76e4de9bebedd4c8bd4463d322898ec31a8a63012a7c6273f100d4002269439.md": "b76e4de9bebedd4c8bd4463d322898ec31a8a63012a7c6273f100d4002269439",
+    "prompts/assets/d40cc6958fddf36743e3792be5ed49dffed86f771aad7f3183a223360b153a0f.md": "d40cc6958fddf36743e3792be5ed49dffed86f771aad7f3183a223360b153a0f",
+    "prompts/assets/d552bb6b40dd4f01f43593ebb49c4a9e4e0c0df524aa548b15879f29e6301a98.md": "d552bb6b40dd4f01f43593ebb49c4a9e4e0c0df524aa548b15879f29e6301a98",
+    "prompts/assets/da83de78c5ef6b8d2c5a3e5d33d3dc3099a382f12d2bb1dda95a911e9cef2f14.md": "da83de78c5ef6b8d2c5a3e5d33d3dc3099a382f12d2bb1dda95a911e9cef2f14",
+    "prompts/assets/e0595b562e055186f86ca10b23bb39948fee9259b7fd3b9f2c51a1ad4ca53513.md": "e0595b562e055186f86ca10b23bb39948fee9259b7fd3b9f2c51a1ad4ca53513",
+    "prompts/assets/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.md": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "prompts/assets/e9b088e794a6bb9082ac053fcc760bd818d7e720ee4bcdc72c6e480de7b7cb0e.md": "e9b088e794a6bb9082ac053fcc760bd818d7e720ee4bcdc72c6e480de7b7cb0e",
+    "prompts/manifest.json": "63a0bfffdc14135906e55454473bb92b5e868c8f01d7b38a18fb2c5d17751743",
+    "prompts/upstream/1042cc643eb0147ca1039b19287c7462ceb297502f7f310d9664ac323a12feca.md": "1042cc643eb0147ca1039b19287c7462ceb297502f7f310d9664ac323a12feca",
+    "prompts/upstream/2351631dfc5644dc5a45eaaca4139475bd02810ee6cb792d058b551559b3242e.md": "2351631dfc5644dc5a45eaaca4139475bd02810ee6cb792d058b551559b3242e",
+    "prompts/upstream/35bd51b5f577cb7b24cd5f4629e49e37cb724ab57754ce6f8f202001635bab8a.md": "35bd51b5f577cb7b24cd5f4629e49e37cb724ab57754ce6f8f202001635bab8a",
+    "prompts/upstream/40a1232c8bd01a87dc2283e5ae3c75f2b054dc2a12cf04e5a279c26e5c541b9b.md": "40a1232c8bd01a87dc2283e5ae3c75f2b054dc2a12cf04e5a279c26e5c541b9b",
+    "prompts/upstream/41c7931bac2391a24046362bd07615d5a3e73dca4672b911516fac99646be8c4.md": "41c7931bac2391a24046362bd07615d5a3e73dca4672b911516fac99646be8c4",
+    "prompts/upstream/85541a9738741407642b3c39bbe3781fbf8bb42f628d50e562c87738ab192b3a.md": "85541a9738741407642b3c39bbe3781fbf8bb42f628d50e562c87738ab192b3a",
+    "prompts/upstream/a91357a1cd2727a0be06d461248d6e3a7274746e38108f548a3adf2cc2430415.md": "a91357a1cd2727a0be06d461248d6e3a7274746e38108f548a3adf2cc2430415",
+    "prompts/upstream/ab0c334d4faca17e3afbb9b16967c1b2fdcc7242a9a0880af57949fa236d6d07.md": "ab0c334d4faca17e3afbb9b16967c1b2fdcc7242a9a0880af57949fa236d6d07",
+    "prompts/upstream/b1dd8718c037906c53a305c5cbccb4a4be35ccbb7837461ec349bfc495412f0d.md": "b1dd8718c037906c53a305c5cbccb4a4be35ccbb7837461ec349bfc495412f0d",
+    "prompts/upstream/b707476816bfe5e571a1bd2179f130fff2b132da5ab8e61063acdb7fd24daf12.md": "b707476816bfe5e571a1bd2179f130fff2b132da5ab8e61063acdb7fd24daf12",
+    "prompts/upstream/c1ed5ce0a3a49ba35b9eeba9774e0bd8ebd10eddec13b2dac564e7170513356c.md": "c1ed5ce0a3a49ba35b9eeba9774e0bd8ebd10eddec13b2dac564e7170513356c",
+    "prompts/upstream/d6d46c2d460a9d91ada2167605a8dfc56efde6b2ab61e101444c736c6fd6960a.md": "d6d46c2d460a9d91ada2167605a8dfc56efde6b2ab61e101444c736c6fd6960a",
+    "prompts/upstream/e1bdd4f8f0df4b20f4a0ffc8a861ce819df45325d8cecdfb92e80379cf8d142e.md": "e1bdd4f8f0df4b20f4a0ffc8a861ce819df45325d8cecdfb92e80379cf8d142e",
+    "prompts/upstream/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.md": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "prompts/upstream/e9b088e794a6bb9082ac053fcc760bd818d7e720ee4bcdc72c6e480de7b7cb0e.md": "e9b088e794a6bb9082ac053fcc760bd818d7e720ee4bcdc72c6e480de7b7cb0e",
+    "prompts/upstream/ebd0d5854abd07dc38300a71e027204eb028e9fa443c59d18e36fcc24289e818.md": "ebd0d5854abd07dc38300a71e027204eb028e9fa443c59d18e36fcc24289e818",
+    "scripts/analysis-tools.py": "2c3a43c60394dba479a73c2ab524158c0dfb6e19a9a3d83380356592059bf57f",
+    "scripts/analyze-modern.py": "7264ff6ab98f91af008f5ae738c19c79157a487ea18e03ae4aa216f0675317c5",
+    "scripts/build-tiger-sysroot.py": "06667fc5b02feb917016915f73cbc6ed52c290df21303a87657c7af2f8c38cbd",
+    "scripts/fetch-deps.py": "2b4c4102076de4fc70e5a642ddf05d957b0388e3094d9465fa2164a3dca60c09",
+    "scripts/import-prompts.py": "d01431e832bb5b6563ebc3245e547e8130dce63b2e8798a90386fe4e6626166c",
+    "scripts/semgrep-report.py": "224da0276c93cf02c1eaa46514ba0c2adadc99035fa87fa3623ddf8a7777c5f6",
+    "scripts/tiger-acceptance.sh": "694eebe6979bfaba776ea33d1889c7115dcea35ea55e663076f6989c46926d43",
+    "scripts/tiger.py": "0fc30669c4f26f238aecc23690b136f2785ea6faec5853491c5196333ab5f32d",
+    "scripts/verified_sources.py": "3c9f42b90ab88b9c711caf6aea2bc54640060b8596374e32b131d4f83b3b795f",
+    "scripts/verify-tiger.py": "9da6f93cabf3eba59e664ee988d7fd696f276ffc2e30688dbf013fb024f36e8f",
+    "src/modern/agent.cpp": "f4c81eede5a6d1acb7f33b2e4739d22c46ef1950b836c8c282fbd5d6d75355e7",
+    "src/modern/artifacts.cpp": "d869c12ac29c4325f58ca02bec5577f668789e531e75b8c984bd8399de593e79",
+    "src/modern/capture_catalog.cpp": "ca46e88a919c91ba734e8f31fa16ff29fa2418c6e1befcf52c62323667099acb",
+    "src/modern/cli.cpp": "194551ee94ec58e8282844f7d453a783c47f768977c0bef0a93ee1d4d038b842",
+    "src/modern/computer.cpp": "ccb8fd5b7c0847a18ac44f32dd2319df25e4a173fec947fd1ea5a67f3c86263e",
+    "src/modern/config.cpp": "42c685ae9ac5499363c20de5bb8b99d15ff0a6596aed57dd607ca3936649d8c5",
+    "src/modern/context.cpp": "6f4eb8ef2583ac80a373c2458a8dc60e245c97f3064fdc16f18770d6181c8e53",
+    "src/modern/failure.cpp": "aabbc34d0e235141e79fee2c370d4ed7f3450eb89787ed467fb1b1bacf383a2a",
+    "src/modern/hooks.cpp": "21afab2dbdfae97ed2406bc5d28e30bc55e63598cac07e418c9f41b9971e2c06",
+    "src/modern/images.cpp": "bb703b2e4516c75d9dfda05af4e1cfac57fb0d4d84e7ee56fb1a631b528b1510",
+    "src/modern/inspection.cpp": "b36fadfea5ef50b49e8a547ad3f275be1935df8436874bfac14089750cfa2379",
+    "src/modern/instructions.cpp": "2c022077ac98ec33dff4bd50d514bcc8a26825e45d71c805b8bb84dbc9a6f598",
+    "src/modern/interaction.cpp": "1e18bf1c1f8cb1a221fc458661687f148c0479365c2912bdeb58265d0a2f82ed",
+    "src/modern/main.cpp": "67bb002f35e6fab656016cccd493ea985199858b106598fa8337185925583e1c",
+    "src/modern/output.cpp": "39fa65b7b086a818a0f9ab5b6280e1f1dfe1c7f0c7a5c5db3cc62280caa62a40",
+    "src/modern/patch.cpp": "8c99791527f8a6b09b35674802db3c29cafe2adde4700a67ca7adda60562f770",
+    "src/modern/platform.cpp": "476d45f859c6ab3325d4f388e3c0e53a9b6c01cd1e5a690615fe8c08c12397cf",
+    "src/modern/prompts.cpp": "3bf1d2966d44bcc98f3ed71e4b89905eb7beccee6430fd7899cc9bb60419e5a8",
+    "src/modern/provider.cpp": "7a9aef0c07363a3d1621ff3c67d08ec276c28dc7fcab04c1eb5a26cc500243d3",
+    "src/modern/reliability.cpp": "d924d9c1e8875c7b7e053509e2ab2fe3e24e5aee814c706dbdc9c4e608461356",
+    "src/modern/state.cpp": "276d7fd8e6b215cd17a530fff5ae9ecba8bf555fa582e300d059c85d078e18b6",
+    "src/modern/support.cpp": "40dfad2759619972f3b0eba053a24b00877b05ce2defb648b727ebd608dd594a",
+    "src/modern/tool_registry.cpp": "bbec68092f2561c5d4596e5976c7766e5715eb4ccddf03ef61b99a8ed7b00a93",
+    "src/modern/tools.cpp": "e28164593cb13e6116bd8e374e26a017051f3faffa647ad1d524d06f94ae05dc",
+    "src/storage.c": "d3393530d3b2ef67dd12587eda3cca47d0df7b328e56e2790af8092efcc35428",
+    "src/subset.c": "319312c2d33aecb144d39a370ebb1aebab8c507249f4897d1826529dde79b53c",
+    "src/subsystems/abi-semantics.c": "93a619b3a7c0aff2f662cf7b4a5e2af4272da13aa7b9e4c766233aacea981c37",
+    "src/subsystems/bundled_cjson.c": "b4e154c9d7c85cb7dca32370fe3599c65daa18b13d08780631d8bc840adb431e",
+    "src/subsystems/cli.c": "09cdb5fda05c38b1730d0bdcbb35d8228b17b99d56c06d1e8e1b83d64bf7d0d7",
+    "src/subsystems/configuration.c": "4f700b72ad789b6493a8d5c0b7728a65388db5081560566aa61adcf6533f78af",
+    "src/subsystems/context.c": "a97ebc75e5ff6e767e7a932ac75ee4d1dd4f5f99fa05ae583476d622381945e5",
+    "src/subsystems/conversation_state.c": "a95e1d45d81b8b2e19278eecb346ac73dccfac6b20503b379ab9d53c3169b6a2",
+    "src/subsystems/documentation_rag.c": "db7c885baaa724ce8dc40dfe1e2d9d9984791a220fa01f4adfb81961225ff8c4",
+    "src/subsystems/dynamic_strings.c": "24fecba8000a75c5211aa8008a809ec3e34d5c011c16e5fbf810f4fb5efe42af",
+    "src/subsystems/highlighting.c": "53a19497e506f8bd7f876b3a543dc05660877d1aac119c398bb01ee4256e8cd7",
+    "src/subsystems/hooks.c": "ac4c5966f1981ac92c9cf484b6051d8d990d43381d4c1f1dc72a252f87edf061",
+    "src/subsystems/http.c": "c192c89d6cdb11cab9376d0cd95baacef75cfc12cdca26470c31e0bd8d728c05",
+    "src/subsystems/mcp.c": "f8df990285b92e8038cfb545a5f96e6896a226bcc2b7caeddb7f49e3898dd40c",
+    "src/subsystems/models_profiles.c": "4fe98545d86ba7808a3e79a26a5f0b00699175195a1a789f858f1c8b7b4040e4",
+    "src/subsystems/plans_executor.c": "38589530bc5fee2efff6ceb101d90fc90543458634a8bde8f5efc3634cb521b6",
+    "src/subsystems/platform.c": "1eade76569cc39c26555af6f1faffbf25a20a4f5dcf355124b23560d724b61a2",
+    "src/subsystems/process_diff.c": "c24d8e85c88af2264bf57be99a20a1de619d2bed2069ae23e980c00aa242e089",
+    "src/subsystems/project_initialization.c": "6b69c1323bd41506547b94ba1c9a5b217d115bdb4017ca9495bb0dfec616c2fe",
+    "src/subsystems/provider_anthropic.c": "3104b855848ce0d1768a7639bd18f96f3eab7a685ed9b44b508297b7a8a46cf5",
+    "src/subsystems/provider_common.c": "6f7b23924f46271bf50953643d229fa636fac3bbe6e770d758c7187fd54601c0",
+    "src/subsystems/provider_google.c": "7f9e858c4ad131259ae12f95cc889a8a76b20e0e2868323ab8a69ba3908029a1",
+    "src/subsystems/provider_ollama.c": "3b8e96b8f0f0d64d2fa35d91b8208180000906dd37fe9737ad014bdce2b7935c",
+    "src/subsystems/provider_openai.c": "d3c5420860e5a6832d04177c71674d42d314dc8e2636f2dfca0d0f35824d7889",
+    "src/subsystems/reasoning.c": "e2ff77174797a2780b0808a3004fed008ee3bd78f1ddb558d02ec564091e7456",
+    "src/subsystems/recovered-storage.c": "d48a93b4c645db65cdfb596504b6df932a3aa10f38601af0f6895343581797ad",
+    "src/subsystems/routing.c": "d5af0386dd2fac4f6f8df637d1439f24192aa5e4fb62ca1ed8d126ecf46dee6a",
+    "src/subsystems/runtime_startup.c": "75ec2dc31dd692a33a58f4c16eade3c5f9d6e3aed87f5645427cb09a7aff16fd",
+    "src/subsystems/sessions_history.c": "b15685f5cffd1b5ba08941efa3a904b8b820131d4d8f3adfb0382efa140c39b9",
+    "src/subsystems/sqlite_tools.c": "194674e1c599bd074eb432b5b86a9267693ea1a2a4dd555ad299aa4b92077fea",
+    "src/subsystems/stdio_abi_stubs.c": "04ced008179ea64bb0db0b721b8a48c2ccd3857cac3547f9c6452ea2cf331650",
+    "src/subsystems/subagents.c": "56c3a28f879e3853518aa76a31c9de95b6fababad3d17283f5fe02b0afb3ed7c",
+    "src/subsystems/terminal_ui.c": "457ba9bd5e38547257a1268ddd2b30a10b024ea5736508a2fc34387469729ed2",
+    "src/subsystems/themes.c": "e0b576961c7616e4cc93c0e11362c9a188686680c1e3d72935ad056d2bad6e26",
+    "src/subsystems/tools.c": "8085640e41f63652e4cf3a51faf05efc08ee805080b5bbe4d300d92d6f59d4bb",
+    "src/subsystems/web_fetch.c": "c35a4d15f039e119d03ff1c5afa8f9f14738d33096867eeb2c55f44c1417fed1",
+    "src/subsystems/web_search.c": "88f9b395463dc66b70d89945fa35afae92ef21a5e94e78e88c7ebe1ac07408ff",
+    "src/subsystems/workers.c": "9766113fea5d30b905e9f1d4c6771e18876772751ca0efa3a6ecd7197191a6f6",
+    "src/text_compat.c": "00213a0ad26fd98c9bd9a0a45fb84f9b853fcac8df7fed05c79e4d6444fb2205",
+    "tests/catalog_recovery_test.cpp": "61b88639bd2585cc43d8682b2e150790619cee9c603b221f29b0a9489bb327da",
+    "tests/checkpoint_test.cpp": "b3039024c72b57e18841334640263d61253277217b49804dd3642792be80f821",
+    "tests/cli_integration.py": "588669ed4f3b2c8888bced0a4dfba8bbc17b00d9d636f1d67570aad64df736e0",
+    "tests/cli_test.cmake": "a1f32be993fcc74dea6cae5b24bccff18981d2d92317285d8c99a91694461702",
+    "tests/context_history_test.cpp": "b7ac5d136fe8adaa763b62b62fef167977972f694ec82f8230791cb684a4f22a",
+    "tests/core_contract.hpp.in": "20abaa20367b4e0d6a9c336e6c3ecd39aeda1d4e2a1e006415f0f09161242bd8",
+    "tests/core_test.cpp": "589a9e4ed1344fdc086ecf12df625c4d7992b6a3da59d0af5b05ae4c0c59abe7",
+    "tests/core_tools.hpp": "ce0eb433db83fcee87df6b51645d0e8cc38bf9e6daf9b18439d8d3b98a505d21",
+    "tests/final_review_test.cpp": "aadd7c6eac00d3fee2dc7696b475967207a33291a1f251c1df7aa51c807e056a",
+    "tests/fixtures/core-tools-v1.json": "457fa3b083c366adea51b72bb799bb6668744709fd238aa7bf68f4c1b62ca496",
+    "tests/fixtures/events-v1.jsonl": "9e33d41bb3ed9051fe968cb8d2b78f18cf17bceb3dbe209ad235b3035209b29a",
+    "tests/followup_test.cpp": "a5c470592b3256e3177d6c3139a33009028a69171ffe5da95869dc7765f17368",
+    "tests/foundation_test.cpp": "5eda0fce3c65f5f405d00ee32945c0262314aa9029fe9fb4b64c878fbb5d6c00",
+    "tests/hermetic.py": "3d5f24815d29a5bc0abfb4bf223a4280bfb114388c434731f246d347657d6407",
+    "tests/modernization_test.cpp": "9c245c98dda267a588afb44a20f471bfe79370d98a25890cd34c69326ce55dd0",
+    "tests/output_test.cpp": "92a32d664d4066b28a79746f87c2cf3dcaf0c32de941dfd5653f39d43af8ceb1",
+    "tests/persistence_bench.cpp": "4cce48647756024e42efb33b0ce8688461880d9f87b2f44b867b89302c9bd20d",
+    "tests/process_helper.hpp": "b748b213b38db30139f41f2f6c468c737dc6bdd93d94d825b2a520c9d7dddd23",
+    "tests/process_policy_test.cpp": "bbfe3a5eb044ea419c293129955491a95c7cd46c6ec2dd767744209128be104e",
+    "tests/prompt_support.hpp": "1a3d5e92e6eb9dcdec36bb355d7cffefc31028403ed0436a260c6dc47517456e",
+    "tests/prompt_test.cpp": "ad3c05cf3af8be9e1895ba7b782543ff7b7513f665a1f9e5da4ff9b2d74dbfb8",
+    "tests/remaining_test.cpp": "68fdc77f645d7f2c3948c8c0096d5c58c4e5010a2282c88e31b6a1c21977c427",
+    "tests/review_test.cpp": "ad7cacb15f82466b6c5d5dac800143f53ccb60753dd3f74ab85d23888b989574",
+    "tests/runtime_test.cpp": "b95c0cace683992eb3bdd21c60ff3b994b9cc1a1ccadbb6d04505d24cb858756",
+    "tests/sanitization_bench.cpp": "fb42f5389a915368583755ea4af26b3ec89201452a63b1623f88ca43be0d9549",
+    "tests/small_core_test.cpp": "2cb869f7db67fffa3df36113a2b125caf46ab21d94d06b852ecd107782935b0c",
+    "tests/temp.hpp": "a8c9cef361ab35eb2e753b78b258ed120997507a976a2bc46ec199d52215bc6d",
+    "tests/test_analyze_modern.py": "7c55ebe3ddee956cc47ae482f9169e38fcec8bc6a2b27ac9262586027a545360",
+    "tests/test_build_integrity.py": "c8529bb60dae76ce3373fd5531c282a792ec9b47a5a32574f49e8f10ce0bafa2",
+    "tests/test_hermetic.py": "ecba7689d9ca4eb2e2a831a44b440862cf4a575867088dd6318029ee82413de9",
+    "tests/test_main.cpp": "deb3c4e615518b31c205588ff71eddfd12bbecbee35c01771ad8eca78426755e",
+    "tests/test_prompts.py": "2d3aec9cf990270d254666f3b894807bbc8fa01edc04815f8b214f31b4cb9900",
+    "tests/test_semgrep_report.py": "c608502d0a1694f77f17360a05d76457b8f74502734ceed9cb7934299bc55fcd",
+    "tests/tool_contract_test.cpp": "98be1c084d30e10ed26ba7352a6431d7e86a9d6bd7ef5ebb605d0b0e43688a42",
+    "tiger-dependencies.lock.json": "d209dcf76da392fc9a87018df647b3dc0bf5a0e29045486d86a2a6531283e037",
+    "toolchain.mk": "96c176fdbef8608f912e14f1b60177bc6342899e95a327eb4b89af81a68072ed"
+  }
+}

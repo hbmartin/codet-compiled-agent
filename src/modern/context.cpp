@@ -69,7 +69,7 @@ Json essential(const Json &metadata) {
   return out;
 }
 Message clipped(const Message &source, const std::string &name, const std::string &reference,
-                size_t limit, bool minimum, Tools &tools) {
+                size_t extra) {
   auto out = source;
   out.previewed = true;
   out.result_file = source.result_file.empty() ? reference : source.result_file;
@@ -112,16 +112,10 @@ Message clipped(const Message &source, const std::string &name, const std::strin
                      .dump();
   };
   finish("", text.size());
-  const auto fixed = tools.history_bytes({out});
-  if (minimum)
-    return out;
-  if (fixed > limit)
-    throw ContextCapacity("Context cannot fit a minimal tool result; increase context_tokens");
-  const auto page =
-      context_excerpt(text, limit - fixed > 256 ? limit - fixed - 256 : 0, process ? 2 : 1);
+  // Only the added page text changes the already-measured minimal wire envelope.
+  // Reserve room for changing omission counters without charging provider wrappers again.
+  const auto page = context_excerpt(text, extra > 256 ? extra - 256 : 0, process ? 2 : 1);
   finish(page.text, page.omitted);
-  if (tools.history_bytes({out}) > limit)
-    finish("", text.size());
   return out;
 }
 std::map<std::string, std::string> call_names(const std::vector<Message> &messages) {
@@ -200,53 +194,65 @@ std::vector<Message> project_history(std::vector<Message> &messages, size_t avai
                                      Tools &tools) {
   ensure_message_ids(messages);
   const auto names = call_names(messages);
+  const auto full = tools.history_size(messages);
+  if (full.total <= available) {
+    for (auto &message : messages)
+      if (message.role == "tool")
+        message.previewed = true;
+    return messages;
+  }
   std::vector<Message> result = messages;
-  size_t fixed = result.empty() ? 2 : result.size() + 1, minimum = 0, count = 0;
-  std::vector<size_t> floors(messages.size());
+  std::vector<bool> reducible(messages.size(), false);
+  size_t count = 0;
+  const auto name = [&](size_t i) {
+    const auto found = names.find(messages[i].tool_call_id);
+    return found == names.end() ? std::string{} : found->second;
+  };
+  std::vector<size_t> payloads(messages.size());
   for (size_t i = 0; i < messages.size(); ++i) {
-    if (messages[i].role != "tool" || messages[i].previewed) {
-      fixed += tools.history_bytes({messages[i]});
+    if (messages[i].role != "tool" || messages[i].previewed)
       continue;
-    }
-    ++count;
-    // Fresh inspection pages are already contiguous and sized by the dispatch budget.
-    // If a legacy page cannot fit, retire/archive its whole completed group instead.
     const auto envelope = Json::parse(messages[i].text, nullptr, false);
     const bool file_page = envelope.is_object() &&
                            envelope.value("metadata", Json::object()).is_object() &&
                            envelope.value("metadata", Json::object()).contains("next_byte_offset");
-    if (names.count(messages[i].tool_call_id) &&
-        names.at(messages[i].tool_call_id) == "read_file" && file_page)
-      floors[i] = tools.history_bytes({messages[i]});
-    else
-      floors[i] = tools.history_bytes(
-          {clipped(messages[i],
-                   names.count(messages[i].tool_call_id) ? names.at(messages[i].tool_call_id) : "",
-                   tools.result_reference(messages[i]), 0, true, tools)});
-    minimum += floors[i];
+    if (name(i) == "read_file" && file_page)
+      continue; // Contiguous source pages must retire as a whole, never skip their middle.
+    auto floor = clipped(messages[i], name(i), tools.result_reference(messages[i]), 0);
+    payloads[i] = tools.result_bytes(floor, name(i));
+    if (payloads[i] < tools.result_bytes(messages[i], name(i))) {
+      result[i] = std::move(floor);
+      reducible[i] = true;
+      ++count;
+    }
   }
-  if (fixed > available || minimum > available - fixed)
+  const auto minimum = tools.history_size(result);
+  if (minimum.total > available)
     throw ContextCapacity("Context cannot fit human input, tool arguments and minimal results; "
                           "increase context_tokens");
-  size_t extra = available - fixed - minimum;
+  size_t extra = available - minimum.total;
   for (size_t i = 0; i < messages.size(); ++i) {
-    if (messages[i].role != "tool" || messages[i].previewed)
-      continue;
-    const auto limit = floors[i] + extra / count;
-    result[i].previewed = true;
-    const auto actual = tools.history_bytes({result[i]});
-    if (actual > limit) {
-      const auto reference = tools.retain_result(messages[i]);
-      result[i] =
-          clipped(messages[i],
-                  names.count(messages[i].tool_call_id) ? names.at(messages[i].tool_call_id) : "",
-                  reference, limit, false, tools);
+    if (reducible[i]) {
+      const auto allowance = extra / count;
+      const auto restore = full.messages[i] - minimum.messages[i];
+      size_t used = 0;
+      if (restore <= allowance) {
+        result[i] = messages[i];
+        used = restore;
+      } else {
+        const auto reference = tools.retain_result(messages[i]);
+        auto preview = clipped(messages[i], name(i), reference, allowance);
+        const auto bytes = tools.result_bytes(preview, name(i));
+        if (bytes >= payloads[i] && bytes - payloads[i] <= allowance) {
+          used = bytes - payloads[i];
+          result[i] = std::move(preview);
+        }
+      }
+      extra -= used;
+      --count;
     }
-    result[i].previewed = true;
-    // Include the persisted flag in the final capacity check.
-    const auto used = tools.history_bytes({result[i]});
-    extra = extra + floors[i] - used;
-    --count;
+    if (result[i].role == "tool")
+      result[i].previewed = true;
   }
   if (tools.history_bytes(result) > available)
     throw ContextCapacity("Stable previews cannot fit; compact the completed conversation");
@@ -264,7 +270,7 @@ size_t minimal_batch_bytes(const std::vector<Message> &protected_messages,
     m.text =
         Json({{"content", ""}, {"is_error", false}, {"metadata", {{"action_completed", true}}}})
             .dump();
-    messages.push_back(clipped(m, c.name, tools.result_reference(m), 0, true, tools));
+    messages.push_back(clipped(m, c.name, tools.result_reference(m), 0));
   }
   return tools.history_bytes(messages);
 }

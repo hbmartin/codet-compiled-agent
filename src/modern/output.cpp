@@ -28,7 +28,7 @@ int open_regular(const fs::path &path, int flags, bool protect) {
   const int fd = ::open(path.c_str(), flags | O_NOFOLLOW | O_NONBLOCK, 0600);
   if (fd < 0)
     throw Error("Cannot open output capture: " + std::string(std::strerror(errno)));
-  struct stat status {};
+  struct stat status{};
   if (::fstat(fd, &status) || !S_ISREG(status.st_mode) || status.st_uid != ::geteuid() ||
       (protect && ::fchmod(fd, 0600)) || ::fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) {
     ::close(fd);
@@ -168,7 +168,6 @@ void OutputSpool::flush_checked() {
   }
   Descriptor lock(open_regular(store_->directory_ / ".capture.lock", O_CREAT | O_RDWR, true));
   require(::flock(lock.fd, LOCK_EX) == 0, "Lock output store");
-  store_->prepare_catalog();
   ++store_->metrics.batches;
   if (fd_ < 0) {
     path_ = store_->directory_ / ("capture-" + unique_id() + ".txt");
@@ -256,8 +255,7 @@ void OutputSpool::close() {
     }
   } else {
     // Only remove our own empty file, never a substituted directory entry.
-    struct stat own {
-    }, current{};
+    struct stat own{}, current{};
     if (::fstat(fd_, &own) == 0 && ::lstat(path_.c_str(), &current) == 0 &&
         own.st_dev == current.st_dev && own.st_ino == current.st_ino)
       (void)::unlink(path_.c_str());
@@ -269,8 +267,10 @@ void OutputSpool::close() {
   } catch (const std::bad_alloc &) {
     throw;
   } catch (const std::exception &e) {
-    error_ = e.what();
-    truncated_ = true;
+    if (error_.empty())
+      error_ = bounded_text(e.what(), 1024);
+    else
+      store_->warn("Catalog accounting failed: " + bounded_text(e.what(), 1024));
   }
 }
 RenderedOutput render_output(const OutputSnapshot &data, size_t limit) {

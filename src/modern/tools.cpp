@@ -596,6 +596,26 @@ std::string Tools::result_reference(const Message &message) const {
     throw Error("Invalid private result identity");
   return (artifact_directory(config_) / ref).string();
 }
+Json Tools::execution_fact(int id, const ExecSession &session) const {
+  Json fact = {{"session_id", id}};
+  try {
+    const auto status = processes_.status(session.process);
+    if (!status.error.empty()) {
+      fact["state"] = "unknown";
+      fact["error"] = bounded_text(status.error, 512);
+    } else {
+      fact["state"] = status.running ? "running" : "awaiting_output";
+      if (!status.running)
+        fact["exit_code"] = status.exit_code;
+    }
+  } catch (const std::exception &error) {
+    if (fatal(std::current_exception()))
+      throw;
+    fact["state"] = "unknown";
+    fact["error"] = bounded_text(error.what(), 512);
+  }
+  return fact;
+}
 Json Tools::execution_state(const std::vector<Message> &messages) const {
   std::map<std::string, Json> recovery;
   const auto collect = [&](const Json &facts) {
@@ -640,8 +660,8 @@ Json Tools::execution_state(const std::vector<Message> &messages) const {
     facts.push_back(entry.second);
   // Only this Tools instance owns execution handles. Historical IDs are never live after resume.
   for (const auto &entry : exec_sessions_)
-    if (!entry.second.completed && processes_.status(entry.second.process).running)
-      facts.push_back({{"session_id", entry.first}, {"state", "running"}});
+    if (!entry.second.completed)
+      facts.push_back(execution_fact(entry.first, entry.second));
   return facts;
 }
 std::string Tools::retain_result(Message &message) {
@@ -654,13 +674,21 @@ std::string Tools::retain_result(Message &message) {
     if (!private_anchor(root) || fs::is_symlink(root) || fs::is_symlink(root / "results") ||
         fs::is_symlink(path.parent_path()) || fs::is_symlink(path))
       throw Error("Invalid private result storage");
-    const auto content = safe_json(Json(message)).dump();
+    auto identity = safe_json(Json(message));
+    identity.erase("previewed");
+    const auto content = identity.dump();
     const auto hash = digest(content);
     const auto cached = archived_results_.find(message.message_id);
     bool published = cached != archived_results_.end() && cached->second.first == hash &&
                      cached->second.second == path.string() && private_regular(files_, root, path);
     if (!published && private_regular(files_, root, path)) {
-      if (files_.read(path, content.size() + 1) != content)
+      // Earlier archives included the optional presentation flag (at most 18 bytes).
+      auto archived = Json::parse(files_.read(path, content.size() + 32), nullptr, false);
+      if (!archived.is_object() ||
+          (archived.contains("previewed") && !archived.at("previewed").is_boolean()))
+        throw Error("Invalid archived message");
+      archived.erase("previewed");
+      if (archived.dump() != content)
         throw Error("Archived message identity changed");
       published = true;
     }
@@ -887,7 +915,7 @@ ToolResult Tools::execute(const ToolCall &call, const Cancellation &cancel) {
         result.metadata["hook_stop"] = post.reason;
         prefix = "Tool completed; hook requested stop: " + post.reason + "\n";
       } else if (post.blocked)
-        throw HookFailure(post.reason);
+        throw Error(post.reason);
     } catch (const Error &e) {
       if (e.code == 130)
         throw;
@@ -1029,7 +1057,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
       page.tool_call_id = call.id;
       page.previewed = true;
       page.text = Json({{"content", text}, {"is_error", false}, {"metadata", metadata}}).dump();
-      return Json(page).dump().size();
+      return result_bytes(page, call.name);
     };
     if (fs::is_directory(p)) {
       if (a.contains("byte_offset") || a.contains("byte_limit"))
@@ -1135,7 +1163,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
       std::array<size_t, 256> out{};
       for (size_t i = 0; i < out.size(); ++i) {
         std::string value(1, static_cast<char>(i));
-        out[i] = i >= 128 ? 3 : Json(Json(value).dump()).dump().size() - 6;
+        out[i] = i >= 128 ? 3 : Json(value).dump().size() - 2;
       }
       return out;
     }();
@@ -1175,7 +1203,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
             valid_until = i + width;
         }
         const auto addition = (lead >= 128 && i < valid_until ? 1 : weights[lead]) + prefix.size() +
-                              (prefix.empty() ? 0 : 2);
+                              (prefix.empty() ? 0 : 1);
         if (selected && cost + addition > cap) {
           full = true;
           break;
@@ -1254,7 +1282,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
         throw Error("Duplicate file in batch/patch");
       if (!before && !after)
         throw Error("Cannot delete a missing file");
-      struct stat st {};
+      struct stat st{};
       const auto mode = stat(p.c_str(), &st) == 0 ? st.st_mode & 0777 : 0644;
       changes.push_back({p, before, std::move(after), static_cast<mode_t>(mode)});
     };
@@ -1651,7 +1679,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
   }
   throw Error("Unavailable tool handler");
 }
-std::string Tools::dynamic_context() const {
+std::string Tools::dynamic_context(bool anticipate_indexes) const {
   std::string out;
   if (!todos_.empty() || large_plan_) {
     out = "\n# Current task plan (bounded view; original step numbers)\n";
@@ -1683,16 +1711,24 @@ std::string Tools::dynamic_context() const {
   }
   if (!session_id_.empty()) {
     const auto results = artifact_directory(config_) / "indexes" / (session_id_ + ".results.jsonl");
-    if (fs::exists(results))
+    if (anticipate_indexes || fs::exists(results))
       out += "\n# Retained tool results and captures\n" + results.string() +
              "\nPage this reference index with read_file in any mode. Paths are relative to "
              "the artifact root (results) or capture root (text captures). Pass listed paths "
              "directly to read_file; registered capture filenames resolve automatically. Captures "
              "may expire.\n";
     const auto index = artifact_index_path(artifact_directory(config_), session_id_);
-    if (fs::exists(index))
+    if (anticipate_indexes || fs::exists(index))
       out += "\n# Historical image index\n" + index.string() + "\nPosition: " +
-             image_history_position(artifact_directory(config_), files_, session_id_).dump() +
+             (anticipate_indexes
+                  ? Json({{"version", 2},
+                          {"kind", "position"},
+                          {"observations", UINT64_MAX},
+                          {"legacy_unknown", UINT64_MAX},
+                          {"last_sequence", UINT64_MAX},
+                          {"latest_line", UINT64_MAX}})
+                  : image_history_position(artifact_directory(config_), files_, session_id_))
+                 .dump() +
              "\nArtifact root: " + artifact_directory(config_).string() +
              "\nPage this JSONL observation index with read_file in any mode. Resolve relative "
              "image paths under the artifact root and reload selected images with view_image. "

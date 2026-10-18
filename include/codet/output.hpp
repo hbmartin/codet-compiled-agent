@@ -15,6 +15,8 @@ class OutputSpool;
 class CaptureStore {
   struct Catalog;
   std::shared_ptr<Catalog> catalog_;
+  void with_catalog(const std::function<void()> &);
+  void recover_catalog();
   void prepare_catalog();
   void rebuild_catalog();
   size_t reserve(OutputSpool &, size_t);

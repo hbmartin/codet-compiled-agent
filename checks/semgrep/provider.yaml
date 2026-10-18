@@ -1,0 +1,21 @@
+rules:
+  - id: codet-public-reasoning-model-aware
+    languages: [cpp]
+    severity: ERROR
+    message: Gate default public Responses reasoning by model capability, not just provider.
+    paths:
+      include: ["**/provider.cpp"]
+    pattern-either:
+      - pattern: |
+          if (!$CONFIG.effort.empty() || $CONFIG.provider == "openai")
+            $BODY["reasoning"] = $VALUE;
+      - pattern: |
+          if ($CONFIG.provider == "openai" || !$CONFIG.effort.empty())
+            $BODY["reasoning"] = $VALUE;
+  - id: codet-epoch-empty-assistant
+    languages: [cpp]
+    severity: ERROR
+    message: Build guarded reply wire before appending an epoch source part; empty replies emit no assistant item.
+    paths:
+      include: ["**/provider.cpp"]
+    pattern: Json::array({{{"role", "assistant"}, {"content", $REPLAY}}})

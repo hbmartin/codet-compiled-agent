@@ -5,12 +5,14 @@
 #include "codet/prompt.hpp"
 #include "prompt_support.hpp"
 #include "temp.hpp"
+#include <fcntl.h>
 #include <fstream>
 #include <future>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <limits>
 #include <sqlite3.h>
+#include <sys/file.h>
 #include <thread>
 using namespace codet;
 using namespace testing;
@@ -798,6 +800,81 @@ TEST_F(History, LegacyIndexesMigrateOnResumeAndForkWithoutNewAttachments) {
               Not(HasSubstr("stale/artifacts")));
   EXPECT_EQ(image_history_position(root, files, child.id)["legacy_unknown"], 1);
 }
+
+TEST_F(History, PlanAndReadBatchesReserveFuturePromptGrowthInEitherOrder) {
+  config.permission_mode = "plan";
+  config.provider = "openai";
+  for (bool read_first : {false, true}) {
+    Tools tools(config, files, processes, http, clock);
+    config.context_tokens = test::context_tokens(tools, config, 20000);
+    StateStore state(config.home);
+    auto session = state.create();
+    const std::string source(25000, 'x');
+    put(config.cwd / "batch-source", source);
+    Json plan = Json::array();
+    for (int i = 0; i < 70; ++i)
+      plan.push_back({{"step", std::to_string(i) + std::string(110, 'p')}, {"status", "pending"}});
+    Scripted provider;
+    size_t main = 0;
+    provider.script = [&](const auto &, const auto &, const auto &messages, const Json &schemas) {
+      EXPECT_FALSE(schemas.empty());
+      if (++main == 1) {
+        auto reply = text_result("");
+        ToolCall read{"read", "read_file", {{"path", "batch-source"}, {"byte_offset", 0}}};
+        ToolCall update{"plan", "update_plan", {{"plan", plan}}};
+        reply.message.calls =
+            read_first ? std::vector<ToolCall>{read, update} : std::vector<ToolCall>{update, read};
+        return reply;
+      }
+      for (const auto &message : messages)
+        if (message.role == "tool" && message.tool_call_id == "read") {
+          const auto envelope = Json::parse(message.text);
+          EXPECT_FALSE(envelope["is_error"]);
+          const auto page = envelope["content"].template get<std::string>();
+          EXPECT_GT(page.size(), 1000u);
+          EXPECT_EQ(page, source.substr(0, page.size()));
+          EXPECT_EQ(envelope["metadata"]["next_byte_offset"], page.size());
+          EXPECT_FALSE(envelope["metadata"].value("projection_truncated", false));
+        }
+      return text_result("done");
+    };
+    Agent agent(config, provider, tools, state, {});
+    EXPECT_EQ(agent.run(session, "inspect and plan", cancel).text, "done");
+    EXPECT_EQ(main, 2u);
+  }
+}
+
+TEST_F(History, MigrationWaitsBeyondSqliteTimeoutWithoutMistakingMigratorsForSessions) {
+  {
+    StateStore initial(config.home);
+  }
+  sqlite3 *db = nullptr;
+  ASSERT_EQ(sqlite3_open((config.home / "state.sqlite3").c_str(), &db), SQLITE_OK);
+  legacy_layout(db);
+  ASSERT_EQ(sqlite3_exec(db, "PRAGMA user_version=5", nullptr, nullptr, nullptr), SQLITE_OK);
+  sqlite3_close(db);
+  fs::create_directories(config.home / "session-locks");
+  put(config.home / "session-locks/existing.lock", "");
+  const int fd = ::open((config.home / ".migration.lock").c_str(), O_RDWR | O_CREAT, 0600);
+  ASSERT_GE(fd, 0);
+  ASSERT_EQ(::flock(fd, LOCK_EX), 0);
+  auto open = [&] {
+    StateStore state(config.home);
+    return state.list().size();
+  };
+  auto first = std::async(std::launch::async, open);
+  auto second = std::async(std::launch::async, open);
+  EXPECT_EQ(first.wait_for(std::chrono::milliseconds(5200)), std::future_status::timeout);
+  EXPECT_EQ(second.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
+  ASSERT_EQ(::flock(fd, LOCK_UN), 0);
+  ::close(fd);
+  EXPECT_EQ(first.get(), 0u);
+  EXPECT_EQ(second.get(), 0u);
+  size_t backups = 0;
+  for (const auto &entry : fs::directory_iterator(config.home))
+    backups += entry.path().filename().string().rfind("state.sqlite3.pre-v6-", 0) == 0;
+  EXPECT_EQ(backups, 1u);
+}
 } // namespace
 
 TEST_F(History, JsonBytePagesRemainVerbatimThroughSaveForkAndProviderFormatting) {
@@ -866,7 +943,7 @@ TEST_F(History, DirectoryPagesRespectContextBudgetAndResumeInSortedOrder) {
     encoded.text =
         Json({{"content", page.content}, {"is_error", page.error}, {"metadata", page.metadata}})
             .dump();
-    EXPECT_LE(Json(encoded).dump().size(), 2000u);
+    EXPECT_LE(t.result_bytes(encoded, "read_file"), 2000u);
     EXPECT_EQ(page.metadata["scan_limited"], false);
     const auto entries = Json::parse(page.content)["entries"];
     ASSERT_FALSE(entries.empty());
@@ -944,7 +1021,7 @@ TEST_F(History, DirectoryScanMetadataSurvivesBoundedProjection) {
   EXPECT_FALSE(metadata.contains("eof"));
   EXPECT_FALSE(metadata.contains("next_entry_offset"));
   EXPECT_EQ(metadata["inspect_archived_page"], true);
-  EXPECT_LE(Json(projected).dump().size(), 5000u);
+  EXPECT_LE(tools.history_bytes(projected), 5000u);
 }
 TEST_F(History, OptionalCanonicalizationFailureKeepsOtherInstructionAndSkillContext) {
   put(config.cwd / "AGENTS.md", "retained instructions");
@@ -1214,6 +1291,93 @@ TEST_F(History, SchemaFourBackfillsJournalReferencesEvenWhenTranscriptWasCompact
   EXPECT_NO_THROW(resumed.restore_references(upgraded.references(id)));
   EXPECT_TRUE(read(resumed, capture).error);
 }
+
+TEST_F(History, SoftFailureCanPromoteOnceWithinSharedHookAndSummaryLimits) {
+  config.hooks["PreCompact"] = Json::array({{{"command", "printf x >> fallback-hook"}}});
+  for (bool fail_checkpoint : {false, true}) {
+    Tools tools(config, files, processes, http, clock);
+    StateStore state(config.home);
+    auto session = state.create();
+    codet::Message old, user;
+    old.role = "assistant";
+    old.text = std::string(20000, 'o');
+    user.role = "user";
+    user.origin = "human";
+    user.text = "continue";
+    session.messages = {old};
+    state.save(session);
+    config.context_tokens =
+        test::context_tokens(tools, config, tools.history_bytes({old, user}) + 128);
+    Scripted provider;
+    size_t summaries = 0, ordinary = 0;
+    provider.script = [&](const auto &, const auto &, const auto &, const Json &schemas) {
+      if (schemas.empty()) {
+        ++summaries;
+        if (summaries == 1 || fail_checkpoint)
+          throw Error("fixture summary failure");
+        return text_result("done");
+      }
+      ++ordinary;
+      return text_result("done");
+    };
+    Agent agent(config, provider, tools, state, {});
+    if (fail_checkpoint)
+      EXPECT_THROW(agent.run(session, "continue", cancel), Error);
+    else
+      EXPECT_EQ(agent.run(session, "continue", cancel).text, "done");
+    EXPECT_EQ(summaries, 2u);
+    EXPECT_EQ(ordinary, fail_checkpoint ? 0u : 1u);
+    EXPECT_EQ(files.read(config.cwd / "fallback-hook", 1024), fail_checkpoint ? "xx" : "x");
+  }
+}
+TEST_F(History, PublishedIndexGrowthPromotesToCheckpointWithOneHookAndSummary) {
+  Tools tools(config, files, processes, http, clock);
+  StateStore state(config.home);
+  auto calibration = state.create();
+  codet::Message old, human, call, result;
+  old.role = "assistant";
+  old.text = "older completed work";
+  human.role = "user";
+  human.origin = "human";
+  human.text = "latest steering";
+  call.role = "assistant";
+  call.calls = {{"large", "exec_command", {{"cmd", std::string(6400, 'x')}}}};
+  result.role = "tool";
+  result.tool_call_id = "large";
+  result.text = "completed";
+  const std::vector<codet::Message> original{old, human, call, result};
+  calibration.messages = original;
+  state.save(calibration);
+  Scripted provider;
+  size_t summaries = 0;
+  provider.script = [&](const auto &, const auto &, const auto &, const auto &) {
+    ++summaries;
+    return text_result("done");
+  };
+  Agent agent(config, provider, tools, state, {});
+  EXPECT_EQ(agent.compact(calibration, cancel).text, "Conversation compacted.");
+  const auto required = tools.history_bytes(calibration.messages);
+  auto session = state.create();
+  session.messages = original;
+  state.save(session);
+  tools.use_session(session.id);
+  config.hooks["PreCompact"] = Json::array({{{"command", "printf x >> growth-hook"}}});
+  config.context_tokens = test::context_tokens(tools, config, required + 512 + 64);
+  bool checkpoint = false;
+  Agent bounded(config, provider, tools, state, [&](const Json &event) {
+    if (event.value("type", "") == "codet.compacted")
+      checkpoint = event.value("checkpoint", false);
+  });
+  summaries = 0;
+  EXPECT_EQ(bounded.compact(session, cancel).text, "Conversation compacted.");
+  EXPECT_TRUE(checkpoint);
+  EXPECT_EQ(summaries, 1u);
+  EXPECT_EQ(files.read(config.cwd / "growth-hook", 1024), "x");
+  for (const auto &message : session.messages) {
+    EXPECT_TRUE(message.calls.empty());
+    EXPECT_NE(message.role, "tool");
+  }
+}
 TEST_F(History, SummaryRetryRunsHookOnceAndCancellationPreservesDurableHistory) {
   config.hooks["PreCompact"] = Json::array({{{"command", "printf x >> compact-count"}}});
   for (bool interrupted : {false, true}) {
@@ -1338,7 +1502,9 @@ TEST_F(History, SchemaFiveSkipsCorruptRowsWithoutChangingThemOrLosingValidRefere
   EXPECT_EQ(reopened.references(good).size(), 2u);
 }
 TEST_F(History, SchemaFiveDatabaseFailureRollsBackAndCanRetry) {
-  { StateStore initial(config.home); }
+  {
+    StateStore initial(config.home);
+  }
   sqlite3 *db = nullptr;
   ASSERT_EQ(sqlite3_open((config.home / "state.sqlite3").c_str(), &db), SQLITE_OK);
   legacy_layout(db);

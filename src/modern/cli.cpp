@@ -226,7 +226,7 @@ class Terminal {
   std::string input_, status_, progress_;
   std::string prompt_;
   std::map<std::string, int> bindings_{{"submit", 10}, {"quit", 4}, {"backspace", 127}};
-  struct termios original_ {};
+  struct termios original_{};
   bool restore_ = false;
   const Cancellation *read_cancel_ = nullptr;
   static int read_character(EditLine *edit, wchar_t *character) {
@@ -237,9 +237,7 @@ class Terminal {
     for (;;) {
       if (terminal && terminal->read_cancel_ && terminal->read_cancel_->requested)
         return 0;
-      struct pollfd descriptor {
-        STDIN_FILENO, POLLIN, 0
-      };
+      struct pollfd descriptor{STDIN_FILENO, POLLIN, 0};
       const int ready = ::poll(&descriptor, 1, 100);
       if (ready < 0) {
         if (errno == EINTR)
@@ -1093,11 +1091,14 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     if (o.action != "consolidate")
       throw Error("Use memory consolidate", 2);
     config.roots.push_back(config.home / "memory");
+    const auto consolidation_input = prompt;
     prompt = "Explicit memory consolidation: use the memory preview and apply_patch to consolidate "
              "Markdown files in the Codet "
              "memory directory, consolidate accurate "
              "useful project facts and feedback, remove contradictions by updating files, preserve "
              "provenance, and report what changed. Do not perform unrelated work.";
+    if (!consolidation_input.empty())
+      prompt += "\n\nAdditional consolidation instructions:\n" + consolidation_input;
   }
   if (!interactive) {
 

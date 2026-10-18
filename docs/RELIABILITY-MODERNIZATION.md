@@ -16,7 +16,7 @@ A syntactically or structurally invalid saved plan warns and resumes with no act
 
 ## API selection and signed history
 
-New API fallback defaults are `gpt-6.1-sol`, `claude-sonnet-5-5` and `gemini-3.8-flash`. OpenAI Responses and Sonnet 5.5 use medium effort when none is selected. Saved model selections and explicit overrides take precedence.
+New API fallback defaults are `gpt-6.1-sol`, `claude-sonnet-5-5` and `gemini-3.8-flash`. Public OpenAI Responses defaults to medium effort for `gpt-6.1-sol` and `gpt-6-astra`; other OpenAI model IDs send reasoning fields only with an explicit effort. Sonnet 5.5 uses medium effort when none is selected. Saved model selections and explicit overrides take precedence.
 
 ```toml
 [providers.openai]
@@ -25,7 +25,10 @@ wire_api = "auto" # auto | responses | chat_completions
 
 Auto selects public Responses for the built-in OpenAI endpoint and Chat Completions for custom bases. Select Responses explicitly for compatible custom endpoints. Known Responses-only tool-calling models reject Chat Completions with an actionable preflight error. Responses shares wire encoding/decoding with Codex, while API authentication, URLs and private headers stay separate.
 
-Sonnet 5.5 stores immutable transmitted message prefixes, including empty thinking blocks and signatures. Changing instructions append supported system messages. Account, model, tool-schema or history-projection changes start a fresh epoch at a completed tool boundary, using semantic completed context and preserving image/recovery references. Signed blocks are not replayed against edited prefixes. Text or image-budget rollover also starts a fresh epoch, keeping current image delivery within four images and 8 MiB. Provider conversation state survives resume; a fork can safely start a fresh epoch.
+Sonnet 5.5 stores immutable transmitted message prefixes, including empty thinking blocks and signatures. Changing instructions append supported system messages. Account, model, tool-schema or history-projection changes start a fresh epoch at a completed tool boundary, using semantic completed context and preserving image/recovery references. Signed blocks are not replayed against edited prefixes. Text or image-budget rollover also starts a fresh epoch, keeping current image delivery within four images and 8 MiB. Provider conversation state survives resume; a fork can safely start a fresh epoch. Empty
+assistant replies retain source bookkeeping but emit no empty assistant wire message. Following
+a transition to another Anthropic model, later instruction changes update that model's top-level
+system prompt without resetting its new tool-use/result history.
 
 Protocol references: [OpenAI model and Responses support](https://developers.openai.com/api/docs/models/gpt-6.1-sol), [Sonnet signed-history migration](https://platform.claude.com/docs/en/models/sonnet-5-5/migration-guide), and [Gemini Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash).
 
@@ -33,7 +36,7 @@ Protocol references: [OpenAI model and Responses support](https://developers.ope
 
 Schema 6 stores ordered messages separately from metadata, tool journals and provider conversation parts. Append operations serialize changed messages only. Tool completion, its transcript result and associated references commit together. Compaction replaces the history generation atomically after archives exist.
 
-Before migrating an older database, stop active sessions. Codet checks session ownership and creates a private consistent SQLite backup named `state.sqlite3.pre-v6-UUID`. Valid legacy sessions migrate independently in one transaction. Malformed legacy transcript bytes remain untouched and report an error only when that session is loaded. Migration failures roll back. Older binaries reject schema 6.
+Before migrating an older database, stop active sessions. Codet serializes upgraders on a private, interruptible migration lock, rechecks the version, then checks session ownership and creates a private consistent SQLite backup named `state.sqlite3.pre-v6-UUID`. Valid legacy sessions migrate independently in one transaction. Malformed legacy transcript bytes remain untouched and report an error only when that session is loaded. Migration failures roll back. Older binaries reject schema 6. Already-current WAL databases open without a migration write transaction. The migration lock has no five-second SQLite busy deadline.
 
 To restore, stop every Codet process, copy the current database and its `-wal`/`-shm` files aside, remove those current files, then copy the selected pre-v6 backup to `state.sqlite3` with mode 0600. Keep the artifact and capture directories alongside it. Run the older binary only after restoring its compatible schema. A restore discards sessions and changes newer than the chosen backup; keep the displaced database for recovery.
 
@@ -45,7 +48,7 @@ durability = "durable" # durable | fast
 
 ## Capture and build accounting
 
-Each capture store has a rebuildable SQLite catalog under the existing store lock. It records identity, accounted bytes, active/completed state and eviction order. Bytes are reserved before writes; partial or abandoned reservations reconcile conservatively. Ordinary 64 KiB flushes update the active capture without opening every retained file. Startup, namespace changes, catalog damage and capacity reclamation trigger reconciliation. Eviction revalidates identity and ownership locks. The existing 8 MiB per-capture, 64 MiB total and completed-file limits remain, including active-file protection, legacy adoption and symlink defenses.
+Each capture store has a rebuildable SQLite catalog under the existing store lock. It records identity, accounted bytes, active/completed state and eviction order. Bytes are reserved before writes; partial or abandoned reservations reconcile conservatively. Ordinary 64 KiB flushes update the active capture without opening every retained file. Startup, namespace changes, a missing catalog, catalog damage and capacity reclamation trigger reconciliation. Corrupt databases and sidecars are validated as owned regular files before removal, with at most one recovery attempt per catalog operation. Other failures remain capture errors, and recovery never repeats output writes. Eviction revalidates identity and ownership locks. The existing 8 MiB per-capture, 64 MiB total and completed-file limits remain, including active-file protection, legacy adoption and symlink defenses.
 
 Dependencies build from freshly extracted, hash-verified archives. A recipe/lock/toolchain fingerprint selects a clean stage, and only a completed build replaces the published sysroot. Its manifest records archive, patch, source-tree, recipe and output hashes. Mach-O verification requires all expected libraries, PPC architecture and a resolvable transitive dependency closure under the stage or approved system paths.
 
@@ -67,3 +70,14 @@ The recorded macOS arm64 Debug run used 512-byte payloads:
 Both modes serialize the same changed-message bytes. One hundred 64 KiB flushes with 40 retained files perform zero store scans. [The source-hashed validation record](validation/reliability-modernization.json) includes memory, WAL size, Linux I/O counters, analyzer coverage and verification details.
 
 The Tiger bundle includes the same benchmark executable. `tiger-acceptance.sh` records both durability runs, capture flushes, `/usr/bin/time -l`, runtime tests and machine details. G4 execution, power-loss testing and live account/provider acceptance remain owner-run checks. See [Tiger acceptance](TIGER-ACCEPTANCE.md) and the [validation record](validation/reliability-modernization.json).
+
+## Capture accounting errors
+
+A close-accounting failure remains visible through `capture_error`, bounded to 1,024 bytes,
+without marking fully written output as truncated or overwriting a primary capture write error.
+Active capture ownership and byte quotas still apply; capacity reconciliation probes catalogued
+active files, preserving live owners and reclaiming abandoned flags. Existing corruption recovery
+remains limited to one attempt per top-level catalog operation and never repeats output writes.
+
+Malformed provider caches and genuine archive-identity conflicts remain explicit errors. These
+changes prevent new failures; automatic repair of already-affected sessions is deferred.

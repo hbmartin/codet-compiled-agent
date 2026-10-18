@@ -32,10 +32,14 @@ Semgrep uses an ignored `build/semgrep-venv` environment; provisioning requires 
 `venv`/pip support (`python3-venv` on Ubuntu). Select another interpreter with
 `SEMGREP_PYTHON=/path/to/python3`, or an existing pinned tool with `SEMGREP=/path/to/semgrep`.
 Checks require version 1.177.0, use only checked-in rules, disable metrics/version checks,
-and fail on findings or analysis errors. They guard optional discovery filesystem calls and
-inline JSON decoding in reference writes; runtime regressions cover recovery semantics.
-Rule fixtures are separate from the two scoped production inputs. Reports live under
-`build/semgrep/` and are uploaded by the existing Ubuntu workflow. Application builds and
+and fail on findings or analysis errors. They guard optional discovery filesystem calls,
+inline JSON decoding in reference writes, and direct checkpoint process-status lookups.
+Runtime regressions cover recovery semantics. Provisioning records `pip freeze --all` and
+interpreter/platform details; `make semgrep-environment` refreshes that evidence for the
+provisioned environment without installing anything. Transitive dependencies remain unlocked.
+Rule fixtures are separate from the three scoped production inputs. Failures print report
+details while retaining JSON and the failing exit status. Reports and environment evidence
+live under `build/semgrep/` and are uploaded by the existing Ubuntu workflow. Application builds and
 Tiger binaries have no Semgrep dependency.
 
 ## Cross-build for Tiger

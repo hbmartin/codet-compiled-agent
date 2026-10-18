@@ -185,7 +185,7 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
            decision.value("behavior", Json()) == "deny");
       if (veto) {
         out.blocked = true;
-        out.stopped = stop;
+        out.stopped = out.stopped || stop;
         if (event == "PermissionRequest")
           out.permission = Decision::deny;
         append(out.reason, event + " vetoed execution");

@@ -1,0 +1,27 @@
+rules:
+  - id: codet-checkpoint-direct-status
+    languages: [cpp]
+    severity: ERROR
+    message: Collect checkpoint process status through the guarded execution_fact helper.
+    paths:
+      include: ["**/tools.cpp"]
+    patterns:
+      - pattern-inside: |
+          Json Tools::execution_state(...) const { ... }
+      - pattern: processes_.status(...)
+  - id: codet-post-tool-feedback-not-fatal
+    languages: [cpp]
+    severity: ERROR
+    message: Return PostToolUse blocking feedback without creating a fatal hook failure.
+    paths:
+      include: ["**/tools.cpp"]
+    pattern: |
+      if (post.blocked)
+        throw HookFailure(...);
+  - id: codet-inspection-wire-size
+    languages: [cpp]
+    severity: ERROR
+    message: Size inspection pages through provider result bytes, not stored Message JSON.
+    paths:
+      include: ["**/tools.cpp"]
+    pattern: return Json(page).dump().size();
