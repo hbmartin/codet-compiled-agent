@@ -138,12 +138,19 @@ TEST_F(Checkpoint, ExpiredNativeRecordsDoNotAbortCheckpointCollection) {
   const auto result = tools.execute(
       {"start",
        "exec_command",
-       {{"cmd", "sleep .4"}, {"login", false}, {"shell", "/bin/sh"}, {"yield_time_ms", 250}}},
+       {{"cmd", "sleep 1"}, {"login", false}, {"shell", "/bin/sh"}, {"yield_time_ms", 250}}},
       cancel);
   ASSERT_TRUE(result.metadata.contains("session_id"));
   const auto id = result.metadata["session_id"];
-  std::this_thread::sleep_for(std::chrono::milliseconds(500));
-  EXPECT_EQ(tools.execution_state({})[0]["state"], "awaiting_output");
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  auto observed = tools.execution_state({});
+  while (!observed.empty() && observed[0]["state"] == "running" &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    observed = tools.execution_state({});
+  }
+  ASSERT_EQ(observed.size(), 1u);
+  ASSERT_EQ(observed[0]["state"], "awaiting_output");
   ProcessSpec spec;
   spec.argv = {"/bin/sh", "-c", "exit 0"};
   spec.cwd = config.cwd;
@@ -326,7 +333,7 @@ TEST_F(Checkpoint, ResponsesRetainOnePassCustomCallTrackingAcrossProviderChanges
     EXPECT_EQ(outcomes, 100u);
   }
 }
-TEST_F(Checkpoint, FailedLexicalAnchorDoesNotAdvertiseOrShadowAUsableSkill) {
+TEST_F(Checkpoint, FailedLexicalAnchorsDoNotConsumeAdmissionOrShadowAUsableSkill) {
   struct ChangingFiles : FileSystem {
     NativeFileSystem native;
     std::function<void(const fs::path &)> after_read;
@@ -353,12 +360,17 @@ TEST_F(Checkpoint, FailedLexicalAnchorDoesNotAdvertiseOrShadowAUsableSkill) {
       fs::current_path(previous, error);
     }
   } restore;
-  const auto bad = config.cwd / ".agents/skills/same/SKILL.md";
+  const auto bad = config.cwd / ".agents/skills/000/SKILL.md";
   const auto good = config.home / "skills/same/SKILL.md";
   fs::create_directories(bad.parent_path());
   fs::create_directories(good.parent_path());
   fs::create_directory(config.cwd / ".git");
   files.atomic_write(bad, "---\nname: same\ndescription: unusable anchor\n---\n");
+  for (int i = 1; i < 100; ++i) {
+    const auto other = bad.parent_path().parent_path() / ("skill" + std::to_string(i)) / "SKILL.md";
+    fs::create_directories(other.parent_path());
+    files.atomic_write(other, "---\nname: same\ndescription: unusable anchor\n---\n");
+  }
   files.atomic_write(good, "---\nname: same\ndescription: usable fallback\n---\n");
   const auto canonical_bad = files.canonical(bad);
   const auto gone = temp.root / "gone";
@@ -379,6 +391,26 @@ TEST_F(Checkpoint, FailedLexicalAnchorDoesNotAdvertiseOrShadowAUsableSkill) {
   EXPECT_THAT(text, Not(HasSubstr("unusable anchor")));
   EXPECT_THAT(text, HasSubstr("usable fallback"));
   EXPECT_THAT(warnings, Contains(HasSubstr("Discovery anchor unavailable")));
+}
+
+TEST_F(Checkpoint, SkillAdmissionStillStopsAtOneHundredValidAnchors) {
+  fs::create_directory(config.cwd / ".git");
+  for (int i = 1000; i <= 1100; ++i) {
+    const auto name = "s" + std::to_string(i);
+    const auto path = config.cwd / ".agents/skills" / name / "SKILL.md";
+    fs::create_directories(path.parent_path());
+    files.atomic_write(path, "---\nname: " + name + "\ndescription: ok\n---\n");
+  }
+  const auto fallback = config.home / "skills/fallback/SKILL.md";
+  fs::create_directories(fallback.parent_path());
+  files.atomic_write(fallback, "---\nname: fallback\ndescription: later root\n---\n");
+  Tools tools(config, files, processes, http, clock);
+  const auto text = tools.instructions();
+  size_t advertised = 0;
+  for (int i = 1000; i <= 1100; ++i)
+    advertised += text.find("- s" + std::to_string(i) + ": ok (file:") != std::string::npos;
+  EXPECT_EQ(advertised, 100u);
+  EXPECT_THAT(text, Not(HasSubstr("- fallback:")));
 }
 
 // OpenAI's two wire APIs are separate cases even though they share a provider name.

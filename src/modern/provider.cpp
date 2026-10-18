@@ -914,9 +914,11 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
       }
       if (stream_failed)
         return;
-      if (event == "response.incomplete")
+      if (event == "response.incomplete") {
+        saw = true;
         throw ProviderError("Provider response incomplete (output limit or interruption)", 200,
                             data);
+      }
       if (event == "error" || event == "response.failed") {
         stream_failed = true;
         stream_error = data;

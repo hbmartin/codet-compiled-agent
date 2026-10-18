@@ -7,9 +7,20 @@ import sys
 from pathlib import Path
 
 
+def interpreter_path():
+    # Keep the venv spelling: resolving its symlink loses the environment identity.
+    executable = Path(sys.executable).absolute()
+    executable = executable.parent.resolve() / executable.name
+    root = Path(__file__).resolve().parents[1]
+    try:
+        return executable.relative_to(root).as_posix()
+    except ValueError:
+        return "<external>/" + executable.name
+
+
 def main():
     if sys.argv[1:] == ["environment"]:
-        print(json.dumps({"python": sys.version, "executable": sys.executable,
+        print(json.dumps({"python": sys.version, "executable": interpreter_path(),
                           "platform": platform.platform(),
                           "semgrep": importlib.metadata.version("semgrep")}, indent=2))
         return

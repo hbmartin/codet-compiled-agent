@@ -769,15 +769,20 @@ TEST_F(Modernization, IncompleteResponsesPreserveSpecificDiagnosticAndRawBody) {
   http.status = 200;
   const std::string body =
       R"({"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}})";
-  for (const auto &event : {std::string("event: response.incomplete\n"), std::string{}}) {
-    http.stream = event + "data: " + body + "\n\n";
+  for (const auto &frame :
+       {std::make_pair(std::string("event: response.incomplete\n"), body),
+        std::make_pair(std::string{}, body),
+        std::make_pair(std::string("event: response.incomplete\n"), std::string("{invalid"))}) {
+    http.requests = 0;
+    http.stream = frame.first + "data: " + frame.second + "\n\n";
     try {
       provider.complete(config, "", {}, Json::array(), cancel, {});
       FAIL();
     } catch (const ProviderError &e) {
       EXPECT_THAT(e.what(), HasSubstr("output limit or interruption"));
-      EXPECT_EQ(e.body, body);
+      EXPECT_EQ(e.body, frame.second);
     }
+    EXPECT_EQ(http.requests, 1);
   }
 }
 
@@ -875,6 +880,69 @@ TEST_F(Modernization, InvalidProviderWritesAndFailedCommitsDoNotPublishCachedSta
   state.save_provider_state(session);
   EXPECT_EQ(state.load_id(session.id, false).provider_state, session.provider_state);
   sqlite3_close(db);
+}
+TEST_F(Modernization, ProviderSnapshotsFollowOwningAndNestedCommitOutcomes) {
+  for (const auto *mode : {"durable", "fast"})
+    for (const auto *operation : {"provider", "append", "replace", "reconcile"})
+      for (bool fail_commit : {false, true}) {
+        SCOPED_TRACE(std::string(mode) + "/" + operation + (fail_commit ? "/rollback" : "/commit"));
+        const auto root = config.state_root / mode / operation / (fail_commit ? "fail" : "ok");
+        StateStore state(root, {}, mode);
+        auto session = state.create();
+        codet::Message assistant;
+        assistant.role = "assistant";
+        assistant.calls = {{"pending", "read_file", {{"path", "x"}}}};
+        session.messages = {assistant};
+        session.provider_state = conversation_fixture("old");
+        state.save(session);
+        sqlite3 *connection = nullptr;
+        ASSERT_EQ(sqlite3_open((root / "state.sqlite3").c_str(), &connection), SQLITE_OK);
+        const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(connection, sqlite3_close);
+        if (fail_commit)
+          ASSERT_EQ(sqlite3_exec(db.get(),
+                                 "CREATE TABLE parent(id INTEGER PRIMARY KEY);"
+                                 "CREATE TABLE poison(id INTEGER REFERENCES parent(id) "
+                                 "DEFERRABLE INITIALLY DEFERRED);"
+                                 "CREATE TRIGGER fail_outer AFTER INSERT ON provider_parts "
+                                 "WHEN NEW.position=1 BEGIN INSERT INTO poison VALUES(1); END;",
+                                 nullptr, nullptr, nullptr),
+                    SQLITE_OK);
+        session.provider_state = conversation_fixture("new");
+        const auto write = [&] {
+          const std::string action = operation;
+          if (action == "provider")
+            state.save_provider_state(session);
+          else if (action == "append") {
+            codet::Message user;
+            user.role = "user";
+            user.text = "appended";
+            session.messages.push_back(user);
+            state.append_messages(session, 1, true);
+          } else if (action == "replace")
+            state.replace_history(session);
+          else
+            state.reconcile(session, true);
+        };
+        if (fail_commit) {
+          try {
+            write();
+            FAIL() << "Expected the owning COMMIT to reject its deferred foreign key";
+          } catch (const Error &error) {
+            EXPECT_THAT(error.what(), HasSubstr("FOREIGN KEY constraint failed"));
+          }
+          ASSERT_EQ(sqlite3_exec(db.get(), "DROP TRIGGER fail_outer", nullptr, nullptr, nullptr),
+                    SQLITE_OK);
+        } else
+          EXPECT_NO_THROW(write());
+        // A reload would repopulate the cache and hide the regression. First save a suffix
+        // using a prefix different from the rows that a stale snapshot would describe.
+        session.provider_state = conversation_fixture(fail_commit ? "new" : "old");
+        session.provider_state["messages"].push_back(conversation_fixture("tail")["messages"][0]);
+        state.save_provider_state(session);
+        EXPECT_EQ(state.load_id(session.id, false).provider_state, session.provider_state);
+        StateStore reopened(root, {}, mode);
+        EXPECT_EQ(reopened.load_id(session.id, false).provider_state, session.provider_state);
+      }
 }
 TEST_F(Modernization, DurableCompletionAvoidsBarrierWhileFastCompletionKeepsIt) {
   for (const auto *mode : {"durable", "fast"}) {

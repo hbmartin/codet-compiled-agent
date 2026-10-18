@@ -1,5 +1,7 @@
 #include "codet/output.hpp"
+#include "process_helper.hpp"
 #include "temp.hpp"
+#include <fcntl.h>
 #include <fstream>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -65,6 +67,41 @@ TEST_F(CatalogRecovery, MissingCatalogAndRemovedDirectoryRecoverInSameStore) {
   capture("after catalog removal");
   fs::remove_all(dir);
   capture("after directory removal");
+}
+TEST_F(CatalogRecovery, CachedIdentityChecksPreserveProcessAdvisoryLocks) {
+  capture("initialize connection");
+  struct ProbeLock {
+    std::shared_ptr<CaptureStore> &store;
+    int fd;
+    ~ProbeLock() {
+      store.reset(); // Close SQLite before closing this test's raw descriptor.
+      if (fd >= 0)
+        ::close(fd);
+    }
+  } held{store, ::open((dir / "catalog.sqlite3").c_str(), O_RDWR)};
+  ASSERT_GE(held.fd, 0);
+  ASSERT_EQ(::fcntl(held.fd, F_SETFD, FD_CLOEXEC), 0);
+  // Byte zero is independent of SQLite's lock range. Any raw close of the same inode
+  // would nevertheless cancel this process's lock, just as it cancels SQLite's locks.
+  struct flock lock{};
+  lock.l_type = F_RDLCK;
+  lock.l_whence = SEEK_SET;
+  lock.l_len = 1;
+  ASSERT_EQ(::fcntl(held.fd, F_SETLK, &lock), 0);
+  const auto probe = [&] {
+    const auto child =
+        test::start_helper({"--codet-catalog-lock-probe", (dir / "catalog.sqlite3").string()});
+    ASSERT_GT(child, 0);
+    int status = 0;
+    ASSERT_TRUE(test::wait_helper(child, status));
+    ASSERT_TRUE(WIFEXITED(status));
+    EXPECT_EQ(WEXITSTATUS(status), 1) << "A catalog identity check released the process lock";
+  };
+  probe();
+  for (int i = 0; i < 3; ++i) {
+    capture("same cached connection");
+    probe();
+  }
 }
 TEST_F(CatalogRecovery, ReplacedCatalogIsReconciled) {
   const auto retained = capture("retained");

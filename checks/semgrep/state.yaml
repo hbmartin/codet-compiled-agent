@@ -6,3 +6,24 @@ rules:
     paths:
       include: ["**/state.cpp"]
     pattern: remember_references($SESSION, <... Json::parse(...) ...>)
+  - id: codet-provider-cache-owning-commit
+    languages: [cpp]
+    severity: ERROR
+    message: Publish provider snapshots only under an owning transaction guard after commit; nested writes invalidate the snapshot.
+    paths:
+      include: ["**/state.cpp"]
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              void StateStore::save_provider_state(...) { ... }
+          - pattern-inside: |
+              void StateStore::append_messages(...) { ... }
+          - pattern-inside: |
+              void StateStore::replace_history(...) { ... }
+      - pattern: $IMPL->cache_provider(...);
+      - pattern-not-inside: |
+          if ($TX.owner) { ... }
+      - pattern-not-inside: |
+          if ($ENABLED && $TX.owner) { ... }
+      - pattern-not-inside: |
+          if ($TX.owner && $ENABLED) { ... }

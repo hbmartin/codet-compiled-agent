@@ -36,6 +36,12 @@ Protocol references: [OpenAI model and Responses support](https://developers.ope
 
 Schema 6 stores ordered messages separately from metadata, tool journals and provider conversation parts. Append operations serialize changed messages only. Tool completion, its transcript result and associated references commit together. Compaction replaces the history generation atomically after archives exist.
 
+Provider snapshots describe committed rows only. A nested provider write compares its cached
+prefix before invalidating the snapshot; only an owning transaction publishes a replacement
+after a successful commit. Reads inside explicit transactions do not publish snapshots.
+Recovery may leave the cache empty until the next owning save or load. The single-session
+8 MiB cache cap and changed-suffix serialization still apply.
+
 Before migrating an older database, stop active sessions. Codet serializes upgraders on a private, interruptible migration lock, rechecks the version, then checks session ownership and creates a private consistent SQLite backup named `state.sqlite3.pre-v6-UUID`. Valid legacy sessions migrate independently in one transaction. Malformed legacy transcript bytes remain untouched and report an error only when that session is loaded. Migration failures roll back. Older binaries reject schema 6. Already-current WAL databases open without a migration write transaction. The migration lock has no five-second SQLite busy deadline.
 
 To restore, stop every Codet process, copy the current database and its `-wal`/`-shm` files aside, remove those current files, then copy the selected pre-v6 backup to `state.sqlite3` with mode 0600. Keep the artifact and capture directories alongside it. Run the older binary only after restoring its compatible schema. A restore discards sessions and changes newer than the chosen backup; keep the displaced database for recovery.
@@ -49,6 +55,10 @@ durability = "durable" # durable | fast
 ## Capture and build accounting
 
 Each capture store has a rebuildable SQLite catalog under the existing store lock. It records identity, accounted bytes, active/completed state and eviction order. Bytes are reserved before writes; partial or abandoned reservations reconcile conservatively. Ordinary 64 KiB flushes update the active capture without opening every retained file. Startup, namespace changes, a missing catalog, catalog damage and capacity reclamation trigger reconciliation. Corrupt databases and sidecars are validated as owned regular files before removal, with at most one recovery attempt per catalog operation. Other failures remain capture errors, and recovery never repeats output writes. Eviction revalidates identity and ownership locks. The existing 8 MiB per-capture, 64 MiB total and completed-file limits remain, including active-file protection, legacy adoption and symlink defenses.
+
+Connected catalog identity checks use `lstat`. Raw validation descriptors close before
+SQLite opens the catalog, and the path identity is checked again before schema work.
+This avoids canceling process advisory locks by closing another descriptor of the same inode.
 
 Dependencies build from freshly extracted, hash-verified archives. A recipe/lock/toolchain fingerprint selects a clean stage, and only a completed build replaces the published sysroot. Its manifest records archive, patch, source-tree, recipe and output hashes. Mach-O verification requires all expected libraries, PPC architecture and a resolvable transitive dependency closure under the stage or approved system paths.
 
@@ -81,3 +91,7 @@ remains limited to one attempt per top-level catalog operation and never repeats
 
 Malformed provider caches and genuine archive-identity conflicts remain explicit errors. These
 changes prevent new failures; automatic repair of already-affected sessions is deferred.
+
+[PR #16 follow-up validation](validation/pr16-review-fixes.json) records transaction-cache,
+terminal-event and catalog-lock regressions, host/sanitizer/Linux tests, scoped safeguards,
+benchmarks and Tiger cross-build verification against their source hashes.

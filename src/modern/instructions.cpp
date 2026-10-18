@@ -308,10 +308,6 @@ std::string Tools::instructions() const {
       const auto resolved = canonical(candidate);
       if (!resolved || !within(*resolved, *canonical_root) || visited.count(*resolved))
         continue;
-      if (++admitted > 100) {
-        exhausted = true;
-        break;
-      }
       SkillMetadata metadata{candidate.filename().string(), ""};
       try {
         bool cut = false;
@@ -335,6 +331,10 @@ std::string Tools::instructions() const {
         }
       if (!valid_anchor)
         continue;
+      if (++admitted > 100) {
+        exhausted = true;
+        break;
+      }
       visited.insert(*resolved);
       if (!names.insert(metadata.name).second)
         continue;

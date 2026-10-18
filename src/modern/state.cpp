@@ -133,10 +133,13 @@ struct StateStore::Impl {
   std::string cached_session;
   Json cached_provider = nullptr;
   size_t cached_bytes = 0, pending_provider_bytes = 0;
-  void cache_provider(const Session &session, size_t bytes) {
+  void clear_provider_cache() {
     cached_session.clear();
     cached_provider = nullptr;
     cached_bytes = 0;
+  }
+  void cache_provider(const Session &session, size_t bytes) {
+    clear_provider_cache();
     if (bytes <= provider_cache_limit) {
       cached_provider = session.provider_state;
       cached_session = session.id;
@@ -484,9 +487,7 @@ Session StateStore::load_id(const std::string &id, bool repair) {
     Statement parts(
         impl_->db, "SELECT position,payload FROM provider_parts WHERE session=? ORDER BY position");
     parts.text(1, s.id);
-    impl_->cached_session.clear();
-    impl_->cached_provider = nullptr;
-    impl_->cached_bytes = 0;
+    impl_->clear_provider_cache();
     int status;
     size_t position = 0, bytes = 0;
     while ((status = sqlite3_step(parts.p)) == SQLITE_ROW) {
@@ -511,7 +512,8 @@ Session StateStore::load_id(const std::string &id, bool repair) {
       throw Error("Cannot load provider conversation: " + std::string(sqlite3_errmsg(impl_->db)));
     if (s.provider_state.is_object() && !s.provider_state.contains("messages"))
       s.provider_state["messages"] = Json::array();
-    impl_->cache_provider(s, bytes);
+    if (sqlite3_get_autocommit(impl_->db))
+      impl_->cache_provider(s, bytes);
   }
   portable_messages(s.messages, s.id);
   ensure_message_ids(s.messages);
@@ -805,6 +807,10 @@ void StateStore::save_provider_state(const Session &s) {
                   std::string(sqlite3_errmsg(impl_->db)));
   }
   const auto header = next.dump();
+  // Compare the cached prefix first, but never leave it describing rows changed by
+  // an enclosing transaction whose eventual COMMIT or ROLLBACK we do not own.
+  if (!tx.owner)
+    impl_->clear_provider_cache();
   if (next != previous_base) {
     Statement q(impl_->db, "INSERT INTO provider_parts VALUES(?,0,?) ON CONFLICT(session,position) "
                            "DO UPDATE SET payload=excluded.payload");
@@ -865,6 +871,8 @@ void StateStore::append_messages(const Session &s, size_t first, bool provider_s
   tx.commit();
   if (provider_state && tx.owner)
     impl_->cache_provider(s, impl_->pending_provider_bytes);
+  else if (provider_state)
+    impl_->clear_provider_cache();
 }
 void StateStore::revise_messages(const Session &s, const std::vector<size_t> &positions) {
   auto owner = acquire(s.id);
@@ -895,7 +903,10 @@ void StateStore::replace_history(const Session &s) {
   append_messages(s, 0);
   save_provider_state(s);
   tx.commit();
-  impl_->cache_provider(s, impl_->pending_provider_bytes);
+  if (tx.owner)
+    impl_->cache_provider(s, impl_->pending_provider_bytes);
+  else
+    impl_->clear_provider_cache();
 }
 void StateStore::save(const Session &s) {
   replace_history(s);
