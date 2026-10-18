@@ -1,5 +1,8 @@
 void request() {
   // ruleid: codet-public-reasoning-model-aware
+  if (c.provider == "openai")
+    body["reasoning"] = fields;
+  // ruleid: codet-public-reasoning-model-aware
   if (!c.effort.empty() || c.provider == "openai")
     body["reasoning"] = fields;
   // ruleid: codet-public-reasoning-model-aware
@@ -11,6 +14,30 @@ void request() {
   // ok: codet-public-reasoning-model-aware
   if (!c.effort.empty())
     body["reasoning"] = fields;
+}
+
+void incomplete_event() {
+  // ruleid: codet-incomplete-event-observed
+  if (event == "response.incomplete")
+    throw ProviderError("incomplete", 200, data);
+  // ruleid: codet-incomplete-event-observed
+  if (event == "response.incomplete") {
+    diagnostic(data);
+    throw ProviderError("incomplete", 200, data);
+  }
+  // ok: codet-incomplete-event-observed
+  if (event == "response.incomplete") {
+    saw = true;
+    throw ProviderError("incomplete", 200, data);
+  }
+  // ok: codet-incomplete-event-observed
+  if (event == "other")
+    throw ProviderError("other", 200, data);
+  // The unnamed event is parsed and marked observed before its type is inspected.
+  saw = true;
+  // ok: codet-incomplete-event-observed
+  if (type == "response.incomplete")
+    throw ProviderError("incomplete", 200, data);
 }
 
 void epoch_reply() {

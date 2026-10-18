@@ -7,6 +7,9 @@ rules:
       include: ["**/provider.cpp"]
     pattern-either:
       - pattern: |
+          if ($CONFIG.provider == "openai")
+            $BODY["reasoning"] = $VALUE;
+      - pattern: |
           if (!$CONFIG.effort.empty() || $CONFIG.provider == "openai")
             $BODY["reasoning"] = $VALUE;
       - pattern: |
@@ -19,3 +22,26 @@ rules:
     paths:
       include: ["**/provider.cpp"]
     pattern: Json::array({{{"role", "assistant"}, {"content", $REPLAY}}})
+  - id: codet-incomplete-event-observed
+    languages: [cpp]
+    severity: ERROR
+    message: Mark a delivered incomplete event as observed before throwing so it cannot trigger a transport retry.
+    paths:
+      include: ["**/provider.cpp"]
+    patterns:
+      - pattern-either:
+          - pattern: |
+              if (event == "response.incomplete")
+                throw ProviderError(...);
+          - pattern: |
+              if (event == "response.incomplete") {
+                ...
+                throw ProviderError(...);
+              }
+      - pattern-not: |
+          if (event == "response.incomplete") {
+            ...
+            saw = true;
+            ...
+            throw ProviderError(...);
+          }

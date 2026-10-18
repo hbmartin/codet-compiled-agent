@@ -297,7 +297,8 @@ TEST_F(Remaining, CancelledBatchCanContinueInSameSessionWithoutReplayingEffects)
   interrupt.join();
   cancel.requested = false;
   provider.next = [&](const auto &messages) {
-    EXPECT_EQ(messages.size(), 6u);
+    EXPECT_EQ(messages.size(), 7u);
+    EXPECT_EQ(messages.back().origin, "runtime");
     EXPECT_EQ(messages[1].role, "assistant");
     for (size_t i = 2; i <= 4; ++i)
       EXPECT_EQ(messages[i].role, "tool");

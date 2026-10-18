@@ -63,17 +63,30 @@ class SemgrepReports(unittest.TestCase):
         self.assertNotIn("failed", result.stderr)
         self.assertFalse((self.root / "build/semgrep-venv").exists())
 
-    def test_environment_records_the_running_interpreter_and_installed_version(self):
+    def test_environment_records_relative_interpreter_and_installed_version(self):
         output = io.StringIO()
         with patch.object(sys, "argv", ["semgrep-report.py", "environment"]), \
+                patch.object(sys, "executable", str(ROOT / "build/semgrep-venv/bin/python")), \
                 patch.object(report.importlib.metadata, "version", return_value="1.177.0"), \
                 contextlib.redirect_stdout(output):
             report.main()
         data = json.loads(output.getvalue())
         self.assertEqual(data["semgrep"], "1.177.0")
-        self.assertEqual(data["executable"], sys.executable)
+        self.assertEqual(data["executable"], "build/semgrep-venv/bin/python")
         self.assertTrue(data["python"])
         self.assertTrue(data["platform"])
+
+    def test_external_interpreter_does_not_publish_its_parent_directories(self):
+        with patch.object(sys, "executable", str(self.root / "private/bin/python3")):
+            self.assertEqual(report.interpreter_path(), "<external>/python3")
+
+    def test_interpreter_symlink_keeps_its_venv_path(self):
+        venv = self.root / "build/semgrep-venv/bin/python"
+        venv.parent.mkdir(parents=True)
+        venv.symlink_to(sys.executable)
+        with patch.object(report, "__file__", str(self.root / "scripts/semgrep-report.py")), \
+                patch.object(sys, "executable", str(venv)):
+            self.assertEqual(report.interpreter_path(), "build/semgrep-venv/bin/python")
 
     def test_missing_report_is_diagnostic(self):
         errors = io.StringIO()

@@ -237,11 +237,9 @@ void CaptureStore::prepare_catalog() {
         throw Error("Cannot inspect capture catalog identity");
       catalog_.reset();
     } else {
-      File file(path);
-      struct stat st{};
-      if (::fstat(file.fd, &st))
-        throw Error("Cannot inspect capture catalog identity");
-      if (st.st_dev != catalog_->device || st.st_ino != catalog_->inode)
+      if (!S_ISREG(link.st_mode) || link.st_uid != ::geteuid())
+        throw Error("Capture catalog requires owned regular files: " + path.string());
+      if (link.st_dev != catalog_->device || link.st_ino != catalog_->inode)
         catalog_.reset();
     }
   }
@@ -253,12 +251,24 @@ void CaptureStore::prepare_catalog() {
         File checked(file);
       }
     }
-    File checked(path, true);
-    if (::fchmod(checked.fd, 0600))
-      throw Error("Cannot protect capture catalog");
+    struct stat identity{};
+    {
+      File checked(path, true);
+      if (::fchmod(checked.fd, 0600))
+        throw Error("Cannot protect capture catalog");
+      if (::fstat(checked.fd, &identity))
+        throw Error("Cannot inspect capture catalog identity");
+    } // Raw descriptors must close before SQLite owns any locks on this inode.
     const auto status = sqlite3_open(path.c_str(), &catalog_->db);
     if (status != SQLITE_OK)
       throw CatalogError(catalog_->db, status);
+    struct stat current{};
+    if (::lstat(path.c_str(), &current) || !S_ISREG(current.st_mode) ||
+        current.st_uid != ::geteuid() || current.st_dev != identity.st_dev ||
+        current.st_ino != identity.st_ino) {
+      catalog_.reset();
+      throw Error("Capture catalog changed while opening");
+    }
     sqlite3_busy_timeout(catalog_->db, 5000);
     execute(
         catalog_->db,
@@ -267,9 +277,6 @@ void CaptureStore::prepare_catalog() {
         "bytes INTEGER NOT NULL CHECK(bytes>=0),seconds INTEGER,nanos INTEGER,active "
         "INTEGER,readable INTEGER);"
         "CREATE INDEX IF NOT EXISTS eviction ON captures(active,seconds,nanos,name)");
-    struct stat identity{};
-    if (::fstat(checked.fd, &identity))
-      throw Error("Cannot inspect capture catalog identity");
     catalog_->device = identity.st_dev;
     catalog_->inode = identity.st_ino;
     rebuild_catalog();

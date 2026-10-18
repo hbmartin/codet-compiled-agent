@@ -178,16 +178,20 @@ void provider_bench() {
                                                   {"text", std::string(payload, 'i')}}})}}})}});
     state.save_provider_state(session);
     const auto before = state.serialized_bytes();
+    const auto reads = state.provider_rows_read();
     const auto start = std::chrono::steady_clock::now();
     for (int i = 0; i < 20; ++i) {
+      const ProviderStateUpdate update{state.provider_revision(session.id), messages.size()};
       messages.push_back(
           {{"source", std::to_string(i)},
            {"wire",
             Json::array(
                 {{{"role", "user"},
                   {"content", Json::array({{{"type", "text"}, {"text", "small update"}}})}}})}});
-      state.save_provider_state(session);
+      state.save_provider_state(session, update);
     }
+    if (state.provider_rows_read() != reads)
+      throw Error("Incremental provider save read unchanged rows");
     const auto written = state.serialized_bytes() - before;
     if (written >= 20000 || state.provider_cache_bytes() > size_t{8} * 1024 * 1024)
       throw Error("Provider appends exceeded changed-part/cache bounds");
@@ -196,6 +200,7 @@ void provider_bench() {
                  {"appends", 20},
                  {"append_serialized_bytes", written},
                  {"cached_payload_bytes", state.provider_cache_bytes()},
+                 {"unchanged_rows_read", state.provider_rows_read() - reads},
                  {"peak_rss_bytes", peak_rss()},
                  {"seconds",
                   std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count()}})
@@ -243,17 +248,17 @@ int main(int argc, char **argv) {
       const auto flush_scans = store->metrics.scans - scans;
       size_t close_scans = 0;
       for (int i = 0; i < 20; ++i) {
+        const auto before = store->metrics.scans;
         OutputSpool next(store);
         next.append("next");
         next.flush();
-        const auto before = store->metrics.scans;
         next.close();
         close_scans += store->metrics.scans - before;
         if (!next.error().empty())
           throw Error(next.error());
       }
       if (close_scans)
-        throw Error("At-capacity close scanned the whole store");
+        throw Error("At-capacity creation/close scanned the whole store");
       struct rusage io{};
       getrusage(RUSAGE_SELF, &io);
       std::cout

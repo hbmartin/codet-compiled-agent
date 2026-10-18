@@ -42,6 +42,7 @@ struct Fd {
 };
 struct CurlContext {
   std::string body, error;
+  std::exception_ptr callback_failure;
   const Cancellation &cancel;
   const ChunkSink &sink;
   size_t max;
@@ -77,11 +78,8 @@ size_t curl_write(char *p, size_t s, size_t n, void *data) {
     c.body.append(p, bytes);
     if (c.sink && c.status >= 200 && c.status < 300)
       c.sink(std::string(p, bytes));
-  } catch (const std::exception &e) {
-    c.error = e.what();
-    return 0;
   } catch (...) {
-    c.error = "HTTP stream callback failed";
+    c.callback_failure = std::current_exception();
     return 0;
   }
   return bytes;
@@ -189,9 +187,7 @@ std::string bounded_text(const std::string &text, size_t limit) {
   return clean;
 }
 int ProcessControl::wait_ready(int fd, int timeout_ms) {
-  struct pollfd ready {
-    fd, POLLIN, 0
-  };
+  struct pollfd ready{fd, POLLIN, 0};
   const int result = ::poll(&ready, 1, timeout_ms);
   if (result < 0 && errno != EINTR)
     throw Error(system_error("wait for child setup"));
@@ -327,6 +323,8 @@ HttpResponse CurlTransport::perform(const HttpRequest &r, const Cancellation &ca
   }
   const CURLcode result = curl_easy_perform(raw);
   cancel.check();
+  if (c.callback_failure)
+    std::rethrow_exception(c.callback_failure);
   if (result != CURLE_OK)
     throw Error(c.error.empty() ? std::string("HTTP transport: ") +
                                       (error[0] ? error : curl_easy_strerror(result))
@@ -340,7 +338,7 @@ std::string read_file_bytes(const fs::path &path, size_t limit, bool prefix) {
   Fd fd(::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK));
   if (fd.n < 0)
     throw Error(system_error("Read " + path.string()));
-  struct stat status {};
+  struct stat status{};
   if (::fstat(fd.n, &status) != 0 || !S_ISREG(status.st_mode))
     throw Error("Expected regular file: " + path.string());
   if (!prefix && (status.st_size < 0 || static_cast<uint64_t>(status.st_size) > limit))
@@ -393,7 +391,7 @@ void NativeFileSystem::atomic_stream(const fs::path &p,
                                      bool private_file) {
   if (!fs::exists(p.parent_path()))
     throw Error("Parent directory does not exist: " + p.parent_path().string());
-  struct stat old {};
+  struct stat old{};
   const bool exists = ::lstat(p.c_str(), &old) == 0;
   if (exists && !S_ISREG(old.st_mode))
     throw Error("Refusing to replace non-regular file: " + p.string());
@@ -432,7 +430,7 @@ void NativeFileSystem::atomic_stream(const fs::path &p,
     flush();
     if (::fsync(fd.n) != 0)
       throw Error(system_error("Sync file"));
-    struct stat current {};
+    struct stat current{};
     const bool now = ::lstat(p.c_str(), &current) == 0;
     if (now != exists || (now && (old.st_dev != current.st_dev || old.st_ino != current.st_ino)))
       throw Error("File changed during atomic write");
@@ -447,7 +445,7 @@ void NativeFileSystem::atomic_stream(const fs::path &p,
   }
 }
 void NativeFileSystem::remove(const fs::path &p) {
-  struct stat st {};
+  struct stat st{};
   if (lstat(p.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
     throw Error("Expected regular file for deletion");
   if (::unlink(p.c_str()) != 0)
@@ -490,7 +488,7 @@ public:
 #ifdef __APPLE__
     (void)pid;
     struct kevent event;
-    struct timespec immediate {};
+    struct timespec immediate{};
     const int count = ::kevent(observer, nullptr, 0, &event, 1, &immediate);
     if (count < 0 && errno == EINTR)
       return false;
@@ -684,7 +682,7 @@ std::string NativeProcesses::start(const ProcessSpec &spec, const Cancellation &
   if (pid == 0) {
     ::close(ready_read.n);
     ::close(release_write.n);
-    struct sigaction disposition {};
+    struct sigaction disposition{};
     disposition.sa_handler = SIG_DFL;
     sigemptyset(&disposition.sa_mask);
     for (int sig = 1; sig < NSIG; ++sig)

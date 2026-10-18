@@ -95,6 +95,9 @@ std::set<std::string> message_references(const std::vector<Message> &messages) {
   };
   for (const auto &m : messages) {
     accept(m.result_file);
+    if (m.checkpoint_state.is_object() &&
+        m.checkpoint_state.value("recovery_record", Json()).is_string())
+      accept(m.checkpoint_state.at("recovery_record").get<std::string>());
     if (m.role != "tool")
       continue;
     const auto envelope = Json::parse(m.text, nullptr, false);
@@ -148,6 +151,8 @@ void portable_messages(std::vector<Message> &messages, const std::string &sessio
           auto content = Json::parse(envelope.at("content").get<std::string>(), nullptr, false);
           if (content.is_object()) {
             normalize(content);
+            if (result_name(message.result_file) && content.contains("result_path"))
+              content["result_path"] = message.result_file;
             envelope["content"] = content.dump();
           }
         }

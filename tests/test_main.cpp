@@ -3,6 +3,7 @@
 #include "temp.hpp"
 #include <csignal>
 #include <cstdlib>
+#include <fcntl.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <iostream>
@@ -12,6 +13,19 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc == 3 && std::string(argv[1]) == "--codet-catalog-lock-probe") {
+      const int fd = ::open(argv[2], O_RDWR);
+      if (fd < 0)
+        return 2;
+      struct flock lock{};
+      lock.l_type = F_WRLCK;
+      lock.l_whence = SEEK_SET;
+      lock.l_len = 1;
+      const auto result = ::fcntl(fd, F_SETLK, &lock);
+      const auto error = errno;
+      ::close(fd);
+      return result == 0 ? 0 : (error == EACCES || error == EAGAIN ? 1 : 2);
+    }
     if (argc == 5 && std::string(argv[1]) == "--codet-capture-helper") {
       codet::OutputSpool active(argv[2], 8, 8, 64);
       active.append("123456");

@@ -23,3 +23,25 @@ rules:
           regex: '(?is)^"\s*BEGIN\b'
       - pattern-not-inside: |
           explicit CatalogTransaction(...) : db(...) { ... }
+  - id: codet-catalog-raw-live-identity
+    languages: [cpp]
+    severity: ERROR
+    message: Inspect a connected catalog with lstat; closing a raw descriptor cancels process advisory locks.
+    paths:
+      include: ["**/capture_catalog.cpp"]
+    patterns:
+      - pattern-inside: |
+          void CaptureStore::prepare_catalog(...) { ... }
+      - pattern-inside: |
+          if (catalog_) { ... }
+      # Semgrep normalizes C++ direct initialization to an initializer list.
+      - pattern: File $FILE{path, ...};
+  - id: codet-catalog-descriptor-before-sqlite
+    languages: [cpp]
+    severity: ERROR
+    message: End the raw catalog descriptor scope before sqlite3_open owns the database.
+    paths:
+      include: ["**/capture_catalog.cpp"]
+    # Keep this guard local to a straight-line scope. AST ellipses descend into
+    # nested blocks and would incorrectly flag a descriptor already destroyed.
+    pattern-regex: '(?s)\bFile\s+\w+\s*[(\{]\s*(?P<catalog_path>\w+)\s*(?:,[^;{}]*)?[)\}]\s*;[^{}]*\bsqlite3_open\s*\(\s*(?P=catalog_path)\s*\.\s*c_str\s*\('

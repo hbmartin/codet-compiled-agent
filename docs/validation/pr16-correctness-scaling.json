@@ -1,0 +1,619 @@
+{
+  "recorded_utc": "2026-10-18T18:33:05.058868+00:00",
+  "branch": "codex/pr16-review-fixes",
+  "implementation_commit": "d7141a9ea4a338769df08aec74a97b9235aff00b",
+  "baseline": "44b108755f77ca1c42ee3962fdb2917605f7e383",
+  "pr": 16,
+  "compatibility": {
+    "sqlite_schema_version": 6,
+    "schema_migration": false,
+    "existing_provider_method_signatures_unchanged": true,
+    "tool_schemas_unchanged": true,
+    "reasoning_effort_defaults_unchanged": true,
+    "full_provider_cache_limit_bytes": 8388608,
+    "additive_cli_command": "codet repair SESSION [--last] [--provider-cache] [--recovery]",
+    "internal_extensions": [
+      "Optional unchanged-prefix hint and committed persistence revision",
+      "Request-only runtime messages and deduplicated Anthropic wire-only updates"
+    ]
+  },
+  "scenarios": [
+    "Actual curl loopback named, unnamed and malformed-body incomplete events preserve ProviderError body/diagnostic and issue exactly one request; existing cancellation/transport-retry tests retained",
+    "Read-only normalization of legacy empty Anthropic wire arrays, deferred-commit failure, next save before reload, resume, compaction and provider switching",
+    "Large provider states above 8 MiB use zero unchanged-payload-row reads, changed-suffix serialization, external-change invalidation and owning/nested rollback checks",
+    "Missing and malformed recovery archives preserve original references and unknown outcomes, reconstruct available journal facts, retain multiple distinct missing records, survive forks and permit new turns without repeating effects",
+    "Ordinary and summary requests receive fresh execution facts outside the system prompt; oversized snapshots replace one private file, retain a digest and create no permanent reference rows; legacy system snapshots receive an explicit empty update",
+    "Failed checkpoint publication removes its newly created unreferenced recovery candidate; immutable historical archives remain retained",
+    "Rejected preview retains a relative reference through save/reload, relocation and later compaction",
+    "Three 5 KiB command results execute exactly once each under the bounded batch budget; protected page and oversized-input safeguards retained",
+    "Shared two-summary budget reports exhaustion accurately and stops a new checkpoint attempt",
+    "Repair inspection makes no session-row changes; explicit repair backs up raw data, preserves malformed UTF-8 bytes, rolls back after backup on SQL failure, preserves journals and makes no provider requests",
+    "Failed reply persistence preserves a private uncommitted receipt and never dispatches its calls",
+    "New capture first flushes and at-capacity closes perform zero ordinary catalog scans; catalog corruption, lock, quota and unsafe-sidecar tests retained"
+  ],
+  "checks": {
+    "macos_host": {
+      "passed": true,
+      "executed": true,
+      "ctest_suites": 7,
+      "unit_cases": 373,
+      "unit_passed": 371,
+      "unit_skipped": [
+        "NetworkOptIn.TlsHandshake",
+        "Contracts.NativeTigerDesktopAcceptance"
+      ],
+      "python_case_counts": [
+        52,
+        7,
+        6,
+        7,
+        3
+      ],
+      "console": {
+        "path": "build/pr16-correctness/ctest-host.log",
+        "sha256": "4da7059bbf03d779e772d549ae1dafbb32a7b330e2d4062fcfd34675c9beada2"
+      },
+      "detailed_log": {
+        "path": "build/pr16-host/Testing/Temporary/LastTest.log",
+        "sha256": "d2949ec110e23829126156d9f463b60826d9f08a532787ada87007e8bdc231e6"
+      }
+    },
+    "macos_asan_ubsan": {
+      "passed": true,
+      "executed": true,
+      "ctest_suites": 7,
+      "unit_cases": 373,
+      "unit_passed": 371,
+      "unit_skipped": [
+        "NetworkOptIn.TlsHandshake",
+        "Contracts.NativeTigerDesktopAcceptance"
+      ],
+      "python_case_counts": [
+        52,
+        7,
+        6,
+        7,
+        3
+      ],
+      "console": {
+        "path": "build/pr16-correctness/ctest-sanitize.log",
+        "sha256": "688dbdd494fa2ed9525e2f1fbe8e0888abf7f2e1e4e16dae83d56a0a46e04a51"
+      },
+      "detailed_log": {
+        "path": "build/pr16-sanitize/Testing/Temporary/LastTest.log",
+        "sha256": "b10b79e81ad8cf77b2550af29e0de81369f0373a116c8d35b8dcba1fd593855b"
+      }
+    },
+    "linux_amd64": {
+      "passed": true,
+      "executed": true,
+      "ctest_suites": 7,
+      "unit_cases": 373,
+      "unit_passed": 369,
+      "unit_skipped": [
+        "NetworkOptIn.TlsHandshake",
+        "Contracts.NativeImageIoCanEncodeAndReloadPixelsWithoutAConsole",
+        "Contracts.NativeTigerDesktopAcceptance",
+        "OutputReview.UnreadableRegularEntryCountsWithoutDisablingHealthyCapture"
+      ],
+      "python_case_counts": [
+        52,
+        7,
+        6,
+        7,
+        3
+      ],
+      "console": {
+        "path": "build/pr16-correctness/linux.log",
+        "sha256": "139a393d54c36c9bcf2b9e03c9e2204a578f255c81d2162bc17bec559f46aa26"
+      },
+      "detailed_log": {
+        "path": "build/pr16-linux/Testing/Temporary/LastTest.log",
+        "sha256": "ce961fb2123d2f2389eb2405a7e2631d99890edca01ac1b58ca0d346c1785f35"
+      }
+    },
+    "analyzers": {
+      "clang-tidy": {
+        "passed": true,
+        "sources": 25,
+        "gated_findings": 0,
+        "versions": [
+          "Ubuntu LLVM version 18.1.3\n  Optimized build."
+        ],
+        "manifest": {
+          "path": "build/pr16-linux/analysis/clang-tidy/manifest.json",
+          "sha256": "1c402550caecc8f9fc18f741ad6cb400d9f76966bd69fea5eaa289534724d8b2"
+        }
+      },
+      "cppcheck": {
+        "passed": true,
+        "sources": 25,
+        "gated_findings": 0,
+        "versions": [
+          "Cppcheck 2.22.0"
+        ],
+        "manifest": {
+          "path": "build/pr16-linux/analysis/cppcheck/manifest.json",
+          "sha256": "cf92d4b7137da2628c6ba9a4ee59e1bee222c575e8790484d37c07bd8c103dc7"
+        }
+      },
+      "clang-analyzer": {
+        "passed": true,
+        "sources": 25,
+        "gated_findings": 0,
+        "versions": [
+          "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin",
+          "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin"
+        ],
+        "manifest": {
+          "path": "build/pr16-linux/analysis/clang-analyzer/manifest.json",
+          "sha256": "0168a01f788de8c3ce39a054e6fe7e82a6fc3a2d0e315ecb8866adf929a1671d"
+        }
+      }
+    },
+    "analyzer_detection": {
+      "clang-tidy": true,
+      "cppcheck": true,
+      "clang-analyzer": true
+    },
+    "analyzer_runner": {
+      "passed": true,
+      "executed": true,
+      "cases": 33,
+      "log": {
+        "path": "build/pr16-correctness/analyzer-runner-final.log",
+        "sha256": "a29963c987b99ce32f222d388b3de183ff61e06bacd50d9ba05137482593e216"
+      }
+    },
+    "semgrep": {
+      "passed": true,
+      "version": "1.177.0",
+      "rules": 14,
+      "fixture_positive_matches": 34,
+      "production_findings": 0,
+      "production_errors": 0,
+      "fixture_report": {
+        "path": "build/semgrep/tests.json",
+        "sha256": "3e3826b8feb720b187739ecef90fe87486ecb625e6f6111e86939392e4058963"
+      },
+      "production_report": {
+        "path": "build/semgrep/scan.json",
+        "sha256": "c63683aae82c9d8438dd6c0967771466b0acbb39eca8d7e5a7a95661a852d36b"
+      },
+      "environment": {
+        "python": "3.13.15 (main, Aug 25 2026, 13:50:12) [Clang 22.1.3 ]",
+        "executable": "<external>/python",
+        "platform": "macOS-15.8-arm64-arm-64bit-Mach-O",
+        "semgrep": "1.177.0"
+      }
+    },
+    "benchmarks": {
+      "durable": {
+        "executed": true,
+        "passed": true,
+        "observations": [
+          {
+            "database_bytes": 45056,
+            "durability": "durable",
+            "input_blocks": 0,
+            "output_blocks": 0,
+            "payload_bytes": 512,
+            "peak_rss_bytes": 8912896,
+            "results": 100,
+            "save_seconds": 0.030471501999999998,
+            "seconds": 0.037437709,
+            "serialized_bytes": 72292,
+            "transcript_bytes": 72393,
+            "wal_bytes": 1001192
+          },
+          {
+            "database_bytes": 45056,
+            "durability": "durable",
+            "input_blocks": 0,
+            "output_blocks": 0,
+            "payload_bytes": 512,
+            "peak_rss_bytes": 9256960,
+            "results": 200,
+            "save_seconds": 0.056999925999999965,
+            "seconds": 0.070080084,
+            "serialized_bytes": 144692,
+            "transcript_bytes": 144893,
+            "wal_bytes": 2047672
+          },
+          {
+            "database_bytes": 45056,
+            "durability": "durable",
+            "input_blocks": 0,
+            "output_blocks": 0,
+            "payload_bytes": 512,
+            "peak_rss_bytes": 9732096,
+            "results": 300,
+            "save_seconds": 0.07997871499999992,
+            "seconds": 0.099055625,
+            "serialized_bytes": 217092,
+            "transcript_bytes": 217393,
+            "wal_bytes": 3118872
+          }
+        ],
+        "log": {
+          "path": "build/pr16-correctness/benchmark-durable.jsonl",
+          "sha256": "cb31541eef83c53c1e357fb6bcc97f00b270d489ff33265b5233598e16ce35ac"
+        }
+      },
+      "fast": {
+        "executed": true,
+        "passed": true,
+        "observations": [
+          {
+            "database_bytes": 45056,
+            "durability": "fast",
+            "input_blocks": 0,
+            "output_blocks": 0,
+            "payload_bytes": 512,
+            "peak_rss_bytes": 8519680,
+            "results": 100,
+            "save_seconds": 0.013704170000000005,
+            "seconds": 0.019288209,
+            "serialized_bytes": 72292,
+            "transcript_bytes": 72393,
+            "wal_bytes": 1001192
+          },
+          {
+            "database_bytes": 45056,
+            "durability": "fast",
+            "input_blocks": 0,
+            "output_blocks": 0,
+            "payload_bytes": 512,
+            "peak_rss_bytes": 8945664,
+            "results": 200,
+            "save_seconds": 0.026094581999999998,
+            "seconds": 0.036964584,
+            "serialized_bytes": 144692,
+            "transcript_bytes": 144893,
+            "wal_bytes": 2047672
+          },
+          {
+            "database_bytes": 45056,
+            "durability": "fast",
+            "input_blocks": 0,
+            "output_blocks": 0,
+            "payload_bytes": 512,
+            "peak_rss_bytes": 9404416,
+            "results": 300,
+            "save_seconds": 0.041121380000000006,
+            "seconds": 0.057583334,
+            "serialized_bytes": 217092,
+            "transcript_bytes": 217393,
+            "wal_bytes": 3118872
+          }
+        ],
+        "log": {
+          "path": "build/pr16-correctness/benchmark-fast.jsonl",
+          "sha256": "9e2cdc3ca2383e4fd08f2ff2e06a6883aa3c0f839e4fac35b41e153e36ab5122"
+        }
+      },
+      "captures": {
+        "executed": true,
+        "passed": true,
+        "observations": [
+          {
+            "capture_batches": 161,
+            "capture_bytes": 6619136,
+            "capture_syncs": 61,
+            "flushes": 100,
+            "input_blocks": 0,
+            "ordinary_close_scans": 0,
+            "ordinary_flush_scans": 0,
+            "output_blocks": 0,
+            "peak_rss_bytes": 8863744,
+            "repeated_closes": 20,
+            "retained_files": 40,
+            "seconds": 0.0191335
+          },
+          {
+            "capture_batches": 185,
+            "capture_bytes": 6619136,
+            "capture_syncs": 85,
+            "flushes": 100,
+            "input_blocks": 0,
+            "ordinary_close_scans": 0,
+            "ordinary_flush_scans": 0,
+            "output_blocks": 0,
+            "peak_rss_bytes": 9453568,
+            "repeated_closes": 20,
+            "retained_files": 64,
+            "seconds": 0.035148292
+          }
+        ],
+        "log": {
+          "path": "build/pr16-correctness/benchmark-captures.jsonl",
+          "sha256": "20c11a2ee87a4248332448d75d120a51091f4bf194d826f78d7bbe2e4f942161"
+        },
+        "new_capture_first_flush_included": true
+      },
+      "history": {
+        "executed": true,
+        "passed": true,
+        "observations": [
+          {
+            "aggregate_wire_items": 0,
+            "messages": 200,
+            "peak_rss_bytes": 12582912,
+            "projected_bytes": 213501,
+            "sizing_and_projection_seconds": 0.302968542,
+            "sizing_seconds": 0.019911417,
+            "tool_results": 100,
+            "wire_bytes": 427515,
+            "wire_parts_encoded": 251
+          },
+          {
+            "aggregate_wire_items": 0,
+            "messages": 600,
+            "peak_rss_bytes": 16728064,
+            "projected_bytes": 641201,
+            "sizing_and_projection_seconds": 0.81230875,
+            "sizing_seconds": 0.064747459,
+            "tool_results": 300,
+            "wire_bytes": 1282915,
+            "wire_parts_encoded": 751
+          },
+          {
+            "aggregate_wire_items": 0,
+            "messages": 2000,
+            "peak_rss_bytes": 29523968,
+            "projected_bytes": 2138149,
+            "sizing_and_projection_seconds": 2.707336125,
+            "sizing_seconds": 0.198261041,
+            "tool_results": 1000,
+            "wire_bytes": 4276815,
+            "wire_parts_encoded": 2501
+          }
+        ],
+        "log": {
+          "path": "build/pr16-correctness/benchmark-history.jsonl",
+          "sha256": "321590822452965bf10042f8dbead14e9b2a8772ad01fbad12e2eca2b27a0414"
+        }
+      },
+      "provider": {
+        "executed": true,
+        "passed": true,
+        "observations": [
+          {
+            "append_serialized_bytes": 2270,
+            "appends": 20,
+            "cached_payload_bytes": 1050471,
+            "peak_rss_bytes": 16875520,
+            "provider_payload_bytes": 1048576,
+            "seconds": 0.005471708,
+            "unchanged_rows_read": 0
+          },
+          {
+            "append_serialized_bytes": 2270,
+            "appends": 20,
+            "cached_payload_bytes": 0,
+            "peak_rss_bytes": 82100224,
+            "provider_payload_bytes": 9437184,
+            "seconds": 0.004554875,
+            "unchanged_rows_read": 0
+          }
+        ],
+        "log": {
+          "path": "build/pr16-correctness/benchmark-provider.jsonl",
+          "sha256": "1f8ca2282cec9dc9dfc6e8fa697685aa05e9cdc05a78e305b3c86db7db6da29d"
+        }
+      }
+    },
+    "tiger": {
+      "passed": true,
+      "cross_built": true,
+      "statically_verified": true,
+      "target_runtime_executed": false,
+      "compiler": "14.2.0",
+      "binaries": [
+        {
+          "name": "codet",
+          "bytes": 5707552,
+          "sha256": "8b7546e98e224476e277ef3e5f5766dfd92f5f84ae2de4a4b122beadb65396c4"
+        },
+        {
+          "name": "codet_tests",
+          "bytes": 11489632,
+          "sha256": "8dae70941f2dc0c133dfc021d7707ff5a64fc13392bb3161d60f7e37eedaf0af"
+        },
+        {
+          "name": "codet_persistence_bench",
+          "bytes": 5118600,
+          "sha256": "c3a7fcc5c28e3cede6dffc1fb71cd78813f80bf1ea31f19f908de4c6993e68fb"
+        }
+      ],
+      "verification": {
+        "path": "build/tiger-verification.json",
+        "sha256": "d3e1e90bd4c2ee4adf5e91d4cad16a0c44ccf9656e423d5310393539c726fbd2"
+      },
+      "log": {
+        "path": "build/pr16-correctness/tiger.log",
+        "sha256": "410c2bd786a40c631480af9993d5ab61e4fe2000c7c795a467a9fb019aff2f1e"
+      }
+    }
+  },
+  "toolchain_images": {
+    "codet-host-followup:fresh": "sha256:0d27b09f69720174c62ffb3f829cc16a120cc076ed537747af3d52106b92fcdf",
+    "codet-tiger-build:gcc14": "sha256:14b4038ff84b05fb03107cde63ebc3c5aa8afb0d6529492f1b74d138adf85f6e"
+  },
+  "conditional_feedback": {
+    "reasoning": "Explicit encrypted-reasoning inclusion is compatibility protection; no current live API failure is claimed",
+    "absolute_reference": "The regression deliberately forces preview rejection; the original capacity-triggered scenario was not independently reproduced"
+  },
+  "historical_validation_metadata_modified": false,
+  "delivery": "Local implementation and evidence commits; no push or GitHub writes",
+  "limitations": [
+    "No live provider requests; HTTP validation uses loopback fixtures",
+    "Tiger binaries were cross-built and statically verified, never executed",
+    "Host benchmark timings and RSS do not establish Tiger hardware performance",
+    "Missing historical outcomes remain explicit unknowns when exact reconstruction is impossible",
+    "Broader malformed derived caches require explicit repair; canonical message/journal corruption remains fail-closed",
+    "Scoped Semgrep checks supplement runtime transaction tests"
+  ],
+  "source_tree_sha256": "c39fab27762dccca1de879ae595d669b58af3e20f947df5fc1415d60b958c6f0",
+  "source_sha256": {
+    ".clang-format": "85b7cd21d813fd0c3860534b5ee44aa9b94d2c8783528be9d2de15a174b41035",
+    ".clang-tidy": "6f1c295e33a074232a79f234b9efc121030909758e1d9b0cb93d04c637aab1f5",
+    ".github/workflows/modern-checks.yml": "47f22294c1d0b1e67613fb467ff9ccc42f0995016d9b6ae3735f302608ace5cb",
+    "CMakeLists.txt": "3f8f8c9e444d91bdab301efbf9c238348fb53fdcb78773e9b9690b9cc9f63d4c",
+    "Makefile": "7cb7f76ebc447465ddb12018f0200d80f5467bd2db32b76a627c70d60dd92a2e",
+    "README.md": "3c0498edd336b96b2e38279ffaf4319f15ea86693380b135f85029dde375d2d5",
+    "analysis-tools.lock.json": "3fb73266fc02ecf960f6d3e98b781be710dad38086dd7a3ebc9234d9e80694f0",
+    "checks/semgrep/capture_catalog.cpp": "6512cd78b0a0e82a1554574ccd32db51cd39db2cfad0d45178d79ce961d99e62",
+    "checks/semgrep/capture_catalog.yaml": "9e78b7471d2b1381857f0b230053ed52919e22868ae5cc97d426675f089c9a57",
+    "checks/semgrep/hooks.cpp": "d6f6f3bc13c7cf0b7f411af6a7def8530d476310326f19cd8c69ad2ee83a63cc",
+    "checks/semgrep/hooks.yaml": "0bc3648effbc87cd82d2fda76f862bc41aef98e580206296cb98d0c7345ef1c6",
+    "checks/semgrep/instructions.cpp": "a2be6603e2e0f07011e381b20ab7a33fe47a7ecd51dc3a378317e1d0d9f42008",
+    "checks/semgrep/instructions.yaml": "06c7d5248d637f721f7c7e56eaf1927908d7b793ab3fbff2e734fa687e60986e",
+    "checks/semgrep/provider.cpp": "9cf74bd7c10056e89af951fd63618e2b0c16fb871ade45995aea41db7ff4e6c7",
+    "checks/semgrep/provider.yaml": "07f37c37cd4cbf5ae108ab1e73b4926e25461bbc5853d8046a15f7f18fe3f819",
+    "checks/semgrep/state.cpp": "4d449c32cbcd73ea437c8930356313d03ffaa64cfa1255f9b64fc75d747f33e0",
+    "checks/semgrep/state.yaml": "c03139d03b2121d2b803a9ff03e87836f03592719dd1c9d0b2ad6b1479af57e8",
+    "checks/semgrep/tools.cpp": "883bfc4b024d81517b633e52962f98f6860888e2d5cdb542507b5d7b02c8053c",
+    "checks/semgrep/tools.yaml": "a89249351037ee344e4d54dae18daf20aeec7add1aff18d23ebe61f6c4b46bac",
+    "cmake/Dockerfile.host-tests": "e4aa877f5eaf1662e76008d3e95766d5fe1ac77a7aa337e953e883d54912c74c",
+    "cmake/Dockerfile.tiger": "ed8c4bf552297de1b168c074947991b9e3abcdfb0077149bb256f764ada48192",
+    "cmake/patches/legacy-signal-gcc14.patch": "847e7f9adde485fa73eebad2ea7416b5fabfedb39aad095670672c1773c3e431",
+    "cmake/patches/libedit-size-max.patch": "aac931bf8b90321711c3ca362909235b6bb2eafd2aa4d2a731a27a3e3b8383b7",
+    "cmake/prompts.cmake": "b0cef80525ffeaaf532b3999efaac3e3089c38e3e0fa424adb98120a17fa80e9",
+    "cmake/tiger.cmake": "9ab358f3ad11b57586a6f7916558e76124af8e98bf9ed1b4d8f7668c03dec622",
+    "dependencies.lock.json": "d20d9c2114dedf0ab7116322e60b17a5b4a6ee4e45eaefaa2fe3c9e3353b793f",
+    "docs/MODERN-AGENT.md": "aa71d442422011c43c5c37397f2ad06ea9793b6cd2fa91def035c0809bd18cc1",
+    "include/app-functions.h": "8e363fc9efb6f09bed6e406c8cda95f46e18f7ca0412ee16654c9a40f26d9340",
+    "include/app-globals.h": "58b79e8bc8e47df7317aa276e7b63cd06b88f72a304e9d1ed9b7f1161b694d6c",
+    "include/app.h": "7b4aff9d8012d627b4ce9220436240b64d9a16bf9bc0b81653bf63ed753170a3",
+    "include/callback-contracts.h": "c9bd4045bd5fbb7ba1e43cbfe582281349dc1e54c7dddfcabf41b29734c3c3e8",
+    "include/codet/artifacts.hpp": "4a93be57d0098d80a2fc85bfd9cc5240e399e4e6b328feccb2349e1d3b785a06",
+    "include/codet/computer.hpp": "aa4e4ef2a400b761ed98f8dfe3b596d140eb06fa58ca7689ed927276c860eeb7",
+    "include/codet/context.hpp": "58a215c2332d2d6ae509849df7d48309cd79f9774a74e6ff90b10f98171f442e",
+    "include/codet/core.hpp": "77f5e6b4f260659ea5290e1e783e3a402b927c9ca0b2288f4c3311e2bf1943ca",
+    "include/codet/diagnostics.hpp": "31ead6755d8a6ce63d365b1a3507b20d06b868bbc3ecbc2893a26f34db750da9",
+    "include/codet/interaction.hpp": "ac2bae0c6d600d8866c06090444b842acbcb5baa31475825a20d34e36b512f03",
+    "include/codet/output.hpp": "028140382180ab93554392230f771f4024cc687a84cab1c2e09c49a194a88554",
+    "include/codet/patch.hpp": "5852178d6a37ef71b560421c84543fe789e0fb5c87d45e337088f48008ec2915",
+    "include/codet/process_control.hpp": "144592cd14597dc1d52750f4eaff9b48be7b3c517991109e93d502300db1f8e6",
+    "include/codet/prompt.hpp": "92fc6bd03ad038af57fcd90ef04fff91e30722bf4ed8db1c25f0e28f32da9b24",
+    "include/codet/support.hpp": "3b67a474dc3b7373172807c0b1120f380379f1f46c8238d84d3aca3fbfc7b6dc",
+    "include/codet/tool_registry.hpp": "6024b8a00ec83280267cc9a874eff3d9d70b60a87dc5e2394e9f9aafa51e0771",
+    "include/embedded-strings.h": "6ffac0e9967e511dd10556aed94a2ef0201c926bd01d699208e4e26834ec2e86",
+    "include/imported-interfaces.h": "f28bc5576423cc04e2138d46b5accbdc64c3e294dcce7a080fcb4da6e16f2c8b",
+    "include/observed-abi.h": "a6526dee44e4e156cdc8f2cd8a9f5ea28cd1a25c8ea3a1deb31d0e28055f2d64",
+    "include/recovered-declarations.h": "328a2d82bcdb6bab00b171749643475b7e55f40ae7508fb305782a606ffa02a9",
+    "include/recovered-layouts.h": "68c1c0b0313d38632390b8919ddc297d6240bed0c2d1de307fce3f0cb431f195",
+    "include/recovered-storage.h": "a655bf2e2172d9293a2920b3f5ffb6ed6e7164e03b16d1c3400547d00648ce09",
+    "include/recovered-types.h": "22d85c337901a5b84de45b08c20409256586c6cc9e5ca4a13ec783788ca76caa",
+    "include/text_compat.h": "6ff5d6fe7251e3b156983ec5d1e4c2dea5bf08cdf40ac68734e1546850dd0da7",
+    "scripts/analysis-tools.py": "2c3a43c60394dba479a73c2ab524158c0dfb6e19a9a3d83380356592059bf57f",
+    "scripts/analyze-modern.py": "7264ff6ab98f91af008f5ae738c19c79157a487ea18e03ae4aa216f0675317c5",
+    "scripts/build-tiger-sysroot.py": "06667fc5b02feb917016915f73cbc6ed52c290df21303a87657c7af2f8c38cbd",
+    "scripts/fetch-deps.py": "2b4c4102076de4fc70e5a642ddf05d957b0388e3094d9465fa2164a3dca60c09",
+    "scripts/import-prompts.py": "d01431e832bb5b6563ebc3245e547e8130dce63b2e8798a90386fe4e6626166c",
+    "scripts/semgrep-report.py": "36b0c5441d982f334dab1f05d61930260970b6462efa788ad95d7aa9f2df28ae",
+    "scripts/tiger-acceptance.sh": "694eebe6979bfaba776ea33d1889c7115dcea35ea55e663076f6989c46926d43",
+    "scripts/tiger.py": "0fc30669c4f26f238aecc23690b136f2785ea6faec5853491c5196333ab5f32d",
+    "scripts/verified_sources.py": "3c9f42b90ab88b9c711caf6aea2bc54640060b8596374e32b131d4f83b3b795f",
+    "scripts/verify-tiger.py": "9da6f93cabf3eba59e664ee988d7fd696f276ffc2e30688dbf013fb024f36e8f",
+    "src/modern/agent.cpp": "3280fe45afaf30b829b8e29d851728ead354044d6308373cd1d530a15ec4c3fd",
+    "src/modern/artifacts.cpp": "9f7a2d23f3d2ff2f3b6afcb9746e81dd7cd5390963a268028ee30e1081af6488",
+    "src/modern/capture_catalog.cpp": "4f42d4a283cb45ef25bafe87ae2f6f081c739a728d87d027d195db4cad512aea",
+    "src/modern/cli.cpp": "3a023fc68dbe8870c3be354175f250b7c15c7d1778cbd6b474fd5817ab360204",
+    "src/modern/computer.cpp": "ccb8fd5b7c0847a18ac44f32dd2319df25e4a173fec947fd1ea5a67f3c86263e",
+    "src/modern/config.cpp": "42c685ae9ac5499363c20de5bb8b99d15ff0a6596aed57dd607ca3936649d8c5",
+    "src/modern/context.cpp": "a46e94b1fe4980d6a1840f718dc5654ba3cdf05caa9c732054a806740350a08b",
+    "src/modern/failure.cpp": "aabbc34d0e235141e79fee2c370d4ed7f3450eb89787ed467fb1b1bacf383a2a",
+    "src/modern/hooks.cpp": "21afab2dbdfae97ed2406bc5d28e30bc55e63598cac07e418c9f41b9971e2c06",
+    "src/modern/images.cpp": "bb703b2e4516c75d9dfda05af4e1cfac57fb0d4d84e7ee56fb1a631b528b1510",
+    "src/modern/inspection.cpp": "b36fadfea5ef50b49e8a547ad3f275be1935df8436874bfac14089750cfa2379",
+    "src/modern/instructions.cpp": "04e7f17b7ccbdd3e223cacf5e75971a4ea4ec3dfaa240508806aef48739119f6",
+    "src/modern/interaction.cpp": "1e18bf1c1f8cb1a221fc458661687f148c0479365c2912bdeb58265d0a2f82ed",
+    "src/modern/main.cpp": "67bb002f35e6fab656016cccd493ea985199858b106598fa8337185925583e1c",
+    "src/modern/output.cpp": "cbd766ddcb0ddf86713e4cdd9a8bb9c00ab32072e5a26b6d0abdfa35d1762118",
+    "src/modern/patch.cpp": "8c99791527f8a6b09b35674802db3c29cafe2adde4700a67ca7adda60562f770",
+    "src/modern/platform.cpp": "016762d75b12c415fa0634598f95c5a67a9ec8ff4a7a1395e455e9e70a1af4ba",
+    "src/modern/prompts.cpp": "3bf1d2966d44bcc98f3ed71e4b89905eb7beccee6430fd7899cc9bb60419e5a8",
+    "src/modern/provider.cpp": "d6fe765aa999ef6a2adbe04fe269bfb903812c2bc0b134d5e35fa6a27544bde9",
+    "src/modern/reliability.cpp": "d924d9c1e8875c7b7e053509e2ab2fe3e24e5aee814c706dbdc9c4e608461356",
+    "src/modern/state.cpp": "08410590d502dc06f343be40fd00ce3877c7a7438bd0614be7533a1e733c9892",
+    "src/modern/support.cpp": "40dfad2759619972f3b0eba053a24b00877b05ce2defb648b727ebd608dd594a",
+    "src/modern/tool_registry.cpp": "bbec68092f2561c5d4596e5976c7766e5715eb4ccddf03ef61b99a8ed7b00a93",
+    "src/modern/tools.cpp": "3936f07d8bac9c1a14a059e5180d1ec163fd3baf306cecf8dfba651e7d2a4375",
+    "src/storage.c": "d3393530d3b2ef67dd12587eda3cca47d0df7b328e56e2790af8092efcc35428",
+    "src/subset.c": "319312c2d33aecb144d39a370ebb1aebab8c507249f4897d1826529dde79b53c",
+    "src/subsystems/abi-semantics.c": "93a619b3a7c0aff2f662cf7b4a5e2af4272da13aa7b9e4c766233aacea981c37",
+    "src/subsystems/bundled_cjson.c": "b4e154c9d7c85cb7dca32370fe3599c65daa18b13d08780631d8bc840adb431e",
+    "src/subsystems/cli.c": "09cdb5fda05c38b1730d0bdcbb35d8228b17b99d56c06d1e8e1b83d64bf7d0d7",
+    "src/subsystems/configuration.c": "4f700b72ad789b6493a8d5c0b7728a65388db5081560566aa61adcf6533f78af",
+    "src/subsystems/context.c": "a97ebc75e5ff6e767e7a932ac75ee4d1dd4f5f99fa05ae583476d622381945e5",
+    "src/subsystems/conversation_state.c": "a95e1d45d81b8b2e19278eecb346ac73dccfac6b20503b379ab9d53c3169b6a2",
+    "src/subsystems/documentation_rag.c": "db7c885baaa724ce8dc40dfe1e2d9d9984791a220fa01f4adfb81961225ff8c4",
+    "src/subsystems/dynamic_strings.c": "24fecba8000a75c5211aa8008a809ec3e34d5c011c16e5fbf810f4fb5efe42af",
+    "src/subsystems/highlighting.c": "53a19497e506f8bd7f876b3a543dc05660877d1aac119c398bb01ee4256e8cd7",
+    "src/subsystems/hooks.c": "ac4c5966f1981ac92c9cf484b6051d8d990d43381d4c1f1dc72a252f87edf061",
+    "src/subsystems/http.c": "c192c89d6cdb11cab9376d0cd95baacef75cfc12cdca26470c31e0bd8d728c05",
+    "src/subsystems/mcp.c": "f8df990285b92e8038cfb545a5f96e6896a226bcc2b7caeddb7f49e3898dd40c",
+    "src/subsystems/models_profiles.c": "4fe98545d86ba7808a3e79a26a5f0b00699175195a1a789f858f1c8b7b4040e4",
+    "src/subsystems/plans_executor.c": "38589530bc5fee2efff6ceb101d90fc90543458634a8bde8f5efc3634cb521b6",
+    "src/subsystems/platform.c": "1eade76569cc39c26555af6f1faffbf25a20a4f5dcf355124b23560d724b61a2",
+    "src/subsystems/process_diff.c": "c24d8e85c88af2264bf57be99a20a1de619d2bed2069ae23e980c00aa242e089",
+    "src/subsystems/project_initialization.c": "6b69c1323bd41506547b94ba1c9a5b217d115bdb4017ca9495bb0dfec616c2fe",
+    "src/subsystems/provider_anthropic.c": "3104b855848ce0d1768a7639bd18f96f3eab7a685ed9b44b508297b7a8a46cf5",
+    "src/subsystems/provider_common.c": "6f7b23924f46271bf50953643d229fa636fac3bbe6e770d758c7187fd54601c0",
+    "src/subsystems/provider_google.c": "7f9e858c4ad131259ae12f95cc889a8a76b20e0e2868323ab8a69ba3908029a1",
+    "src/subsystems/provider_ollama.c": "3b8e96b8f0f0d64d2fa35d91b8208180000906dd37fe9737ad014bdce2b7935c",
+    "src/subsystems/provider_openai.c": "d3c5420860e5a6832d04177c71674d42d314dc8e2636f2dfca0d0f35824d7889",
+    "src/subsystems/reasoning.c": "e2ff77174797a2780b0808a3004fed008ee3bd78f1ddb558d02ec564091e7456",
+    "src/subsystems/recovered-storage.c": "d48a93b4c645db65cdfb596504b6df932a3aa10f38601af0f6895343581797ad",
+    "src/subsystems/routing.c": "d5af0386dd2fac4f6f8df637d1439f24192aa5e4fb62ca1ed8d126ecf46dee6a",
+    "src/subsystems/runtime_startup.c": "75ec2dc31dd692a33a58f4c16eade3c5f9d6e3aed87f5645427cb09a7aff16fd",
+    "src/subsystems/sessions_history.c": "b15685f5cffd1b5ba08941efa3a904b8b820131d4d8f3adfb0382efa140c39b9",
+    "src/subsystems/sqlite_tools.c": "194674e1c599bd074eb432b5b86a9267693ea1a2a4dd555ad299aa4b92077fea",
+    "src/subsystems/stdio_abi_stubs.c": "04ced008179ea64bb0db0b721b8a48c2ccd3857cac3547f9c6452ea2cf331650",
+    "src/subsystems/subagents.c": "56c3a28f879e3853518aa76a31c9de95b6fababad3d17283f5fe02b0afb3ed7c",
+    "src/subsystems/terminal_ui.c": "457ba9bd5e38547257a1268ddd2b30a10b024ea5736508a2fc34387469729ed2",
+    "src/subsystems/themes.c": "e0b576961c7616e4cc93c0e11362c9a188686680c1e3d72935ad056d2bad6e26",
+    "src/subsystems/tools.c": "8085640e41f63652e4cf3a51faf05efc08ee805080b5bbe4d300d92d6f59d4bb",
+    "src/subsystems/web_fetch.c": "c35a4d15f039e119d03ff1c5afa8f9f14738d33096867eeb2c55f44c1417fed1",
+    "src/subsystems/web_search.c": "88f9b395463dc66b70d89945fa35afae92ef21a5e94e78e88c7ebe1ac07408ff",
+    "src/subsystems/workers.c": "9766113fea5d30b905e9f1d4c6771e18876772751ca0efa3a6ecd7197191a6f6",
+    "src/text_compat.c": "00213a0ad26fd98c9bd9a0a45fb84f9b853fcac8df7fed05c79e4d6444fb2205",
+    "tests/catalog_recovery_test.cpp": "22a3290aed9e7b6b87017e14214eb15a60ea5879250bc6dfee67f205fa8e016b",
+    "tests/checkpoint_test.cpp": "0f59c0aed2b1017d3ea0c875293a6155e9422e42467f05ce5dcc766390e8ea66",
+    "tests/cli_integration.py": "32ae40debf3845152f863aa38dfe26d1e7a6e02a3b34d6270daf56dfd0bb3336",
+    "tests/cli_test.cmake": "a1f32be993fcc74dea6cae5b24bccff18981d2d92317285d8c99a91694461702",
+    "tests/context_history_test.cpp": "33e71f9feb06da57f6f5bd9fce3107146afe40f50b9e498d452328fb4a788947",
+    "tests/core_contract.hpp.in": "20abaa20367b4e0d6a9c336e6c3ecd39aeda1d4e2a1e006415f0f09161242bd8",
+    "tests/core_test.cpp": "589a9e4ed1344fdc086ecf12df625c4d7992b6a3da59d0af5b05ae4c0c59abe7",
+    "tests/core_tools.hpp": "ce0eb433db83fcee87df6b51645d0e8cc38bf9e6daf9b18439d8d3b98a505d21",
+    "tests/final_review_test.cpp": "aadd7c6eac00d3fee2dc7696b475967207a33291a1f251c1df7aa51c807e056a",
+    "tests/fixtures/core-tools-v1.json": "457fa3b083c366adea51b72bb799bb6668744709fd238aa7bf68f4c1b62ca496",
+    "tests/fixtures/events-v1.jsonl": "9e33d41bb3ed9051fe968cb8d2b78f18cf17bceb3dbe209ad235b3035209b29a",
+    "tests/followup_test.cpp": "a5c470592b3256e3177d6c3139a33009028a69171ffe5da95869dc7765f17368",
+    "tests/foundation_test.cpp": "5eda0fce3c65f5f405d00ee32945c0262314aa9029fe9fb4b64c878fbb5d6c00",
+    "tests/hermetic.py": "3d5f24815d29a5bc0abfb4bf223a4280bfb114388c434731f246d347657d6407",
+    "tests/modernization_test.cpp": "2bcd991fbace2dced5222e4e76d892768e220a2795ba4e9b62bc9e3b71c3897e",
+    "tests/output_test.cpp": "92a32d664d4066b28a79746f87c2cf3dcaf0c32de941dfd5653f39d43af8ceb1",
+    "tests/persistence_bench.cpp": "e5bc623694e0493a6be5a5a0c938a35902865f8d44bc3b574beec912d85b67a9",
+    "tests/process_helper.hpp": "b748b213b38db30139f41f2f6c468c737dc6bdd93d94d825b2a520c9d7dddd23",
+    "tests/process_policy_test.cpp": "bbfe3a5eb044ea419c293129955491a95c7cd46c6ec2dd767744209128be104e",
+    "tests/prompt_support.hpp": "1a3d5e92e6eb9dcdec36bb355d7cffefc31028403ed0436a260c6dc47517456e",
+    "tests/prompt_test.cpp": "ad3c05cf3af8be9e1895ba7b782543ff7b7513f665a1f9e5da4ff9b2d74dbfb8",
+    "tests/remaining_test.cpp": "05b8b747e2671330beece0cf4f469ff08c79a21241b814914773876f89430fe9",
+    "tests/review_test.cpp": "ad7cacb15f82466b6c5d5dac800143f53ccb60753dd3f74ab85d23888b989574",
+    "tests/runtime_test.cpp": "b95c0cace683992eb3bdd21c60ff3b994b9cc1a1ccadbb6d04505d24cb858756",
+    "tests/sanitization_bench.cpp": "fb42f5389a915368583755ea4af26b3ec89201452a63b1623f88ca43be0d9549",
+    "tests/small_core_test.cpp": "2cb869f7db67fffa3df36113a2b125caf46ab21d94d06b852ecd107782935b0c",
+    "tests/temp.hpp": "a8c9cef361ab35eb2e753b78b258ed120997507a976a2bc46ec199d52215bc6d",
+    "tests/test_analyze_modern.py": "7c55ebe3ddee956cc47ae482f9169e38fcec8bc6a2b27ac9262586027a545360",
+    "tests/test_build_integrity.py": "c8529bb60dae76ce3373fd5531c282a792ec9b47a5a32574f49e8f10ce0bafa2",
+    "tests/test_hermetic.py": "ecba7689d9ca4eb2e2a831a44b440862cf4a575867088dd6318029ee82413de9",
+    "tests/test_main.cpp": "2ca28b234523f2e36cd133466a3e17db25e39648ea73cea5e78cb5ea1a1b72a0",
+    "tests/test_prompts.py": "2d3aec9cf990270d254666f3b894807bbc8fa01edc04815f8b214f31b4cb9900",
+    "tests/test_semgrep_report.py": "1f9f475026cba34898bd762486c606553a5d84e9df42879e368bb3652a62e82d",
+    "tests/tool_contract_test.cpp": "98be1c084d30e10ed26ba7352a6431d7e86a9d6bd7ef5ebb605d0b0e43688a42",
+    "tiger-dependencies.lock.json": "d209dcf76da392fc9a87018df647b3dc0bf5a0e29045486d86a2a6531283e037"
+  }
+}

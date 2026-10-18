@@ -1,4 +1,5 @@
 {
+  "metadata_normalization": "Interpreter path made repository-relative; original run versions, timestamps, results and source hashes are unchanged. This edit is not a rerun.",
   "recorded_utc": "2026-10-17T21:13:17.440423+00:00",
   "baseline_commit": "711fcce65463c5eb0247c3c8acd8dfe65650f43d",
   "schema": 6,
@@ -109,7 +110,7 @@
       "analysis_errors": 0,
       "environment": {
         "python": "3.12.15 (main, Sep 30 2026, 22:04:19) [Clang 17.0.0 (clang-1700.6.4.2)]",
-        "executable": "/Users/haroldmartin/Downloads/Tiger/compiled-agent/codet-context-history/build/semgrep-venv/bin/python",
+        "executable": "build/semgrep-venv/bin/python",
         "platform": "macOS-15.8-arm64-arm-64bit",
         "semgrep": "1.177.0"
       },

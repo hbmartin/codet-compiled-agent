@@ -363,6 +363,9 @@ size_t provider_result_bytes(const Config &, const Message &, const std::string 
 struct Provider {
   virtual ~Provider() = default;
   virtual void restore_conversation(const Json &) {}
+  virtual std::optional<size_t> conversation_prefix() const {
+    return std::nullopt;
+  }
   virtual Json conversation_state() const {
     return nullptr;
   }
@@ -387,10 +390,18 @@ class ApiProvider final : public Provider {
   CredentialStore &credentials_;
   Clock &clock_;
   mutable Json conversation_ = nullptr;
+  mutable std::optional<size_t> unchanged_parts_;
 
 public:
   void restore_conversation(const Json &state) override {
     conversation_ = state;
+    unchanged_parts_ =
+        state.is_object() && state.contains("messages") && state.at("messages").is_array()
+            ? state.at("messages").size()
+            : 0;
+  }
+  std::optional<size_t> conversation_prefix() const override {
+    return unchanged_parts_;
   }
   Json conversation_state() const override {
     return conversation_;
@@ -410,9 +421,14 @@ struct Session {
   std::optional<std::string> effort = std::nullopt;
   Json provider_state = nullptr;
 };
+struct ProviderStateUpdate {
+  uint64_t revision = 0;
+  size_t unchanged = 0;
+};
 class StateStore {
   struct Impl;
   std::unique_ptr<Impl> impl_;
+  Session read_session(const std::string &, bool, bool);
 
 public:
   explicit StateStore(const fs::path &, const fs::path &artifact_root = {},
@@ -428,11 +444,19 @@ public:
   Session fork(const Session &);
   void save(const Session &);
   void update_metadata(const Session &);
-  void append_messages(const Session &, size_t first, bool provider_state = false);
+  void append_messages(const Session &, size_t first, bool provider_state = false,
+                       const std::optional<ProviderStateUpdate> & = std::nullopt);
   void revise_messages(const Session &, const std::vector<size_t> &);
   void replace_history(const Session &);
   void complete_tool(Session &, const ToolCall &, Message);
-  void save_provider_state(const Session &);
+  void save_provider_state(const Session &,
+                           const std::optional<ProviderStateUpdate> & = std::nullopt);
+  uint64_t provider_revision(const std::string &) const;
+  uint64_t provider_rows_read() const;
+  Json recovery_facts(const std::string &) const;
+  Json repair(const std::string &, bool last, bool provider_cache, bool recovery, class Tools &);
+  std::string preserve_response(const Session &, const Message &);
+  void discard_recovery_record(const std::string &);
   void sync();
   uint64_t serialized_bytes() const;
   size_t provider_cache_bytes() const;
@@ -556,7 +580,9 @@ public:
   void reference_results(const std::vector<Message> &);
   void restore_references(const std::vector<std::string> &);
   std::string retain_result(Message &);
-  Json execution_state(const std::vector<Message> &) const;
+  Json execution_state(const std::vector<Message> &,
+                       const std::function<Json()> &recover = {}) const;
+  std::string execution_context(const Json &);
   size_t history_bytes(const std::vector<Message> &messages) const {
     return provider_history_bytes(config_, messages);
   }
@@ -570,6 +596,7 @@ public:
     inspection_budget_ = bytes;
   }
   std::string result_reference(const Message &) const;
+  std::string result_identifier(const Message &) const;
   ToolResult execute(const ToolCall &, const Cancellation &);
   std::string instructions() const;
   std::string dynamic_context(bool anticipate_indexes = false) const;

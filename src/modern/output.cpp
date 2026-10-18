@@ -169,14 +169,19 @@ void OutputSpool::flush_checked() {
   Descriptor lock(open_regular(store_->directory_ / ".capture.lock", O_CREAT | O_RDWR, true));
   require(::flock(lock.fd, LOCK_EX) == 0, "Lock output store");
   ++store_->metrics.batches;
-  if (fd_ < 0) {
-    path_ = store_->directory_ / ("capture-" + unique_id() + ".txt");
-    fd_ = open_regular(path_, O_CREAT | O_EXCL | O_RDWR, true);
-    require(::flock(fd_, LOCK_EX | LOCK_NB) == 0, "Own output capture");
-    ++store_->metrics.files;
-  }
   const auto requested = std::min(pending_size_, store_->limit_ - bytes_);
-  const auto keep = available(requested);
+  size_t keep = 0;
+  // Reconcile external namespace changes before creating our own entry. Catalog
+  // recovery may retry this block, but never writes capture output twice.
+  store_->with_catalog([&] {
+    if (fd_ < 0) {
+      path_ = store_->directory_ / ("capture-" + unique_id() + ".txt");
+      fd_ = open_regular(path_, O_CREAT | O_EXCL | O_RDWR, true);
+      require(::flock(fd_, LOCK_EX | LOCK_NB) == 0, "Own output capture");
+      ++store_->metrics.files;
+    }
+    keep = store_->account_reservation(*this, requested);
+  });
   if (keep < requested)
     error_ = "Output capture store capacity exhausted";
   size_t at = 0;
