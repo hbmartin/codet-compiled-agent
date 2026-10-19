@@ -327,11 +327,6 @@ void CaptureStore::rebuild_catalog() {
   transaction.commit();
   catalog_->observe(directory_);
 }
-size_t CaptureStore::reserve(OutputSpool &spool, size_t requested) {
-  size_t reserved = 0;
-  with_catalog([&] { reserved = account_reservation(spool, requested); });
-  return reserved;
-}
 size_t CaptureStore::account_reservation(OutputSpool &spool, size_t requested) {
   auto *db = catalog_->db;
   struct stat own{};

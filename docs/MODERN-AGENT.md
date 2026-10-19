@@ -157,7 +157,7 @@ ordinary close accounting uses targeted active-row checks rather than directory 
 
 Summary generation retains the configured output allowance and an 8 KiB visible-prose maximum. The conservative escaping-derived target is advisory: summaries are accepted using actual serialized continuation size. A genuinely oversized summary gets one smaller-target retry, counted in usage and request limits, with one PreCompact hook invocation. Empty or exhausted responses fail without replacing history. Manual compaction shares these rules and does nothing when no history can be reduced.
 
-SQLite schema 6 stores ordered message rows, session metadata, tool journals and provider conversation parts separately. Append and revision operations serialize changed messages only. Tool completion, its transcript result and associated references commit atomically; compaction publishes a replacement history generation after required archives exist. The portable capture/result registry, fork inheritance, relocation behavior and paged indexes/SESSION.results.jsonl inspection remain. See [migration and restore instructions](RELIABILITY-MODERNIZATION.md#schema-6-and-restore).
+SQLite schema 7 stores ordered message rows, session metadata, tool journals and provider conversation parts separately. Append and revision operations serialize changed messages only. Tool completion, its transcript result and associated references commit atomically; compaction publishes a replacement history generation after required archives exist. The portable capture/result registry, fork inheritance, relocation behavior and paged indexes/SESSION.results.jsonl inspection remain. See [migration and restore instructions](RELIABILITY-MODERNIZATION.md#schema-7-and-restore).
 
 Retired image occurrences are archived in a versioned JSONL observation ledger before history replacement. Checkpoints retain references; protected images that have not yet been delivered survive compaction until their first request. Later image input can be explicitly reloaded. Inspection allowances refresh before each tool
 in a batch and reserve pending plan/index growth. Pages use provider wire-payload bytes rather
@@ -310,14 +310,14 @@ Other providers retain the single untagged-message path. Phases alone never forc
 request. Tool batches, pending user input and response completion retain their existing
 follow-up behavior. Full provider replay remains intact.
 
-SQLite schema 6 retains nullable per-session reasoning effort and result references alongside ordered messages and provider conversation parts; schemas 1–5 migrate forward after a private backup and ownership checks.
+SQLite schema 7 retains nullable per-session reasoning effort and result references alongside ordered messages and provider conversation parts; schemas 1–6 migrate forward after a private backup and ownership checks.
 Resume/fork keep explicitly saved effort for the same provider/model. Explicit CLI/profile effort wins;
 a changed provider/model falls back to configured effort. Inherited defaults remain NULL in SQLite
 and follow later configuration changes. Legacy empty saved values load as inherited; nonempty
 legacy selections remain pinned because their provenance is unavailable. Agent turns and /new
 preserve this distinction. Migrations acquire a write transaction and reread the schema version
 before DDL; concurrent upgraders serialize and recheck, with all steps rolled back on database errors. Older messages without
-`assistant_items` remain readable. Earlier binaries reject schema 6, so use the new binary
+`assistant_items` remain readable. Earlier binaries reject schema 7, so use the new binary
 after migration. No credentials or configuration locations change.
 
 See [reference fingerprints](validation/core-alignment-reference.json) and the
@@ -330,8 +330,29 @@ The [checkpoint/context follow-up evidence](validation/checkpoint-context.json) 
 pending-output recovery, normalized archive identity, exact wire sizing, resolved Semgrep
 versions, and the mixed-history benchmark on the schema-6 main baseline.
 
-See [reliability and provider modernization](RELIABILITY-MODERNIZATION.md) for schema 6, durability, raw error output, semantic compaction, API defaults and signed conversation epochs.
+See [reliability and provider modernization](RELIABILITY-MODERNIZATION.md) for schema 7, durability, raw error output, semantic compaction, API defaults and signed conversation epochs.
 
 ### Provider-state persistence
 
-Known historical empty Anthropic assistant items normalize to empty wire arrays while retaining their source positions. Loads do not rewrite storage; the next owning save persists normalization. Other malformed derived caches require explicit repair. The full snapshot cache remains capped at 8 MiB. Large Anthropic epochs use an unchanged-prefix hint bound to a committed session revision and SQLite data version; ordinary appends serialize only the changed suffix and do not reread unchanged provider rows. Missing or stale hints fall back to full validation. Nested writes invalidate published state, and only a successful owning commit publishes a new cursor or snapshot. Full provider request serialization still scales with transmitted history.
+Known historical empty Anthropic assistant items normalize to empty wire arrays while retaining their source positions. Loads do not rewrite storage; the next owning save persists normalization. Other malformed derived caches require explicit repair. The full snapshot cache remains capped at 8 MiB. Large Anthropic epochs use an unchanged-prefix hint bound to a committed session revision and a per-session database token; ordinary appends serialize only the changed suffix and do not reread unchanged provider rows. Missing or stale hints fall back to full validation. Nested writes invalidate published state, and only a successful owning commit publishes a new cursor or snapshot. Full provider request serialization still scales with transmitted history.
+
+Schema 7 adds `provider_revisions` and triggers for all provider-part mutations, including external
+SQLite writes and moves between sessions. Unrelated session commits preserve prefix tickets;
+changed session tokens force strict validation. Tokens are captured inside the owning transaction
+and published after commit. Schema changes revalidate the revision table and triggers before reuse.
+An indexed tail check rejects unexpected provider rows beyond the committed prefix.
+
+Explicit recovery repair preserves unavailable original references in `recovery_unavailable` facts.
+It replaces unusable active pointers with fresh relative archives marked as partial surviving
+observations, retains journal records, and carries uncertainty through reconciliation, forks and
+compaction. Newly created candidates are cleaned after failed publication; errors after backup
+creation name that backup. No historical actions are replayed. Read-only repair inspection does
+not rewrite session rows; opening an older database can still perform the normal schema migration.
+
+Recovery archive decoding uses a bounded 8 MiB cache, rechecks private file identity on reuse, and
+retries unavailable archives. Live process observations remain fresh. All request paths share
+runtime-message construction and runtime-aware budgets. Provider decoding failures retain raw
+frames and become provider errors, so optional compaction can safely report and skip them.
+
+[PR #17 follow-up validation](validation/pr17-correctness-scaling.json) records schema-7 migration,
+rollback, repair, replay and cache regressions alongside the offline validation matrix.

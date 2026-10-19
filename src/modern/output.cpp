@@ -153,9 +153,6 @@ OutputSpool::~OutputSpool() {
   if (fd_ >= 0)
     ::close(fd_);
 }
-size_t OutputSpool::available(size_t requested) {
-  return store_->reserve(*this, requested);
-}
 void OutputSpool::flush_checked() {
   if (pending_size_ == 0)
     return;

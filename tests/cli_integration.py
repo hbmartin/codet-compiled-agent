@@ -36,6 +36,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
         if self.path in ('/codex','/v1/responses'):
             prompt=next((m.get('content','') for m in reversed(body['input']) if m.get('role')=='user'),'')
+            if prompt.startswith('fixture-malformed-') or (self.server.malformed_summary and not body.get('tools')):
+                mode=prompt[len('fixture-malformed-'):]
+                payload='{broken' if mode=='syntax' else json.dumps({'type':'response.output_text.delta','delta':42})
+                data=('data: '+payload+'\n\n').encode()
+                self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
             if prompt.startswith('fixture-incomplete-'):
                 malformed=prompt.endswith('malformed')
                 payload='{broken' if malformed else json.dumps({'type':'response.incomplete','response':{'incomplete_details':{'reason':'max_output_tokens'}}})
@@ -161,6 +166,7 @@ class CliTests(unittest.TestCase):
         self.env=dict(__import__("hermetic").environment(self.root/"user-home"),CODET_HOME=str(self.home));self.env.pop('SEARXNG_URL',None)
         self.server.requests=[]
         self.server.before_reply=None
+        self.server.malformed_summary=False
     def tearDown(self):self.tmp.cleanup()
     def run_cli(self,*args,input=''):
         return subprocess.run([BIN,'-C',str(self.workspace),*args],input=input,text=True,capture_output=True,env=self.env,timeout=15)
@@ -952,6 +958,40 @@ class CliTests(unittest.TestCase):
                 self.assertIn('output limit or interruption',error['message'])
                 self.assertEqual(error['body'],'{broken' if mode=='malformed' else json.dumps({'type':'response.incomplete','response':{'incomplete_details':{'reason':'max_output_tokens'}}}))
                 self.assertEqual(len(self.server.requests),1)
+
+    def test_curl_malformed_fields_keep_raw_frames_without_retries(self):
+        for mode in ('syntax','typed'):
+            self.server.requests=[]
+            r=self.run_cli('exec','--output-format=json','-c','providers.openai.wire_api="responses"','fixture-malformed-'+mode)
+            self.assertEqual(r.returncode,1,r.stderr)
+            error=json.loads(r.stdout)['provider_error']
+            self.assertIn('Malformed provider stream',error['message'])
+            self.assertEqual(error['body'],'{broken' if mode=='syntax' else json.dumps({'type':'response.output_text.delta','delta':42}))
+            self.assertEqual(len(self.server.requests),1)
+
+    def test_real_curl_optional_compaction_skips_malformed_typed_summary(self):
+        import sqlite3
+        r=self.run_cli('exec','--json','simple');self.assertEqual(r.returncode,0,r.stderr)
+        session=json.loads(r.stdout.splitlines()[0])['thread_id']
+        with sqlite3.connect(self.home/'state.sqlite3') as db:
+            old={'role':'assistant','text':'o'*20000}
+            db.execute('UPDATE session_messages SET payload=? WHERE session=? AND position=1',(json.dumps(old),session))
+        # Measure the fixture's stable system/tools cost, then leave room for the
+        # complete history while crossing the optional compaction threshold.
+        r=self.run_cli('exec','--output-format=json','-c','providers.openai.wire_api="responses"','budget-probe');self.assertEqual(r.returncode,0,r.stderr)
+        body=self.server.requests[-1]['body']
+        system=body['input'][0]['content']
+        schemas=[dict(name=t['name'],description=t['description'],input_schema=t['parameters']) for t in body['tools']]
+        fixed=len(system.encode())+len(json.dumps(schemas,separators=(',',':'),ensure_ascii=False).encode())+256
+        context=(fixed+16384*3+24096+2)//3
+        # max_output_tokens below follows the CLI default explicitly so sizing
+        # remains stable if a fixture's global config gains another override.
+        self.server.requests=[];self.server.malformed_summary=True
+        r=self.run_cli('exec','resume',session,'-c','providers.openai.wire_api="responses"','-c','max_output_tokens=16384','-c','context_tokens='+str(context),'continue')
+        self.assertEqual(r.returncode,0,r.stderr)
+        self.assertIn('Optional compaction skipped',r.stderr)
+        self.assertEqual(sum(not request['body'].get('tools') for request in self.server.requests),1)
+        self.assertEqual(sum(bool(request['body'].get('tools')) for request in self.server.requests),1)
 
     def test_repair_backs_up_corrupt_cache_and_preserves_failed_response(self):
         import sqlite3

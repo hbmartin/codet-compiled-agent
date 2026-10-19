@@ -19,6 +19,7 @@
 #include <set>
 #include <sstream>
 #include <sys/stat.h>
+#include <unistd.h>
 
 namespace codet {
 namespace {
@@ -471,6 +472,21 @@ bool private_regular(const FileSystem &files, const fs::path &root, const fs::pa
   }
   return fs::is_regular_file(value) || (directory && fs::is_directory(value));
 }
+std::string recovery_identity(const fs::path &path) {
+  struct stat status{};
+  if (::lstat(path.c_str(), &status) || !S_ISREG(status.st_mode) || status.st_uid != ::geteuid() ||
+      (status.st_mode & 0077))
+    throw Error("Checkpoint recovery archive must be a private owned regular file");
+#if defined(__APPLE__)
+  const auto modified = status.st_mtimespec, changed = status.st_ctimespec;
+#else
+  const auto modified = status.st_mtim, changed = status.st_ctim;
+#endif
+  return std::to_string(status.st_dev) + ":" + std::to_string(status.st_ino) + ":" +
+         std::to_string(status.st_size) + ":" + std::to_string(modified.tv_sec) + ":" +
+         std::to_string(modified.tv_nsec) + ":" + std::to_string(changed.tv_sec) + ":" +
+         std::to_string(changed.tv_nsec);
+}
 } // namespace
 bool Tools::private_anchor(const fs::path &root) const {
   const auto key = fs::absolute(root).lexically_normal();
@@ -630,6 +646,7 @@ Json Tools::execution_state(const std::vector<Message> &messages,
                             const std::function<Json()> &recover) const {
   std::map<std::string, Json> recovery, unavailable;
   Json journal;
+  std::map<fs::path, std::pair<std::string, std::shared_ptr<const Json>>> observed;
   const auto collect = [&](const Json &facts) {
     if (!facts.is_array())
       throw Error("Invalid checkpoint recovery state");
@@ -652,15 +669,46 @@ Json Tools::execution_state(const std::vector<Message> &messages,
           if (!result_name(ref) || !private_anchor(artifact_directory(config_)) ||
               !private_regular(files_, artifact_directory(config_), path))
             throw Error("Invalid checkpoint recovery reference");
-          const auto bytes = files_.read(path, size_t{8} * 1024 * 1024);
-          if (bytes.find('\0') != std::string::npos)
-            throw Error("Invalid checkpoint recovery JSON");
-          const auto archive = Json::parse(bytes).get<Message>();
-          if (archive.role != "system" || archive.origin != "recovery" ||
-              archive.message_id != path.stem().string() ||
-              digest(archive.text) != archive.message_id)
-            throw Error("Invalid checkpoint recovery archive identity");
-          collect(Json::parse(archive.text));
+          const auto identity = recovery_identity(path);
+          auto cached = recovery_archives_.find(path);
+          if (cached != recovery_archives_.end() && cached->second.identity != identity) {
+            recovery_archive_bytes_ -= cached->second.bytes;
+            recovery_archives_.erase(cached);
+            cached = recovery_archives_.end();
+          }
+          if (cached != recovery_archives_.end()) {
+            cached->second.used = ++recovery_archive_clock_;
+            observed[path] = {identity, cached->second.facts};
+            collect(*cached->second.facts);
+          } else if (observed.count(path) && observed.at(path).first == identity) {
+            collect(*observed.at(path).second);
+          } else {
+            const auto bytes = files_.read(path, size_t{8} * 1024 * 1024);
+            if (bytes.find('\0') != std::string::npos)
+              throw Error("Invalid checkpoint recovery JSON");
+            const auto archive = Json::parse(bytes).get<Message>();
+            if (archive.role != "system" || archive.origin != "recovery" ||
+                archive.message_id != path.stem().string() ||
+                digest(archive.text) != archive.message_id || recovery_identity(path) != identity)
+              throw Error("Invalid checkpoint recovery archive identity");
+            auto facts = std::make_shared<const Json>(Json::parse(archive.text));
+            collect(*facts);
+            observed[path] = {identity, facts};
+            constexpr size_t limit = size_t{8} * 1024 * 1024;
+            const auto size = facts->dump().size();
+            if (size <= limit) {
+              while (size > limit - recovery_archive_bytes_ && !recovery_archives_.empty()) {
+                const auto oldest = std::min_element(
+                    recovery_archives_.begin(), recovery_archives_.end(),
+                    [](const auto &a, const auto &b) { return a.second.used < b.second.used; });
+                recovery_archive_bytes_ -= oldest->second.bytes;
+                recovery_archives_.erase(oldest);
+              }
+              recovery_archives_.emplace(path, RecoveryArchive{identity, std::move(facts), size,
+                                                               ++recovery_archive_clock_});
+              recovery_archive_bytes_ += size;
+            }
+          }
         }
       } catch (const std::bad_alloc &) {
         throw;

@@ -654,7 +654,7 @@ TEST_F(Modernization, LegacyMigrationBacksUpAndPreservesMalformedBytesIndependen
   EXPECT_THROW(store.load_id("nul", false), Error);
   size_t backups = 0;
   for (const auto &entry : fs::directory_iterator(config.state_root))
-    if (entry.path().filename().string().rfind("state.sqlite3.pre-v6-", 0) == 0) {
+    if (entry.path().filename().string().rfind("state.sqlite3.pre-v7-", 0) == 0) {
       ++backups;
       struct stat st{};
       ASSERT_EQ(::stat(entry.path().c_str(), &st), 0);
