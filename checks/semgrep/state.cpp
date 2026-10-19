@@ -116,3 +116,28 @@ void required_write_validation() {
   // ok: codet-load-cache-population-boundary
   const auto token = impl_->provider_token(id);
 }
+
+void StateStore::reconcile(Session &session) {
+  // ruleid: codet-reconcile-stable-checkpoint-view
+  impl_->portable(session.messages, session.id);
+  // ruleid: codet-reconcile-stable-checkpoint-view
+  normalize_checkpoint_reference(stored, files, root, anchor);
+  // ok: codet-reconcile-stable-checkpoint-view
+  impl_->known_projections(stored, session.checkpoint_projection);
+}
+Session StateStore::fork(const Session &parent) {
+  // ruleid: codet-state-filesystem-dependency
+  NativeFileSystem files;
+  // ok: codet-state-filesystem-dependency
+  copy_image_history(root, *impl_->files, parent.id, child.id);
+}
+std::string StateStore::preserve_response(const Session &session, const Message &message) {
+  // ruleid: codet-state-filesystem-dependency
+  NativeFileSystem files;
+  // ok: codet-state-filesystem-dependency
+  impl_->files->atomic_write(path, bytes, true);
+}
+struct NativeFallback {
+  // ok: codet-state-filesystem-dependency
+  NativeFileSystem files;
+};

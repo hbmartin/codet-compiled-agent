@@ -78,3 +78,31 @@ rules:
       - pattern-either:
           - pattern: $IMPL->provider_token(...)
           - pattern: $IMPL->publish_provider(...)
+
+  - id: codet-reconcile-stable-checkpoint-view
+    languages: [cpp]
+    severity: ERROR
+    message: Reconciliation compares persisted messages using snapshot provenance, without resolving checkpoint files again.
+    paths:
+      include: ["**/state.cpp"]
+    patterns:
+      - pattern-inside: |
+          void StateStore::reconcile(...) { ... }
+      - pattern-either:
+          - pattern: $IMPL->portable(...)
+          - pattern: normalize_checkpoint_reference(...)
+  - id: codet-state-filesystem-dependency
+    languages: [cpp]
+    severity: ERROR
+    message: Use StateStore's configured filesystem for forks, receipts, and repair backups.
+    paths:
+      include: ["**/state.cpp"]
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              Session StateStore::fork(...) { ... }
+          - pattern-inside: |
+              std::string StateStore::preserve_response(...) { ... }
+          - pattern-inside: |
+              Json StateStore::repair(...) { ... }
+      - pattern: NativeFileSystem $FILES;

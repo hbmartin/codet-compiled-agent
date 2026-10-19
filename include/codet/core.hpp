@@ -417,12 +417,15 @@ public:
                           const Json &, const Cancellation &, const ChunkSink &,
                           const ItemSink & = {}) override;
 };
+struct SessionProjection;
 struct Session {
   std::string id, name;
   std::vector<Message> messages;
   std::string provider = "", model = "";
   std::optional<std::string> effort = std::nullopt;
   Json provider_state = nullptr;
+  // Persistence provenance only; never serialized or sent to providers.
+  mutable std::shared_ptr<SessionProjection> checkpoint_projection = {};
 };
 struct ProviderStateUpdate {
   uint64_t revision = 0;
@@ -431,11 +434,14 @@ struct ProviderStateUpdate {
 class StateStore {
   struct Impl;
   std::unique_ptr<Impl> impl_;
-  Session read_session(const std::string &, bool, bool);
+  Session read_session(const std::string &, bool, bool, bool project = true);
+  StateStore(const fs::path &, const fs::path &, const std::string &, FileSystem *);
 
 public:
   explicit StateStore(const fs::path &, const fs::path &artifact_root = {},
                       const std::string &durability = "durable");
+  StateStore(FileSystem &, const fs::path &, const fs::path &artifact_root = {},
+             const std::string &durability = "durable");
   ~StateStore();
   Session create(const std::string &name = "");
   // Default loads are repaired snapshots, never persistent recovery writes.
@@ -616,7 +622,6 @@ public:
   }
   std::string result_reference(const Message &) const;
   std::string result_identifier(const Message &) const;
-  void write_repair_backup(const fs::path &, const std::string &);
   ToolResult execute(const ToolCall &, const Cancellation &);
   std::string instructions() const;
   std::string dynamic_context(bool anticipate_indexes = false) const;

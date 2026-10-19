@@ -1,5 +1,6 @@
 #include "codet/artifacts.hpp"
 #include "codet/computer.hpp"
+#include "codet/context.hpp"
 #include "codet/core.hpp"
 #include "codet/output.hpp"
 #include "codet/support.hpp"
@@ -17,7 +18,8 @@ MATCHER_P(TrustedReference, identifier, "an available owned reference") {
 }
 struct RepairFiles : FileSystem {
   NativeFileSystem native;
-  mutable size_t reads = 0;
+  mutable size_t reads = 0, opens = 0, resolutions = 0;
+  mutable std::function<void()> on_canonical;
   mutable std::function<void()> on_read;
   std::function<void()> on_backup;
   std::function<void(const fs::path &)> on_write, before_write;
@@ -43,9 +45,13 @@ struct RepairFiles : FileSystem {
     native.remove(p);
   }
   fs::path canonical(const fs::path &p) const override {
+    ++resolutions;
+    if (on_canonical)
+      on_canonical();
     return native.canonical(p);
   }
   std::unique_ptr<ReadHandle> open_read(const fs::path &p) const override {
+    ++opens;
     if (on_open)
       on_open(p);
     return native.open_read(p);
@@ -145,7 +151,7 @@ std::string chat_stream(Json function, std::string id = "call") {
 } // namespace
 TEST_F(Pr18, CaptureReferencesAreValidatedAgainstTheConfiguredRootInEveryRepairMode) {
   config.capture_root = temp.root / "custom-captures";
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   auto session = state.create();
   const auto capture = "capture-00000000-0000-0000-0000-000000000001.txt";
   codet::Message message;
@@ -175,7 +181,7 @@ TEST_F(Pr18, CaptureReferencesAreValidatedAgainstTheConfiguredRootInEveryRepairM
   EXPECT_FALSE(tools.observe_result_reference(capture).error.empty());
 }
 TEST_F(Pr18, CaptureEvictionProducesDurablePartialHistoryAcrossForkAndCompaction) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   Tools tools(config, files, processes, http, clock);
   auto session = state.create();
   codet::Message message;
@@ -233,7 +239,7 @@ TEST_F(Pr18, OwnedAvailableAndUnreadableReferencesKeepTheirExistingTrustPolicies
   }
 }
 TEST_F(Pr18, RecoveryRepairPreservesUserJsonResultPathAndNormalizesOwnedToolMetadata) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   auto s = state.create();
   Tools tools(config, files, processes, http, clock);
   codet::Message assistant;
@@ -272,7 +278,7 @@ TEST_F(Pr18, ArchiveReadsAndBackupsAllowConcurrentCommitsAndRetryOnce) {
     SCOPED_TRACE(during_backup);
     files.reads = 0;
     config.state_root = temp.root / (during_backup ? "backup" : "read");
-    StateStore state(config.state_root);
+    StateStore state(files, config.state_root);
     auto s = state.create(), other = state.create();
     Tools tools(config, files, processes, http, clock);
     tools.use_session(s.id);
@@ -301,7 +307,7 @@ TEST_F(Pr18, ArchiveReadsAndBackupsAllowConcurrentCommitsAndRetryOnce) {
   }
 }
 TEST_F(Pr18, SecondInvalidationStopsWithoutRepairWritesAndListsBothBackups) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   auto s = state.create(), other = state.create();
   codet::Message m;
   m.role = "assistant";
@@ -334,7 +340,7 @@ TEST_F(Pr18, SecondInvalidationStopsWithoutRepairWritesAndListsBothBackups) {
             before);
 }
 TEST_F(Pr18, RetryUsesNewTargetRowsAndBacksUpTheAppliedAttempt) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   auto s = state.create();
   codet::Message m;
   m.role = "assistant";
@@ -355,7 +361,7 @@ TEST_F(Pr18, RetryUsesNewTargetRowsAndBacksUpTheAppliedAttempt) {
   EXPECT_THAT(files.native.read(report["backup"].get<std::string>()), HasSubstr("external change"));
 }
 TEST_F(Pr18, ChangedFilesInvalidatePreparationAndRemoveOnlySupersededCandidates) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   auto s = state.create();
   codet::Message m;
   m.role = "assistant";
@@ -381,7 +387,7 @@ TEST_F(Pr18, ChangedFilesInvalidatePreparationAndRemoveOnlySupersededCandidates)
               HasSubstr(ref.string()));
 }
 TEST_F(Pr18, ProviderRowsAndRevisionUseTheSameActiveSessionSnapshot) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   auto s = state.create();
   s.provider_state = {{"provider", "anthropic"}, {"messages", Json::array()}};
   state.save(s);
@@ -509,7 +515,7 @@ TEST_F(Pr18, CacheChargesTheExistingSerializedArchiveTextConservatively) {
   EXPECT_EQ(files.reads, 3u);
 }
 TEST_F(Pr18, BackupWriteFailureAfterPublicationStillNamesTheRetainedBackup) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   auto s = state.create();
   files.on_backup = [] { throw Error("after backup publication"); };
   Tools tools(config, files, processes, http, clock);
@@ -526,7 +532,7 @@ TEST_F(Pr18, BackupWriteFailureAfterPublicationStillNamesTheRetainedBackup) {
   EXPECT_EQ(n, 1u);
 }
 TEST_F(Pr18, DeferredRepairCommitFailureRollsBackRowsAndRemovesNewCandidates) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   auto s = state.create();
   codet::Message m;
   m.role = "assistant";
@@ -576,7 +582,7 @@ TEST_F(Pr18, DecodedArchiveObservationsRetainTheirIdentityOnMissAndHit) {
   }
 }
 TEST_F(Pr18, ProviderOnlyRepairReportsProblemsWithoutDependingOnFileStability) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   auto s = state.create();
   Tools tools(config, files, processes, http, clock);
   s.messages = {checkpoint(tools)};
@@ -634,7 +640,7 @@ TEST_F(Pr18, CustomRootCandidatesAreRemovedAfterStalenessAndDeferredCommitFailur
     SCOPED_TRACE(deferred);
     config.state_root = temp.root / (deferred ? "deferred" : "stale");
     config.artifact_root = temp.root / (deferred ? "custom-deferred" : "custom-stale");
-    StateStore state(config.state_root); // Deliberately differs from Tools' artifact root.
+    StateStore state(files, config.state_root); // Deliberately differs from Tools' artifact root.
     auto s = state.create(), other = state.create();
     codet::Message m;
     m.role = "assistant";
@@ -659,7 +665,7 @@ TEST_F(Pr18, CustomRootCandidatesAreRemovedAfterStalenessAndDeferredCommitFailur
   }
 }
 TEST_F(Pr18, CandidateCleanupProtectsExistingReferencedAndReplacedArchives) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   auto s = state.create();
   Tools tools(config, files, processes, http, clock);
   tools.use_session(s.id);
@@ -691,7 +697,7 @@ TEST_F(Pr18, CandidateCleanupProtectsExistingReferencedAndReplacedArchives) {
   EXPECT_TRUE(fs::exists(replacement));
 }
 TEST_F(Pr18, CandidateCleanupHandlesWriterFailureAfterPublication) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   Tools tools(config, files, processes, http, clock);
   codet::Message m;
   m.role = "assistant";
@@ -709,7 +715,7 @@ TEST_F(Pr18, CandidateCleanupHandlesWriterFailureAfterPublication) {
   EXPECT_FALSE(fs::exists(candidates[0].file.path));
 }
 TEST_F(Pr18, FinalRepairValidationDoesNotReopenOrReadArchives) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   Tools tools(config, files, processes, http, clock);
   auto s = state.create();
   tools.use_session(s.id);
@@ -796,7 +802,7 @@ TEST_F(Pr18, RepairRetriesArchiveSwapAfterDecodingOnCacheMissAndHit) {
   for (const bool cached : {false, true}) {
     SCOPED_TRACE(cached);
     config.state_root = temp.root / (cached ? "hit" : "miss");
-    StateStore state(config.state_root);
+    StateStore state(files, config.state_root);
     auto s = state.create();
     config.approval = "on-request";
     Tools tools(config, files, live, http, clock, [](const PermissionRequest &) { return true; });
@@ -830,7 +836,7 @@ TEST_F(Pr18, RepairRetriesArchiveSwapAfterDecodingOnCacheMissAndHit) {
 }
 
 TEST_F(Pr18, InvalidRevisionTokensAreReportedAndRepairedEvenWithNoProviderRows) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   Tools tools(config, files, processes, http, clock);
   Db raw(config.state_root / "state.sqlite3");
   for (const bool rows : {false, true})
@@ -861,7 +867,7 @@ TEST_F(Pr18, InvalidRevisionTokensAreReportedAndRepairedEvenWithNoProviderRows) 
     }
 }
 TEST_F(Pr18, TokenRepairRollsBackAndPreservesItsBackupOnDeferredCommitFailure) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   auto s = state.create();
   Tools tools(config, files, processes, http, clock);
   Db raw(config.state_root / "state.sqlite3");
@@ -891,7 +897,7 @@ TEST_F(Pr18, AbsoluteCheckpointsNormalizeReadOnlyAndRegisterAcrossForkSaveAndRel
   fs::create_directories(real);
   fs::create_directory_symlink(real, alias);
   config.artifact_root = alias / "artifacts";
-  StateStore state(config.state_root, artifact_directory(config));
+  StateStore state(files, config.state_root, artifact_directory(config));
   auto s = state.create();
   Tools tools(config, files, processes, http, clock);
   tools.use_session(s.id);
@@ -951,7 +957,7 @@ TEST_F(Pr18, AbsoluteCheckpointsNormalizeReadOnlyAndRegisterAcrossForkSaveAndRel
   EXPECT_NO_THROW(relocated.save(moved_child));
 }
 TEST_F(Pr18, UnsafeAndUnavailableAbsoluteCheckpointsRetainTheirOriginalPointers) {
-  StateStore state(config.state_root, artifact_directory(config));
+  StateStore state(files, config.state_root, artifact_directory(config));
   auto s = state.create();
   Tools tools(config, files, processes, http, clock);
   tools.use_session(s.id);
@@ -980,7 +986,7 @@ TEST_F(Pr18, UnsafeAndUnavailableAbsoluteCheckpointsRetainTheirOriginalPointers)
   }
 }
 TEST_F(Pr18, CandidateCleanupAcceptsAbsenceAndContinuesAfterThrowingDiagnostics) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   auto s = state.create();
   Tools tools(config, files, processes, http, clock);
   tools.use_session(s.id);
@@ -1004,7 +1010,7 @@ TEST_F(Pr18, CandidateCleanupAcceptsAbsenceAndContinuesAfterThrowingDiagnostics)
   EXPECT_FALSE(fs::exists(candidates[2].file.path));
 }
 TEST_F(Pr18, ReferenceInsertionSkipsKnownPathsAndDoesNotPublishNestedKnowledge) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   auto s = state.create();
   Db raw(config.state_root / "state.sqlite3");
   codet::Message first;
@@ -1030,7 +1036,7 @@ TEST_F(Pr18, ReferenceInsertionSkipsKnownPathsAndDoesNotPublishNestedKnowledge) 
 }
 
 TEST_F(Pr18, RecoveryCandidateFailuresBeforeWriteAndDuringIdentityCaptureRemainSafe) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   auto s = state.create();
   Tools tools(config, files, processes, http, clock);
   tools.use_session(s.id);
@@ -1058,7 +1064,7 @@ TEST_F(Pr18, RecoveryCandidateFailuresBeforeWriteAndDuringIdentityCaptureRemainS
   EXPECT_TRUE(state.load_id(s.id, false).messages.empty());
 }
 TEST_F(Pr18, MessageCorruptionStillFailsAsDataCorruption) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   auto s = state.create();
   s.messages = {codet::Message{"user", "saved"}};
   state.save(s);
@@ -1087,7 +1093,7 @@ TEST_F(Pr18, MessageCorruptionStillFailsAsDataCorruption) {
 }
 
 TEST_F(Pr18, RevisionAndProviderCorruptionAreDiscoveredIndependently) {
-  StateStore state(config.state_root);
+  StateStore state(files, config.state_root);
   auto s = state.create();
   s.provider_state = {{"provider", "anthropic"}, {"messages", Json::array()}};
   state.save(s);
@@ -1100,4 +1106,331 @@ TEST_F(Pr18, RevisionAndProviderCorruptionAreDiscoveredIndependently) {
   auto fixed = state.repair(s.id, false, true, false, tools);
   EXPECT_EQ(fixed["issues"], report["issues"]);
   EXPECT_NO_THROW(state.save(s));
+}
+
+namespace {
+struct Pr21 : Pr18 {
+  Session legacy(StateStore &state, Tools &tools, Db &raw, bool missing_id = false) {
+    auto session = state.create();
+    tools.use_session(session.id);
+    auto message = checkpoint(tools);
+    message.message_id = missing_id ? "" : "checkpoint";
+    const auto ref = message.checkpoint_state.at("recovery_record").get<std::string>();
+    message.checkpoint_state["recovery_record"] =
+        files.canonical(artifact_directory(config) / ref).string();
+    session.messages = {message};
+    state.save(session);
+    raw.exec("UPDATE session_messages SET payload='" + Json(message).dump() + "' WHERE session='" +
+             session.id + "';DELETE FROM session_references WHERE session='" + session.id + "'");
+    return session;
+  }
+  std::string row(Db &raw, const Session &s) {
+    return raw.value("SELECT payload FROM session_messages WHERE session='" + s.id +
+                     "' AND position=0");
+  }
+  void append(StateStore &state, Session &s) {
+    codet::Message next;
+    next.role = "user";
+    next.message_id = unique_id();
+    next.text = "continue";
+    const auto first = s.messages.size();
+    s.messages.push_back(next);
+    state.append_messages(s, first);
+  }
+};
+struct CheckpointReply : Provider {
+  size_t requests = 0;
+  ProviderResult complete(const Config &, const std::string &, const std::vector<codet::Message> &,
+                          const Json &, const Cancellation &, const ChunkSink &,
+                          const ItemSink &) override {
+    ++requests;
+    ProviderResult result;
+    result.message.role = "assistant";
+    result.message.text = "fixture summary or reply";
+    return result;
+  }
+};
+} // namespace
+TEST_F(Pr21, ReconciliationUsesStableProvenanceAfterArchiveTrustChanges) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  for (int mode : {0, 1, 2}) {
+    SCOPED_TRACE(mode);
+    auto original = legacy(state, tools, raw);
+    const auto path =
+        fs::path(original.messages[0].checkpoint_state.at("recovery_record").get<std::string>());
+    auto loaded = state.load_id(original.id, false);
+    auto copied = loaded;
+    const auto before = files.opens;
+    if (mode == 0)
+      fs::remove(path);
+    else if (mode == 1)
+      ASSERT_EQ(::chmod(path.c_str(), 0644), 0);
+    else {
+      fs::remove(path);
+      fs::create_symlink(config.cwd, path);
+    }
+    EXPECT_NO_THROW(state.reconcile(loaded));
+    EXPECT_NO_THROW(state.reconcile(copied));
+    EXPECT_EQ(files.opens, before);
+    EXPECT_FALSE(absolute_checkpoint_reference(loaded.messages[0]));
+    EXPECT_THAT(tools.execution_state(loaded.messages).dump(), HasSubstr("recovery_unavailable"));
+    EXPECT_THAT(row(raw, loaded), Not(HasSubstr(path.string())));
+    fs::remove(path);
+  }
+}
+TEST_F(Pr21, FallbackIdsDoNotDependOnArchiveAvailabilityAndLoadsRemainReadOnly) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  auto original = legacy(state, tools, raw, true);
+  auto expected = original.messages;
+  portable_messages(expected, original.id);
+  ensure_message_ids(expected);
+  auto available = state.load_id(original.id, false);
+  EXPECT_EQ(available.messages[0].message_id, expected[0].message_id);
+  EXPECT_THAT(row(raw, original), HasSubstr(*absolute_checkpoint_reference(original.messages[0])));
+  const auto path = fs::path(*absolute_checkpoint_reference(original.messages[0]));
+  ASSERT_EQ(::chmod(path.c_str(), 0644), 0);
+  EXPECT_EQ(state.load_id(original.id, false).messages[0].message_id, expected[0].message_id);
+  fs::remove(path);
+  EXPECT_EQ(state.load_id(original.id, false).messages[0].message_id, expected[0].message_id);
+  EXPECT_NO_THROW(state.reconcile(available));
+  EXPECT_EQ(state.load_id(original.id, false).messages[0].message_id, expected[0].message_id);
+}
+TEST_F(Pr21, AppendRewritesOnlyPendingRowsWithoutReopeningArchives) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  auto original = legacy(state, tools, raw);
+  auto loaded = state.load_id(original.id, false);
+  auto copy = loaded;
+  const auto reference =
+      loaded.messages[0].checkpoint_state.at("recovery_record").get<std::string>();
+  raw.exec("CREATE TABLE checkpoint_writes(n INTEGER);CREATE TRIGGER count_checkpoint_updates "
+           "AFTER UPDATE ON session_messages BEGIN INSERT INTO checkpoint_writes VALUES(1); END");
+  const auto opens = files.opens;
+  const auto bytes = state.serialized_bytes();
+  files.on_open = [](const fs::path &) { throw Error("unexpected archive reopen"); };
+  append(state, loaded);
+  EXPECT_EQ(raw.value("SELECT count(*) FROM checkpoint_writes"), "1");
+  EXPECT_THAT(row(raw, loaded), HasSubstr(reference));
+  EXPECT_THAT(row(raw, loaded),
+              Not(HasSubstr(*absolute_checkpoint_reference(original.messages[0]))));
+  EXPECT_THAT(state.references(loaded.id), Contains(reference));
+  append(state, loaded);
+  EXPECT_EQ(raw.value("SELECT count(*) FROM checkpoint_writes"), "1");
+  EXPECT_LT(state.serialized_bytes() - bytes, 3000u);
+  EXPECT_EQ(files.opens, opens);
+  // A copied snapshot may still carry the pending rewrite. Its identical durable row is accepted.
+  state.revise_messages(copy, {});
+  EXPECT_EQ(raw.value("SELECT count(*) FROM checkpoint_writes"), "1");
+  files.on_open = {};
+}
+TEST_F(Pr21, NormalTurnPersistsLegacyCheckpointBeforeRelocationAndCompaction) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  auto s = legacy(state, tools, raw);
+  const auto absolute = *absolute_checkpoint_reference(s.messages[0]);
+  CheckpointReply provider;
+  Agent agent(config, provider, tools, state, {});
+  EXPECT_NO_THROW(agent.run(s, "continue", cancel));
+  ASSERT_EQ(provider.requests, 1u);
+  EXPECT_THAT(row(raw, s), Not(HasSubstr(absolute)));
+  const auto moved = temp.root / "moved";
+  fs::create_directories(moved);
+  fs::copy(config.state_root, moved / "state", fs::copy_options::recursive);
+  fs::rename(artifact_directory(config), moved / "artifacts");
+  config.state_root = moved / "state";
+  config.artifact_root = moved / "artifacts";
+  StateStore relocated(files, config.state_root, config.artifact_root);
+  Tools moved_tools(config, files, processes, http, clock);
+  auto resumed = relocated.load_id(s.id, false);
+  EXPECT_THAT(moved_tools.execution_state(resumed.messages).dump(), HasSubstr("old"));
+  Agent moved_agent(config, provider, moved_tools, relocated, {});
+  EXPECT_NO_THROW(moved_agent.compact(resumed, cancel));
+  auto child = relocated.fork(resumed);
+  EXPECT_THAT(moved_tools.execution_state(child.messages).dump(), HasSubstr("old"));
+}
+TEST_F(Pr21, DeferredFailureRetainsPendingRowsForTheNextWriteBeforeReload) {
+  for (bool revise : {false, true}) {
+    SCOPED_TRACE(revise);
+    StateStore state(files, config.state_root, artifact_directory(config));
+    Tools tools(config, files, processes, http, clock);
+    Db raw(config.state_root / "state.sqlite3");
+    auto original = legacy(state, tools, raw);
+    auto loaded = state.load_id(original.id, false);
+    const auto before = row(raw, loaded);
+    raw.exec("CREATE TABLE cp_parent(id INTEGER PRIMARY KEY);CREATE TABLE cp_poison(id INTEGER "
+             "REFERENCES cp_parent(id) DEFERRABLE INITIALLY DEFERRED);CREATE TRIGGER refuse_cp "
+             "AFTER UPDATE ON session_messages BEGIN INSERT INTO cp_poison VALUES(1); END");
+    if (revise)
+      EXPECT_THROW(state.revise_messages(loaded, {}), Error);
+    else {
+      EXPECT_THROW(append(state, loaded), Error);
+      loaded.messages.resize(1);
+    }
+    EXPECT_EQ(row(raw, loaded), before);
+    raw.exec("DROP TRIGGER refuse_cp;DROP TABLE cp_poison;DROP TABLE cp_parent");
+    fs::remove(fs::path(*absolute_checkpoint_reference(original.messages[0])));
+    // No reload may repair the in-memory pending state before this retry.
+    if (revise)
+      EXPECT_NO_THROW(state.revise_messages(loaded, {}));
+    else
+      EXPECT_NO_THROW(append(state, loaded));
+    EXPECT_NE(row(raw, loaded), before);
+  }
+}
+TEST_F(Pr21, PendingNormalizationRejectsExternalEditsWithoutAppendingOrOverwriting) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  auto s = legacy(state, tools, raw);
+  auto loaded = state.load_id(s.id, false);
+  raw.exec(
+      "UPDATE session_messages SET payload=replace(payload,'summary','external') WHERE session='" +
+      s.id + "'");
+  const auto external = row(raw, s);
+  EXPECT_THROW(append(state, loaded), Error);
+  EXPECT_EQ(row(raw, s), external);
+  EXPECT_EQ(raw.value("SELECT count(*) FROM session_messages WHERE session='" + s.id + "'"), "1");
+  loaded.messages.resize(1);
+  EXPECT_THROW(state.reconcile(loaded), Error);
+  auto replacement = state.load_id(s.id, false);
+  EXPECT_NO_THROW(append(state, replacement));
+}
+TEST_F(Pr21, LazyAnchorRetriesFailuresAndDoesNotBreakDatabaseOperations) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  EXPECT_EQ(files.resolutions, 0u);
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  auto original = legacy(state, tools, raw);
+  // Use a fresh store so its anchor has not yet been established.
+  StateStore fresh(files, config.state_root, artifact_directory(config));
+  files.on_canonical = [] { throw Error("injected artifact permission failure"); };
+  EXPECT_NO_THROW(fresh.list());
+  auto unavailable = fresh.load_id(original.id, false);
+  EXPECT_TRUE(absolute_checkpoint_reference(unavailable.messages[0]));
+  EXPECT_NO_THROW(fresh.repair(original.id, false, true, false, tools));
+  files.on_canonical = {};
+  auto available = fresh.load_id(original.id, false);
+  EXPECT_FALSE(absolute_checkpoint_reference(available.messages[0]));
+  const auto loop = temp.root / "loop";
+  fs::create_symlink(loop, loop);
+  EXPECT_NO_THROW({
+    StateStore broken(config.state_root, loop);
+    broken.list();
+    broken.load_id(original.id);
+  });
+}
+TEST_F(Pr21, RepeatedReferencesValidateOnceAndNewPreparationRechecksUnavailableArchives) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  auto original = legacy(state, tools, raw);
+  auto second = original.messages[0];
+  second.message_id = "second";
+  original.messages.push_back(second);
+  state.save(original);
+  raw.exec("UPDATE session_messages SET payload='" + Json(second).dump() + "' WHERE session='" +
+           original.id + "'");
+  const auto before = files.opens;
+  auto loaded = state.load_id(original.id, false);
+  EXPECT_EQ(files.opens - before, 1u);
+  // Both rows have the same explicit ID because the fixture writes the same legacy payload.
+  const auto ref = loaded.messages[0].checkpoint_state.at("recovery_record").get<std::string>();
+  fs::remove(artifact_directory(config) / ref);
+  auto unavailable = state.load_id(original.id, false);
+  EXPECT_TRUE(absolute_checkpoint_reference(unavailable.messages[0]));
+  EXPECT_THAT(tools.execution_state(loaded.messages).dump(), HasSubstr("recovery_unavailable"));
+}
+TEST_F(Pr21, ReceiptAndForkUseTheInjectedFilesystem) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  auto s = state.create();
+  s.messages = {codet::Message{"assistant", "saved"}};
+  state.save(s);
+  files.before_write = [](const fs::path &) { throw Error("injected receipt write"); };
+  EXPECT_THROW(state.preserve_response(s, s.messages[0]), Error);
+  files.before_write = {};
+  const auto receipt = state.preserve_response(s, s.messages[0]);
+  EXPECT_TRUE(fs::exists(receipt));
+  const auto index = artifact_index_path(artifact_directory(config), s.id);
+  fs::create_directories(index.parent_path());
+  files.atomic_write(
+      index, Json({{"kind", "header"}, {"version", 2}, {"session_id", s.id}}).dump() + "\n", true);
+  s.messages[0].artifact_index = artifact_index_reference(s.id);
+  state.save(s);
+  files.on_open = [](const fs::path &) { throw Error("injected fork open"); };
+  EXPECT_THROW(state.fork(s), Error);
+  files.on_open = {};
+  EXPECT_NO_THROW(state.fork(s));
+}
+
+TEST_F(Pr21, PinnedAnchorRejectsReplacementAndFullReplacementSupersedesPendingRows) {
+  const auto real = temp.root / "real";
+  const auto alias = temp.root / "alias";
+  fs::create_directories(real);
+  fs::create_directory_symlink(real, alias);
+  config.artifact_root = alias / "artifacts";
+  StateStore state(files, config.state_root, config.artifact_root);
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  auto original = legacy(state, tools, raw);
+  auto loaded = state.load_id(original.id, false);
+  const auto other = temp.root / "other";
+  fs::create_directories(other);
+  fs::copy(real / "artifacts", other / "artifacts", fs::copy_options::recursive);
+  fs::remove(alias);
+  fs::create_directory_symlink(other, alias);
+  auto changed = state.load_id(original.id, false);
+  EXPECT_TRUE(absolute_checkpoint_reference(changed.messages[0]));
+  // The prior projection remains comparable, but never authorizes reads under a changed anchor.
+  EXPECT_THAT(tools.execution_state(loaded.messages).dump(), HasSubstr("recovery_unavailable"));
+  loaded.messages = {codet::Message{"user", "replacement"}};
+  EXPECT_NO_THROW(state.replace_history(loaded));
+  EXPECT_NO_THROW(append(state, loaded));
+  EXPECT_THAT(row(raw, loaded), HasSubstr("replacement"));
+  EXPECT_THAT(row(raw, loaded), Not(HasSubstr("recovery_record")));
+}
+TEST_F(Pr21, ChangedCheckpointPreparationRunsBeforeTheWriterLock) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  auto s = state.create(), other = state.create();
+  tools.use_session(s.id);
+  auto cp = checkpoint(tools);
+  cp.message_id = "new-checkpoint";
+  cp.checkpoint_state["recovery_record"] =
+      (artifact_directory(config) / cp.checkpoint_state.at("recovery_record").get<std::string>())
+          .string();
+  s.messages = {cp};
+  size_t commits = 0;
+  files.on_open = [&](const fs::path &) {
+    raw.exec("UPDATE sessions SET status='during-prepare' WHERE id='" + other.id + "'");
+    ++commits;
+  };
+  EXPECT_NO_THROW(state.append_messages(s, 0));
+  EXPECT_EQ(commits, 1u);
+  EXPECT_EQ(raw.value("SELECT status FROM sessions WHERE id='" + other.id + "'"), "during-prepare");
+  files.on_open = {};
+}
+
+TEST_F(Pr21, NewCheckpointFallbackIdsUseTheLexicallyPortableViewBeforeProjection) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  auto s = state.create();
+  tools.use_session(s.id);
+  auto cp = checkpoint(tools);
+  cp.checkpoint_state["recovery_record"] =
+      (artifact_directory(config) / cp.checkpoint_state.at("recovery_record").get<std::string>())
+          .string();
+  cp.result_file = (capture_directory(config) / ("capture-" + unique_id() + ".txt")).string();
+  s.messages = {cp};
+  EXPECT_NO_THROW(state.save(s));
+  EXPECT_NO_THROW(state.reconcile(s));
+  const auto loaded = state.load_id(s.id, false);
+  EXPECT_EQ(loaded.messages[0].message_id, s.messages[0].message_id);
+  EXPECT_EQ(loaded.messages[0].checkpoint_state, s.messages[0].checkpoint_state);
 }
