@@ -457,8 +457,7 @@ public:
   uint64_t provider_revision(const std::string &) const;
   uint64_t provider_rows_read() const;
   Json recovery_facts(const std::string &) const;
-  Json repair(const std::string &, bool last, bool provider_cache, bool recovery, class Tools &,
-              FileSystem &);
+  Json repair(const std::string &, bool last, bool provider_cache, bool recovery, class Tools &);
   std::string preserve_response(const Session &, const Message &);
   void discard_recovery_record(const RecoveryCandidate &, class Tools &);
   void sync();
@@ -617,8 +616,7 @@ public:
   }
   std::string result_reference(const Message &) const;
   std::string result_identifier(const Message &) const;
-  // Internal persistence validation: portable identifier and current trusted file identity.
-  std::pair<std::string, std::string> checked_result_reference(const std::string &) const;
+  void write_repair_backup(const fs::path &, const std::string &);
   ToolResult execute(const ToolCall &, const Cancellation &);
   std::string instructions() const;
   std::string dynamic_context(bool anticipate_indexes = false) const;

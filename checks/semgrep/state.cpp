@@ -98,3 +98,21 @@ void load_cache() {
     impl_->publish_provider(session, bytes, token);
   } catch (...) { impl_->clear_provider_cache(); }
 }
+
+Session StateStore::read_session(const std::string &id) {
+  // ruleid: codet-load-cache-population-boundary
+  const auto token = impl_->provider_token(id);
+  // ruleid: codet-load-cache-population-boundary
+  impl_->publish_provider(session, bytes, token);
+  // ok: codet-load-cache-population-boundary
+  impl_->populate_provider(session, bytes);
+}
+Session StateStore::load_id(const std::string &id) {
+  // ruleid: codet-load-cache-population-boundary
+  const auto token = impl_->provider_token(id);
+  return session;
+}
+void required_write_validation() {
+  // ok: codet-load-cache-population-boundary
+  const auto token = impl_->provider_token(id);
+}

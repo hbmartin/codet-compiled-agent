@@ -603,7 +603,6 @@ std::string Tools::result_reference(const Message &message) const {
 ReferenceObservation Tools::observe_result_reference(const std::string &original,
                                                      bool checkpoint) const {
   ReferenceObservation observation;
-  observation.original = original;
   observation.policy =
       checkpoint ? ArtifactPolicy::private_owned_regular : ArtifactPolicy::owned_regular;
   try {
@@ -615,9 +614,12 @@ ReferenceObservation Tools::observe_result_reference(const std::string &original
       // Remap only a trusted anchor alias. Keep components beneath it for symlink checks.
       for (const auto &root : {artifacts, captures}) {
         const auto anchor = private_anchors_.find(root);
-        if (anchor != private_anchors_.end() && within(ref, anchor->second) && !within(ref, root)) {
-          ref = root / ref.lexically_relative(anchor->second);
-          break;
+        if (anchor != private_anchors_.end()) {
+          const auto remapped = remap_artifact_alias(ref, root, anchor->second);
+          if (remapped != ref) {
+            ref = remapped;
+            break;
+          }
         }
       }
       if (ref.parent_path() == captures && capture_name(ref)) {
@@ -664,12 +666,8 @@ bool Tools::reference_current(const ReferenceObservation &observation) const {
   }
   return current == observation.identity;
 }
-std::pair<std::string, std::string>
-Tools::checked_result_reference(const std::string &original) const {
-  const auto observation = observe_result_reference(original);
-  if (!observation.error.empty() || !observation.identity)
-    throw Error(observation.error.empty() ? "Result identity unavailable" : observation.error);
-  return {observation.identifier, observation.identity.value()};
+void Tools::write_repair_backup(const fs::path &path, const std::string &bytes) {
+  files_.atomic_write(path, bytes, true);
 }
 void Tools::retain_recovery_result(Message &message, std::vector<RecoveryCandidate> &candidates) {
   if (message.message_id.empty())
@@ -678,7 +676,7 @@ void Tools::retain_recovery_result(Message &message, std::vector<RecoveryCandida
   const bool created = message.result_file.empty() && !fs::exists(path);
   if (created) {
     RecoveryCandidate candidate;
-    candidate.file.original = candidate.file.identifier = result_identifier(message);
+    candidate.file.identifier = result_identifier(message);
     candidate.file.root = fs::absolute(artifact_directory(config_)).lexically_normal();
     candidate.file.path = candidate.file.root / candidate.file.identifier;
     candidate.file.policy = ArtifactPolicy::private_owned_regular;
@@ -694,8 +692,21 @@ void Tools::retain_recovery_result(Message &message, std::vector<RecoveryCandida
 void Tools::discard_recovery_candidate(const RecoveryCandidate &candidate) {
   const auto &file = candidate.file;
   if (!result_name(file.identifier) || file.path != file.root / file.identifier ||
-      !private_anchor(file.root))
+      !private_anchor(file.root) || fs::is_symlink(file.root))
     throw Error("Recovery candidate storage changed");
+  // Check each component without following links, even when the leaf is absent.
+  auto component = file.root;
+  for (const auto &part : file.path.lexically_relative(file.root)) {
+    component /= part;
+    struct stat status{};
+    if (::lstat(component.c_str(), &status)) {
+      if (errno == ENOENT)
+        return;
+      throw Error("Cannot inspect recovery candidate");
+    }
+    if (S_ISLNK(status.st_mode))
+      throw Error("Unsafe recovery candidate symlink");
+  }
   const auto identity = checked_artifact_identity(files_, file.root, file.path, file.policy);
   if (file.identity && file.identity != identity)
     throw Error("Recovery candidate identity changed");

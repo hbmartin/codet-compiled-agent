@@ -59,3 +59,22 @@ rules:
     paths:
       include: ["**/state.cpp"]
     pattern: $IMPL->publish_provider(..., $IMPL->provider_token(...), ...)
+  - id: codet-load-cache-population-boundary
+    languages: [cpp]
+    severity: ERROR
+    message: Load entrypoints must use guarded optional population; direct token acquisition or publication can fail an otherwise valid load.
+    paths:
+      include: ["**/state.cpp"]
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              Session StateStore::read_session(...) { ... }
+          - pattern-inside: |
+              Session StateStore::load(...) { ... }
+          - pattern-inside: |
+              Session StateStore::load_id(...) { ... }
+          - pattern-inside: |
+              Session StateStore::last(...) { ... }
+      - pattern-either:
+          - pattern: $IMPL->provider_token(...)
+          - pattern: $IMPL->publish_provider(...)

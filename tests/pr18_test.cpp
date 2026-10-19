@@ -12,12 +12,15 @@
 using namespace codet;
 using namespace testing;
 namespace {
+MATCHER_P(TrustedReference, identifier, "an available owned reference") {
+  return arg.identifier == identifier && arg.error.empty() && arg.identity.has_value();
+}
 struct RepairFiles : FileSystem {
   NativeFileSystem native;
   mutable size_t reads = 0;
   mutable std::function<void()> on_read;
   std::function<void()> on_backup;
-  std::function<void(const fs::path &)> on_write;
+  std::function<void(const fs::path &)> on_write, before_write;
   mutable std::function<void(const fs::path &)> on_open;
   std::string read(const fs::path &p, size_t n) const override {
     if (p.string().find("/results/") != std::string::npos) {
@@ -28,6 +31,8 @@ struct RepairFiles : FileSystem {
     return native.read(p, n);
   }
   void atomic_write(const fs::path &p, const std::string &s, bool secret) override {
+    if (before_write)
+      before_write(p);
     native.atomic_write(p, s, secret);
     if (on_write)
       on_write(p);
@@ -150,24 +155,24 @@ TEST_F(Pr18, CaptureReferencesAreValidatedAgainstTheConfiguredRootInEveryRepairM
   session.messages = {message};
   state.save(session);
   Tools tools(config, files, processes, http, clock);
-  const auto inspection = state.repair(session.id, false, false, false, tools, files);
+  const auto inspection = state.repair(session.id, false, false, false, tools);
   ASSERT_EQ(inspection["issues"].size(), 1u);
-  const auto provider = state.repair(session.id, false, true, false, tools, files);
+  const auto provider = state.repair(session.id, false, true, false, tools);
   EXPECT_EQ(provider["issues"], inspection["issues"]);
-  auto report = state.repair(session.id, false, false, true, tools, files);
+  auto report = state.repair(session.id, false, false, true, tools);
   EXPECT_EQ(report["issues"], inspection["issues"]);
   auto saved = state.load_id(session.id, false);
   EXPECT_TRUE(result_name(saved.messages[0].result_file));
   EXPECT_THAT(tools.execution_state(saved.messages).dump(), HasSubstr(capture));
-  EXPECT_NO_THROW(state.repair(session.id, false, false, true, tools, files));
+  EXPECT_NO_THROW(state.repair(session.id, false, false, true, tools));
   const auto path = config.capture_root / capture;
   fs::create_directories(path.parent_path());
   files.atomic_write(path, "available", true);
-  EXPECT_EQ(tools.checked_result_reference(path.string()).first, capture);
-  EXPECT_EQ(tools.checked_result_reference(capture).first, capture);
+  EXPECT_THAT(tools.observe_result_reference(path.string()), TrustedReference(capture));
+  EXPECT_THAT(tools.observe_result_reference(capture), TrustedReference(capture));
   fs::remove(path);
   fs::create_symlink(config.cwd, path);
-  EXPECT_THROW(tools.checked_result_reference(capture), Error);
+  EXPECT_FALSE(tools.observe_result_reference(capture).error.empty());
 }
 TEST_F(Pr18, CaptureEvictionProducesDurablePartialHistoryAcrossForkAndCompaction) {
   StateStore state(config.state_root);
@@ -190,7 +195,7 @@ TEST_F(Pr18, CaptureEvictionProducesDurablePartialHistoryAcrossForkAndCompaction
     evict.close();
   }
   ASSERT_FALSE(fs::exists(capture_directory(config) / message.result_file));
-  auto report = state.repair(session.id, false, false, true, tools, files);
+  auto report = state.repair(session.id, false, false, true, tools);
   EXPECT_FALSE(report["issues"].empty());
   auto saved = state.load_id(session.id, false);
   auto child = state.fork(saved);
@@ -211,7 +216,7 @@ TEST_F(Pr18, OwnedAvailableAndUnreadableReferencesKeepTheirExistingTrustPolicies
   fs::create_directories(path.parent_path());
   files.atomic_write(path, "data", true);
   ASSERT_EQ(::chmod(path.c_str(), 0644), 0);
-  EXPECT_EQ(tools.checked_result_reference(path.string()).first, ref.string());
+  EXPECT_THAT(tools.observe_result_reference(path.string()), TrustedReference(ref.string()));
   EXPECT_NO_THROW(checked_artifact_identity(files, artifact_directory(config), path,
                                             ArtifactPolicy::owned_regular));
   EXPECT_THROW(checked_artifact_identity(files, artifact_directory(config), path,
@@ -219,11 +224,11 @@ TEST_F(Pr18, OwnedAvailableAndUnreadableReferencesKeepTheirExistingTrustPolicies
                Error);
   ASSERT_EQ(::chmod(path.c_str(), 0), 0);
   if (::geteuid() != 0)
-    EXPECT_THROW(tools.checked_result_reference(ref.string()), Error);
+    EXPECT_FALSE(tools.observe_result_reference(ref.string()).error.empty());
   ASSERT_EQ(::chmod(path.c_str(), 0600), 0);
   if (::geteuid() == 0) {
     ASSERT_EQ(::chown(path.c_str(), 12345, 12345), 0);
-    EXPECT_THROW(tools.checked_result_reference(ref.string()), Error);
+    EXPECT_FALSE(tools.observe_result_reference(ref.string()).error.empty());
     ASSERT_EQ(::chown(path.c_str(), 0, 0), 0);
   }
 }
@@ -252,7 +257,7 @@ TEST_F(Pr18, RecoveryRepairPreservesUserJsonResultPathAndNormalizesOwnedToolMeta
     s.messages.push_back(m);
   }
   state.save(s);
-  state.repair(s.id, false, false, true, tools, files);
+  state.repair(s.id, false, false, true, tools);
   const auto saved = state.load_id(s.id, false);
   const auto user = Json::parse(Json::parse(saved.messages[1].text)["content"].get<std::string>());
   EXPECT_EQ(user["result_path"], "user-data");
@@ -285,7 +290,7 @@ TEST_F(Pr18, ArchiveReadsAndBackupsAllowConcurrentCommitsAndRetryOnce) {
         commit();
     };
     files.on_read = during_backup ? std::function<void()>{} : commit;
-    auto report = state.repair(s.id, false, false, true, tools, files);
+    auto report = state.repair(s.id, false, false, true, tools);
     EXPECT_EQ(backups, 2u);
     EXPECT_EQ(report["backups"].size(), 2u);
     EXPECT_EQ(writer.value("SELECT status FROM sessions WHERE id='" + other.id + "'"),
@@ -314,7 +319,7 @@ TEST_F(Pr18, SecondInvalidationStopsWithoutRepairWritesAndListsBothBackups) {
   };
   Tools tools(config, files, processes, http, clock);
   try {
-    state.repair(s.id, false, false, true, tools, files);
+    state.repair(s.id, false, false, true, tools);
     FAIL();
   } catch (const Error &e) {
     EXPECT_THAT(e.what(), HasSubstr("changed twice"));
@@ -345,7 +350,7 @@ TEST_F(Pr18, RetryUsesNewTargetRowsAndBacksUpTheAppliedAttempt) {
                   s.id + "'");
   };
   Tools tools(config, files, processes, http, clock);
-  const auto report = state.repair(s.id, false, false, true, tools, files);
+  const auto report = state.repair(s.id, false, false, true, tools);
   EXPECT_EQ(state.load_id(s.id, false).messages[0].text, "external change");
   EXPECT_THAT(files.native.read(report["backup"].get<std::string>()), HasSubstr("external change"));
 }
@@ -368,7 +373,7 @@ TEST_F(Pr18, ChangedFilesInvalidatePreparationAndRemoveOnlySupersededCandidates)
       fs::remove(path);
   };
   Tools tools(config, files, processes, http, clock);
-  auto report = state.repair(s.id, false, false, true, tools, files);
+  auto report = state.repair(s.id, false, false, true, tools);
   EXPECT_EQ(backups, 2u);
   EXPECT_EQ(report["issues"].size(), 1u);
   EXPECT_EQ(archives(), 1u);
@@ -509,7 +514,7 @@ TEST_F(Pr18, BackupWriteFailureAfterPublicationStillNamesTheRetainedBackup) {
   files.on_backup = [] { throw Error("after backup publication"); };
   Tools tools(config, files, processes, http, clock);
   try {
-    state.repair(s.id, false, true, false, tools, files);
+    state.repair(s.id, false, true, false, tools);
     FAIL();
   } catch (const Error &e) {
     EXPECT_THAT(e.what(), HasSubstr("after backup publication; backup:"));
@@ -536,7 +541,7 @@ TEST_F(Pr18, DeferredRepairCommitFailureRollsBackRowsAndRemovesNewCandidates) {
            "session_messages BEGIN INSERT INTO poison VALUES(1); END");
   Tools tools(config, files, processes, http, clock);
   try {
-    state.repair(s.id, false, false, true, tools, files);
+    state.repair(s.id, false, false, true, tools);
     FAIL();
   } catch (const Error &e) {
     EXPECT_THAT(e.what(), HasSubstr("backup:"));
@@ -581,7 +586,7 @@ TEST_F(Pr18, ProviderOnlyRepairReportsProblemsWithoutDependingOnFileStability) {
   result.result_file = "results/old/missing.json";
   s.messages.push_back(result);
   state.save(s);
-  const auto inspection = state.repair(s.id, false, false, false, tools, files);
+  const auto inspection = state.repair(s.id, false, false, false, tools);
   const auto archive = artifact_directory(config) /
                        s.messages[0].checkpoint_state.at("recovery_record").get<std::string>();
   size_t backups = 0;
@@ -589,7 +594,7 @@ TEST_F(Pr18, ProviderOnlyRepairReportsProblemsWithoutDependingOnFileStability) {
     ++backups;
     fs::remove(archive);
   };
-  const auto report = state.repair(s.id, false, true, false, tools, files);
+  const auto report = state.repair(s.id, false, true, false, tools);
   files.on_backup = {};
   EXPECT_EQ(report["issues"], inspection["issues"]);
   EXPECT_EQ(backups, 1u);
@@ -608,20 +613,21 @@ TEST_F(Pr18, TrustedAnchorAliasesPreserveSubordinateSymlinkChecks) {
   const auto path = artifact_directory(config) / ref;
   fs::create_directories(path.parent_path());
   files.atomic_write(path, "available", true);
-  EXPECT_EQ(tools.checked_result_reference(path.string()).first, ref.string());
-  EXPECT_EQ(tools.checked_result_reference(files.canonical(path).string()).first, ref.string());
+  EXPECT_THAT(tools.observe_result_reference(path.string()), TrustedReference(ref.string()));
+  EXPECT_THAT(tools.observe_result_reference(files.canonical(path).string()),
+              TrustedReference(ref.string()));
   const auto capture =
       capture_directory(config) / "capture-00000000-0000-0000-0000-000000000001.txt";
   fs::create_directories(capture.parent_path());
   files.atomic_write(capture, "capture", true);
-  EXPECT_EQ(tools.checked_result_reference(files.canonical(capture).string()).first,
-            capture.filename().string());
+  EXPECT_THAT(tools.observe_result_reference(files.canonical(capture).string()),
+              TrustedReference(capture.filename().string()));
   fs::create_symlink(path, path.parent_path() / "unsafe.json");
-  EXPECT_THROW(tools.checked_result_reference((path.parent_path() / "unsafe.json").string()),
-               Error);
-  EXPECT_THROW(
-      tools.checked_result_reference(files.canonical(path.parent_path()).string() + "/unsafe.json"),
-      Error);
+  EXPECT_FALSE(
+      tools.observe_result_reference((path.parent_path() / "unsafe.json").string()).error.empty());
+  EXPECT_FALSE(
+      tools.observe_result_reference(files.canonical(path.parent_path()).string() + "/unsafe.json")
+          .error.empty());
 }
 TEST_F(Pr18, CustomRootCandidatesAreRemovedAfterStalenessAndDeferredCommitFailure) {
   for (const bool deferred : {false, true}) {
@@ -646,7 +652,7 @@ TEST_F(Pr18, CustomRootCandidatesAreRemovedAfterStalenessAndDeferredCommitFailur
         raw.exec("UPDATE sessions SET updated=updated+1 WHERE id='" + other.id + "'");
       };
     Tools tools(config, files, processes, http, clock);
-    EXPECT_THROW(state.repair(s.id, false, false, true, tools, files), Error);
+    EXPECT_THROW(state.repair(s.id, false, false, true, tools), Error);
     files.on_backup = {};
     EXPECT_EQ(archives(), 0u);
     EXPECT_EQ(state.load_id(s.id, false).messages[0].result_file, m.result_file);
@@ -714,7 +720,7 @@ TEST_F(Pr18, FinalRepairValidationDoesNotReopenOrReadArchives) {
     files.on_read = [&] { ++reads_after_backup; };
     files.on_open = [&](const fs::path &) { ++opens_after_backup; };
   };
-  EXPECT_NO_THROW(state.repair(s.id, false, false, true, tools, files));
+  EXPECT_NO_THROW(state.repair(s.id, false, false, true, tools));
   files.on_backup = {};
   files.on_read = {};
   files.on_open = {};
@@ -812,7 +818,7 @@ TEST_F(Pr18, RepairRetriesArchiveSwapAfterDecodingOnCacheMissAndHit) {
         swapped = true;
       }
     };
-    const auto report = state.repair(s.id, false, false, true, tools, files);
+    const auto report = state.repair(s.id, false, false, true, tools);
     live.on_status = {};
     EXPECT_TRUE(swapped);
     EXPECT_EQ(report["backups"].size(), 2u);
@@ -821,4 +827,277 @@ TEST_F(Pr18, RepairRetriesArchiveSwapAfterDecodingOnCacheMissAndHit) {
                 HasSubstr("recovery_unavailable"));
   }
   EXPECT_EQ(live.starts, 2u); // Historical repair never dispatches another effect.
+}
+
+TEST_F(Pr18, InvalidRevisionTokensAreReportedAndRepairedEvenWithNoProviderRows) {
+  StateStore state(config.state_root);
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  for (const bool rows : {false, true})
+    for (const bool recovery : {false, true}) {
+      SCOPED_TRACE(rows);
+      SCOPED_TRACE(recovery);
+      auto s = state.create();
+      if (rows) {
+        s.provider_state = {{"provider", "anthropic"}, {"messages", Json::array()}};
+        state.save(s);
+      }
+      raw.exec("INSERT INTO provider_revisions(session,revision) VALUES('" + s.id +
+               "','invalid') ON CONFLICT(session) DO UPDATE SET revision='invalid'");
+      const auto inspection = state.repair(s.id, false, false, false, tools);
+      ASSERT_EQ(inspection["issues"].size(), 1u);
+      EXPECT_THROW(state.load_id(s.id, false), Error);
+      const auto report = state.repair(s.id, false, !recovery, recovery, tools);
+      EXPECT_EQ(report["issues"], inspection["issues"]);
+      const auto backup = Json::parse(files.native.read(report["backup"].get<std::string>()));
+      EXPECT_EQ(backup["provider_revisions"][0]["revision"], "invalid");
+      EXPECT_NE(raw.value("SELECT revision FROM provider_revisions WHERE session='" + s.id + "'"),
+                "invalid");
+      EXPECT_NO_THROW(state.save(s)); // Check the next write before a load could reset trust.
+      auto loaded = state.load_id(s.id, false);
+      EXPECT_NO_THROW(state.save(loaded));
+      EXPECT_TRUE(state.repair(s.id, false, false, false, tools)["issues"].empty());
+      EXPECT_NO_THROW(state.repair(s.id, false, true, false, tools));
+    }
+}
+TEST_F(Pr18, TokenRepairRollsBackAndPreservesItsBackupOnDeferredCommitFailure) {
+  StateStore state(config.state_root);
+  auto s = state.create();
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  raw.exec("INSERT INTO provider_revisions VALUES('" + s.id +
+           "','invalid');"
+           "CREATE TABLE token_parent(id INTEGER PRIMARY KEY);"
+           "CREATE TABLE token_poison(id INTEGER REFERENCES token_parent(id) DEFERRABLE INITIALLY "
+           "DEFERRED);"
+           "CREATE TRIGGER refuse_token AFTER UPDATE ON provider_revisions "
+           "BEGIN INSERT INTO token_poison VALUES(1); END");
+  std::string error;
+  try {
+    state.repair(s.id, false, true, false, tools);
+  } catch (const Error &e) {
+    error = e.what();
+  }
+  EXPECT_THAT(error, HasSubstr("backup:"));
+  EXPECT_EQ(raw.value("SELECT revision FROM provider_revisions WHERE session='" + s.id + "'"),
+            "invalid");
+  raw.exec("DROP TRIGGER refuse_token");
+  EXPECT_NO_THROW(state.repair(s.id, false, true, false, tools));
+  EXPECT_NO_THROW(state.save(s));
+}
+TEST_F(Pr18, AbsoluteCheckpointsNormalizeReadOnlyAndRegisterAcrossForkSaveAndRelocation) {
+  const auto real = temp.root / "real";
+  const auto alias = temp.root / "alias";
+  fs::create_directories(real);
+  fs::create_directory_symlink(real, alias);
+  config.artifact_root = alias / "artifacts";
+  StateStore state(config.state_root, artifact_directory(config));
+  auto s = state.create();
+  Tools tools(config, files, processes, http, clock);
+  tools.use_session(s.id);
+  codet::Message archive;
+  archive.role = "system";
+  archive.origin = "recovery";
+  archive.text = Json::array({{{"call_id", "old"}, {"recovery", "uncertain"}}}).dump();
+  archive.message_id = digest(archive.text);
+  std::vector<RecoveryCandidate> candidates;
+  tools.retain_recovery_result(archive, candidates);
+  const auto absolute = files.canonical(candidates[0].file.path).string();
+  codet::Message checkpoint;
+  checkpoint.role = "system";
+  checkpoint.text = "summary";
+  checkpoint.checkpoint_state = {{"recovery_record", absolute}};
+  s.messages = {checkpoint};
+  state.save(s);
+  Db raw(config.state_root / "state.sqlite3");
+  // Reproduce a legacy persisted absolute reference without using the corrected writer.
+  raw.exec("UPDATE session_messages SET payload='" + Json(s.messages[0]).dump() +
+           "' WHERE session='" + s.id +
+           "';"
+           "DELETE FROM session_references WHERE session='" +
+           s.id + "'");
+  auto loaded = state.load_id(s.id, false);
+  EXPECT_EQ(loaded.messages[0].checkpoint_state["recovery_record"], archive.result_file);
+  EXPECT_THAT(raw.value("SELECT payload FROM session_messages WHERE session='" + s.id + "'"),
+              HasSubstr(absolute));
+  raw.exec("CREATE TABLE checkpoint_parent(id INTEGER PRIMARY KEY);"
+           "CREATE TABLE checkpoint_poison(id INTEGER REFERENCES checkpoint_parent(id) "
+           "DEFERRABLE INITIALLY DEFERRED);"
+           "CREATE TRIGGER reject_checkpoint AFTER INSERT ON session_messages BEGIN "
+           "INSERT INTO checkpoint_poison VALUES(1); END");
+  EXPECT_THROW(state.save(loaded), Error);
+  EXPECT_THAT(raw.value("SELECT payload FROM session_messages WHERE session='" + s.id + "'"),
+              HasSubstr(absolute));
+  raw.exec("DROP TRIGGER reject_checkpoint");
+  EXPECT_NO_THROW(state.save(loaded)); // Verify the next save before reloading.
+  auto child = state.fork(loaded);
+  EXPECT_THAT(state.references(child.id), Contains(archive.result_file));
+  EXPECT_NO_THROW(state.discard_recovery_record(candidates[0], tools));
+  EXPECT_TRUE(fs::exists(candidates[0].file.path));
+  state.save(loaded);
+  EXPECT_THAT(state.references(s.id), Contains(archive.result_file));
+  EXPECT_THAT(raw.value("SELECT payload FROM session_messages WHERE session='" + s.id + "'"),
+              Not(HasSubstr(absolute)));
+  const auto moved = temp.root / "moved";
+  fs::create_directories(moved);
+  fs::copy(config.state_root, moved / "state", fs::copy_options::recursive);
+  fs::copy(real / "artifacts", moved / "artifacts", fs::copy_options::recursive);
+  config.state_root = moved / "state";
+  config.artifact_root = moved / "artifacts";
+  StateStore relocated(config.state_root, config.artifact_root);
+  Tools moved_tools(config, files, processes, http, clock);
+  auto moved_child = relocated.load_id(child.id, false);
+  EXPECT_THAT(moved_tools.execution_state(moved_child.messages).dump(), HasSubstr("old"));
+  EXPECT_NO_THROW(relocated.save(moved_child));
+}
+TEST_F(Pr18, UnsafeAndUnavailableAbsoluteCheckpointsRetainTheirOriginalPointers) {
+  StateStore state(config.state_root, artifact_directory(config));
+  auto s = state.create();
+  Tools tools(config, files, processes, http, clock);
+  tools.use_session(s.id);
+  auto m = checkpoint(tools);
+  const auto relative = m.checkpoint_state.at("recovery_record").get<std::string>();
+  const auto path = artifact_directory(config) / relative;
+  const auto bytes = files.native.read(path);
+  for (int mode : {0, 1, 2}) {
+    SCOPED_TRACE(mode);
+    fs::remove(path);
+    if (mode == 1) {
+      files.atomic_write(path, bytes, true);
+      ASSERT_EQ(::chmod(path.c_str(), 0644), 0);
+    }
+    if (mode == 2) {
+      auto outside = temp.root / "outside.json";
+      files.atomic_write(outside, bytes, true);
+      fs::create_symlink(outside, path);
+    }
+    m.checkpoint_state = {{"recovery_record", path.string()}};
+    s.messages = {m};
+    state.save(s);
+    auto loaded = state.load_id(s.id, false);
+    EXPECT_EQ(loaded.messages[0].checkpoint_state["recovery_record"], path.string());
+    EXPECT_THAT(tools.execution_state(loaded.messages).dump(), HasSubstr("recovery_unavailable"));
+  }
+}
+TEST_F(Pr18, CandidateCleanupAcceptsAbsenceAndContinuesAfterThrowingDiagnostics) {
+  StateStore state(config.state_root);
+  auto s = state.create();
+  Tools tools(config, files, processes, http, clock);
+  tools.use_session(s.id);
+  std::vector<RecoveryCandidate> candidates;
+  for (int i = 0; i < 3; ++i) {
+    codet::Message m;
+    m.role = "system";
+    m.text = std::to_string(i);
+    tools.retain_recovery_result(m, candidates);
+  }
+  fs::remove(candidates[0].file.path);
+  EXPECT_NO_THROW(state.discard_recovery_record(candidates[0], tools));
+  files.atomic_write(candidates[1].file.path, "replacement", true);
+  size_t diagnostics = 0;
+  cleanup_recovery_candidates(state, tools, candidates, [&](const std::string &) {
+    ++diagnostics;
+    throw std::bad_alloc();
+  });
+  EXPECT_EQ(diagnostics, 1u);
+  EXPECT_TRUE(fs::exists(candidates[1].file.path));
+  EXPECT_FALSE(fs::exists(candidates[2].file.path));
+}
+TEST_F(Pr18, ReferenceInsertionSkipsKnownPathsAndDoesNotPublishNestedKnowledge) {
+  StateStore state(config.state_root);
+  auto s = state.create();
+  Db raw(config.state_root / "state.sqlite3");
+  codet::Message first;
+  first.result_file = "results/owner/first.json";
+  codet::Message second;
+  second.result_file = "results/owner/second.json";
+  state.remember_references(s.id, {first});
+  raw.exec("CREATE TRIGGER reject_known BEFORE INSERT ON session_references WHEN "
+           "NEW.path='results/owner/first.json' BEGIN SELECT RAISE(ABORT,'known reinserted'); END");
+  EXPECT_NO_THROW(state.remember_references(s.id, {first, second}));
+  EXPECT_THAT(state.references(s.id), Contains(second.result_file));
+  codet::Message third;
+  third.result_file = "results/owner/third.json";
+  raw.exec("CREATE TABLE ref_parent(id INTEGER PRIMARY KEY);CREATE TABLE ref_poison(id INTEGER "
+           "REFERENCES ref_parent(id) DEFERRABLE INITIALLY DEFERRED);"
+           "CREATE TRIGGER reject_commit AFTER INSERT ON session_references WHEN "
+           "NEW.path='results/owner/third.json' BEGIN INSERT INTO ref_poison VALUES(1); END");
+  s.messages = {third};
+  EXPECT_THROW(state.save(s), Error);
+  raw.exec("DROP TRIGGER reject_commit");
+  EXPECT_NO_THROW(state.save(s));
+  EXPECT_THAT(state.references(s.id), Contains(third.result_file));
+}
+
+TEST_F(Pr18, RecoveryCandidateFailuresBeforeWriteAndDuringIdentityCaptureRemainSafe) {
+  StateStore state(config.state_root);
+  auto s = state.create();
+  Tools tools(config, files, processes, http, clock);
+  tools.use_session(s.id);
+  codet::Message m;
+  m.role = "system";
+  m.text = "recovery";
+  std::vector<RecoveryCandidate> candidates;
+  files.before_write = [](const fs::path &) { throw Error("before archive publication"); };
+  EXPECT_THROW(tools.retain_recovery_result(m, candidates), Error);
+  files.before_write = {};
+  ASSERT_EQ(candidates.size(), 1u);
+  EXPECT_FALSE(fs::exists(candidates[0].file.path));
+  EXPECT_NO_THROW(state.discard_recovery_record(candidates[0], tools));
+  candidates.clear();
+  m.message_id.clear();
+  files.on_write = [](const fs::path &path) {
+    if (::chmod(path.c_str(), 0644))
+      throw Error("chmod fixture failed");
+  };
+  EXPECT_THROW(tools.retain_recovery_result(m, candidates), Error);
+  files.on_write = {};
+  ASSERT_EQ(candidates.size(), 1u);
+  EXPECT_TRUE(fs::exists(candidates[0].file.path));
+  EXPECT_THROW(state.discard_recovery_record(candidates[0], tools), Error);
+  EXPECT_TRUE(state.load_id(s.id, false).messages.empty());
+}
+TEST_F(Pr18, MessageCorruptionStillFailsAsDataCorruption) {
+  StateStore state(config.state_root);
+  auto s = state.create();
+  s.messages = {codet::Message{"user", "saved"}};
+  state.save(s);
+  Db raw(config.state_root / "state.sqlite3");
+  for (const auto *payload : {"{", "{}", "null"}) {
+    SCOPED_TRACE(payload);
+    raw.exec("UPDATE session_messages SET payload='" + std::string(payload) + "' WHERE session='" +
+             s.id + "'");
+    try {
+      state.load_id(s.id, false);
+      FAIL() << "malformed message loaded";
+    } catch (const Error &e) {
+      EXPECT_THAT(e.what(), HasSubstr("Corrupt session messages"));
+    }
+  }
+  raw.exec("UPDATE session_messages SET payload=CAST(x'7b7d007b7d' AS TEXT) WHERE session='" +
+           s.id + "'");
+  EXPECT_THROW(state.load_id(s.id, false), Error);
+  raw.exec("UPDATE session_messages SET position=4 WHERE session='" + s.id + "'");
+  try {
+    state.load_id(s.id, false);
+    FAIL() << "noncontiguous message loaded";
+  } catch (const Error &e) {
+    EXPECT_THAT(e.what(), HasSubstr("noncontiguous"));
+  }
+}
+
+TEST_F(Pr18, RevisionAndProviderCorruptionAreDiscoveredIndependently) {
+  StateStore state(config.state_root);
+  auto s = state.create();
+  s.provider_state = {{"provider", "anthropic"}, {"messages", Json::array()}};
+  state.save(s);
+  Db raw(config.state_root / "state.sqlite3");
+  raw.exec("UPDATE provider_parts SET payload='broken';UPDATE provider_revisions SET "
+           "revision='invalid'");
+  Tools tools(config, files, processes, http, clock);
+  auto report = state.repair(s.id, false, false, false, tools);
+  ASSERT_EQ(report["issues"].size(), 2u);
+  auto fixed = state.repair(s.id, false, true, false, tools);
+  EXPECT_EQ(fixed["issues"], report["issues"]);
+  EXPECT_NO_THROW(state.save(s));
 }

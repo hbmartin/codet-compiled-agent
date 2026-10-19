@@ -123,6 +123,67 @@ std::string checked_artifact_identity(const FileSystem &files, const fs::path &r
          std::to_string(modified.tv_nsec) + ":" + std::to_string(changed.tv_sec) + ":" +
          std::to_string(changed.tv_nsec);
 }
+fs::path remap_artifact_alias(const fs::path &value, const fs::path &root, const fs::path &anchor) {
+  // Remap the trusted anchor only; subordinate symlinks must remain visible to validation.
+  return value.is_absolute() && within(value, anchor) && !within(value, root)
+             ? root / value.lexically_relative(anchor)
+             : value;
+}
+bool normalize_checkpoint_reference(Message &message, const FileSystem &files, const fs::path &root,
+                                    const fs::path &anchor) {
+  if (!message.checkpoint_state.is_object())
+    return false;
+  auto ref = message.checkpoint_state.find("recovery_record");
+  if (ref == message.checkpoint_state.end() || !ref->is_string())
+    return false;
+  const fs::path original(ref->get_ref<const std::string &>());
+  if (!original.is_absolute())
+    return false;
+  try {
+    const auto base = fs::absolute(root).lexically_normal();
+    if (files.canonical(base) != anchor)
+      return false;
+    const auto path = remap_artifact_alias(original, base, anchor);
+    const auto relative = path.lexically_relative(base);
+    if (!result_name(relative))
+      return false;
+    const auto identity =
+        checked_artifact_identity(files, base, path, ArtifactPolicy::private_owned_regular);
+    auto input = files.open_read(path);
+    if (input->path() != files.canonical(path) ||
+        identity !=
+            checked_artifact_identity(files, base, path, ArtifactPolicy::private_owned_regular))
+      return false;
+    *ref = relative.string();
+    return true;
+  } catch (const std::bad_alloc &) {
+    throw;
+  } catch (const std::exception &) {
+    return false; // Preserve the original pointer for explicit uncertainty and repair.
+  }
+}
+void cleanup_recovery_candidates(StateStore &state, Tools &tools,
+                                 const std::vector<RecoveryCandidate> &candidates,
+                                 const DiagnosticSink &diagnostics) noexcept {
+  for (const auto &candidate : candidates) {
+    const auto diagnose = [&](const char *reason) noexcept {
+      try {
+        report_diagnostic(diagnostics, "Cannot remove recovery candidate " +
+                                           candidate.file.identifier + ": " + reason);
+      } catch (...) {
+        // A diagnostic failure must not stop the remaining candidates.
+        return;
+      }
+    };
+    try {
+      state.discard_recovery_record(candidate, tools);
+    } catch (const std::exception &error) {
+      diagnose(error.what());
+    } catch (...) {
+      diagnose("Unknown cleanup failure");
+    }
+  }
+}
 std::set<std::string> message_references(const std::vector<Message> &messages) {
   std::set<std::string> out;
   const auto accept = [&](const std::string &value) {

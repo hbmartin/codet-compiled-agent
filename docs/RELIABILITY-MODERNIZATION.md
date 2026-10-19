@@ -139,3 +139,26 @@ the offline test matrix, benchmarks, and Tiger cross-build/static verification a
 identity checks, root-aware candidate cleanup, optional token failures, operational snapshot errors,
 fragmented tool diagnostics, and the offline matrix with source hashes. Tiger verification is static;
 no target hardware or live provider execution is claimed.
+
+## PR #20 repair follow-up
+
+Inspection checks each selected session's provider revision token inside its read snapshot, even
+when no provider rows remain. Explicit provider-cache or recovery repair backs up the original
+rows, clears derived provider state and rotates that token in the same transaction. Invalid token
+content is repairable; missing or altered revision infrastructure remains a mandatory integrity
+failure. Operational SQLite and allocation failures are not reported as message corruption.
+
+Trusted, available absolute checkpoint archive paths normalize to relative identifiers in loaded
+snapshots without writing the database. Successful saves persist the same normalized view used for
+reference registration, and forks retain references to shared archives. Missing or unsafe pointers
+remain available to historical-uncertainty handling and explicit recovery repair. Trust validation
+continues to require owned private regular archives, including on restored or aliased storage.
+
+Candidate cleanup treats an absent unpublished file as already removed and continues after cleanup
+or diagnostic failures. Existing, committed, replaced, unsafe and changed archives retain their
+protections. Backup publication uses the filesystem already configured by Tools. Known-reference
+insertion skips committed paths and publishes optional cache knowledge only after owning commits.
+
+[PR #20 follow-up validation](validation/pr20-correctness-repair.json) records the fault regressions,
+portable checkpoint lifecycle, cleanup and insertion tests, offline checks, benchmarks and Tiger
+cross-build/static verification against source hashes. Tiger hardware execution remains untested.
