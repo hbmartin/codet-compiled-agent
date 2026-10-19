@@ -15,6 +15,22 @@ enum class ArtifactPolicy : std::uint8_t {
   owned_regular,
   private_owned_regular
 };
+struct ReferenceObservation {
+  std::string original, identifier;
+  fs::path root, path;
+  ArtifactPolicy policy = ArtifactPolicy::owned_regular;
+  std::optional<std::string> identity;
+  std::string error;
+};
+struct ExecutionObservation {
+  Json facts = Json::array();
+  std::map<std::string, ReferenceObservation> archives;
+};
+struct RecoveryCandidate {
+  ReferenceObservation file;
+  std::string content_digest;
+  size_t bytes = 0;
+};
 std::string checked_artifact_identity(const FileSystem &, const fs::path &root, const fs::path &,
                                       ArtifactPolicy);
 std::set<std::string> message_references(const std::vector<Message> &);

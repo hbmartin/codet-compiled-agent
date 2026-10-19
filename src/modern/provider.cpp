@@ -927,6 +927,7 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
     };
     std::map<size_t, Json> blocks;
     std::map<size_t, std::string> arguments, tool_frames;
+    std::map<size_t, std::string> id_frames, name_frames;
     std::map<size_t, ToolCall> calls;
     auto text = [&](const std::string &value) {
       result.message.text += value;
@@ -1086,11 +1087,15 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
           for (const auto &tc : delta.value("tool_calls", Json::array())) {
             const auto index = tc.value("index", size_t{0});
             auto &call = calls[index];
-            tool_frames[index] = data;
-            if (tc.contains("id"))
+            tool_frames.emplace(index, data);
+            if (tc.contains("id")) {
+              id_frames[index] = data;
               call.id = tc["id"];
+            }
             if (tc.contains("function")) {
               const auto &f = tc["function"];
+              if (f.contains("name"))
+                name_frames[index] = data;
               call.name += f.value("name", "");
               arguments[index] += f.value("arguments", "");
             }
@@ -1167,6 +1172,12 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
     const auto assembly_body = [&]() -> const std::string & {
       if (!response.body.empty())
         return response.body;
+      if (!parsing_arguments && calls.count(assembling)) {
+        if (calls.at(assembling).id.empty() && id_frames.count(assembling))
+          return id_frames.at(assembling);
+        if (calls.at(assembling).name.empty() && name_frames.count(assembling))
+          return name_frames.at(assembling);
+      }
       return parsing_arguments ? arguments[assembling] : tool_frames[assembling];
     };
     try {

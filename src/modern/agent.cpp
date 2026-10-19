@@ -159,38 +159,37 @@ bool Agent::compact_history(Session &session, const Cancellation &cancel,
   auto critical =
       tools_.execution_state(session.messages, [&] { return state_.recovery_facts(session.id); });
   execution = execution_context(session, critical);
-  struct RecoveryCandidate {
+  struct RecoveryCleanup {
     StateStore &state;
+    Tools &tools;
     const DiagnosticSink &diagnostics;
-    std::string ref;
+    std::vector<RecoveryCandidate> candidates;
     bool committed = false;
-    RecoveryCandidate(StateStore &store, const DiagnosticSink &sink)
-        : state(store), diagnostics(sink) {}
-    ~RecoveryCandidate() {
-      if (!committed && !ref.empty()) {
-        try {
-          state.discard_recovery_record(ref);
-        } catch (const std::exception &error) {
+    RecoveryCleanup(StateStore &store, Tools &toolset, const DiagnosticSink &sink)
+        : state(store), tools(toolset), diagnostics(sink) {}
+    ~RecoveryCleanup() {
+      if (!committed)
+        for (const auto &candidate : candidates) {
           try {
-            report_diagnostic(diagnostics,
-                              "Cannot remove recovery candidate: " + std::string(error.what()));
-          } catch (...) {
-            return; // Preserve the original failure even if diagnostic allocation fails.
+            state.discard_recovery_record(candidate, tools);
+          } catch (const std::exception &error) {
+            try {
+              report_diagnostic(diagnostics,
+                                "Cannot remove recovery candidate: " + std::string(error.what()));
+            } catch (...) {
+              return;
+            }
           }
         }
-      }
     }
-  } recovery_candidate{state_, diagnostics_};
+  } recovery_candidate{state_, tools_, diagnostics_};
   if (critical.dump().size() > 2048) {
     Message record;
     record.role = "system";
     record.origin = "recovery";
     record.message_id = digest(critical.dump());
     record.text = critical.dump();
-    const bool existed = fs::exists(tools_.result_reference(record));
-    tools_.retain_result(record);
-    if (!existed)
-      recovery_candidate.ref = record.result_file;
+    tools_.retain_recovery_result(record, recovery_candidate.candidates);
     critical = {{"records", critical.size()}, {"recovery_record", record.result_file}};
   }
   compact.checkpoint_state = critical;
