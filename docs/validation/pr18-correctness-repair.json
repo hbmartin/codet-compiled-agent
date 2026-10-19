@@ -1,0 +1,634 @@
+{
+  "recorded_utc": "2026-10-19T01:40:35.288492+00:00",
+  "branch": "codex/pr18-correctness-followup",
+  "implementation_commit": "415ae1b376df62c1635fa475ae15c4af4e0f7d52",
+  "baseline": "25071e10f86e82c362708c52214c13e5dd084d73",
+  "follow_up_to_pr": 18,
+  "compatibility": {
+    "sqlite_schema_version": 7,
+    "schema_migration_added": false,
+    "provider_interfaces_unchanged": true,
+    "tool_schemas_unchanged": true,
+    "reasoning_effort_defaults_unchanged": true,
+    "cli_flags_unchanged": true,
+    "repair_retry_count": 1,
+    "repair_maximum_preparation_attempts": 2,
+    "repair_report_optional_backups_array": true,
+    "full_provider_cache_limit_bytes": 8388608,
+    "reusable_recovery_cache_serialized_limit_bytes": 8388608
+  },
+  "coverage": [
+    "Optional cache/cursor publication is noexcept; isolated allocator/SQLite interception injects failures after successful commits across provider saves, appends and replacements, during load publication, and through Agent; next save checked before reload; no false receipt",
+    "Actual load interleaves external SQL between provider rows and token read; active session SELECT retains old rows under old token, requiring strict validation on the next save",
+    "Malformed OpenAI/Anthropic tool arguments and missing names/IDs preserve ProviderError type and full HTTP body or tool-specific fallback; real curl loopback covers six malformed-tool cases, with one request each",
+    "Consumer text and item callbacks retain original JSON exceptions; cancellation keeps precedence; existing optional compaction, incomplete-event and pre-observation transport retry tests retained",
+    "Repair reports evicted captures and missing references consistently across modes, honors custom roots and owned/private policies, creates durable partial archives, preserves arbitrary user JSON and tool-aware metadata normalization",
+    "Coherent read snapshots and staged private backups precede the final write lock; unrelated writers commit during archive reads and backup writes; successful one-retry, second invalidation, changed target rows and changed file identities covered",
+    "Repair rollback and deferred commit failure remove new candidates and preserve canonical rows, existing archives and backup diagnostics; retries retain both backups; uncertainty survives fork, relocation and repeated compaction",
+    "Recovery caching charges existing serialized text, including conservative whitespace charging; private restored archives are rechecked after chmod0600; 8 MiB cache behavior and fresh runtime observations retained",
+    "Existing large interleaved-session persistence benchmarks serialize 2270 suffix bytes for 20 appends, read zero unchanged rows, and retain the full-cache cap; ordinary capture scans remain zero"
+  ],
+  "excluded": [
+    "New revision-infrastructure or permission repair commands",
+    "Relaxed trust checks",
+    "Parsed-heap memory budgeting",
+    "Rollback-guard consolidation",
+    "Live provider requests",
+    "Tiger hardware execution",
+    "Unrelated catalog findings",
+    "Path-traversal work",
+    "Model-table refactors"
+  ],
+  "checks": {
+    "macos_host": {
+      "executed": true,
+      "passed": true,
+      "ctest_suites": 8,
+      "publication_fault_cases": 4,
+      "unit_cases": 406,
+      "total_cpp_cases": 410,
+      "cpp_passed": 408,
+      "cpp_skipped": [
+        "Contracts.NativeTigerDesktopAcceptance",
+        "NetworkOptIn.TlsHandshake"
+      ],
+      "cli_integration_cases": 55,
+      "console": {
+        "path": "build/pr18-followup/ctest-host.log",
+        "sha256": "b0ef3b7473857ca0c8319777d93421f638a0ba44d23d05185e172b14fea31c3d"
+      },
+      "detailed_log": {
+        "path": "build/pr16-host/Testing/Temporary/LastTest.log",
+        "sha256": "c7d3e5696488be893535e7edb28e02899ee074e32d4c6da5837aad40c139e840"
+      }
+    },
+    "macos_asan_ubsan": {
+      "executed": true,
+      "passed": true,
+      "ctest_suites": 8,
+      "publication_fault_cases": 4,
+      "unit_cases": 406,
+      "total_cpp_cases": 410,
+      "cpp_passed": 408,
+      "cpp_skipped": [
+        "Contracts.NativeTigerDesktopAcceptance",
+        "NetworkOptIn.TlsHandshake"
+      ],
+      "cli_integration_cases": 55,
+      "console": {
+        "path": "build/pr18-followup/ctest-sanitize.log",
+        "sha256": "2f701cbaa5b01b52ab85149a53ba800e7bd4c1cce0114c9a628f0d48cace7fa8"
+      },
+      "detailed_log": {
+        "path": "build/pr16-sanitize/Testing/Temporary/LastTest.log",
+        "sha256": "fce8ef05980ac4b099761de0e500a8e2273a15ada98069897788b3e184f52c44"
+      }
+    },
+    "linux_amd64": {
+      "executed": true,
+      "passed": true,
+      "ctest_suites": 8,
+      "publication_fault_cases": 4,
+      "unit_cases": 406,
+      "total_cpp_cases": 410,
+      "cpp_passed": 405,
+      "cpp_skipped": [
+        "Contracts.NativeImageIoCanEncodeAndReloadPixelsWithoutAConsole",
+        "Contracts.NativeTigerDesktopAcceptance",
+        "NetworkOptIn.TlsHandshake",
+        "OutputReview.UnreadableRegularEntryCountsWithoutDisablingHealthyCapture",
+        "SmallCore.UnreadableDiscoveryRootsDoNotAbortOtherGuidance"
+      ],
+      "cli_integration_cases": 55,
+      "console": {
+        "path": "build/pr18-followup/linux.log",
+        "sha256": "c5a9462f4b40781afa48ca54d756331569d76552e4e575c4ab2fa007b5b98950"
+      },
+      "detailed_log": {
+        "path": "build/pr16-linux/Testing/Temporary/LastTest.log",
+        "sha256": "1f5e7befa9337c89d5f31effee5b06ffaf6f67c4546622398c6013591eee2a85"
+      }
+    },
+    "analyzers": {
+      "clang-tidy": {
+        "passed": true,
+        "executed": true,
+        "application_sources": 25,
+        "gated_findings": 0,
+        "versions": [
+          "Ubuntu LLVM version 18.1.3\n  Optimized build."
+        ],
+        "manifest": {
+          "path": "build/pr16-linux/analysis/clang-tidy/manifest.json",
+          "sha256": "5fd4ff2d2c946eb672393b651ee66ec59e6cdc91925252f9cd9f0a19b579a92c"
+        }
+      },
+      "cppcheck": {
+        "passed": true,
+        "executed": true,
+        "application_sources": 25,
+        "gated_findings": 0,
+        "versions": [
+          "Cppcheck 2.22.0"
+        ],
+        "manifest": {
+          "path": "build/pr16-linux/analysis/cppcheck/manifest.json",
+          "sha256": "f95136309ffc19e2b00134fb27266ffca204b5377b5081eff85de9c158c10c6d"
+        }
+      },
+      "clang-analyzer": {
+        "passed": true,
+        "executed": true,
+        "application_sources": 25,
+        "gated_findings": 0,
+        "versions": [
+          "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin",
+          "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin"
+        ],
+        "manifest": {
+          "path": "build/pr16-linux/analysis/clang-analyzer/manifest.json",
+          "sha256": "8f377179167ee346ead0f46692a095598be66f410cf0f423d4fd3c9920f9c9eb"
+        }
+      }
+    },
+    "analyzer_detection": {
+      "executed": true,
+      "passed": true,
+      "tools": {
+        "clang-tidy": true,
+        "cppcheck": true,
+        "clang-analyzer": true
+      },
+      "manifest": {
+        "path": "build/pr16-linux/analysis/selftest/selftest.json",
+        "sha256": "3487eb0a98fc4af909d26aa6ce025d386b8ee2e4715fa58a679a999bf7df504a"
+      }
+    },
+    "analyzer_runner": {
+      "passed": true,
+      "executed": true,
+      "cases": 33,
+      "environment": "cached Linux amd64 image with PyYAML",
+      "log": {
+        "path": "build/pr18-followup/analyzer-runner.log",
+        "sha256": "fbe08d5ff15fb8799374d1484ec2d2ec1a59717ce47381187e448ebe9f357b76"
+      }
+    },
+    "semgrep": {
+      "passed": true,
+      "executed": true,
+      "version": "1.177.0",
+      "rules": 18,
+      "positive_fixture_matches": 42,
+      "production_findings": 0,
+      "production_errors": 0,
+      "fixtures": {
+        "path": "build/semgrep/tests.json",
+        "sha256": "ed11f13cb1f7cb936467424b225f177992f58a31a264160072af364f6da3d3ec"
+      },
+      "production": {
+        "path": "build/semgrep/scan.json",
+        "sha256": "1e4b8c10b59fc466f6533e2610237759881c0e9101e6eb864e1dbf248df82096"
+      },
+      "environment": {
+        "python": "3.12.15 (main, Sep 30 2026, 22:04:19) [Clang 17.0.0 (clang-1700.6.4.2)]",
+        "executable": "<external>/python",
+        "platform": "macOS-15.8-arm64-arm-64bit",
+        "semgrep": "1.177.0"
+      }
+    },
+    "benchmarks": {
+      "durable": {
+        "executed": true,
+        "passed": true,
+        "observations": [
+          {
+            "database_bytes": 53248,
+            "durability": "durable",
+            "input_blocks": 0,
+            "output_blocks": 0,
+            "payload_bytes": 512,
+            "peak_rss_bytes": 8667136,
+            "results": 100,
+            "save_seconds": 0.022098291,
+            "seconds": 0.027896833,
+            "serialized_bytes": 72292,
+            "transcript_bytes": 72393,
+            "wal_bytes": 1001192
+          },
+          {
+            "database_bytes": 53248,
+            "durability": "durable",
+            "input_blocks": 0,
+            "output_blocks": 0,
+            "payload_bytes": 512,
+            "peak_rss_bytes": 9076736,
+            "results": 200,
+            "save_seconds": 0.044494372999999976,
+            "seconds": 0.055871791,
+            "serialized_bytes": 144692,
+            "transcript_bytes": 144893,
+            "wal_bytes": 2047672
+          },
+          {
+            "database_bytes": 53248,
+            "durability": "durable",
+            "input_blocks": 0,
+            "output_blocks": 0,
+            "payload_bytes": 512,
+            "peak_rss_bytes": 9486336,
+            "results": 300,
+            "save_seconds": 0.06570957699999999,
+            "seconds": 0.082930125,
+            "serialized_bytes": 217092,
+            "transcript_bytes": 217393,
+            "wal_bytes": 3118872
+          }
+        ],
+        "log": {
+          "path": "build/pr18-followup/benchmark-durable.jsonl",
+          "sha256": "9ec63fcf5bede9b8ef1185e03dfa5f54aa07eb812223fb102104e7809b79c3d1"
+        }
+      },
+      "fast": {
+        "executed": true,
+        "passed": true,
+        "observations": [
+          {
+            "database_bytes": 53248,
+            "durability": "fast",
+            "input_blocks": 0,
+            "output_blocks": 0,
+            "payload_bytes": 512,
+            "peak_rss_bytes": 8552448,
+            "results": 100,
+            "save_seconds": 0.013245746000000003,
+            "seconds": 0.018751292,
+            "serialized_bytes": 72292,
+            "transcript_bytes": 72393,
+            "wal_bytes": 1001192
+          },
+          {
+            "database_bytes": 53248,
+            "durability": "fast",
+            "input_blocks": 0,
+            "output_blocks": 0,
+            "payload_bytes": 512,
+            "peak_rss_bytes": 8994816,
+            "results": 200,
+            "save_seconds": 0.026070580000000003,
+            "seconds": 0.037040792,
+            "serialized_bytes": 144692,
+            "transcript_bytes": 144893,
+            "wal_bytes": 2047672
+          },
+          {
+            "database_bytes": 53248,
+            "durability": "fast",
+            "input_blocks": 0,
+            "output_blocks": 0,
+            "payload_bytes": 512,
+            "peak_rss_bytes": 9404416,
+            "results": 300,
+            "save_seconds": 0.038830039000000025,
+            "seconds": 0.055288542,
+            "serialized_bytes": 217092,
+            "transcript_bytes": 217393,
+            "wal_bytes": 3118872
+          }
+        ],
+        "log": {
+          "path": "build/pr18-followup/benchmark-fast.jsonl",
+          "sha256": "b1b398c4d70029127f7b426e0440f8d2e03c2d4ae0d9b1eba6a232dd84bdff86"
+        }
+      },
+      "captures": {
+        "executed": true,
+        "passed": true,
+        "observations": [
+          {
+            "capture_batches": 161,
+            "capture_bytes": 6619136,
+            "capture_syncs": 61,
+            "flushes": 100,
+            "input_blocks": 0,
+            "ordinary_close_scans": 0,
+            "ordinary_flush_scans": 0,
+            "output_blocks": 0,
+            "peak_rss_bytes": 8863744,
+            "repeated_closes": 20,
+            "retained_files": 40,
+            "seconds": 0.019488375
+          },
+          {
+            "capture_batches": 185,
+            "capture_bytes": 6619136,
+            "capture_syncs": 85,
+            "flushes": 100,
+            "input_blocks": 0,
+            "ordinary_close_scans": 0,
+            "ordinary_flush_scans": 0,
+            "output_blocks": 0,
+            "peak_rss_bytes": 9256960,
+            "repeated_closes": 20,
+            "retained_files": 64,
+            "seconds": 0.029343292
+          }
+        ],
+        "log": {
+          "path": "build/pr18-followup/benchmark-captures.jsonl",
+          "sha256": "a953a2b1f60f18e9ab5bf0d01dc31c2d742cb8fd38cf7b91980e3340a07d9df5"
+        }
+      },
+      "history": {
+        "executed": true,
+        "passed": true,
+        "observations": [
+          {
+            "aggregate_wire_items": 0,
+            "messages": 200,
+            "peak_rss_bytes": 12484608,
+            "projected_bytes": 213501,
+            "sizing_and_projection_seconds": 0.273656292,
+            "sizing_seconds": 0.020212833,
+            "tool_results": 100,
+            "wire_bytes": 427515,
+            "wire_parts_encoded": 251
+          },
+          {
+            "aggregate_wire_items": 0,
+            "messages": 600,
+            "peak_rss_bytes": 16400384,
+            "projected_bytes": 641201,
+            "sizing_and_projection_seconds": 0.771217334,
+            "sizing_seconds": 0.058491959,
+            "tool_results": 300,
+            "wire_bytes": 1282915,
+            "wire_parts_encoded": 751
+          },
+          {
+            "aggregate_wire_items": 0,
+            "messages": 2000,
+            "peak_rss_bytes": 29982720,
+            "projected_bytes": 2138149,
+            "sizing_and_projection_seconds": 2.665387125,
+            "sizing_seconds": 0.197942834,
+            "tool_results": 1000,
+            "wire_bytes": 4276815,
+            "wire_parts_encoded": 2501
+          }
+        ],
+        "log": {
+          "path": "build/pr18-followup/benchmark-history.jsonl",
+          "sha256": "95b7f096807af3b14bcfe05748999f1d3c81120549eb5e43a32265ed79188eaf"
+        }
+      },
+      "provider": {
+        "executed": true,
+        "passed": true,
+        "observations": [
+          {
+            "append_serialized_bytes": 2270,
+            "appends": 20,
+            "cached_payload_bytes": 1050471,
+            "peak_rss_bytes": 18317312,
+            "provider_payload_bytes": 1048576,
+            "seconds": 0.0066755,
+            "unchanged_rows_read": 0,
+            "unrelated_session_commits": 20
+          },
+          {
+            "append_serialized_bytes": 2270,
+            "appends": 20,
+            "cached_payload_bytes": 0,
+            "peak_rss_bytes": 82952192,
+            "provider_payload_bytes": 9437184,
+            "seconds": 0.006114458,
+            "unchanged_rows_read": 0,
+            "unrelated_session_commits": 20
+          }
+        ],
+        "log": {
+          "path": "build/pr18-followup/benchmark-provider.jsonl",
+          "sha256": "9632980e459b22588ada922ffff926f010e9241864f10d888ff43edde7d4e291"
+        }
+      }
+    },
+    "tiger": {
+      "passed": true,
+      "cross_built": true,
+      "statically_verified": true,
+      "target_runtime_executed": false,
+      "compiler": "14.2.0",
+      "binaries": [
+        {
+          "name": "codet",
+          "bytes": 5755596,
+          "sha256": "3527706f922b113af22f841b5b22e8280f0caf0df9bd892288fd08aa0f993f16"
+        },
+        {
+          "name": "codet_tests",
+          "bytes": 12045828,
+          "sha256": "eadf1a2ab860f70c712fd8583009b72a43d50ee5dd0478a4acb2269e7bd6641a"
+        },
+        {
+          "name": "codet_persistence_bench",
+          "bytes": 5166960,
+          "sha256": "49513861917fa22a40ea047f838176c7297949a847d120543389083d53ebc6b1"
+        }
+      ],
+      "verification": {
+        "path": "build/tiger-verification.json",
+        "sha256": "6bb87cacf9a5110e19409778e91ff3c5ea5c77892bac67f5b0e4234cd43067ca"
+      },
+      "log": {
+        "path": "build/pr18-followup/tiger.log",
+        "sha256": "e65fba9cf430bb2d8f20982b5053beaa41ce2bb69f2af1f581becfdb2e64ecce"
+      }
+    },
+    "host_binary": {
+      "path": "build/pr16-host/codet",
+      "sha256": "ca1da8ae7baa333e7d40ef2f43d94d14483c9bb4a6f869ee8fac71d7c21d0522"
+    }
+  },
+  "source_tree_sha256": "b551c095fddb0230b16915ef7f7c0e643980f9bd7cdf846a84478232f66699fa",
+  "sources": {
+    ".clang-format": "85b7cd21d813fd0c3860534b5ee44aa9b94d2c8783528be9d2de15a174b41035",
+    ".clang-tidy": "6f1c295e33a074232a79f234b9efc121030909758e1d9b0cb93d04c637aab1f5",
+    ".github/workflows/modern-checks.yml": "47f22294c1d0b1e67613fb467ff9ccc42f0995016d9b6ae3735f302608ace5cb",
+    "CMakeLists.txt": "9732b3f0b75ff021e635bb8aff62fbb51c1b45c582658356b98569a9a6794f9c",
+    "Makefile": "7cb7f76ebc447465ddb12018f0200d80f5467bd2db32b76a627c70d60dd92a2e",
+    "README.md": "3c0498edd336b96b2e38279ffaf4319f15ea86693380b135f85029dde375d2d5",
+    "analysis-tools.lock.json": "3fb73266fc02ecf960f6d3e98b781be710dad38086dd7a3ebc9234d9e80694f0",
+    "checks/semgrep/agent.cpp": "c65c2c3da32a304cdea4c1b62d587009a52137a09c3a7a95b9349e33b8d49f3a",
+    "checks/semgrep/agent.yaml": "5d2a120c62f794a1df0e3c4069a7a7ba3f62af93b46cda164173edb1b4c90cf2",
+    "checks/semgrep/capture_catalog.cpp": "6512cd78b0a0e82a1554574ccd32db51cd39db2cfad0d45178d79ce961d99e62",
+    "checks/semgrep/capture_catalog.yaml": "9e78b7471d2b1381857f0b230053ed52919e22868ae5cc97d426675f089c9a57",
+    "checks/semgrep/hooks.cpp": "d6f6f3bc13c7cf0b7f411af6a7def8530d476310326f19cd8c69ad2ee83a63cc",
+    "checks/semgrep/hooks.yaml": "0bc3648effbc87cd82d2fda76f862bc41aef98e580206296cb98d0c7345ef1c6",
+    "checks/semgrep/instructions.cpp": "a2be6603e2e0f07011e381b20ab7a33fe47a7ecd51dc3a378317e1d0d9f42008",
+    "checks/semgrep/instructions.yaml": "06c7d5248d637f721f7c7e56eaf1927908d7b793ab3fbff2e734fa687e60986e",
+    "checks/semgrep/provider.cpp": "9cf74bd7c10056e89af951fd63618e2b0c16fb871ade45995aea41db7ff4e6c7",
+    "checks/semgrep/provider.yaml": "07f37c37cd4cbf5ae108ab1e73b4926e25461bbc5853d8046a15f7f18fe3f819",
+    "checks/semgrep/state.cpp": "6622cb8c29896937080a81a1453954a9b3029b121d0f798aef1fb750bbafd956",
+    "checks/semgrep/state.yaml": "8525c2a3aaf9fe6dc340bf4dfef43a8ee0ce599b9bba258afff0475c22fac1cf",
+    "checks/semgrep/tools.cpp": "883bfc4b024d81517b633e52962f98f6860888e2d5cdb542507b5d7b02c8053c",
+    "checks/semgrep/tools.yaml": "a89249351037ee344e4d54dae18daf20aeec7add1aff18d23ebe61f6c4b46bac",
+    "cmake/Dockerfile.host-tests": "e4aa877f5eaf1662e76008d3e95766d5fe1ac77a7aa337e953e883d54912c74c",
+    "cmake/Dockerfile.tiger": "ed8c4bf552297de1b168c074947991b9e3abcdfb0077149bb256f764ada48192",
+    "cmake/patches/legacy-signal-gcc14.patch": "847e7f9adde485fa73eebad2ea7416b5fabfedb39aad095670672c1773c3e431",
+    "cmake/patches/libedit-size-max.patch": "aac931bf8b90321711c3ca362909235b6bb2eafd2aa4d2a731a27a3e3b8383b7",
+    "cmake/prompts.cmake": "b0cef80525ffeaaf532b3999efaac3e3089c38e3e0fa424adb98120a17fa80e9",
+    "cmake/tiger.cmake": "9ab358f3ad11b57586a6f7916558e76124af8e98bf9ed1b4d8f7668c03dec622",
+    "dependencies.lock.json": "d20d9c2114dedf0ab7116322e60b17a5b4a6ee4e45eaefaa2fe3c9e3353b793f",
+    "docs/MODERN-AGENT.md": "b5194f082d50dcc3dcfaf5dfa25c4466e375ca5eb8e9676b99923144640819bc",
+    "docs/RELIABILITY-MODERNIZATION.md": "373ef744755723ec7bd57fceb917dbc0b2791ac465888a3a2cc601408a0153ef",
+    "include/app-functions.h": "8e363fc9efb6f09bed6e406c8cda95f46e18f7ca0412ee16654c9a40f26d9340",
+    "include/app-globals.h": "58b79e8bc8e47df7317aa276e7b63cd06b88f72a304e9d1ed9b7f1161b694d6c",
+    "include/app.h": "7b4aff9d8012d627b4ce9220436240b64d9a16bf9bc0b81653bf63ed753170a3",
+    "include/callback-contracts.h": "c9bd4045bd5fbb7ba1e43cbfe582281349dc1e54c7dddfcabf41b29734c3c3e8",
+    "include/codet/artifacts.hpp": "a14053c93db6f8262a2ea3635f4724564cfaee9beea4ec6f5152385d85416786",
+    "include/codet/computer.hpp": "aa4e4ef2a400b761ed98f8dfe3b596d140eb06fa58ca7689ed927276c860eeb7",
+    "include/codet/context.hpp": "8cad0e003c14392ee9ff0ca82a35385bca011f0ac8716c1307bffd2a4c5bbf10",
+    "include/codet/core.hpp": "5871b9cf8c028d6ee9c841c66c1cad952d2eec1df470c90a57d5019ad13da817",
+    "include/codet/diagnostics.hpp": "31ead6755d8a6ce63d365b1a3507b20d06b868bbc3ecbc2893a26f34db750da9",
+    "include/codet/interaction.hpp": "ac2bae0c6d600d8866c06090444b842acbcb5baa31475825a20d34e36b512f03",
+    "include/codet/output.hpp": "d67f248b095142d77f43701d400529ede8006835558b1c2044ea758d72327225",
+    "include/codet/patch.hpp": "5852178d6a37ef71b560421c84543fe789e0fb5c87d45e337088f48008ec2915",
+    "include/codet/process_control.hpp": "144592cd14597dc1d52750f4eaff9b48be7b3c517991109e93d502300db1f8e6",
+    "include/codet/prompt.hpp": "cedf0270b29cc6731329907bae32be3b3870c9d803e8d354601a731d863752d1",
+    "include/codet/support.hpp": "3b67a474dc3b7373172807c0b1120f380379f1f46c8238d84d3aca3fbfc7b6dc",
+    "include/codet/tool_registry.hpp": "6024b8a00ec83280267cc9a874eff3d9d70b60a87dc5e2394e9f9aafa51e0771",
+    "include/embedded-strings.h": "6ffac0e9967e511dd10556aed94a2ef0201c926bd01d699208e4e26834ec2e86",
+    "include/imported-interfaces.h": "f28bc5576423cc04e2138d46b5accbdc64c3e294dcce7a080fcb4da6e16f2c8b",
+    "include/observed-abi.h": "a6526dee44e4e156cdc8f2cd8a9f5ea28cd1a25c8ea3a1deb31d0e28055f2d64",
+    "include/recovered-declarations.h": "328a2d82bcdb6bab00b171749643475b7e55f40ae7508fb305782a606ffa02a9",
+    "include/recovered-layouts.h": "68c1c0b0313d38632390b8919ddc297d6240bed0c2d1de307fce3f0cb431f195",
+    "include/recovered-storage.h": "a655bf2e2172d9293a2920b3f5ffb6ed6e7164e03b16d1c3400547d00648ce09",
+    "include/recovered-types.h": "22d85c337901a5b84de45b08c20409256586c6cc9e5ca4a13ec783788ca76caa",
+    "include/text_compat.h": "6ff5d6fe7251e3b156983ec5d1e4c2dea5bf08cdf40ac68734e1546850dd0da7",
+    "scripts/analysis-tools.py": "2c3a43c60394dba479a73c2ab524158c0dfb6e19a9a3d83380356592059bf57f",
+    "scripts/analyze-modern.py": "7264ff6ab98f91af008f5ae738c19c79157a487ea18e03ae4aa216f0675317c5",
+    "scripts/build-tiger-sysroot.py": "06667fc5b02feb917016915f73cbc6ed52c290df21303a87657c7af2f8c38cbd",
+    "scripts/fetch-deps.py": "2b4c4102076de4fc70e5a642ddf05d957b0388e3094d9465fa2164a3dca60c09",
+    "scripts/import-prompts.py": "d01431e832bb5b6563ebc3245e547e8130dce63b2e8798a90386fe4e6626166c",
+    "scripts/semgrep-report.py": "36b0c5441d982f334dab1f05d61930260970b6462efa788ad95d7aa9f2df28ae",
+    "scripts/tiger-acceptance.sh": "694eebe6979bfaba776ea33d1889c7115dcea35ea55e663076f6989c46926d43",
+    "scripts/tiger.py": "0fc30669c4f26f238aecc23690b136f2785ea6faec5853491c5196333ab5f32d",
+    "scripts/verified_sources.py": "3c9f42b90ab88b9c711caf6aea2bc54640060b8596374e32b131d4f83b3b795f",
+    "scripts/verify-tiger.py": "9da6f93cabf3eba59e664ee988d7fd696f276ffc2e30688dbf013fb024f36e8f",
+    "src/modern/agent.cpp": "e39e9131b747d1543fd0f322fe3588893bd1f956fc1cdbe54064920033cf3124",
+    "src/modern/artifacts.cpp": "96c88f868507905835efcd667d150e80be8e0a6f52f4ac8756eea9e29bb66fe8",
+    "src/modern/capture_catalog.cpp": "6deb5a69a6c957f6f72aebc958b6e3973bff12c86e588af2ffd047d0f2d5e5ee",
+    "src/modern/cli.cpp": "3a023fc68dbe8870c3be354175f250b7c15c7d1778cbd6b474fd5817ab360204",
+    "src/modern/computer.cpp": "ccb8fd5b7c0847a18ac44f32dd2319df25e4a173fec947fd1ea5a67f3c86263e",
+    "src/modern/config.cpp": "42c685ae9ac5499363c20de5bb8b99d15ff0a6596aed57dd607ca3936649d8c5",
+    "src/modern/context.cpp": "8ed943aa721dd3d80912d41079d8a34dfda9bce7230727af80c5d7a5290b2487",
+    "src/modern/failure.cpp": "aabbc34d0e235141e79fee2c370d4ed7f3450eb89787ed467fb1b1bacf383a2a",
+    "src/modern/hooks.cpp": "21afab2dbdfae97ed2406bc5d28e30bc55e63598cac07e418c9f41b9971e2c06",
+    "src/modern/images.cpp": "bb703b2e4516c75d9dfda05af4e1cfac57fb0d4d84e7ee56fb1a631b528b1510",
+    "src/modern/inspection.cpp": "b36fadfea5ef50b49e8a547ad3f275be1935df8436874bfac14089750cfa2379",
+    "src/modern/instructions.cpp": "04e7f17b7ccbdd3e223cacf5e75971a4ea4ec3dfaa240508806aef48739119f6",
+    "src/modern/interaction.cpp": "1e18bf1c1f8cb1a221fc458661687f148c0479365c2912bdeb58265d0a2f82ed",
+    "src/modern/main.cpp": "67bb002f35e6fab656016cccd493ea985199858b106598fa8337185925583e1c",
+    "src/modern/output.cpp": "ce028a4b378e211cf54332a41abc776393e989ed51c7e471097e8112426c63a0",
+    "src/modern/patch.cpp": "8c99791527f8a6b09b35674802db3c29cafe2adde4700a67ca7adda60562f770",
+    "src/modern/platform.cpp": "016762d75b12c415fa0634598f95c5a67a9ec8ff4a7a1395e455e9e70a1af4ba",
+    "src/modern/prompts.cpp": "57082e86bf22ccad9d788b2bcff866788507bec072a7531797237a6fcfa0d367",
+    "src/modern/provider.cpp": "873f087d59b7484490561826bb4a5863a37221a2a523c93b77de3b85f15e06c4",
+    "src/modern/reliability.cpp": "d924d9c1e8875c7b7e053509e2ab2fe3e24e5aee814c706dbdc9c4e608461356",
+    "src/modern/state.cpp": "86107668aa49bd540cfa3392d093385ddfca65675c8536a1ab345c84a2baf61d",
+    "src/modern/support.cpp": "40dfad2759619972f3b0eba053a24b00877b05ce2defb648b727ebd608dd594a",
+    "src/modern/tool_registry.cpp": "bbec68092f2561c5d4596e5976c7766e5715eb4ccddf03ef61b99a8ed7b00a93",
+    "src/modern/tools.cpp": "9675a5d29df3b53839ca9736d7823f12087e83d79dd3c74505416fa77dec04e2",
+    "src/storage.c": "d3393530d3b2ef67dd12587eda3cca47d0df7b328e56e2790af8092efcc35428",
+    "src/subset.c": "319312c2d33aecb144d39a370ebb1aebab8c507249f4897d1826529dde79b53c",
+    "src/subsystems/abi-semantics.c": "93a619b3a7c0aff2f662cf7b4a5e2af4272da13aa7b9e4c766233aacea981c37",
+    "src/subsystems/bundled_cjson.c": "b4e154c9d7c85cb7dca32370fe3599c65daa18b13d08780631d8bc840adb431e",
+    "src/subsystems/cli.c": "09cdb5fda05c38b1730d0bdcbb35d8228b17b99d56c06d1e8e1b83d64bf7d0d7",
+    "src/subsystems/configuration.c": "4f700b72ad789b6493a8d5c0b7728a65388db5081560566aa61adcf6533f78af",
+    "src/subsystems/context.c": "a97ebc75e5ff6e767e7a932ac75ee4d1dd4f5f99fa05ae583476d622381945e5",
+    "src/subsystems/conversation_state.c": "a95e1d45d81b8b2e19278eecb346ac73dccfac6b20503b379ab9d53c3169b6a2",
+    "src/subsystems/documentation_rag.c": "db7c885baaa724ce8dc40dfe1e2d9d9984791a220fa01f4adfb81961225ff8c4",
+    "src/subsystems/dynamic_strings.c": "24fecba8000a75c5211aa8008a809ec3e34d5c011c16e5fbf810f4fb5efe42af",
+    "src/subsystems/highlighting.c": "53a19497e506f8bd7f876b3a543dc05660877d1aac119c398bb01ee4256e8cd7",
+    "src/subsystems/hooks.c": "ac4c5966f1981ac92c9cf484b6051d8d990d43381d4c1f1dc72a252f87edf061",
+    "src/subsystems/http.c": "c192c89d6cdb11cab9376d0cd95baacef75cfc12cdca26470c31e0bd8d728c05",
+    "src/subsystems/mcp.c": "f8df990285b92e8038cfb545a5f96e6896a226bcc2b7caeddb7f49e3898dd40c",
+    "src/subsystems/models_profiles.c": "4fe98545d86ba7808a3e79a26a5f0b00699175195a1a789f858f1c8b7b4040e4",
+    "src/subsystems/plans_executor.c": "38589530bc5fee2efff6ceb101d90fc90543458634a8bde8f5efc3634cb521b6",
+    "src/subsystems/platform.c": "1eade76569cc39c26555af6f1faffbf25a20a4f5dcf355124b23560d724b61a2",
+    "src/subsystems/process_diff.c": "c24d8e85c88af2264bf57be99a20a1de619d2bed2069ae23e980c00aa242e089",
+    "src/subsystems/project_initialization.c": "6b69c1323bd41506547b94ba1c9a5b217d115bdb4017ca9495bb0dfec616c2fe",
+    "src/subsystems/provider_anthropic.c": "3104b855848ce0d1768a7639bd18f96f3eab7a685ed9b44b508297b7a8a46cf5",
+    "src/subsystems/provider_common.c": "6f7b23924f46271bf50953643d229fa636fac3bbe6e770d758c7187fd54601c0",
+    "src/subsystems/provider_google.c": "7f9e858c4ad131259ae12f95cc889a8a76b20e0e2868323ab8a69ba3908029a1",
+    "src/subsystems/provider_ollama.c": "3b8e96b8f0f0d64d2fa35d91b8208180000906dd37fe9737ad014bdce2b7935c",
+    "src/subsystems/provider_openai.c": "d3c5420860e5a6832d04177c71674d42d314dc8e2636f2dfca0d0f35824d7889",
+    "src/subsystems/reasoning.c": "e2ff77174797a2780b0808a3004fed008ee3bd78f1ddb558d02ec564091e7456",
+    "src/subsystems/recovered-storage.c": "d48a93b4c645db65cdfb596504b6df932a3aa10f38601af0f6895343581797ad",
+    "src/subsystems/routing.c": "d5af0386dd2fac4f6f8df637d1439f24192aa5e4fb62ca1ed8d126ecf46dee6a",
+    "src/subsystems/runtime_startup.c": "75ec2dc31dd692a33a58f4c16eade3c5f9d6e3aed87f5645427cb09a7aff16fd",
+    "src/subsystems/sessions_history.c": "b15685f5cffd1b5ba08941efa3a904b8b820131d4d8f3adfb0382efa140c39b9",
+    "src/subsystems/sqlite_tools.c": "194674e1c599bd074eb432b5b86a9267693ea1a2a4dd555ad299aa4b92077fea",
+    "src/subsystems/stdio_abi_stubs.c": "04ced008179ea64bb0db0b721b8a48c2ccd3857cac3547f9c6452ea2cf331650",
+    "src/subsystems/subagents.c": "56c3a28f879e3853518aa76a31c9de95b6fababad3d17283f5fe02b0afb3ed7c",
+    "src/subsystems/terminal_ui.c": "457ba9bd5e38547257a1268ddd2b30a10b024ea5736508a2fc34387469729ed2",
+    "src/subsystems/themes.c": "e0b576961c7616e4cc93c0e11362c9a188686680c1e3d72935ad056d2bad6e26",
+    "src/subsystems/tools.c": "8085640e41f63652e4cf3a51faf05efc08ee805080b5bbe4d300d92d6f59d4bb",
+    "src/subsystems/web_fetch.c": "c35a4d15f039e119d03ff1c5afa8f9f14738d33096867eeb2c55f44c1417fed1",
+    "src/subsystems/web_search.c": "88f9b395463dc66b70d89945fa35afae92ef21a5e94e78e88c7ebe1ac07408ff",
+    "src/subsystems/workers.c": "9766113fea5d30b905e9f1d4c6771e18876772751ca0efa3a6ecd7197191a6f6",
+    "src/text_compat.c": "00213a0ad26fd98c9bd9a0a45fb84f9b853fcac8df7fed05c79e4d6444fb2205",
+    "tests/catalog_recovery_test.cpp": "22a3290aed9e7b6b87017e14214eb15a60ea5879250bc6dfee67f205fa8e016b",
+    "tests/checkpoint_test.cpp": "0f59c0aed2b1017d3ea0c875293a6155e9422e42467f05ce5dcc766390e8ea66",
+    "tests/cli_integration.py": "121aeecda1f1cdf3d9ee2a8e65f6e88ee02cfc3f32238860f519a9e25e82ae98",
+    "tests/cli_test.cmake": "a1f32be993fcc74dea6cae5b24bccff18981d2d92317285d8c99a91694461702",
+    "tests/context_history_test.cpp": "0cad9fc7f9ff65f3f37e36ca2093edee5d440d4d05acfb6416cee1a025781195",
+    "tests/core_contract.hpp.in": "20abaa20367b4e0d6a9c336e6c3ecd39aeda1d4e2a1e006415f0f09161242bd8",
+    "tests/core_test.cpp": "589a9e4ed1344fdc086ecf12df625c4d7992b6a3da59d0af5b05ae4c0c59abe7",
+    "tests/core_tools.hpp": "ce0eb433db83fcee87df6b51645d0e8cc38bf9e6daf9b18439d8d3b98a505d21",
+    "tests/final_review_test.cpp": "aadd7c6eac00d3fee2dc7696b475967207a33291a1f251c1df7aa51c807e056a",
+    "tests/fixtures/core-tools-v1.json": "457fa3b083c366adea51b72bb799bb6668744709fd238aa7bf68f4c1b62ca496",
+    "tests/fixtures/events-v1.jsonl": "9e33d41bb3ed9051fe968cb8d2b78f18cf17bceb3dbe209ad235b3035209b29a",
+    "tests/followup_test.cpp": "a5c470592b3256e3177d6c3139a33009028a69171ffe5da95869dc7765f17368",
+    "tests/foundation_test.cpp": "5eda0fce3c65f5f405d00ee32945c0262314aa9029fe9fb4b64c878fbb5d6c00",
+    "tests/hermetic.py": "3d5f24815d29a5bc0abfb4bf223a4280bfb114388c434731f246d347657d6407",
+    "tests/modernization_test.cpp": "e3d1eac0145848bcfd27e37867183f14ddd2428cd20fe14e649dff524e993aca",
+    "tests/output_test.cpp": "92a32d664d4066b28a79746f87c2cf3dcaf0c32de941dfd5653f39d43af8ceb1",
+    "tests/persistence_bench.cpp": "ebdac0a8a585d60bd4746d7c83e8cff4cddfee788310ef4a07159090739e23b5",
+    "tests/pr17_test.cpp": "6d7952775d84a712b67b75ce03e295f21ca98e0353fd40b10f36527d708de482",
+    "tests/pr18_test.cpp": "384667df306f4e0712745897a23e27078dbf5a7e2d32d0b3c7edaacd6c416a57",
+    "tests/process_helper.hpp": "b748b213b38db30139f41f2f6c468c737dc6bdd93d94d825b2a520c9d7dddd23",
+    "tests/process_policy_test.cpp": "bbfe3a5eb044ea419c293129955491a95c7cd46c6ec2dd767744209128be104e",
+    "tests/prompt_support.hpp": "1a3d5e92e6eb9dcdec36bb355d7cffefc31028403ed0436a260c6dc47517456e",
+    "tests/prompt_test.cpp": "ad3c05cf3af8be9e1895ba7b782543ff7b7513f665a1f9e5da4ff9b2d74dbfb8",
+    "tests/publication_fault_test.cpp": "b68ade0f97d54466d682faf61034632b9aa3115fa5d786bd78e62b6d17517dca",
+    "tests/remaining_test.cpp": "05b8b747e2671330beece0cf4f469ff08c79a21241b814914773876f89430fe9",
+    "tests/review_test.cpp": "ad7cacb15f82466b6c5d5dac800143f53ccb60753dd3f74ab85d23888b989574",
+    "tests/runtime_test.cpp": "b95c0cace683992eb3bdd21c60ff3b994b9cc1a1ccadbb6d04505d24cb858756",
+    "tests/sanitization_bench.cpp": "fb42f5389a915368583755ea4af26b3ec89201452a63b1623f88ca43be0d9549",
+    "tests/small_core_test.cpp": "2cb869f7db67fffa3df36113a2b125caf46ab21d94d06b852ecd107782935b0c",
+    "tests/temp.hpp": "a8c9cef361ab35eb2e753b78b258ed120997507a976a2bc46ec199d52215bc6d",
+    "tests/test_analyze_modern.py": "7c55ebe3ddee956cc47ae482f9169e38fcec8bc6a2b27ac9262586027a545360",
+    "tests/test_build_integrity.py": "c8529bb60dae76ce3373fd5531c282a792ec9b47a5a32574f49e8f10ce0bafa2",
+    "tests/test_hermetic.py": "ecba7689d9ca4eb2e2a831a44b440862cf4a575867088dd6318029ee82413de9",
+    "tests/test_main.cpp": "2ca28b234523f2e36cd133466a3e17db25e39648ea73cea5e78cb5ea1a1b72a0",
+    "tests/test_prompts.py": "2d3aec9cf990270d254666f3b894807bbc8fa01edc04815f8b214f31b4cb9900",
+    "tests/test_semgrep_report.py": "1f9f475026cba34898bd762486c606553a5d84e9df42879e368bb3652a62e82d",
+    "tests/tool_contract_test.cpp": "98be1c084d30e10ed26ba7352a6431d7e86a9d6bd7ef5ebb605d0b0e43688a42",
+    "tiger-dependencies.lock.json": "d209dcf76da392fc9a87018df647b3dc0bf5a0e29045486d86a2a6531283e037"
+  },
+  "toolchain_images": {
+    "codet-host-followup:fresh": "sha256:0d27b09f69720174c62ffb3f829cc16a120cc076ed537747af3d52106b92fcdf",
+    "codet-tiger-build:gcc14": "sha256:14b4038ff84b05fb03107cde63ebc3c5aa8afb0d6529492f1b74d138adf85f6e"
+  },
+  "notes": [
+    "All provider requests in executed tests use fixtures or loopback; no live provider calls.",
+    "Tiger results establish cross-build/static compatibility only; timing and RSS are host observations.",
+    "Historical validation records remain unchanged.",
+    "Cached build-directory names reflect prior work; source hashes identify the exact follow-up sources.",
+    "The publication allocator/SQLite interception lives only in a separate host test executable, never the production binary.",
+    "The serialized archive-cache cap is not a parsed-heap memory bound."
+  ]
+}
