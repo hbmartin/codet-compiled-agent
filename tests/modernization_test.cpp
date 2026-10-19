@@ -1154,14 +1154,14 @@ TEST_F(Modernization, ExplicitRepairRollsBackAfterBackupAndNeverChangesJournal) 
             SQLITE_OK);
   Tools tools(config, files, processes, http, clock);
   const auto journal = state.recovery_facts(session.id);
-  EXPECT_THROW(state.repair(session.id, false, true, false, tools), Error);
+  EXPECT_THROW(state.repair(session.id, false, true, false, tools, files), Error);
   EXPECT_EQ(state.recovery_facts(session.id), journal);
   EXPECT_THROW(state.load_id(session.id, false), Error);
   EXPECT_EQ(std::distance(fs::directory_iterator(config.state_root / "repairs"),
                           fs::directory_iterator()),
             1);
   ASSERT_EQ(sqlite3_exec(raw, "DROP TRIGGER refuse_repair", nullptr, nullptr, nullptr), SQLITE_OK);
-  const auto repaired = state.repair(session.id, false, true, false, tools);
+  const auto repaired = state.repair(session.id, false, true, false, tools, files);
   EXPECT_TRUE(repaired["changed"]);
   EXPECT_EQ(state.recovery_facts(session.id), journal);
   EXPECT_TRUE(state.load_id(session.id, false).provider_state.is_null());
@@ -1234,7 +1234,7 @@ TEST_F(Modernization, RepairBackupRetainsMalformedUtf8Bytes) {
   sqlite3_finalize(update);
   sqlite3_close(raw);
   Tools tools(config, files, processes, http, clock);
-  const auto report = state.repair(session.id, false, true, false, tools);
+  const auto report = state.repair(session.id, false, true, false, tools, files);
   const auto backup = Json::parse(files.read(report["backup"].get<std::string>(), 100000));
   EXPECT_EQ(backup["provider_parts"][1]["payload"]["encoding"], "base64");
   EXPECT_EQ(backup["provider_parts"][1]["payload"]["bytes"], base64_encode(invalid));

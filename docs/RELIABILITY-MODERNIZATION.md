@@ -105,11 +105,25 @@ same pre-repair problems. Recovery repair preserves unavailable results as parti
 durable uncertainty; it never rewrites arbitrary user JSON content or repeats historical actions.
 
 A session lease covers the operation. Coherent database reads, archive decoding, private backups
-and replacement serialization precede the final write transaction. A database-version and file-identity
-check rejects stale preparation. Repair retries once, for at most two attempts; a second change exits
-without applying repair changes and reports all retained backups. The existing `backup` field names
-the applied attempt; `backups` lists retained preparation backups when a retry occurs. Unrelated
-sessions can commit during preparation, although such commits require fresh preparation.
+and replacement serialization precede the final write transaction. Recovery preparation carries
+file identities captured with the decoded facts, including cache hits; it never establishes a new
+identity baseline after decoding. Final recovery publication rechecks each distinct relevant
+reference using filesystem metadata and trusted-path validation under the writer lock. These
+checks remain proportional to the reference count; archive reads, backup writing and serialization
+stay outside that lock. Provider-cache-only repair reports the same preparation-time file issues
+but does not gate its database-only mutation on file stability.
+
+A database-wide version check rejects stale preparation in every mutation mode. Repair retries
+once, for at most two attempts; overlapping unrelated commits can exhaust both attempts even when
+the selected session is unchanged. A second change exits without applying repair changes and
+reports all retained backups. The existing `backup` field names the applied attempt; `backups`
+lists retained preparation backups when a retry occurs. Operational database read failures abort
+preparation immediately, including failures that end the read transaction automatically.
+
+Trusted configured-root aliases (including `/var` and `/private/var`) resolve to the same portable
+identifiers without bypassing symlink checks below the anchor. Failed repair and checkpoint
+candidates are removed from their actual creation root only while their identity/content matches
+and no committed reference uses them; pre-existing archives are preserved.
 
 Restore checkpoint archives as owned regular files with mode `0600` under their original relative
 artifact identifiers. Symlinks, foreign owners and group/other permissions remain untrusted;
@@ -120,3 +134,8 @@ text length. This bounds serialized content, not the parsed JSON heap footprint.
 [PR #18 follow-up validation](validation/pr18-correctness-repair.json) records committed-response
 allocation failures, repair preparation retries, capture-reference recovery, tool error payloads,
 the offline test matrix, benchmarks, and Tiger cross-build/static verification against source hashes.
+
+[PR #19 follow-up validation](validation/pr19-correctness-repair.json) records consumed archive
+identity checks, root-aware candidate cleanup, optional token failures, operational snapshot errors,
+fragmented tool diagnostics, and the offline matrix with source hashes. Tiger verification is static;
+no target hardware or live provider execution is claimed.

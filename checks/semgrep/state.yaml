@@ -52,3 +52,10 @@ rules:
       - pattern-inside: |
           Json StateStore::repair(...) { ... }
       - pattern: $OBJECT["result_path"] = $REFERENCE
+  - id: codet-provider-cache-token-boundary
+    languages: [cpp]
+    severity: ERROR
+    message: Acquire optional load-cache tokens inside the guarded population operation, not as throwing publication arguments.
+    paths:
+      include: ["**/state.cpp"]
+    pattern: $IMPL->publish_provider(..., $IMPL->provider_token(...), ...)

@@ -600,32 +600,110 @@ std::string Tools::result_reference(const Message &message) const {
   return ((capture_name(ref) ? capture_directory(config_) : artifact_directory(config_)) / ref)
       .string();
 }
+ReferenceObservation Tools::observe_result_reference(const std::string &original,
+                                                     bool checkpoint) const {
+  ReferenceObservation observation;
+  observation.original = original;
+  observation.policy =
+      checkpoint ? ArtifactPolicy::private_owned_regular : ArtifactPolicy::owned_regular;
+  try {
+    fs::path ref(original);
+    const auto artifacts = fs::absolute(artifact_directory(config_)).lexically_normal();
+    const auto captures = fs::absolute(capture_directory(config_)).lexically_normal();
+    observation.root = artifacts;
+    if (ref.is_absolute()) {
+      // Remap only a trusted anchor alias. Keep components beneath it for symlink checks.
+      for (const auto &root : {artifacts, captures}) {
+        const auto anchor = private_anchors_.find(root);
+        if (anchor != private_anchors_.end() && within(ref, anchor->second) && !within(ref, root)) {
+          ref = root / ref.lexically_relative(anchor->second);
+          break;
+        }
+      }
+      if (ref.parent_path() == captures && capture_name(ref)) {
+        observation.root = captures;
+        ref = ref.filename();
+      } else
+        ref = ref.lexically_relative(artifacts);
+    }
+    if (!checkpoint && capture_name(ref) && ref == ref.filename())
+      observation.root = captures;
+    else if (!result_name(ref))
+      throw Error("Untrusted result reference");
+    observation.identifier = ref.string();
+    observation.path = observation.root / ref;
+    if (!private_anchor(observation.root))
+      throw Error("Artifact anchor changed");
+    observation.identity =
+        checked_artifact_identity(files_, observation.root, observation.path, observation.policy);
+    if (!checkpoint) {
+      auto input = files_.open_read(observation.path);
+      if (input->path() != files_.canonical(observation.path) || !reference_current(observation))
+        throw Error("Result identity changed while opening");
+    }
+  } catch (const std::bad_alloc &) {
+    throw;
+  } catch (const std::exception &error) {
+    observation.error = bounded_text(error.what(), 512);
+    if (observation.error.empty())
+      observation.error = "Result reference unavailable";
+  }
+  return observation;
+}
+bool Tools::reference_current(const ReferenceObservation &observation) const {
+  std::optional<std::string> current;
+  try {
+    if (!observation.path.empty() && private_anchor(observation.root))
+      current =
+          checked_artifact_identity(files_, observation.root, observation.path, observation.policy);
+  } catch (const std::bad_alloc &) {
+    throw;
+  } catch (const std::exception &) {
+    // A missing or unsafe reference remains unavailable; availability changes invalidate it.
+    current = std::nullopt;
+  }
+  return current == observation.identity;
+}
 std::pair<std::string, std::string>
 Tools::checked_result_reference(const std::string &original) const {
-  fs::path ref(original), root = fs::absolute(artifact_directory(config_)).lexically_normal();
-  if (ref.is_absolute()) {
-    const auto capture_root = fs::absolute(capture_directory(config_)).lexically_normal();
-    if (ref.parent_path().lexically_normal() == capture_root.lexically_normal() &&
-        capture_name(ref)) {
-      root = capture_root;
-      ref = ref.filename();
-    } else
-      ref = ref.lexically_relative(root);
+  const auto observation = observe_result_reference(original);
+  if (!observation.error.empty() || !observation.identity)
+    throw Error(observation.error.empty() ? "Result identity unavailable" : observation.error);
+  return {observation.identifier, observation.identity.value()};
+}
+void Tools::retain_recovery_result(Message &message, std::vector<RecoveryCandidate> &candidates) {
+  if (message.message_id.empty())
+    message.message_id = unique_id();
+  const fs::path path = result_reference(message);
+  const bool created = message.result_file.empty() && !fs::exists(path);
+  if (created) {
+    RecoveryCandidate candidate;
+    candidate.file.original = candidate.file.identifier = result_identifier(message);
+    candidate.file.root = fs::absolute(artifact_directory(config_)).lexically_normal();
+    candidate.file.path = candidate.file.root / candidate.file.identifier;
+    candidate.file.policy = ArtifactPolicy::private_owned_regular;
+    candidates.push_back(std::move(candidate));
   }
-  if (capture_name(ref) && ref == ref.filename())
-    root = capture_directory(config_);
-  else if (!result_name(ref))
-    throw Error("Untrusted result reference");
-  if (!private_anchor(root))
-    throw Error("Artifact anchor changed");
-  const auto target = root / ref;
-  const auto identity =
-      checked_artifact_identity(files_, root, target, ArtifactPolicy::owned_regular);
-  auto input = files_.open_read(target);
-  if (input->path() != files_.canonical(target) ||
-      checked_artifact_identity(files_, root, target, ArtifactPolicy::owned_regular) != identity)
-    throw Error("Result identity changed while opening");
-  return {ref.string(), identity};
+  retain_result_impl(message, created ? &candidates.back() : nullptr);
+  if (created) {
+    auto &candidate = candidates.back();
+    candidate.file.identity = checked_artifact_identity(files_, candidate.file.root,
+                                                        candidate.file.path, candidate.file.policy);
+  }
+}
+void Tools::discard_recovery_candidate(const RecoveryCandidate &candidate) {
+  const auto &file = candidate.file;
+  if (!result_name(file.identifier) || file.path != file.root / file.identifier ||
+      !private_anchor(file.root))
+    throw Error("Recovery candidate storage changed");
+  const auto identity = checked_artifact_identity(files_, file.root, file.path, file.policy);
+  if (file.identity && file.identity != identity)
+    throw Error("Recovery candidate identity changed");
+  // Also handles a writer that throws after publishing the newly created archive.
+  if (digest(files_.read(file.path, candidate.bytes + 1)) != candidate.content_digest ||
+      checked_artifact_identity(files_, file.root, file.path, file.policy) != identity)
+    throw Error("Recovery candidate content changed");
+  files_.remove(file.path);
 }
 Json Tools::execution_fact(int id, const ExecSession &session) const {
   Json fact = {{"session_id", id}};
@@ -649,6 +727,11 @@ Json Tools::execution_fact(int id, const ExecSession &session) const {
 }
 Json Tools::execution_state(const std::vector<Message> &messages,
                             const std::function<Json()> &recover) const {
+  return observe_execution(messages, recover).facts;
+}
+ExecutionObservation Tools::observe_execution(const std::vector<Message> &messages,
+                                              const std::function<Json()> &recover) const {
+  ExecutionObservation observation;
   std::map<std::string, Json> recovery, unavailable;
   Json journal;
   std::map<fs::path, std::pair<std::string, std::shared_ptr<const Json>>> observed;
@@ -670,12 +753,15 @@ Json Tools::execution_state(const std::vector<Message> &messages,
           collect(saved);
         else {
           const auto ref = saved.at("recovery_record").get<std::string>();
-          const auto path = artifact_directory(config_) / ref;
-          if (!result_name(ref) || !private_anchor(artifact_directory(config_)) ||
-              !private_regular(files_, artifact_directory(config_), path))
-            throw Error("Invalid checkpoint recovery reference");
-          const auto identity = checked_artifact_identity(files_, artifact_directory(config_), path,
-                                                          ArtifactPolicy::private_owned_regular);
+          auto entry = observation.archives.find(ref);
+          if (entry == observation.archives.end())
+            entry = observation.archives.emplace(ref, observe_result_reference(ref, true)).first;
+          auto &reference = entry->second;
+          if (!reference.error.empty() || !reference.identity)
+            throw Error(reference.error.empty() ? "Recovery identity unavailable"
+                                                : reference.error);
+          const auto &path = reference.path;
+          const auto &identity = reference.identity.value();
           auto cached = recovery_archives_.find(path);
           if (cached != recovery_archives_.end() && cached->second.identity != identity) {
             recovery_archive_bytes_ -= cached->second.bytes;
@@ -695,9 +781,7 @@ Json Tools::execution_state(const std::vector<Message> &messages,
             const auto archive = Json::parse(bytes).get<Message>();
             if (archive.role != "system" || archive.origin != "recovery" ||
                 archive.message_id != path.stem().string() ||
-                digest(archive.text) != archive.message_id ||
-                checked_artifact_identity(files_, artifact_directory(config_), path,
-                                          ArtifactPolicy::private_owned_regular) != identity)
+                digest(archive.text) != archive.message_id || !reference_current(reference))
               throw Error("Invalid checkpoint recovery archive identity");
             auto facts = std::make_shared<const Json>(Json::parse(archive.text));
             collect(*facts);
@@ -721,6 +805,12 @@ Json Tools::execution_state(const std::vector<Message> &messages,
       } catch (const std::bad_alloc &) {
         throw;
       } catch (const std::exception &error) {
+        if (saved.is_object() && saved.value("recovery_record", Json()).is_string()) {
+          const auto entry =
+              observation.archives.find(saved.at("recovery_record").get<std::string>());
+          if (entry != observation.archives.end())
+            entry->second.error = bounded_text(error.what(), 512);
+        }
         if (journal.is_null())
           journal = recover ? recover() : Json::array();
         collect(journal);
@@ -760,7 +850,8 @@ Json Tools::execution_state(const std::vector<Message> &messages,
   for (const auto &entry : exec_sessions_)
     if (!entry.second.completed)
       facts.push_back(execution_fact(entry.first, entry.second));
-  return facts;
+  observation.facts = std::move(facts);
+  return observation;
 }
 std::string Tools::execution_context(const Json &facts) {
   auto text = facts.dump();
@@ -786,6 +877,9 @@ std::string Tools::execution_context(const Json &facts) {
          text;
 }
 std::string Tools::retain_result(Message &message) {
+  return retain_result_impl(message, nullptr);
+}
+std::string Tools::retain_result_impl(Message &message, RecoveryCandidate *candidate) {
   if (message.result_file.empty()) {
     if (message.message_id.empty())
       message.message_id = unique_id();
@@ -799,6 +893,10 @@ std::string Tools::retain_result(Message &message) {
     identity.erase("previewed");
     const auto content = identity.dump();
     const auto hash = digest(content);
+    if (candidate) {
+      candidate->content_digest = hash;
+      candidate->bytes = content.size();
+    }
     const auto cached = archived_results_.find(message.message_id);
     bool published = cached != archived_results_.end() && cached->second.first == hash &&
                      cached->second.second == path.string() && private_regular(files_, root, path);

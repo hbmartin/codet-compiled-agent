@@ -14,6 +14,9 @@
 #include <vector>
 
 namespace codet {
+struct ReferenceObservation;
+struct ExecutionObservation;
+struct RecoveryCandidate;
 using Json = nlohmann::json;
 namespace fs = std::filesystem;
 std::string safe_text(const std::string &);
@@ -454,9 +457,10 @@ public:
   uint64_t provider_revision(const std::string &) const;
   uint64_t provider_rows_read() const;
   Json recovery_facts(const std::string &) const;
-  Json repair(const std::string &, bool last, bool provider_cache, bool recovery, class Tools &);
+  Json repair(const std::string &, bool last, bool provider_cache, bool recovery, class Tools &,
+              FileSystem &);
   std::string preserve_response(const Session &, const Message &);
-  void discard_recovery_record(const std::string &);
+  void discard_recovery_record(const RecoveryCandidate &, class Tools &);
   void sync();
   uint64_t serialized_bytes() const;
   size_t provider_cache_bytes() const;
@@ -526,7 +530,7 @@ struct HookOutcome {
 };
 class DiagnosticBuffer;
 class Tools {
-  friend class StateStore;
+  std::string retain_result_impl(Message &, RecoveryCandidate *);
   const Config &config_;
   FileSystem &files_;
   Processes &processes_;
@@ -592,6 +596,12 @@ public:
   std::string retain_result(Message &);
   Json execution_state(const std::vector<Message> &,
                        const std::function<Json()> &recover = {}) const;
+  ExecutionObservation observe_execution(const std::vector<Message> &,
+                                         const std::function<Json()> &recover = {}) const;
+  ReferenceObservation observe_result_reference(const std::string &, bool checkpoint = false) const;
+  bool reference_current(const ReferenceObservation &) const;
+  void retain_recovery_result(Message &, std::vector<RecoveryCandidate> &);
+  void discard_recovery_candidate(const RecoveryCandidate &);
   std::string execution_context(const Json &);
   size_t history_bytes(const std::vector<Message> &messages) const {
     return provider_history_bytes(config_, messages);

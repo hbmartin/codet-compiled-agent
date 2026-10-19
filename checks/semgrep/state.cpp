@@ -87,3 +87,14 @@ void portable_messages(std::vector<Message> &messages) {
   // ok: codet-repair-portable-content-only
   metadata["result_path"] = message.result_file;
 }
+void load_cache() {
+  // ruleid: codet-provider-cache-token-boundary
+  impl_->publish_provider(session, bytes, impl_->provider_token(session.id));
+  // ok: codet-provider-cache-token-boundary
+  impl_->populate_provider(session, bytes);
+  try {
+    const auto token = impl_->provider_token(session.id);
+    // ok: codet-provider-cache-token-boundary
+    impl_->publish_provider(session, bytes, token);
+  } catch (...) { impl_->clear_provider_cache(); }
+}
