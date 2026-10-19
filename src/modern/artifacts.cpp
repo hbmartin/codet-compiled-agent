@@ -3,6 +3,7 @@
 #include "codet/output.hpp"
 #include "codet/support.hpp"
 #include <sys/stat.h>
+#include <unistd.h>
 namespace codet {
 namespace {
 bool blob_name(const ImageArtifact &a) {
@@ -84,6 +85,43 @@ bool result_name(const fs::path &ref) {
   return !ref.is_absolute() && parts.size() == 3 && parts[0] == "results" &&
          identity(parts[1].string()) && parts[2].extension() == ".json" &&
          identity(parts[2].stem().string());
+}
+std::string checked_artifact_identity(const FileSystem &files, const fs::path &root,
+                                      const fs::path &path, ArtifactPolicy policy) {
+  const auto base = fs::absolute(root).lexically_normal();
+  const auto value = fs::absolute(path).lexically_normal();
+  if (!within(value, base) || !within(files.canonical(value), files.canonical(base)) ||
+      fs::is_symlink(base))
+    throw Error("Artifact reference escapes trusted storage");
+  auto current = base;
+  for (const auto &part : value.lexically_relative(base)) {
+    if (part == ".")
+      continue;
+    current /= part;
+    if (fs::is_symlink(current))
+      throw Error("Unsafe artifact symlink");
+  }
+  struct stat status{};
+  if (::lstat(value.c_str(), &status) ||
+      (!S_ISREG(status.st_mode) &&
+       !(policy == ArtifactPolicy::file_or_directory && S_ISDIR(status.st_mode))))
+    throw Error("Artifact is unavailable or not a regular file");
+  if ((policy == ArtifactPolicy::owned_regular ||
+       policy == ArtifactPolicy::private_owned_regular) &&
+      status.st_uid != ::geteuid())
+    throw Error("Artifact must be an owned regular file");
+  if (policy == ArtifactPolicy::private_owned_regular && (status.st_mode & 0077))
+    throw Error("Checkpoint recovery archive must be private (mode 0600)");
+#if defined(__APPLE__)
+  const auto modified = status.st_mtimespec, changed = status.st_ctimespec;
+#else
+  const auto modified = status.st_mtim, changed = status.st_ctim;
+#endif
+  return std::to_string(status.st_dev) + ":" + std::to_string(status.st_ino) + ":" +
+         std::to_string(status.st_size) + ":" + std::to_string(status.st_uid) + ":" +
+         std::to_string(status.st_mode) + ":" + std::to_string(modified.tv_sec) + ":" +
+         std::to_string(modified.tv_nsec) + ":" + std::to_string(changed.tv_sec) + ":" +
+         std::to_string(changed.tv_nsec);
 }
 std::set<std::string> message_references(const std::vector<Message> &messages) {
   std::set<std::string> out;

@@ -123,10 +123,10 @@ void sql(sqlite3 *db, const char *s) {
 struct Transaction {
   sqlite3 *db;
   bool owner, finished = false;
-  explicit Transaction(sqlite3 *connection)
+  explicit Transaction(sqlite3 *connection, bool write = true)
       : db(connection), owner(sqlite3_get_autocommit(connection) != 0) {
     if (owner)
-      sql(db, "BEGIN IMMEDIATE");
+      sql(db, write ? "BEGIN IMMEDIATE" : "BEGIN");
   }
   ~Transaction() {
     if (owner && !finished)
@@ -188,35 +188,6 @@ fs::path repair_directory(const fs::path &home) {
     throw Error("Cannot protect repair directory");
   return dir;
 }
-std::string checked_result_reference(const FileSystem &files, const fs::path &root,
-                                     const std::string &original) {
-  fs::path ref(original);
-  if (ref.is_absolute())
-    ref = ref.lexically_relative(root);
-  if (capture_name(ref) && ref == ref.filename())
-    return ref.string();
-  if (!result_name(ref))
-    throw Error("Untrusted result reference");
-  const auto target = root / ref;
-  if (files.canonical(target) != files.canonical(root) / ref)
-    throw Error("Result reference escapes artifact storage");
-  auto current = root;
-  if (fs::is_symlink(current))
-    throw Error("Unsafe artifact anchor");
-  for (const auto &part : ref) {
-    current /= part;
-    if (fs::is_symlink(current))
-      throw Error("Unsafe result symlink");
-  }
-  struct stat identity{};
-  if (::lstat(target.c_str(), &identity) || !S_ISREG(identity.st_mode) ||
-      identity.st_uid != ::geteuid())
-    throw Error("Result archive is unavailable or not an owned regular file");
-  auto checked = files.open_read(target);
-  if (checked->path() != files.canonical(target))
-    throw Error("Result identity changed while opening");
-  return ref.string();
-}
 } // namespace
 struct StateStore::Impl {
   sqlite3 *db = nullptr;
@@ -226,11 +197,13 @@ struct StateStore::Impl {
   std::string cached_session;
   Json cached_provider = nullptr;
   size_t cached_bytes = 0, pending_provider_bytes = 0;
-  void clear_provider_cache() {
+  void clear_provider_cache() noexcept {
     cached_session.clear();
     cached_provider = nullptr;
     cached_bytes = 0;
     cursor_session.clear();
+    cursor_token.clear();
+    cursor_count = cursor_bytes = cursor_header_bytes = 0;
     revision = 0;
   }
   void cache_provider(const Session &session, size_t bytes) {
@@ -286,14 +259,19 @@ struct StateStore::Impl {
       throw Error(status == SQLITE_ROW ? "Unexpected provider rows beyond committed prefix"
                                        : "Cannot inspect provider prefix boundary");
   }
-  void publish_provider(const Session &session, size_t bytes, const std::string &token) {
-    cache_provider(session, bytes);
-    cursor_session = session.id;
-    cursor_count = provider_messages(session.provider_state).size();
-    cursor_bytes = bytes;
-    cursor_header_bytes = bytes ? provider_header(session.provider_state).dump().size() : 0;
-    cursor_token = token;
-    revision = ++generation;
+  // Cache publication is optional: a successful COMMIT must remain successful.
+  void publish_provider(const Session &session, size_t bytes, const std::string &token) noexcept {
+    try {
+      cache_provider(session, bytes);
+      cursor_session = session.id;
+      cursor_count = provider_messages(session.provider_state).size();
+      cursor_bytes = bytes;
+      cursor_header_bytes = bytes ? provider_header(session.provider_state).dump().size() : 0;
+      cursor_token = token;
+      revision = ++generation;
+    } catch (...) {
+      clear_provider_cache();
+    }
   }
   ~Impl() {
     if (db)
@@ -1207,170 +1185,258 @@ void StateStore::discard_recovery_record(const std::string &ref) {
 }
 Json StateStore::repair(const std::string &selector, bool last, bool provider_cache, bool recovery,
                         Tools &tools) {
+  if (!sqlite3_get_autocommit(impl_->db))
+    throw Error("Repair requires its own transaction");
   const auto id = select_session(impl_->db, selector, last);
   auto owner = acquire(id);
   const bool mutate = provider_cache || recovery;
-  // No live read statement may precede this upgrade to a write transaction.
-  std::unique_ptr<Transaction> transaction;
-  if (mutate)
-    transaction = std::make_unique<Transaction>(impl_->db);
-  auto session = read_session(id, false, false);
-  Json report = {{"session", id}, {"changed", false}, {"issues", Json::array()}};
-  try {
-    (void)load_id(id, false);
-  } catch (const Error &error) {
-    report["issues"].push_back(error.what());
-  }
-  auto facts = tools.execution_state(session.messages, [&] { return recovery_facts(id); });
-  for (const auto &fact : facts)
-    if (fact.value("kind", Json()) == "recovery_unavailable")
-      report["issues"].push_back(fact);
-  NativeFileSystem files;
-  if (!mutate) {
-    for (const auto &message : session.messages) {
-      if (message.result_file.empty())
-        continue;
-      try {
-        (void)checked_result_reference(files, impl_->artifact_root, message.result_file);
-      } catch (const std::bad_alloc &) {
-        throw;
-      } catch (const std::exception &error) {
-        report["issues"].push_back({{"kind", "recovery_unavailable"},
-                                    {"original_reference", message.result_file},
-                                    {"reason", bounded_text(error.what(), 512)}});
+  auto &files = tools.files_;
+  std::vector<std::string> backups;
+  backups.reserve(2);
+  const auto database_version = [&] {
+    Statement q(impl_->db, "PRAGMA data_version");
+    if (sqlite3_step(q.p) != SQLITE_ROW)
+      throw Error("Cannot inspect repair snapshot version");
+    return sqlite3_column_int64(q.p, 0);
+  };
+  // One retry only. Preparation never holds the database's writer lock.
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    std::vector<std::string> candidates;
+    const auto cleanup = [&] {
+      impl_->clear_provider_cache();
+      for (const auto &candidate : candidates) {
+        try {
+          discard_recovery_record(candidate);
+        } catch (const std::exception &error) {
+          std::fprintf(stderr, "Cannot remove repair candidate %s: %s\n", candidate.c_str(),
+                       error.what());
+        }
       }
-    }
-    return report;
-  }
-  Json backup = {{"session", id}, {"kind", "session_repair_backup"}};
-  for (const auto *table : {"sessions", "session_messages", "provider_parts", "tools",
-                            "session_references", "provider_revisions"}) {
-    const auto query = std::string("SELECT * FROM ") + table +
-                       (std::string(table) == "sessions" ? " WHERE id=?" : " WHERE session=?");
-    Statement rows(impl_->db, query.c_str());
-    rows.text(1, id);
-    backup[table] = Json::array();
-    int status;
-    while ((status = sqlite3_step(rows.p)) == SQLITE_ROW) {
-      Json row = Json::object();
-      for (int i = 0; i < sqlite3_column_count(rows.p); ++i) {
-        const auto value = column(rows.p, i);
-        const auto type = sqlite3_column_type(rows.p, i);
-        Json stored = type == SQLITE_NULL ? Json() : Json(value);
-        if (type != SQLITE_NULL && safe_text(value) != value)
-          stored = {{"encoding", "base64"}, {"bytes", base64_encode(value)}};
-        row[sqlite3_column_name(rows.p, i)] = std::move(stored);
+    };
+    try {
+      const auto version =
+          database_version(); // Before BEGIN: later external commits invalidate it.
+      Session session;
+      Json journal, backup,
+          report = {{"session", id}, {"changed", false}, {"issues", Json::array()}};
+      {
+        Transaction snapshot(impl_->db, false);
+        session = read_session(id, false, false);
+        try {
+          (void)load_id(id, false);
+        } catch (const Error &error) {
+          report["issues"].push_back(error.what());
+        }
+        journal = recovery_facts(id);
+        if (mutate) {
+          backup = {{"session", id}, {"kind", "session_repair_backup"}};
+          for (const auto *table : {"sessions", "session_messages", "provider_parts", "tools",
+                                    "session_references", "provider_revisions"}) {
+            const auto query =
+                std::string("SELECT * FROM ") + table +
+                (std::string(table) == "sessions" ? " WHERE id=?" : " WHERE session=?");
+            Statement rows(impl_->db, query.c_str());
+            rows.text(1, id);
+            backup[table] = Json::array();
+            int status;
+            while ((status = sqlite3_step(rows.p)) == SQLITE_ROW) {
+              Json row = Json::object();
+              for (int i = 0; i < sqlite3_column_count(rows.p); ++i) {
+                const auto value = column(rows.p, i);
+                const auto type = sqlite3_column_type(rows.p, i);
+                Json stored = type == SQLITE_NULL ? Json() : Json(value);
+                if (type != SQLITE_NULL && safe_text(value) != value)
+                  stored = {{"encoding", "base64"}, {"bytes", base64_encode(value)}};
+                row[sqlite3_column_name(rows.p, i)] = std::move(stored);
+              }
+              backup[table].push_back(std::move(row));
+            }
+            if (status != SQLITE_DONE)
+              throw Error("Cannot back up session repair rows");
+          }
+        }
+        snapshot.commit();
       }
-      backup[table].push_back(std::move(row));
-    }
-    if (status != SQLITE_DONE)
-      throw Error("Cannot back up session repair rows");
-  }
-  const auto path = repair_directory(impl_->home) / (id + "-backup-" + unique_id() + ".json");
-  files.atomic_write(path, backup.dump(), true);
-  report["backup"] = path.string();
-  std::vector<std::string> candidates;
-  try {
-    impl_->clear_provider_cache();
-    {
-      Statement clear(impl_->db, "DELETE FROM provider_parts WHERE session=?");
-      clear.text(1, id);
-      clear.run();
-    }
-    if (recovery) {
-      tools.use_session(id);
-      bool unavailable = false;
-      for (auto &message : session.messages) {
+      auto facts = tools.execution_state(session.messages, [&] { return journal; });
+      for (const auto &fact : facts)
+        if (fact.value("kind", Json()) == "recovery_unavailable")
+          report["issues"].push_back(fact);
+      using Reference = std::pair<std::string, std::string>;
+      std::map<std::string, std::optional<Reference>> observed;
+      std::vector<std::optional<Reference>> references(session.messages.size());
+      std::vector<Json> missing(session.messages.size());
+      const auto observe = [&](const std::string &original) -> std::optional<Reference> {
+        try {
+          return tools.checked_result_reference(original);
+        } catch (const std::bad_alloc &) {
+          throw;
+        } catch (const std::exception &) {
+          return std::nullopt;
+        }
+      };
+      for (size_t i = 0; i < session.messages.size(); ++i) {
+        const auto &message = session.messages[i];
+        if (message.checkpoint_state.is_object() &&
+            message.checkpoint_state.value("recovery_record", Json()).is_string()) {
+          const auto ref = message.checkpoint_state.at("recovery_record").get<std::string>();
+          observed[ref] = observe(ref);
+        }
         if (message.result_file.empty())
           continue;
-        const auto original = message.result_file;
         try {
-          message.result_file = checked_result_reference(files, impl_->artifact_root, original);
+          references[i] = tools.checked_result_reference(message.result_file);
         } catch (const std::bad_alloc &) {
           throw;
         } catch (const std::exception &error) {
-          Json fact = {{"kind", "recovery_unavailable"},
-                       {"recovery", "unknown"},
-                       {"original_reference", original},
-                       {"message_id", message.message_id},
-                       {"reason", bounded_text(error.what(), 512)},
-                       {"instruction", "Only a partial surviving observation is available; inspect "
-                                       "effects before repeating actions."}};
-          facts.push_back(fact);
-          report["issues"].push_back(fact);
-          unavailable = true;
-          Message partial = message;
-          partial.message_id = unique_id();
-          partial.result_file.clear();
-          partial.checkpoint_state = Json::array({fact});
-          partial.text =
-              "Partial surviving observation from explicit repair; original result unavailable.\n" +
-              message.text;
-          const auto candidate = tools.result_identifier(partial);
-          candidates.push_back(candidate);
-          tools.retain_result(partial);
-          message.result_file = partial.result_file;
+          missing[i] = {{"kind", "recovery_unavailable"},
+                        {"recovery", "unknown"},
+                        {"original_reference", message.result_file},
+                        {"message_id", message.message_id},
+                        {"reason", bounded_text(error.what(), 512)},
+                        {"instruction",
+                         "Only a partial surviving observation is available; inspect "
+                         "effects before repeating actions."}};
+          report["issues"].push_back(missing[i]);
         }
-        if (message.role == "tool") {
-          auto envelope = Json::parse(message.text, nullptr, false);
-          if (envelope.is_object()) {
-            for (const auto *key : {"metadata", "content"}) {
-              auto nested = envelope.value(key, Json());
-              const bool encoded = nested.is_string();
-              if (encoded)
-                nested = Json::parse(nested.get<std::string>(), nullptr, false);
-              if (nested.is_object() && nested.contains("result_path")) {
-                nested["result_path"] = message.result_file;
-                envelope[key] = encoded ? Json(nested.dump()) : nested;
-              }
-            }
-            message.text = envelope.dump();
+        observed[message.result_file] = references[i];
+      }
+      if (!mutate)
+        return report;
+      auto backup_path =
+          (repair_directory(impl_->home) / (id + "-backup-" + unique_id() + ".json")).string();
+      backups.push_back(std::move(backup_path));
+      try {
+        files.atomic_write(backups.back(), backup.dump(), true);
+      } catch (...) {
+        std::error_code status;
+        if (!fs::is_regular_file(backups.back(), status))
+          backups.pop_back();
+        throw;
+      }
+      report["backup"] = backups.back();
+      if (backups.size() > 1)
+        report["backups"] = backups;
+      std::vector<std::string> payloads;
+      std::set<std::string> retained;
+      if (recovery) {
+        tools.use_session(id);
+        bool unavailable = false;
+        for (size_t i = 0; i < session.messages.size(); ++i) {
+          auto &message = session.messages[i];
+          if (message.result_file.empty())
+            continue;
+          if (references[i])
+            message.result_file = references[i]->first;
+          else {
+            facts.push_back(missing[i]);
+            unavailable = true;
+            Message partial = message;
+            partial.message_id = unique_id();
+            partial.result_file.clear();
+            partial.checkpoint_state = Json::array({missing[i]});
+            partial.text = "Partial surviving observation from explicit repair; original result "
+                           "unavailable.\n" +
+                           message.text;
+            candidates.push_back(tools.result_identifier(partial));
+            tools.retain_result(partial);
+            message.result_file = partial.result_file;
+            observed[partial.result_file] = tools.checked_result_reference(partial.result_file);
           }
         }
+        for (auto &message : session.messages)
+          if (!message.checkpoint_state.is_null())
+            message.checkpoint_state = facts;
+        if (unavailable) {
+          Message marker;
+          marker.role = "system";
+          marker.origin = "recovery";
+          marker.message_id = unique_id();
+          marker.text = "Explicit repair retained incomplete historical results. Use current "
+                        "recovery facts; never replay historical effects automatically.";
+          marker.checkpoint_state = facts;
+          session.messages.push_back(std::move(marker));
+        }
+        portable_messages(session.messages, id);
+        ensure_message_ids(session.messages);
+        payloads.reserve(session.messages.size());
+        for (const auto &message : session.messages)
+          payloads.push_back(safe_json(Json(message)).dump());
+        retained = message_references(session.messages);
       }
-      for (auto &message : session.messages)
-        if (!message.checkpoint_state.is_null())
-          message.checkpoint_state = facts;
-      if (unavailable) {
-        Message marker;
-        marker.role = "system";
-        marker.origin = "recovery";
-        marker.message_id = unique_id();
-        marker.text = "Explicit repair retained incomplete historical results. Use current "
-                      "recovery facts; never replay historical effects automatically.";
-        marker.checkpoint_state = facts;
-        session.messages.push_back(std::move(marker));
+      // Allocate report fields before the durable commit, just like prepared payloads.
+      report["changed"] = true;
+      report["provider_cache_reset"] = true;
+      report["recovery_facts"] = recovery ? facts : Json();
+      bool stale = false;
+      {
+        Transaction publication(impl_->db);
+        impl_->verify_revisions();
+        stale = database_version() != version;
+        for (const auto &entry : observed) {
+          if (stale)
+            break;
+          stale = observe(entry.first) != entry.second;
+        }
+        if (!stale) {
+          impl_->clear_provider_cache();
+          impl_->known_references.erase(id);
+          Statement clear(impl_->db, "DELETE FROM provider_parts WHERE session=?");
+          clear.text(1, id);
+          clear.run();
+          if (recovery) {
+            update_metadata(session);
+            Statement messages(impl_->db, "DELETE FROM session_messages WHERE session=?");
+            messages.text(1, id);
+            messages.run();
+            Statement mark(impl_->db,
+                           "UPDATE sessions SET message_format=1,messages='[]' WHERE id=?");
+            mark.text(1, id);
+            mark.run();
+            Statement row(impl_->db, "INSERT INTO session_messages VALUES(?,?,?)");
+            for (size_t i = 0; i < payloads.size(); ++i) {
+              sqlite3_reset(row.p);
+              row.text(1, id);
+              sqlite3_bind_int64(row.p, 2, static_cast<sqlite3_int64>(i));
+              row.text(3, payloads[i]);
+              row.run();
+              impl_->serialized += payloads[i].size();
+            }
+            Statement ref(impl_->db, "INSERT OR IGNORE INTO session_references VALUES(?,?,?)");
+            for (const auto &path : retained) {
+              sqlite3_reset(ref.p);
+              ref.text(1, id);
+              ref.text(2, result_name(path) ? "result" : "capture");
+              ref.text(3, path);
+              ref.run();
+            }
+          }
+          publication.commit();
+        }
       }
-      portable_messages(session.messages, id);
-      session.provider_state = nullptr;
-      replace_history(session);
-    }
-    transaction->commit();
-  } catch (...) {
-    const auto failure = std::current_exception();
-    // Roll back references before checking whether newly created archives are still used.
-    transaction.reset();
-    impl_->clear_provider_cache();
-    for (const auto &candidate : candidates) {
+      if (!stale)
+        return report;
+      cleanup();
+      candidates.clear();
+      if (attempt == 1)
+        throw Error("Repair preparation changed twice; no repair changes applied; retry repair");
+    } catch (...) {
+      const auto failure = std::current_exception();
+      cleanup();
+      if (backups.empty())
+        std::rethrow_exception(failure);
+      std::string suffix;
+      for (const auto &path : backups)
+        suffix += "; backup: " + path;
       try {
-        discard_recovery_record(candidate);
-      } catch (const std::exception &cleanup) {
-        std::fprintf(stderr, "Cannot remove repair candidate %s: %s; backup: %s\n",
-                     candidate.c_str(), cleanup.what(), path.c_str());
+        std::rethrow_exception(failure);
+      } catch (const Error &error) {
+        throw Error(std::string(error.what()) + suffix, error.code);
+      } catch (const std::exception &error) {
+        throw Error(std::string(error.what()) + suffix);
       }
-    }
-    try {
-      std::rethrow_exception(failure);
-    } catch (const Error &error) {
-      throw Error(std::string(error.what()) + "; backup: " + path.string(), error.code);
-    } catch (const std::exception &error) {
-      throw Error(std::string(error.what()) + "; backup: " + path.string());
     }
   }
-  report["changed"] = true;
-  report["provider_cache_reset"] = true;
-  report["recovery_facts"] = recovery ? facts : Json();
-  return report;
+  throw Error("Repair preparation exhausted"); // Both attempts return or throw above.
 }
 Json StateStore::list() {
   Statement q(

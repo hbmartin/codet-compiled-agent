@@ -900,8 +900,16 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
     result.message.role = "assistant";
     result.message.replay_provider = c.provider;
     bool completed = false, saw = false;
-    std::string stream_error, last_frame;
+    std::string stream_error;
     std::exception_ptr consumer_failure;
+    const auto consume = [&](const auto &callback, const auto &value) {
+      try {
+        callback(value);
+      } catch (...) {
+        consumer_failure = std::current_exception();
+        throw;
+      }
+    };
     bool stream_failed = false;
     std::map<size_t, AssistantText> streamed;
     auto item_event = [&](const std::string &type, const AssistantText &item,
@@ -915,26 +923,15 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
         value["text_delta"] = delta;
       else
         value["text"] = "";
-      try {
-        items({{"type", type}, {"item", value}});
-      } catch (...) {
-        consumer_failure = std::current_exception();
-        throw;
-      }
+      consume(items, Json({{"type", type}, {"item", value}}));
     };
     std::map<size_t, Json> blocks;
-    std::map<size_t, std::string> arguments;
+    std::map<size_t, std::string> arguments, tool_frames;
     std::map<size_t, ToolCall> calls;
     auto text = [&](const std::string &value) {
       result.message.text += value;
-      if (sink) {
-        try {
-          sink(value);
-        } catch (...) {
-          consumer_failure = std::current_exception();
-          throw;
-        }
-      }
+      if (sink)
+        consume(sink, value);
     };
     auto decode_frame = [&](const std::string &event, const std::string &data) {
       if (data == "[DONE]") {
@@ -1014,8 +1011,10 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
         const size_t index = j.value("index", size_t{0});
         if (type == "message_start" && j.contains("message"))
           usage(result.usage, j["message"].value("usage", Json::object()));
-        if (type == "content_block_start")
+        if (type == "content_block_start") {
           blocks[index] = j.at("content_block");
+          tool_frames[index] = data;
+        }
         if (type == "content_block_delta") {
           const auto &delta = j.at("delta");
           const auto dt = delta.value("type", "");
@@ -1087,6 +1086,7 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
           for (const auto &tc : delta.value("tool_calls", Json::array())) {
             const auto index = tc.value("index", size_t{0});
             auto &call = calls[index];
+            tool_frames[index] = data;
             if (tc.contains("id"))
               call.id = tc["id"];
             if (tc.contains("function")) {
@@ -1109,7 +1109,6 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
       throw ProviderError("Malformed provider stream: " + std::string(error.what()), 200, raw);
     };
     const auto frame = [&](const std::string &event, const std::string &data) {
-      last_frame = data;
       try {
         decode_frame(event, data);
       } catch (const Json::exception &error) {
@@ -1163,13 +1162,27 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
     // A JSON error body must not be mistaken for a successful empty stream.
     if (!saw || !completed)
       throw Error("Truncated or malformed provider stream");
+    size_t assembling = 0;
+    bool parsing_arguments = false;
+    const auto assembly_body = [&]() -> const std::string & {
+      if (!response.body.empty())
+        return response.body;
+      return parsing_arguments ? arguments[assembling] : tool_frames[assembling];
+    };
     try {
       if (c.provider == "anthropic")
         for (auto &entry : blocks) {
+          assembling = entry.first;
+          parsing_arguments = false;
           auto &b = entry.second;
           if (b.value("type", "") == "tool_use") {
-            if (!arguments[entry.first].empty())
+            if (b.value("id", "").empty() || b.value("name", "").empty())
+              throw MalformedProviderJson("Malformed streamed tool call: missing id or name");
+            if (!arguments[entry.first].empty()) {
+              parsing_arguments = true;
               b["input"] = parse_object(arguments[entry.first]);
+              parsing_arguments = false;
+            }
             result.message.calls.push_back(
                 {b.at("id"), tool_logical_name(b.at("name")), b.value("input", Json::object())});
           }
@@ -1177,17 +1190,21 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
         }
       if (c.provider == "openai" && !uses_responses(c))
         for (auto &entry : calls) {
+          assembling = entry.first;
+          parsing_arguments = false;
           auto &call = entry.second;
           if (call.id.empty() || call.name.empty())
-            throw Error("Malformed streamed tool call");
+            throw MalformedProviderJson("Malformed streamed tool call: missing id or name");
           call.name = tool_logical_name(call.name);
+          parsing_arguments = true;
           call.arguments = parse_object(arguments[entry.first]);
+          parsing_arguments = false;
           result.message.calls.push_back(call);
         }
     } catch (const Json::exception &error) {
-      malformed(error, response.body.empty() ? last_frame : response.body);
+      malformed(error, assembly_body());
     } catch (const MalformedProviderJson &error) {
-      malformed(error, response.body.empty() ? last_frame : response.body);
+      malformed(error, assembly_body());
     }
     if (result.stop_reason == "length" || result.stop_reason == "max_tokens" ||
         result.stop_reason == "MAX_TOKENS")

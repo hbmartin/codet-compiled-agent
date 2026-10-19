@@ -31,6 +31,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         callback=self.server.before_reply
         self.server.before_reply=None
         if callback:callback()
+        if 'fixture-tool-invalid-' in json.dumps(body.get('messages',[])):
+            mode=next(k for k in ('arguments','name','id') if 'fixture-tool-invalid-'+k in json.dumps(body['messages']))
+            name='' if mode=='name' else 'read_file'
+            identity='' if mode=='id' else 'invalid-call'
+            if self.path=='/v1/messages':
+                frames=[{'type':'content_block_start','index':0,'content_block':{'type':'tool_use','id':identity,'name':name,'input':{}}}]
+                if mode=='arguments':frames.append({'type':'content_block_delta','index':0,'delta':{'type':'input_json_delta','partial_json':'{broken-arguments'}})
+                frames.append({'type':'message_stop'})
+            else:
+                frames=[{'choices':[{'delta':{'tool_calls':[{'index':0,'id':identity,'function':{'name':name,'arguments':'{broken-arguments' if mode=='arguments' else '{}'}}]},'finish_reason':'tool_calls'}]}]
+            wire=''.join('data: '+json.dumps(f)+'\n\n' for f in frames)
+            if self.path!='/v1/messages':wire+='data: [DONE]\n\n'
+            data=wire.encode();self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers()
+            for at in range(0,len(data),7):self.wfile.write(data[at:at+7]);self.wfile.flush()
+            return
         if self.path == '/api/chat':
             data=(json.dumps({'message':{'role':'assistant','content':'fixture done'},'done':True})+'\n').encode()
             self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
@@ -968,6 +983,22 @@ class CliTests(unittest.TestCase):
             self.assertIn('Malformed provider stream',error['message'])
             self.assertEqual(error['body'],'{broken' if mode=='syntax' else json.dumps({'type':'response.output_text.delta','delta':42}))
             self.assertEqual(len(self.server.requests),1)
+
+    def test_curl_tool_assembly_errors_keep_payload_and_never_retry(self):
+        for provider in ('openai','anthropic'):
+            for mode in ('arguments','name','id'):
+                with self.subTest(provider=provider,mode=mode):
+                    self.server.requests=[]
+                    flags=['--provider',provider,'-c',f'providers.{provider}.api_key="fixture"','-c',f'providers.{provider}.base_url="http://127.0.0.1:{self.server.server_port}'+('/v1' if provider=='openai' else '')+'"']
+                    if provider=='anthropic':flags+=['--model','claude-sonnet-5-5']
+                    else:flags+=['-c','providers.openai.wire_api="chat_completions"']
+                    r=self.run_cli('exec','--output-format=json',*flags,'fixture-tool-invalid-'+mode)
+                    self.assertEqual(r.returncode,1,r.stderr)
+                    error=json.loads(r.stdout)['provider_error']
+                    self.assertIn('Malformed',error['message'])
+                    self.assertIn('{broken-arguments' if mode=='arguments' else 'invalid-call' if mode=='name' else 'read_file',error['body'])
+                    self.assertIn('message_stop' if provider=='anthropic' else '[DONE]',error['body'])
+                    self.assertEqual(len(self.server.requests),1)
 
     def test_real_curl_optional_compaction_skips_malformed_typed_summary(self):
         import sqlite3

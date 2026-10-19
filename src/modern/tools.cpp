@@ -457,35 +457,13 @@ PermissionRequest Tools::execution_request(const ToolCall &call) const {
 namespace {
 bool private_regular(const FileSystem &files, const fs::path &root, const fs::path &p,
                      bool directory = false) {
-  const auto base = fs::absolute(root).lexically_normal();
-  const auto value = fs::absolute(p).lexically_normal();
-  if (!within(value, base) || !within(files.canonical(value), files.canonical(base)) ||
-      fs::is_symlink(base))
+  try {
+    (void)checked_artifact_identity(
+        files, root, p, directory ? ArtifactPolicy::file_or_directory : ArtifactPolicy::regular);
+    return true;
+  } catch (const Error &) {
     return false;
-  auto current = base;
-  for (const auto &part : value.lexically_relative(base)) {
-    if (part == ".")
-      continue;
-    current /= part;
-    if (fs::is_symlink(current))
-      return false;
   }
-  return fs::is_regular_file(value) || (directory && fs::is_directory(value));
-}
-std::string recovery_identity(const fs::path &path) {
-  struct stat status{};
-  if (::lstat(path.c_str(), &status) || !S_ISREG(status.st_mode) || status.st_uid != ::geteuid() ||
-      (status.st_mode & 0077))
-    throw Error("Checkpoint recovery archive must be a private owned regular file");
-#if defined(__APPLE__)
-  const auto modified = status.st_mtimespec, changed = status.st_ctimespec;
-#else
-  const auto modified = status.st_mtim, changed = status.st_ctim;
-#endif
-  return std::to_string(status.st_dev) + ":" + std::to_string(status.st_ino) + ":" +
-         std::to_string(status.st_size) + ":" + std::to_string(modified.tv_sec) + ":" +
-         std::to_string(modified.tv_nsec) + ":" + std::to_string(changed.tv_sec) + ":" +
-         std::to_string(changed.tv_nsec);
 }
 } // namespace
 bool Tools::private_anchor(const fs::path &root) const {
@@ -622,6 +600,33 @@ std::string Tools::result_reference(const Message &message) const {
   return ((capture_name(ref) ? capture_directory(config_) : artifact_directory(config_)) / ref)
       .string();
 }
+std::pair<std::string, std::string>
+Tools::checked_result_reference(const std::string &original) const {
+  fs::path ref(original), root = fs::absolute(artifact_directory(config_)).lexically_normal();
+  if (ref.is_absolute()) {
+    const auto capture_root = fs::absolute(capture_directory(config_)).lexically_normal();
+    if (ref.parent_path().lexically_normal() == capture_root.lexically_normal() &&
+        capture_name(ref)) {
+      root = capture_root;
+      ref = ref.filename();
+    } else
+      ref = ref.lexically_relative(root);
+  }
+  if (capture_name(ref) && ref == ref.filename())
+    root = capture_directory(config_);
+  else if (!result_name(ref))
+    throw Error("Untrusted result reference");
+  if (!private_anchor(root))
+    throw Error("Artifact anchor changed");
+  const auto target = root / ref;
+  const auto identity =
+      checked_artifact_identity(files_, root, target, ArtifactPolicy::owned_regular);
+  auto input = files_.open_read(target);
+  if (input->path() != files_.canonical(target) ||
+      checked_artifact_identity(files_, root, target, ArtifactPolicy::owned_regular) != identity)
+    throw Error("Result identity changed while opening");
+  return {ref.string(), identity};
+}
 Json Tools::execution_fact(int id, const ExecSession &session) const {
   Json fact = {{"session_id", id}};
   try {
@@ -669,7 +674,8 @@ Json Tools::execution_state(const std::vector<Message> &messages,
           if (!result_name(ref) || !private_anchor(artifact_directory(config_)) ||
               !private_regular(files_, artifact_directory(config_), path))
             throw Error("Invalid checkpoint recovery reference");
-          const auto identity = recovery_identity(path);
+          const auto identity = checked_artifact_identity(files_, artifact_directory(config_), path,
+                                                          ArtifactPolicy::private_owned_regular);
           auto cached = recovery_archives_.find(path);
           if (cached != recovery_archives_.end() && cached->second.identity != identity) {
             recovery_archive_bytes_ -= cached->second.bytes;
@@ -689,13 +695,15 @@ Json Tools::execution_state(const std::vector<Message> &messages,
             const auto archive = Json::parse(bytes).get<Message>();
             if (archive.role != "system" || archive.origin != "recovery" ||
                 archive.message_id != path.stem().string() ||
-                digest(archive.text) != archive.message_id || recovery_identity(path) != identity)
+                digest(archive.text) != archive.message_id ||
+                checked_artifact_identity(files_, artifact_directory(config_), path,
+                                          ArtifactPolicy::private_owned_regular) != identity)
               throw Error("Invalid checkpoint recovery archive identity");
             auto facts = std::make_shared<const Json>(Json::parse(archive.text));
             collect(*facts);
             observed[path] = {identity, facts};
             constexpr size_t limit = size_t{8} * 1024 * 1024;
-            const auto size = facts->dump().size();
+            const auto size = archive.text.size();
             if (size <= limit) {
               while (size > limit - recovery_archive_bytes_ && !recovery_archives_.empty()) {
                 const auto oldest = std::min_element(

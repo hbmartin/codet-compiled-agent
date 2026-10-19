@@ -526,6 +526,7 @@ struct HookOutcome {
 };
 class DiagnosticBuffer;
 class Tools {
+  friend class StateStore;
   const Config &config_;
   FileSystem &files_;
   Processes &processes_;
@@ -606,6 +607,8 @@ public:
   }
   std::string result_reference(const Message &) const;
   std::string result_identifier(const Message &) const;
+  // Internal persistence validation: portable identifier and current trusted file identity.
+  std::pair<std::string, std::string> checked_result_reference(const std::string &) const;
   ToolResult execute(const ToolCall &, const Cancellation &);
   std::string instructions() const;
   std::string dynamic_context(bool anticipate_indexes = false) const;
