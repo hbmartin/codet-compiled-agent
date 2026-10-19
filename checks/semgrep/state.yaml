@@ -29,3 +29,26 @@ rules:
           if ($ENABLED && $TX.owner) { ... }
       - pattern-not-inside: |
           if ($TX.owner && $ENABLED) { ... }
+  - id: codet-provider-cache-publication-noexcept
+    languages: [cpp]
+    severity: ERROR
+    message: Optional cache publication must catch all failures and invalidate cache trust without throwing after commit.
+    paths:
+      include: ["**/state.cpp"]
+    patterns:
+      - pattern: |
+          void publish_provider(...) { ... }
+      - pattern-not: |
+          void publish_provider(...) noexcept {
+            try { ... } catch (...) { clear_provider_cache(); }
+          }
+  - id: codet-repair-portable-content-only
+    languages: [cpp]
+    severity: ERROR
+    message: Delegate portable result metadata normalization; do not rewrite arbitrary result_path keys during repair.
+    paths:
+      include: ["**/state.cpp"]
+    patterns:
+      - pattern-inside: |
+          Json StateStore::repair(...) { ... }
+      - pattern: $OBJECT["result_path"] = $REFERENCE

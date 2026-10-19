@@ -34,12 +34,12 @@ Protocol references: [OpenAI model and Responses support](https://developers.ope
 
 ## Schema 7 and restore
 
-Schema 6 stores ordered messages separately from metadata, tool journals and provider conversation parts. Append operations serialize changed messages only. Tool completion, its transcript result and associated references commit together. Compaction replaces the history generation atomically after archives exist.
+Schema 7 stores ordered messages separately from metadata, tool journals and provider conversation parts. Per-session `provider_revisions` tokens rotate through insert, update and delete triggers on provider parts, including writes from external SQLite connections. Missing or altered revision infrastructure fails closed. Append operations serialize changed messages only. Tool completion, its transcript result and associated references commit together. Compaction replaces the history generation atomically after archives exist.
 
 Provider snapshots describe committed rows only. A nested provider write compares its cached
 prefix before invalidating the snapshot; only an owning transaction publishes a replacement
 after a successful commit. Reads inside explicit transactions do not publish snapshots.
-Recovery may leave the cache empty until the next owning save or load. The single-session
+Optional cache publication cannot fail an already committed save: allocation or serialization failures invalidate cache and cursor trust. Recovery may leave the cache empty until the next owning save or load. The single-session
 8 MiB cache cap and changed-suffix serialization still apply.
 
 Before migrating an older database, stop active sessions. Codet serializes upgraders on a private, interruptible migration lock, rechecks the version, then checks session ownership and creates a private consistent SQLite backup named `state.sqlite3.pre-v7-UUID`. Valid legacy sessions migrate independently in one transaction. Malformed legacy transcript bytes remain untouched and report an error only when that session is loaded. Migration failures roll back. Older binaries reject schema 7. Already-current WAL databases open without a migration write transaction. The migration lock has no five-second SQLite busy deadline.
@@ -96,3 +96,27 @@ Genuine immutable archive-identity conflicts remain errors; repair never silentl
 [PR #16 follow-up validation](validation/pr16-review-fixes.json) records transaction-cache,
 terminal-event and catalog-lock regressions, host/sanitizer/Linux tests, scoped safeguards,
 benchmarks and Tiger cross-build verification against their source hashes.
+
+## Repair preparation and private restores
+
+Repair inspects result archives and captures using their configured roots, including captures
+removed by retention quotas. Inspection, provider-cache repair and recovery repair report the
+same pre-repair problems. Recovery repair preserves unavailable results as partial archives and
+durable uncertainty; it never rewrites arbitrary user JSON content or repeats historical actions.
+
+A session lease covers the operation. Coherent database reads, archive decoding, private backups
+and replacement serialization precede the final write transaction. A database-version and file-identity
+check rejects stale preparation. Repair retries once, for at most two attempts; a second change exits
+without applying repair changes and reports all retained backups. The existing `backup` field names
+the applied attempt; `backups` lists retained preparation backups when a retry occurs. Unrelated
+sessions can commit during preparation, although such commits require fresh preparation.
+
+Restore checkpoint archives as owned regular files with mode `0600` under their original relative
+artifact identifiers. Symlinks, foreign owners and group/other permissions remain untrusted;
+unavailable archives retain explicit uncertainty rather than inferred historical outcomes.
+The recovery archive cache accounts for at most 8 MiB of serialized facts using the decoded archive
+text length. This bounds serialized content, not the parsed JSON heap footprint.
+
+[PR #18 follow-up validation](validation/pr18-correctness-repair.json) records committed-response
+allocation failures, repair preparation retries, capture-reference recovery, tool error payloads,
+the offline test matrix, benchmarks, and Tiger cross-build/static verification against source hashes.

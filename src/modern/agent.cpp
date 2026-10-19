@@ -32,11 +32,14 @@ std::string Agent::execution_context(const Session &session) {
 std::string Agent::execution_context(const Session &session, const Json &facts) {
   const auto &state = session.provider_state;
   bool previous_runtime = state.is_object() && state.contains("execution_digest");
-  for (const auto *key : {"system", "latest_system"})
-    if (state.is_object() && state.value(key, Json()).is_string() &&
-        state.at(key).get_ref<const std::string &>().find(
-            "# Current execution and recovery facts") != std::string::npos)
-      previous_runtime = true;
+  if (state.is_object())
+    for (const auto *key : {"system", "latest_system"}) {
+      const auto found = state.find(key);
+      if (found != state.end() && found->is_string() &&
+          found->get_ref<const std::string &>().find("# Current execution and recovery facts") !=
+              std::string::npos)
+        previous_runtime = true;
+    }
   return facts.empty() && !previous_runtime ? std::string{} : tools_.execution_context(facts);
 }
 
