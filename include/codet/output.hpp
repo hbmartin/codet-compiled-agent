@@ -19,7 +19,6 @@ class CaptureStore {
   void recover_catalog();
   void prepare_catalog();
   void rebuild_catalog();
-  size_t reserve(OutputSpool &, size_t);
   size_t account_reservation(OutputSpool &, size_t);
   void account_closed(OutputSpool &);
   fs::path directory_;
@@ -47,7 +46,6 @@ class OutputSpool {
   bool stopped_ = false, truncated_ = false, closed_ = false, admitted_ = false;
   std::string error_;
   std::unique_ptr<char[]> pending_;
-  size_t available(size_t requested);
   void flush_checked();
 
 public:

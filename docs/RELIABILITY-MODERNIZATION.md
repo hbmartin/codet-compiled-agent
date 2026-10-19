@@ -32,7 +32,7 @@ system prompt without resetting its new tool-use/result history.
 
 Protocol references: [OpenAI model and Responses support](https://developers.openai.com/api/docs/models/gpt-6.1-sol), [Sonnet signed-history migration](https://platform.claude.com/docs/en/models/sonnet-5-5/migration-guide), and [Gemini Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash).
 
-## Schema 6 and restore
+## Schema 7 and restore
 
 Schema 6 stores ordered messages separately from metadata, tool journals and provider conversation parts. Append operations serialize changed messages only. Tool completion, its transcript result and associated references commit together. Compaction replaces the history generation atomically after archives exist.
 
@@ -42,9 +42,9 @@ after a successful commit. Reads inside explicit transactions do not publish sna
 Recovery may leave the cache empty until the next owning save or load. The single-session
 8 MiB cache cap and changed-suffix serialization still apply.
 
-Before migrating an older database, stop active sessions. Codet serializes upgraders on a private, interruptible migration lock, rechecks the version, then checks session ownership and creates a private consistent SQLite backup named `state.sqlite3.pre-v6-UUID`. Valid legacy sessions migrate independently in one transaction. Malformed legacy transcript bytes remain untouched and report an error only when that session is loaded. Migration failures roll back. Older binaries reject schema 6. Already-current WAL databases open without a migration write transaction. The migration lock has no five-second SQLite busy deadline.
+Before migrating an older database, stop active sessions. Codet serializes upgraders on a private, interruptible migration lock, rechecks the version, then checks session ownership and creates a private consistent SQLite backup named `state.sqlite3.pre-v7-UUID`. Valid legacy sessions migrate independently in one transaction. Malformed legacy transcript bytes remain untouched and report an error only when that session is loaded. Migration failures roll back. Older binaries reject schema 7. Already-current WAL databases open without a migration write transaction. The migration lock has no five-second SQLite busy deadline.
 
-To restore, stop every Codet process, copy the current database and its `-wal`/`-shm` files aside, remove those current files, then copy the selected pre-v6 backup to `state.sqlite3` with mode 0600. Keep the artifact and capture directories alongside it. Run the older binary only after restoring its compatible schema. A restore discards sessions and changes newer than the chosen backup; keep the displaced database for recovery.
+To restore, stop every Codet process, copy the current database and its `-wal`/`-shm` files aside, remove those current files, then copy the selected pre-v7 backup to `state.sqlite3` with mode 0600. Keep the artifact and capture directories alongside it. Run the older binary only after restoring its compatible schema. A restore discards sessions and changes newer than the chosen backup; keep the displaced database for recovery.
 
 ```toml
 durability = "durable" # durable | fast
@@ -89,8 +89,9 @@ Active capture ownership and byte quotas still apply; capacity reconciliation pr
 active files, preserving live owners and reclaiming abandoned flags. Existing corruption recovery
 remains limited to one attempt per top-level catalog operation and never repeats output writes.
 
-Malformed provider caches and genuine archive-identity conflicts remain explicit errors. These
-changes prevent new failures; automatic repair of already-affected sessions is deferred.
+Malformed provider caches remain explicit errors during ordinary saves. Explicit `codet repair`
+can back up and reset derived wire state or preserve unavailable recovery references as uncertainty.
+Genuine immutable archive-identity conflicts remain errors; repair never silently replaces archives.
 
 [PR #16 follow-up validation](validation/pr16-review-fixes.json) records transaction-cache,
 terminal-event and catalog-lock regressions, host/sanitizer/Linux tests, scoped safeguards,

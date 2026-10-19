@@ -31,6 +31,20 @@ std::string resolve_effort(const Config &config, const Session *saved) {
   const auto selected = saved_effort(config, saved);
   return selected ? *selected : config.effort;
 }
+Message runtime_message(const std::string &execution) {
+  Message message;
+  message.role = "system";
+  message.origin = "runtime";
+  message.text = execution;
+  return message;
+}
+PromptBudget request_budget(const Config &config, const std::string &system, const Json &schemas,
+                            const std::string &execution) {
+  auto budget = prompt_budget(config, system, schemas);
+  if (!execution.empty())
+    budget.fixed += provider_history_bytes(config, {runtime_message(execution)});
+  return budget;
+}
 PromptBudget prompt_budget(const Config &config, const std::string &system, const Json &schemas) {
   return {config.context_tokens * 3, system.size() + schemas.dump().size() + 256,
           config.max_output_tokens * 3};

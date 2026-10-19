@@ -2,6 +2,7 @@
 #include "codet/computer.hpp"
 #include "codet/context.hpp"
 #include "codet/core.hpp"
+#include "codet/support.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
@@ -143,6 +144,79 @@ std::string column(sqlite3_stmt *p, int n) {
                          static_cast<size_t>(sqlite3_column_bytes(p, n)))
            : std::string{};
 }
+// The stored SQL is checked after schema changes before trusting revision tokens.
+const std::map<std::string, std::string> &revision_schema() {
+  static const std::map<std::string, std::string> definitions = {
+      {"provider_revisions",
+       "CREATE TABLE provider_revisions(session TEXT PRIMARY KEY,revision "
+       "TEXT NOT NULL,FOREIGN KEY(session) REFERENCES sessions(id) ON DELETE CASCADE)"},
+      {"provider_revision_insert",
+       "CREATE TRIGGER provider_revision_insert AFTER INSERT ON provider_parts BEGIN "
+       "INSERT INTO provider_revisions VALUES(NEW.session,lower(hex(randomblob(16)))) "
+       "ON CONFLICT(session) DO UPDATE SET revision=excluded.revision; END"},
+      {"provider_revision_delete",
+       "CREATE TRIGGER provider_revision_delete AFTER DELETE ON provider_parts BEGIN "
+       "INSERT INTO provider_revisions VALUES(OLD.session,lower(hex(randomblob(16)))) "
+       "ON CONFLICT(session) DO UPDATE SET revision=excluded.revision; END"},
+      {"provider_revision_update",
+       "CREATE TRIGGER provider_revision_update AFTER UPDATE ON provider_parts BEGIN "
+       "INSERT INTO provider_revisions VALUES(OLD.session,lower(hex(randomblob(16)))) "
+       "ON CONFLICT(session) DO UPDATE SET revision=excluded.revision; "
+       "INSERT INTO provider_revisions VALUES(NEW.session,lower(hex(randomblob(16)))) "
+       "ON CONFLICT(session) DO UPDATE SET revision=excluded.revision; END"}};
+  return definitions;
+}
+std::string select_session(sqlite3 *db, const std::string &selector, bool last) {
+  Statement q(db, last ? "SELECT id FROM sessions ORDER BY updated DESC,rowid DESC LIMIT 1"
+                       : "SELECT id FROM sessions WHERE id=? OR name=? "
+                         "ORDER BY (id=?) DESC,updated DESC,rowid DESC LIMIT 1");
+  if (!last) {
+    q.text(1, selector);
+    q.text(2, selector);
+    q.text(3, selector);
+  }
+  if (sqlite3_step(q.p) != SQLITE_ROW)
+    throw Error(last ? "No saved sessions" : "Session not found: " + selector, 2);
+  return column(q.p, 0);
+}
+fs::path repair_directory(const fs::path &home) {
+  const auto dir = home / "repairs";
+  if (fs::is_symlink(dir))
+    throw Error("Invalid repair directory");
+  fs::create_directories(dir);
+  if (::chmod(dir.c_str(), 0700))
+    throw Error("Cannot protect repair directory");
+  return dir;
+}
+std::string checked_result_reference(const FileSystem &files, const fs::path &root,
+                                     const std::string &original) {
+  fs::path ref(original);
+  if (ref.is_absolute())
+    ref = ref.lexically_relative(root);
+  if (capture_name(ref) && ref == ref.filename())
+    return ref.string();
+  if (!result_name(ref))
+    throw Error("Untrusted result reference");
+  const auto target = root / ref;
+  if (files.canonical(target) != files.canonical(root) / ref)
+    throw Error("Result reference escapes artifact storage");
+  auto current = root;
+  if (fs::is_symlink(current))
+    throw Error("Unsafe artifact anchor");
+  for (const auto &part : ref) {
+    current /= part;
+    if (fs::is_symlink(current))
+      throw Error("Unsafe result symlink");
+  }
+  struct stat identity{};
+  if (::lstat(target.c_str(), &identity) || !S_ISREG(identity.st_mode) ||
+      identity.st_uid != ::geteuid())
+    throw Error("Result archive is unavailable or not an owned regular file");
+  auto checked = files.open_read(target);
+  if (checked->path() != files.canonical(target))
+    throw Error("Result identity changed while opening");
+  return ref.string();
+}
 } // namespace
 struct StateStore::Impl {
   sqlite3 *db = nullptr;
@@ -171,20 +245,54 @@ struct StateStore::Impl {
   uint64_t serialized = 0, rows_read = 0, generation = 0, revision = 0;
   std::string cursor_session;
   size_t cursor_count = 0, cursor_bytes = 0, cursor_header_bytes = 0;
-  int cursor_data_version = 0;
-  int data_version() const {
-    Statement q(db, "PRAGMA data_version");
-    if (sqlite3_step(q.p) != SQLITE_ROW)
-      throw Error("Cannot inspect provider cache version");
-    return sqlite3_column_int(q.p, 0);
+  std::string cursor_token, pending_provider_token;
+  int verified_schema = -1;
+  void verify_revisions() {
+    Statement version(db, "PRAGMA schema_version");
+    if (sqlite3_step(version.p) != SQLITE_ROW)
+      throw Error("Cannot inspect provider revision schema");
+    const auto current = sqlite3_column_int(version.p, 0);
+    if (current == verified_schema)
+      return;
+    clear_provider_cache();
+    for (const auto &definition : revision_schema()) {
+      Statement q(db, "SELECT sql FROM sqlite_master WHERE name=?");
+      q.text(1, definition.first);
+      if (sqlite3_step(q.p) != SQLITE_ROW || column(q.p, 0) != definition.second)
+        throw Error("Invalid provider revision infrastructure: " + definition.first);
+    }
+    verified_schema = current;
   }
-  void publish_provider(const Session &session, size_t bytes) {
+  std::string provider_token(const std::string &id) {
+    verify_revisions();
+    Statement q(db, "SELECT revision FROM provider_revisions WHERE session=?");
+    q.text(1, id);
+    const auto status = sqlite3_step(q.p);
+    if (status == SQLITE_DONE)
+      return {};
+    if (status != SQLITE_ROW)
+      throw Error("Cannot inspect provider revision");
+    const auto token = column(q.p, 0);
+    if (token.size() != 32 || token.find_first_not_of("0123456789abcdef") != std::string::npos)
+      throw Error("Invalid provider revision token");
+    return token;
+  }
+  void check_provider_tail(const std::string &id, size_t count) const {
+    Statement tail(db, "SELECT 1 FROM provider_parts WHERE session=? AND position>? LIMIT 1");
+    tail.text(1, id);
+    sqlite3_bind_int64(tail.p, 2, static_cast<sqlite3_int64>(count));
+    const auto status = sqlite3_step(tail.p);
+    if (status != SQLITE_DONE)
+      throw Error(status == SQLITE_ROW ? "Unexpected provider rows beyond committed prefix"
+                                       : "Cannot inspect provider prefix boundary");
+  }
+  void publish_provider(const Session &session, size_t bytes, const std::string &token) {
     cache_provider(session, bytes);
     cursor_session = session.id;
     cursor_count = provider_messages(session.provider_state).size();
     cursor_bytes = bytes;
     cursor_header_bytes = bytes ? provider_header(session.provider_state).dump().size() : 0;
-    cursor_data_version = data_version();
+    cursor_token = token;
     revision = ++generation;
   }
   ~Impl() {
@@ -219,7 +327,7 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
     if (sqlite3_step(query.p) != SQLITE_ROW)
       throw Error("Cannot read state schema");
     const auto value = sqlite3_column_int(query.p, 0);
-    if (value > 6)
+    if (value > 7)
       throw Error("Session database was created by a newer Codet version");
     return value;
   };
@@ -250,10 +358,10 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
       throw Error("Cannot acquire database migration lock");
     }
   };
-  if (version() < 6) {
+  if (version() < 7) {
     acquire_migration();
     const auto old_version = version();
-    if (old_version > 0 && old_version < 6) {
+    if (old_version > 0 && old_version < 7) {
       const auto locks = home / "session-locks";
       if (fs::exists(locks))
         for (const auto &entry : fs::directory_iterator(locks)) {
@@ -267,7 +375,7 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
           }
           migration_locks.descriptors.push_back(fd);
         }
-      const auto target = home / ("state.sqlite3.pre-v6-" + unique_id());
+      const auto target = home / ("state.sqlite3.pre-v7-" + unique_id());
       sqlite3 *backup_db = nullptr;
       if (sqlite3_open(target.c_str(), &backup_db) != SQLITE_OK) {
         if (backup_db)
@@ -283,7 +391,7 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
       if (protection || copied != SQLITE_DONE)
         throw Error("Cannot complete migration backup");
     }
-    if (version() < 6) {
+    if (version() < 7) {
       Transaction migration(impl_->db);
       const int n = version(); // Another starter may have migrated while we waited for the lock.
       sql(impl_->db,
@@ -382,9 +490,26 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
           throw Error("Cannot migrate session messages");
         sql(impl_->db, "PRAGMA user_version=6");
       }
+      if (n < 7) {
+        // Older-layout fixtures may retain the revision table while rebuilding provider_parts.
+        for (const auto &definition : revision_schema()) {
+          Statement exists(impl_->db, "SELECT sql FROM sqlite_master WHERE name=?");
+          exists.text(1, definition.first);
+          const auto status = sqlite3_step(exists.p);
+          if (status == SQLITE_DONE)
+            sql(impl_->db, definition.second.c_str());
+          else if (status != SQLITE_ROW || column(exists.p, 0) != definition.second)
+            throw Error("Invalid provider revision infrastructure: " + definition.first);
+        }
+        sql(impl_->db, "INSERT OR IGNORE INTO provider_revisions "
+                       "SELECT session,lower(hex(randomblob(16))) FROM (SELECT DISTINCT session "
+                       "FROM provider_parts);"
+                       "PRAGMA user_version=7");
+      }
       migration.commit();
     }
   }
+  impl_->verify_revisions();
   bool wal = false;
   {
     Statement mode(impl_->db, "PRAGMA journal_mode");
@@ -481,14 +606,8 @@ Session StateStore::create(const std::string &name) {
   return s;
 }
 Session StateStore::load(const std::string &selector, bool repair) {
-  Statement q(impl_->db, "SELECT id FROM sessions WHERE id=? OR name=? "
-                         "ORDER BY (id=?) DESC,updated DESC,rowid DESC LIMIT 1");
-  q.text(1, selector);
-  q.text(2, selector);
-  q.text(3, selector);
-  if (sqlite3_step(q.p) != SQLITE_ROW)
-    throw Error("Session not found: " + selector, 2);
-  return load_id(column(q.p, 0), repair);
+  const auto id = select_session(impl_->db, selector, false);
+  return load_id(id, repair);
 }
 Session StateStore::load_id(const std::string &id, bool repair) {
   return read_session(id, repair, true);
@@ -558,7 +677,7 @@ Session StateStore::read_session(const std::string &id, bool repair, bool provid
     if (s.provider_state.is_object() && !s.provider_state.contains("messages"))
       s.provider_state["messages"] = Json::array();
     if (!normalized && sqlite3_get_autocommit(impl_->db))
-      impl_->publish_provider(s, bytes);
+      impl_->publish_provider(s, bytes, impl_->provider_token(s.id));
   }
   portable_messages(s.messages, s.id);
   ensure_message_ids(s.messages);
@@ -735,10 +854,8 @@ void StateStore::reconcile(Session &session, bool persist) {
   }
 }
 Session StateStore::last(bool repair) {
-  Statement q(impl_->db, "SELECT id FROM sessions ORDER BY updated DESC,rowid DESC LIMIT 1");
-  if (sqlite3_step(q.p) != SQLITE_ROW)
-    throw Error("No saved sessions", 2);
-  return load_id(column(q.p, 0), repair);
+  const auto id = select_session(impl_->db, "", true);
+  return load_id(id, repair);
 }
 Session StateStore::fork(const Session &parent) {
   auto recovered = parent;
@@ -794,22 +911,24 @@ void StateStore::save_provider_state(const Session &s,
                                      const std::optional<ProviderStateUpdate> &hint) {
   auto owner = acquire(s.id);
   Transaction tx(impl_->db);
+  const auto token = impl_->provider_token(s.id);
   const auto &messages = provider_messages(s.provider_state);
-  const bool incremental =
-      s.provider_state.is_object() && hint && hint->revision && hint->revision == impl_->revision &&
-      impl_->cursor_session == s.id && hint->unchanged == impl_->cursor_count &&
-      messages.size() >= hint->unchanged && impl_->data_version() == impl_->cursor_data_version;
+  const bool incremental = s.provider_state.is_object() && hint && hint->revision &&
+                           hint->revision == impl_->revision && impl_->cursor_session == s.id &&
+                           hint->unchanged == impl_->cursor_count &&
+                           messages.size() >= hint->unchanged && token == impl_->cursor_token;
   for (size_t i = incremental ? hint->unchanged : 0; i < messages.size(); ++i)
     validate_provider_part(messages[i]);
   const auto next = provider_header(s.provider_state);
   Json previous_base;
   size_t previous_count = 0, first = 0, bytes = 0;
   if (incremental) {
+    impl_->check_provider_tail(s.id, impl_->cursor_count);
     previous_count = first = impl_->cursor_count;
     bytes = impl_->cursor_bytes - impl_->cursor_header_bytes;
     // Rewriting the small header avoids retaining another copy of it outside the cap.
     previous_base = nullptr;
-  } else if (impl_->cached_session == s.id && impl_->data_version() == impl_->cursor_data_version) {
+  } else if (impl_->cached_session == s.id && token == impl_->cursor_token) {
     previous_base = provider_header(impl_->cached_provider);
     const auto &previous_messages = provider_messages(impl_->cached_provider);
     previous_count = previous_messages.size();
@@ -894,15 +1013,17 @@ void StateStore::save_provider_state(const Session &s,
     q.text(3, text);
     q.run();
   }
+  impl_->check_provider_tail(s.id, messages.size());
+  auto committed_token = impl_->provider_token(s.id);
   tx.commit();
   impl_->pending_provider_bytes = bytes;
+  impl_->pending_provider_token = std::move(committed_token);
   if (tx.owner)
-    impl_->publish_provider(s, bytes);
+    impl_->publish_provider(s, bytes, impl_->pending_provider_token);
 }
 uint64_t StateStore::provider_revision(const std::string &id) const {
-  return impl_->cursor_session == id && impl_->data_version() == impl_->cursor_data_version
-             ? impl_->revision
-             : 0;
+  const auto token = impl_->provider_token(id);
+  return impl_->cursor_session == id && token == impl_->cursor_token ? impl_->revision : 0;
 }
 uint64_t StateStore::provider_rows_read() const {
   return impl_->rows_read;
@@ -936,7 +1057,7 @@ void StateStore::append_messages(const Session &s, size_t first, bool provider_s
     save_provider_state(s, hint);
   tx.commit();
   if (provider_state && tx.owner)
-    impl_->publish_provider(s, impl_->pending_provider_bytes);
+    impl_->publish_provider(s, impl_->pending_provider_bytes, impl_->pending_provider_token);
   else if (provider_state)
     impl_->clear_provider_cache();
 }
@@ -970,7 +1091,7 @@ void StateStore::replace_history(const Session &s) {
   save_provider_state(s);
   tx.commit();
   if (tx.owner)
-    impl_->publish_provider(s, impl_->pending_provider_bytes);
+    impl_->publish_provider(s, impl_->pending_provider_bytes, impl_->pending_provider_token);
   else
     impl_->clear_provider_cache();
 }
@@ -1054,12 +1175,7 @@ Json StateStore::recovery_facts(const std::string &id) const {
   return facts;
 }
 std::string StateStore::preserve_response(const Session &session, const Message &message) {
-  const auto dir = impl_->home / "repairs";
-  if (fs::is_symlink(dir))
-    throw Error("Invalid recovery receipt directory");
-  fs::create_directories(dir);
-  if (::chmod(dir.c_str(), 0700))
-    throw Error("Cannot protect recovery receipt directory");
+  const auto dir = repair_directory(impl_->home);
   const auto path = dir / (session.id + "-response-" + unique_id() + ".json");
   NativeFileSystem files;
   files.atomic_write(path,
@@ -1091,36 +1207,44 @@ void StateStore::discard_recovery_record(const std::string &ref) {
 }
 Json StateStore::repair(const std::string &selector, bool last, bool provider_cache, bool recovery,
                         Tools &tools) {
-  Statement select(
-      impl_->db, last ? "SELECT id FROM sessions ORDER BY updated DESC,rowid DESC LIMIT 1"
-                      : "SELECT id FROM sessions WHERE id=? OR name=? ORDER BY (id=?) DESC,updated "
-                        "DESC,rowid DESC LIMIT 1");
-  if (!last) {
-    select.text(1, selector);
-    select.text(2, selector);
-    select.text(3, selector);
-  }
-  if (sqlite3_step(select.p) != SQLITE_ROW)
-    throw Error("Session not found", 2);
-  const auto id = column(select.p, 0);
+  const auto id = select_session(impl_->db, selector, last);
   auto owner = acquire(id);
+  const bool mutate = provider_cache || recovery;
+  // No live read statement may precede this upgrade to a write transaction.
+  std::unique_ptr<Transaction> transaction;
+  if (mutate)
+    transaction = std::make_unique<Transaction>(impl_->db);
   auto session = read_session(id, false, false);
   Json report = {{"session", id}, {"changed", false}, {"issues", Json::array()}};
   try {
     (void)load_id(id, false);
-  } catch (const Error &e) {
-    report["issues"].push_back(e.what());
+  } catch (const Error &error) {
+    report["issues"].push_back(error.what());
   }
-  const auto facts = tools.execution_state(session.messages, [&] { return recovery_facts(id); });
+  auto facts = tools.execution_state(session.messages, [&] { return recovery_facts(id); });
   for (const auto &fact : facts)
     if (fact.value("kind", Json()) == "recovery_unavailable")
       report["issues"].push_back(fact);
-  if (!provider_cache && !recovery)
+  NativeFileSystem files;
+  if (!mutate) {
+    for (const auto &message : session.messages) {
+      if (message.result_file.empty())
+        continue;
+      try {
+        (void)checked_result_reference(files, impl_->artifact_root, message.result_file);
+      } catch (const std::bad_alloc &) {
+        throw;
+      } catch (const std::exception &error) {
+        report["issues"].push_back({{"kind", "recovery_unavailable"},
+                                    {"original_reference", message.result_file},
+                                    {"reason", bounded_text(error.what(), 512)}});
+      }
+    }
     return report;
-  Transaction transaction(impl_->db);
+  }
   Json backup = {{"session", id}, {"kind", "session_repair_backup"}};
-  for (const auto *table :
-       {"sessions", "session_messages", "provider_parts", "tools", "session_references"}) {
+  for (const auto *table : {"sessions", "session_messages", "provider_parts", "tools",
+                            "session_references", "provider_revisions"}) {
     const auto query = std::string("SELECT * FROM ") + table +
                        (std::string(table) == "sessions" ? " WHERE id=?" : " WHERE session=?");
     Statement rows(impl_->db, query.c_str());
@@ -1142,40 +1266,107 @@ Json StateStore::repair(const std::string &selector, bool last, bool provider_ca
     if (status != SQLITE_DONE)
       throw Error("Cannot back up session repair rows");
   }
-  const auto dir = impl_->home / "repairs";
-  if (fs::is_symlink(dir))
-    throw Error("Invalid repair directory");
-  fs::create_directories(dir);
-  if (::chmod(dir.c_str(), 0700))
-    throw Error("Cannot protect repair directory");
-  const auto path = dir / (id + "-backup-" + unique_id() + ".json");
-  NativeFileSystem files;
+  const auto path = repair_directory(impl_->home) / (id + "-backup-" + unique_id() + ".json");
   files.atomic_write(path, backup.dump(), true);
   report["backup"] = path.string();
-  impl_->clear_provider_cache();
-  Statement clear(impl_->db, "DELETE FROM provider_parts WHERE session=?");
-  clear.text(1, id);
-  clear.run();
-  if (recovery) {
-    for (auto &message : session.messages) {
-      if (fs::path(message.result_file).is_absolute()) {
-        const auto ref = fs::path(message.result_file).lexically_relative(impl_->artifact_root);
-        if (!result_name(ref) ||
-            files.canonical(message.result_file) != files.canonical(impl_->artifact_root) / ref)
-          throw Error("Cannot repair untrusted absolute result reference; backup: " +
-                      path.string());
-        auto checked = files.open_read(message.result_file);
-        message.result_file = ref.string();
-      }
-      if (!message.checkpoint_state.is_null())
-        message.checkpoint_state = facts;
+  std::vector<std::string> candidates;
+  try {
+    impl_->clear_provider_cache();
+    {
+      Statement clear(impl_->db, "DELETE FROM provider_parts WHERE session=?");
+      clear.text(1, id);
+      clear.run();
     }
-    portable_messages(session.messages, id);
-    // Rewriting source messages invalidates their signed wire cache as well.
-    session.provider_state = nullptr;
-    replace_history(session);
+    if (recovery) {
+      tools.use_session(id);
+      bool unavailable = false;
+      for (auto &message : session.messages) {
+        if (message.result_file.empty())
+          continue;
+        const auto original = message.result_file;
+        try {
+          message.result_file = checked_result_reference(files, impl_->artifact_root, original);
+        } catch (const std::bad_alloc &) {
+          throw;
+        } catch (const std::exception &error) {
+          Json fact = {{"kind", "recovery_unavailable"},
+                       {"recovery", "unknown"},
+                       {"original_reference", original},
+                       {"message_id", message.message_id},
+                       {"reason", bounded_text(error.what(), 512)},
+                       {"instruction", "Only a partial surviving observation is available; inspect "
+                                       "effects before repeating actions."}};
+          facts.push_back(fact);
+          report["issues"].push_back(fact);
+          unavailable = true;
+          Message partial = message;
+          partial.message_id = unique_id();
+          partial.result_file.clear();
+          partial.checkpoint_state = Json::array({fact});
+          partial.text =
+              "Partial surviving observation from explicit repair; original result unavailable.\n" +
+              message.text;
+          const auto candidate = tools.result_identifier(partial);
+          candidates.push_back(candidate);
+          tools.retain_result(partial);
+          message.result_file = partial.result_file;
+        }
+        if (message.role == "tool") {
+          auto envelope = Json::parse(message.text, nullptr, false);
+          if (envelope.is_object()) {
+            for (const auto *key : {"metadata", "content"}) {
+              auto nested = envelope.value(key, Json());
+              const bool encoded = nested.is_string();
+              if (encoded)
+                nested = Json::parse(nested.get<std::string>(), nullptr, false);
+              if (nested.is_object() && nested.contains("result_path")) {
+                nested["result_path"] = message.result_file;
+                envelope[key] = encoded ? Json(nested.dump()) : nested;
+              }
+            }
+            message.text = envelope.dump();
+          }
+        }
+      }
+      for (auto &message : session.messages)
+        if (!message.checkpoint_state.is_null())
+          message.checkpoint_state = facts;
+      if (unavailable) {
+        Message marker;
+        marker.role = "system";
+        marker.origin = "recovery";
+        marker.message_id = unique_id();
+        marker.text = "Explicit repair retained incomplete historical results. Use current "
+                      "recovery facts; never replay historical effects automatically.";
+        marker.checkpoint_state = facts;
+        session.messages.push_back(std::move(marker));
+      }
+      portable_messages(session.messages, id);
+      session.provider_state = nullptr;
+      replace_history(session);
+    }
+    transaction->commit();
+  } catch (...) {
+    const auto failure = std::current_exception();
+    // Roll back references before checking whether newly created archives are still used.
+    transaction.reset();
+    impl_->clear_provider_cache();
+    for (const auto &candidate : candidates) {
+      try {
+        discard_recovery_record(candidate);
+      } catch (const std::exception &cleanup) {
+        std::fprintf(stderr, "Cannot remove repair candidate %s: %s; backup: %s\n",
+                     candidate.c_str(), cleanup.what(), path.c_str());
+      }
+    }
+    try {
+      std::rethrow_exception(failure);
+    } catch (const Error &error) {
+      throw Error(std::string(error.what()) + "; backup: " + path.string(), error.code);
+    } catch (const std::exception &error) {
+      throw Error(std::string(error.what()) + "; backup: " + path.string());
+    }
   }
-  transaction.commit();
   report["changed"] = true;
   report["provider_cache_reset"] = true;
   report["recovery_facts"] = recovery ? facts : Json();

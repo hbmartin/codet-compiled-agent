@@ -25,6 +25,35 @@ struct PromptBudget {
 };
 PromptBudget prompt_budget(const Config &, const std::string &system, const Json &schemas);
 
+// All request paths reserve the provider-specific runtime envelope here.
+Message runtime_message(const std::string &);
+PromptBudget request_budget(const Config &, const std::string &, const Json &, const std::string &);
+
+// Restore both halves of a response publication before turn recovery runs.
+class ResponseAppend {
+  Session &session_;
+  size_t original_;
+  Json previous_;
+  bool committed_ = false;
+
+public:
+  explicit ResponseAppend(Session &session) noexcept
+      : session_(session), original_(session.messages.size()),
+        previous_(std::move(session.provider_state)) {}
+  ~ResponseAppend() {
+    if (!committed_) {
+      while (session_.messages.size() > original_)
+        session_.messages.pop_back();
+      session_.provider_state.swap(previous_);
+    }
+  }
+  ResponseAppend(const ResponseAppend &) = delete;
+  ResponseAppend &operator=(const ResponseAppend &) = delete;
+  void commit() noexcept {
+    committed_ = true;
+  }
+};
+
 // Append prepared messages without copying history. Roll back before turn recovery on failure.
 class PromptAppend {
   Session &session_;

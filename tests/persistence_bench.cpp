@@ -165,7 +165,8 @@ void history_bench() {
 }
 void provider_bench() {
   TempDirectory temp;
-  StateStore state(temp.root / "state");
+  StateStore state(temp.root / "state"), other(temp.root / "state");
+  auto unrelated = other.create();
   for (size_t payload : {1024u * 1024, 9u * 1024 * 1024}) {
     auto session = state.create();
     session.provider_state = {{"provider", "anthropic"}, {"messages", Json::array()}};
@@ -188,6 +189,7 @@ void provider_bench() {
             Json::array(
                 {{{"role", "user"},
                   {"content", Json::array({{{"type", "text"}, {"text", "small update"}}})}}})}});
+      other.finish_turn(unrelated.id, "complete");
       state.save_provider_state(session, update);
     }
     if (state.provider_rows_read() != reads)
@@ -198,6 +200,7 @@ void provider_bench() {
     std::cout
         << Json({{"provider_payload_bytes", payload},
                  {"appends", 20},
+                 {"unrelated_session_commits", 20},
                  {"append_serialized_bytes", written},
                  {"cached_payload_bytes", state.provider_cache_bytes()},
                  {"unchanged_rows_read", state.provider_rows_read() - reads},

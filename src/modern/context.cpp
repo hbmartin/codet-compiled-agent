@@ -287,9 +287,7 @@ std::vector<Message> project_history(std::vector<Message> &messages, size_t avai
 std::vector<size_t> batch_result_reserves(const std::vector<ToolCall> &calls, Tools &tools) {
   std::vector<size_t> suffix(calls.size() + 1);
   for (size_t i = calls.size(); i > 0; --i) {
-    Message call, result;
-    call.role = "assistant";
-    call.calls = {{calls[i - 1].id, calls[i - 1].name, Json::object()}};
+    Message result;
     result.role = "tool";
     result.message_id = "00000000-0000-0000-0000-000000000000";
     result.tool_call_id = calls[i - 1].id;
@@ -298,23 +296,14 @@ std::vector<size_t> batch_result_reserves(const std::vector<ToolCall> &calls, To
             .dump();
     result = clipped(result, calls[i - 1].name, tools.result_identifier(result), 0);
     // Individual framing is an upper bound even when adjacent results coalesce.
-    suffix[i - 1] = suffix[i] + tools.history_size({call, result}).messages.at(1) + 1;
+    suffix[i - 1] = suffix[i] + batch_result_bytes(result, calls[i - 1], tools);
   }
   return suffix;
 }
-size_t minimal_batch_bytes(const std::vector<Message> &protected_messages,
-                           const std::vector<ToolCall> &calls, Tools &tools) {
-  auto messages = protected_messages;
-  for (const auto &c : calls) {
-    Message m;
-    m.role = "tool";
-    m.message_id = "00000000-0000-0000-0000-000000000000";
-    m.tool_call_id = c.id;
-    m.text =
-        Json({{"content", ""}, {"is_error", false}, {"metadata", {{"action_completed", true}}}})
-            .dump();
-    messages.push_back(clipped(m, c.name, tools.result_identifier(m), 0));
-  }
-  return tools.history_bytes(messages);
+size_t batch_result_bytes(const Message &result, const ToolCall &call, Tools &tools) {
+  Message stub;
+  stub.role = "assistant";
+  stub.calls = {{call.id, call.name, Json::object()}};
+  return tools.history_size({stub, result}).messages.at(1) + 1;
 }
 } // namespace codet

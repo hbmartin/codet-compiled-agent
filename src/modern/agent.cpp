@@ -25,19 +25,21 @@ size_t image_boundary(const std::vector<Message> &messages) {
 }
 } // namespace
 std::string Agent::execution_context(const Session &session) {
-  const auto facts =
-      tools_.execution_state(session.messages, [&] { return state_.recovery_facts(session.id); });
-  const auto &provider_state = session.provider_state;
-  const bool previous_runtime =
-      provider_state.is_object() &&
-      (provider_state.contains("execution_digest") ||
-       (provider_state.contains("system") &&
-        provider_state.at("system").get_ref<const std::string &>().find(
-            "# Current execution and recovery facts") != std::string::npos));
-  if (facts.empty() && !previous_runtime)
-    return {};
-  return tools_.execution_context(facts);
+  return execution_context(session, tools_.execution_state(session.messages, [&] {
+    return state_.recovery_facts(session.id);
+  }));
 }
+std::string Agent::execution_context(const Session &session, const Json &facts) {
+  const auto &state = session.provider_state;
+  bool previous_runtime = state.is_object() && state.contains("execution_digest");
+  for (const auto *key : {"system", "latest_system"})
+    if (state.is_object() && state.value(key, Json()).is_string() &&
+        state.at(key).get_ref<const std::string &>().find(
+            "# Current execution and recovery facts") != std::string::npos)
+      previous_runtime = true;
+  return facts.empty() && !previous_runtime ? std::string{} : tools_.execution_context(facts);
+}
+
 bool Agent::compact_history(Session &session, const Cancellation &cancel,
                             const std::string &project, const Json &schemas,
                             const std::string &trigger, Usage &usage, size_t *requests,
@@ -79,15 +81,7 @@ bool Agent::compact_history(Session &session, const Cancellation &cancel,
                            }));
   };
   auto system = compose();
-  auto budget = prompt_budget(config_, system, schemas);
-  const auto runtime_bytes = [&] {
-    Message runtime;
-    runtime.role = "system";
-    runtime.origin = "runtime";
-    runtime.text = execution;
-    return execution.empty() ? size_t{0} : tools_.history_bytes({runtime});
-  };
-  budget.fixed += runtime_bytes();
+  auto budget = request_budget(config_, system, schemas, execution);
   const auto capacity = [&](const std::string &reason) {
     return SummaryFailure(
         reason + "; increase context_tokens or reduce output/project context. history retained.");
@@ -159,9 +153,9 @@ bool Agent::compact_history(Session &session, const Cancellation &cancel,
     if (hook.stopped)
       throw Error(hook.reason);
   }
-  execution = execution_context(session);
   auto critical =
       tools_.execution_state(session.messages, [&] { return state_.recovery_facts(session.id); });
+  execution = execution_context(session, critical);
   struct RecoveryCandidate {
     StateStore &state;
     const DiagnosticSink &diagnostics;
@@ -230,8 +224,7 @@ bool Agent::compact_history(Session &session, const Cancellation &cancel,
   for (;;) {
     publish();
     system = compose();
-    budget = prompt_budget(config_, system, schemas);
-    budget.fixed += runtime_bytes();
+    budget = request_budget(config_, system, schemas, execution);
     available = budget.available();
     continuation = {compact};
     continuation.insert(continuation.end(), tail.begin(), tail.end());
@@ -273,9 +266,8 @@ bool Agent::compact_history(Session &session, const Cancellation &cancel,
     // as an ordinary request. Retry preparation reserves its actual wire size.
     execution = execution_context(session);
     const auto summary_system = instructions(target);
-    const auto input_available = prompt_budget(config_, summary_system, Json::array()).available();
-    const auto runtime = runtime_bytes();
-    const auto summary_budget = input_available > runtime ? input_available - runtime : 0;
+    const auto summary_budget =
+        request_budget(config_, summary_system, Json::array(), execution).available();
     request.text = label + steering;
     const auto fixed = Json(std::vector<Message>{request}).dump().size();
     if (fixed >= summary_budget)
@@ -285,14 +277,10 @@ bool Agent::compact_history(Session &session, const Cancellation &cancel,
     request.text += steering;
     std::vector<Message> summary_messages{request};
     if (!execution.empty()) {
-      Message observation;
-      observation.role = "system";
-      observation.origin = "runtime";
-      observation.text = execution;
-      summary_messages.push_back(std::move(observation));
+      summary_messages.push_back(runtime_message(execution));
     }
     if (Json(std::vector<Message>{request}).dump().size() > summary_budget ||
-        tools_.history_bytes(summary_messages) > input_available)
+        tools_.history_bytes({request}) > summary_budget)
       throw capacity("Compaction request exceeded its reserved input allowance");
     ProviderResult summary;
     try {
@@ -484,16 +472,6 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
              {"input_schema", schema}});
       auto execution = execution_context(session);
       std::string current_dynamic, prompt_dynamic, cached_system;
-      const auto runtime_message = [&] {
-        Message runtime;
-        runtime.role = "system";
-        runtime.origin = "runtime";
-        runtime.text = execution;
-        return runtime;
-      };
-      const auto runtime_bytes = [&] {
-        return execution.empty() ? size_t{0} : tools_.history_bytes({runtime_message()});
-      };
       const auto compose = [&]() -> const std::string & {
         current_dynamic = tools_.dynamic_context();
         if (cached_system.empty() || current_dynamic != prompt_dynamic) {
@@ -504,8 +482,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         return cached_system;
       };
       const auto &system = compose();
-      auto budget = prompt_budget(config_, system, schemas);
-      budget.fixed += runtime_bytes();
+      auto budget = request_budget(config_, system, schemas, execution);
       const auto context_error = [&](const std::string &cause, size_t transcript_bytes) {
         const auto required = (budget.fixed + budget.output + transcript_bytes + 2) / 3;
         return Error(cause + ". context_tokens=" + std::to_string(config_.context_tokens) +
@@ -568,8 +545,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
       if (compacted || soft_attempted) {
         execution = execution_context(session);
         (void)compose();
-        budget = prompt_budget(config_, system, schemas);
-        budget.fixed += runtime_bytes();
+        budget = request_budget(config_, system, schemas, execution);
         available = budget.available();
         try {
           request_messages = project_history(session.messages, available, tools_);
@@ -581,8 +557,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
                                       &requests, &cycle);
           execution = execution_context(session);
           (void)compose();
-          budget = prompt_budget(config_, system, schemas);
-          budget.fixed += runtime_bytes();
+          budget = request_budget(config_, system, schemas, execution);
           available = budget.available();
           request_messages = project_history(session.messages, available, tools_);
         }
@@ -618,7 +593,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
       const auto provider_revision = state_.provider_revision(session.id);
       provider_.restore_conversation(session.provider_state);
       if (!execution.empty())
-        request_messages.push_back(runtime_message());
+        request_messages.push_back(runtime_message(execution));
       auto response = provider_.complete(
           config_, system, request_messages, schemas, cancel,
           [&](const std::string &delta) {
@@ -645,16 +620,18 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         if (item.id.empty())
           item.id = unique_id();
       response.message.message_id = unique_id();
-      session.messages.push_back(response.message);
-      session.provider_state = provider_.conversation_state();
       try {
+        ResponseAppend publication(session);
+        session.messages.push_back(response.message);
+        session.provider_state = provider_.conversation_state();
         const auto prefix = provider_.conversation_prefix();
         state_.append_messages(
             session, session.messages.size() - 1, true,
             prefix ? std::optional<ProviderStateUpdate>{{provider_revision, *prefix}}
                    : std::nullopt);
-      } catch (const Error &error) {
-        auto detail = std::string(error.what());
+        publication.commit();
+      } catch (...) {
+        const auto failure = std::current_exception();
         std::string receipt;
         try {
           receipt = state_.preserve_response(session, response.message);
@@ -662,10 +639,27 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
           report_diagnostic(diagnostics_,
                             "Cannot preserve uncommitted response: " + std::string(failure.what()));
         }
-        session.messages.pop_back();
-        if (!receipt.empty())
-          detail.append("; uncommitted response preserved at ").append(receipt);
-        throw Error(detail, error.code);
+        try {
+          provider_.restore_conversation(session.provider_state);
+        } catch (const std::exception &restore) {
+          report_diagnostic(diagnostics_,
+                            "Cannot restore provider adapter: " + std::string(restore.what()));
+        }
+        const auto suffix =
+            receipt.empty() ? std::string{} : "; uncommitted response preserved at " + receipt;
+        try {
+          std::rethrow_exception(failure);
+        } catch (const ProviderError &error) {
+          throw ProviderError(std::string(error.what()) + suffix, error.http_status, error.body);
+        } catch (const Error &error) {
+          throw Error(std::string(error.what()) + suffix, error.code);
+        } catch (const std::bad_alloc &) {
+          if (!receipt.empty())
+            report_diagnostic(diagnostics_, suffix);
+          throw;
+        } catch (const std::exception &error) {
+          throw Error(std::string(error.what()) + suffix);
+        }
       }
       if (response.message.assistant_items.empty()) {
         start_fallback();
@@ -771,12 +765,6 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         size_t position, call, bytes;
       };
       std::vector<Completed> reducible_results;
-      const auto result_cost = [&](const Message &result, const ToolCall &call) {
-        Message stub;
-        stub.role = "assistant";
-        stub.calls = {{call.id, call.name, Json::object()}};
-        return tools_.history_size({stub, result}).messages.at(1) + 1;
-      };
       for (size_t call_position = 0; call_position < calls.size(); ++call_position) {
         const auto &call = calls[call_position];
         cancel.check();
@@ -786,9 +774,8 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
                                    ? future_dynamic.size() - current_dynamic.size()
                                    : 0) +
                               (plans[call_position] ? 8192 : 0);
-        const auto batch_budget = prompt_budget(config_, system, schemas).available();
-        const auto runtime = runtime_bytes();
-        const auto batch_available = batch_budget > runtime ? batch_budget - runtime : 0;
+        const auto batch_available =
+            request_budget(config_, system, schemas, execution).available();
         const auto reserve = 3072 + growth + suffix[call_position];
         if (reserve >= batch_available)
           throw context_error("Recoverable result envelopes cannot fit before dispatch", reserve);
@@ -799,7 +786,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
           auto &message = session.messages[completed.position];
           if (!reduce_completed_result(message, calls[completed.call].name, tools_))
             continue;
-          const auto bytes = result_cost(message, calls[completed.call]);
+          const auto bytes = batch_result_bytes(message, calls[completed.call], tools_);
           protected_bytes -= completed.bytes - bytes;
           retained_bytes -= completed.bytes - bytes;
           state_.remember_references(session.id, {message});
@@ -850,7 +837,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
         portable_messages(normalized, session.id, call.name);
         tool = std::move(normalized.front());
         state_.complete_tool(session, call, std::move(tool));
-        const auto bytes = result_cost(session.messages.back(), call);
+        const auto bytes = batch_result_bytes(session.messages.back(), call, tools_);
         protected_bytes += bytes;
         retained_bytes += bytes;
         reducible_results.push_back({session.messages.size() - 1, call_position, bytes});

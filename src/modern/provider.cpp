@@ -293,30 +293,15 @@ Json wire_history(const Config &c, const std::string &system, const std::vector<
   if (uses_responses(c)) {
     WireOutput input;
     append_wire(input, {{"role", "developer"}, {"content", system}}, messages.size(), size);
-    // Earlier code revisited every prior item after each ordinary message. Count those
-    // visits once; each call now takes work bounded by its qualified name length.
-    std::vector<size_t> normalizations(messages.size());
-    size_t remaining = 0;
-    if (c.provider == "codex")
-      for (size_t i = messages.size(); i > 0; --i) {
-        const auto &m = messages[i - 1];
-        if (m.role != "tool" && !(m.role == "assistant" && !clean_replay(m).empty() &&
-                                  (m.replay_provider.empty() || m.replay_provider == c.provider)))
-          ++remaining;
-        normalizations[i - 1] = remaining;
-      }
     const auto append = [&](Json item, size_t owner) {
-      if (normalizations[owner] && item.value("type", "") == "function_call" &&
-          item.contains("name")) {
-        auto qualified = item.at("name").get<std::string>();
-        for (size_t n = normalizations[owner]; n; --n) {
-          const auto split = qualified.find("__");
-          if (split == std::string::npos)
-            break;
+      if (c.provider == "codex" && item.value("type", "") == "function_call" &&
+          item.value("namespace", std::string{}).empty() && item.contains("name")) {
+        const auto qualified = item.at("name").get<std::string>();
+        const auto split = qualified.find("__");
+        if (split != std::string::npos) {
           item["namespace"] = qualified.substr(0, split);
-          qualified = qualified.substr(split + 2);
+          item["name"] = qualified.substr(split + 2);
         }
-        item["name"] = qualified;
       }
       append_wire(input, std::move(item), owner, size);
     };
@@ -476,10 +461,13 @@ Json functions(const Json &tools) {
                      {"parameters", t["input_schema"]}}}});
   return out;
 }
+struct MalformedProviderJson : Error {
+  using Error::Error;
+};
 Json parse_object(const std::string &text) {
   auto j = Json::parse(text, nullptr, false);
   if (!j.is_object())
-    throw Error("Provider returned malformed JSON");
+    throw MalformedProviderJson("Provider returned malformed JSON");
   return j;
 }
 void usage(Usage &u, const Json &j) {
@@ -912,7 +900,8 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
     result.message.role = "assistant";
     result.message.replay_provider = c.provider;
     bool completed = false, saw = false;
-    std::string stream_error;
+    std::string stream_error, last_frame;
+    std::exception_ptr consumer_failure;
     bool stream_failed = false;
     std::map<size_t, AssistantText> streamed;
     auto item_event = [&](const std::string &type, const AssistantText &item,
@@ -926,17 +915,28 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
         value["text_delta"] = delta;
       else
         value["text"] = "";
-      items({{"type", type}, {"item", value}});
+      try {
+        items({{"type", type}, {"item", value}});
+      } catch (...) {
+        consumer_failure = std::current_exception();
+        throw;
+      }
     };
     std::map<size_t, Json> blocks;
     std::map<size_t, std::string> arguments;
     std::map<size_t, ToolCall> calls;
     auto text = [&](const std::string &value) {
       result.message.text += value;
-      if (sink)
-        sink(value);
+      if (sink) {
+        try {
+          sink(value);
+        } catch (...) {
+          consumer_failure = std::current_exception();
+          throw;
+        }
+      }
     };
-    auto frame = [&](const std::string &event, const std::string &data) {
+    auto decode_frame = [&](const std::string &event, const std::string &data) {
       if (data == "[DONE]") {
         completed = true;
         return;
@@ -954,8 +954,8 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
         saw = true;
         return;
       }
-      const auto j = parse_object(data);
       saw = true;
+      const auto j = parse_object(data);
       const auto type = j.value("type", event);
       if (j.contains("error") || type == "error" || type == "response.failed") {
         stream_error = data;
@@ -1102,6 +1102,22 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
         }
       }
     };
+    const auto malformed = [&](const std::exception &error, const std::string &raw) -> void {
+      cancel.check();
+      if (consumer_failure)
+        std::rethrow_exception(consumer_failure);
+      throw ProviderError("Malformed provider stream: " + std::string(error.what()), 200, raw);
+    };
+    const auto frame = [&](const std::string &event, const std::string &data) {
+      last_frame = data;
+      try {
+        decode_frame(event, data);
+      } catch (const Json::exception &error) {
+        malformed(error, data);
+      } catch (const MalformedProviderJson &error) {
+        malformed(error, data);
+      }
+    };
     SseDecoder sse(frame);
     std::string ndjson;
     HttpResponse response;
@@ -1147,26 +1163,32 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
     // A JSON error body must not be mistaken for a successful empty stream.
     if (!saw || !completed)
       throw Error("Truncated or malformed provider stream");
-    if (c.provider == "anthropic")
-      for (auto &entry : blocks) {
-        auto &b = entry.second;
-        if (b.value("type", "") == "tool_use") {
-          if (!arguments[entry.first].empty())
-            b["input"] = parse_object(arguments[entry.first]);
-          result.message.calls.push_back(
-              {b.at("id"), tool_logical_name(b.at("name")), b.value("input", Json::object())});
+    try {
+      if (c.provider == "anthropic")
+        for (auto &entry : blocks) {
+          auto &b = entry.second;
+          if (b.value("type", "") == "tool_use") {
+            if (!arguments[entry.first].empty())
+              b["input"] = parse_object(arguments[entry.first]);
+            result.message.calls.push_back(
+                {b.at("id"), tool_logical_name(b.at("name")), b.value("input", Json::object())});
+          }
+          result.message.replay.push_back(b);
         }
-        result.message.replay.push_back(b);
-      }
-    if (c.provider == "openai" && !uses_responses(c))
-      for (auto &entry : calls) {
-        auto &call = entry.second;
-        if (call.id.empty() || call.name.empty())
-          throw Error("Malformed streamed tool call");
-        call.name = tool_logical_name(call.name);
-        call.arguments = parse_object(arguments[entry.first]);
-        result.message.calls.push_back(call);
-      }
+      if (c.provider == "openai" && !uses_responses(c))
+        for (auto &entry : calls) {
+          auto &call = entry.second;
+          if (call.id.empty() || call.name.empty())
+            throw Error("Malformed streamed tool call");
+          call.name = tool_logical_name(call.name);
+          call.arguments = parse_object(arguments[entry.first]);
+          result.message.calls.push_back(call);
+        }
+    } catch (const Json::exception &error) {
+      malformed(error, response.body.empty() ? last_frame : response.body);
+    } catch (const MalformedProviderJson &error) {
+      malformed(error, response.body.empty() ? last_frame : response.body);
+    }
     if (result.stop_reason == "length" || result.stop_reason == "max_tokens" ||
         result.stop_reason == "MAX_TOKENS")
       throw Error("Provider output token limit reached");

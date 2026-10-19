@@ -558,6 +558,15 @@ class Tools {
     bool completed = false;
     std::optional<int> exit_code;
   };
+  struct RecoveryArchive {
+    std::string identity;
+    std::shared_ptr<const Json> facts;
+    size_t bytes = 0;
+    uint64_t used = 0;
+  };
+  mutable std::map<fs::path, RecoveryArchive> recovery_archives_;
+  mutable size_t recovery_archive_bytes_ = 0;
+  mutable uint64_t recovery_archive_clock_ = 0;
   Json execution_fact(int, const ExecSession &) const;
   std::map<int, ExecSession> exec_sessions_;
   std::map<std::string, std::pair<std::string, std::string>> archived_results_;
@@ -637,6 +646,7 @@ private:
     unsigned summaries = 0;
   };
   std::string execution_context(const Session &);
+  std::string execution_context(const Session &, const Json &);
   bool compact_history(Session &, const Cancellation &, const std::string &project,
                        const Json &schemas, const std::string &trigger, Usage &,
                        size_t *requests = nullptr, CompactionCycle *cycle = nullptr);
