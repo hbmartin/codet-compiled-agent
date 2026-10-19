@@ -16,7 +16,7 @@ enum class ArtifactPolicy : std::uint8_t {
   private_owned_regular
 };
 struct ReferenceObservation {
-  std::string original, identifier;
+  std::string identifier;
   fs::path root, path;
   ArtifactPolicy policy = ArtifactPolicy::owned_regular;
   std::optional<std::string> identity;
@@ -33,6 +33,11 @@ struct RecoveryCandidate {
 };
 std::string checked_artifact_identity(const FileSystem &, const fs::path &root, const fs::path &,
                                       ArtifactPolicy);
+fs::path remap_artifact_alias(const fs::path &, const fs::path &root, const fs::path &anchor);
+bool normalize_checkpoint_reference(Message &, const FileSystem &, const fs::path &root,
+                                    const fs::path &anchor);
+void cleanup_recovery_candidates(StateStore &, Tools &, const std::vector<RecoveryCandidate> &,
+                                 const DiagnosticSink & = {}) noexcept;
 std::set<std::string> message_references(const std::vector<Message> &);
 fs::path archive_image_history(const fs::path &, FileSystem &, const std::string &,
                                const std::vector<Message> &);

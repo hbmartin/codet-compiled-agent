@@ -18,6 +18,9 @@ bool read_failed = false;
 size_t steps_after_failure = 0;
 int countdown = -1, skip = 0;
 std::function<void()> provider_read_done;
+const char *failed_query = nullptr;
+int failed_status = SQLITE_IOERR;
+bool failed_allocation = false, failed_rollback = false;
 void arm() noexcept {
   countdown = skip;
 }
@@ -27,6 +30,8 @@ void disable() noexcept {
   provider_read_error = rollback_read = token_error = read_failed = false;
   infrastructure_error = false;
   provider_read_done = {};
+  failed_query = nullptr;
+  failed_allocation = failed_rollback = false;
 }
 } // namespace fault
 void *operator new(std::size_t n) {
@@ -74,6 +79,15 @@ extern "C" int sqlite3_step(sqlite3_stmt *statement) {
   static const auto step = reinterpret_cast<Step>(dlsym(RTLD_NEXT, "sqlite3_step"));
   if (fault::read_failed)
     ++fault::steps_after_failure;
+  if (fault::failed_query && std::strcmp(sqlite3_sql(statement), fault::failed_query) == 0) {
+    fault::failed_query = nullptr;
+    if (fault::failed_allocation)
+      throw std::bad_alloc();
+    if (fault::failed_rollback)
+      sqlite3_exec(sqlite3_db_handle(statement), "ROLLBACK", nullptr, nullptr, nullptr);
+    fault::read_failed = true;
+    return fault::failed_status;
+  }
   if (fault::provider_read_error &&
       std::strcmp(
           sqlite3_sql(statement),
@@ -348,7 +362,7 @@ TEST(PublicationFault, RepairStopsImmediatelyOnOperationalReadFailureWithOrWitho
     fault::steps_after_failure = 0;
     std::string failure;
     try {
-      (void)store.repair(s.id, false, true, false, tools, files);
+      (void)store.repair(s.id, false, true, false, tools);
     } catch (const Error &e) {
       failure = e.what();
     }
@@ -375,4 +389,120 @@ TEST(PublicationFault, InvalidRevisionTokensRemainMandatoryLoadErrors) {
             SQLITE_OK);
   EXPECT_THROW(store.load_id(s.id, false), Error);
   EXPECT_EQ(store.provider_cache_bytes(), 0u);
+}
+
+TEST(PublicationFault, SessionLoadAndRepairPreserveOperationalAndAllocationFailures) {
+  TempDirectory temp;
+  Config config;
+  config.home = temp.root / "home";
+  config.state_root = temp.root / "state";
+  config.cwd = temp.root / "work";
+  fs::create_directories(config.home);
+  fs::create_directories(config.cwd);
+  NativeFileSystem files;
+  NativeProcesses processes;
+  NoHttp http;
+  SystemClock clock;
+  StateStore store(config.state_root);
+  auto s = store.create();
+  s.messages = {Message{"user", "saved"}};
+  store.save(s);
+  Tools tools(config, files, processes, http, clock);
+  const auto arm = [](const char *query, int status, bool rollback = false) {
+    fault::failed_query = query;
+    fault::failed_status = status;
+    fault::failed_rollback = rollback;
+    fault::steps_after_failure = 0;
+  };
+  for (const int status : {SQLITE_IOERR, SQLITE_BUSY, SQLITE_CORRUPT}) {
+    SCOPED_TRACE(status);
+    for (const bool rollback : {false, true}) {
+      SCOPED_TRACE(rollback);
+      arm("SELECT position,payload FROM session_messages WHERE session=? ORDER BY position", status,
+          rollback);
+      std::string failure;
+      try {
+        store.repair(s.id, false, true, false, tools);
+      } catch (const Error &e) {
+        failure = e.what();
+      }
+      const auto steps = fault::steps_after_failure;
+      fault::disable();
+      EXPECT_NE(failure.find("Cannot load session messages"), std::string::npos) << failure;
+      EXPECT_NE(failure.find(std::to_string(status)), std::string::npos) << failure;
+      EXPECT_EQ(steps, 0u);
+      EXPECT_FALSE(fs::exists(config.state_root / "repairs"));
+    }
+    arm("SELECT id FROM sessions WHERE id=? OR name=? ORDER BY (id=?) DESC,updated DESC,rowid DESC "
+        "LIMIT 1",
+        status);
+    std::string failure;
+    try {
+      store.load(s.id, false);
+    } catch (const Error &e) {
+      failure = e.what();
+    }
+    fault::disable();
+    EXPECT_NE(failure.find("Cannot select session"), std::string::npos) << failure;
+    EXPECT_EQ(failure.find("not found"), std::string::npos);
+  }
+  arm("SELECT position,payload FROM session_messages WHERE session=? ORDER BY position",
+      SQLITE_NOMEM);
+  fault::failed_allocation = true;
+  EXPECT_THROW(store.load_id(s.id, false), std::bad_alloc);
+  fault::disable();
+  EXPECT_NO_THROW(store.save(s));
+}
+TEST(PublicationFault, MigrationInspectionReportsSqlFailuresWithoutClaimingInvalidSchema) {
+  for (const int status : {SQLITE_IOERR, SQLITE_BUSY, SQLITE_CORRUPT}) {
+    SCOPED_TRACE(status);
+    TempDirectory temp;
+    const auto root = temp.root / "state";
+    {
+      StateStore store(root);
+      store.create();
+    }
+    sqlite3 *db = nullptr;
+    ASSERT_EQ(sqlite3_open((root / "state.sqlite3").c_str(), &db), SQLITE_OK);
+    std::unique_ptr<sqlite3, decltype(&sqlite3_close)> connection(db, sqlite3_close);
+    ASSERT_EQ(sqlite3_exec(db, "PRAGMA user_version=6", nullptr, nullptr, nullptr), SQLITE_OK);
+    fault::failed_query = "SELECT sql FROM sqlite_master WHERE name=?";
+    fault::failed_status = status;
+    std::string failure;
+    try {
+      StateStore migrating(root);
+    } catch (const Error &e) {
+      failure = e.what();
+    }
+    fault::disable();
+    EXPECT_NE(failure.find("Cannot inspect provider revision infrastructure"), std::string::npos)
+        << failure;
+    EXPECT_EQ(failure.find("Invalid provider revision infrastructure"), std::string::npos);
+    sqlite3_stmt *version = nullptr;
+    ASSERT_EQ(sqlite3_prepare_v2(db, "PRAGMA user_version", -1, &version, nullptr), SQLITE_OK);
+    ASSERT_EQ(sqlite3_step(version), SQLITE_ROW);
+    EXPECT_EQ(sqlite3_column_int(version, 0), 6);
+    sqlite3_finalize(version);
+    EXPECT_NO_THROW(StateStore retry(root));
+  }
+}
+
+TEST(PublicationFault, OptionalReferenceKnowledgeCannotFailCommittedRows) {
+  TempDirectory temp;
+  StateStore store(temp.root / "state");
+  auto s = store.create();
+  Message first;
+  first.result_file = "results/owner/first.json";
+  fault::after_commit = true;
+  fault::skip = 0;
+  fault::fired = false;
+  EXPECT_NO_THROW(store.remember_references(s.id, {first}));
+  const bool fired = fault::fired;
+  fault::disable();
+  EXPECT_TRUE(fired);
+  Message second;
+  second.result_file = "results/owner/second.json";
+  EXPECT_NO_THROW(store.remember_references(s.id, {first, second}));
+  EXPECT_EQ(store.references(s.id).size(), 2u);
+  EXPECT_NO_THROW(store.save(s));
 }

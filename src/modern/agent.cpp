@@ -169,18 +169,7 @@ bool Agent::compact_history(Session &session, const Cancellation &cancel,
         : state(store), tools(toolset), diagnostics(sink) {}
     ~RecoveryCleanup() {
       if (!committed)
-        for (const auto &candidate : candidates) {
-          try {
-            state.discard_recovery_record(candidate, tools);
-          } catch (const std::exception &error) {
-            try {
-              report_diagnostic(diagnostics,
-                                "Cannot remove recovery candidate: " + std::string(error.what()));
-            } catch (...) {
-              return;
-            }
-          }
-        }
+        cleanup_recovery_candidates(state, tools, candidates, diagnostics);
     }
   } recovery_candidate{state_, tools_, diagnostics_};
   if (critical.dump().size() > 2048) {

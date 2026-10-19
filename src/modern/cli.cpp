@@ -749,11 +749,9 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   }
   if (o.command == "repair") {
     Tools inspection(config, files, processes, http, clock);
-    std::cout << state
-                     .repair(o.session, o.last, o.repair_provider, o.repair_recovery, inspection,
-                             files)
-                     .dump(2)
-              << '\n';
+    std::cout
+        << state.repair(o.session, o.last, o.repair_provider, o.repair_recovery, inspection).dump(2)
+        << '\n';
     return 0;
   }
   Session session;

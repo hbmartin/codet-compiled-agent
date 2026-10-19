@@ -529,14 +529,14 @@ TEST_F(Pr17, RepairQuarantinesUnavailableReferencesWithoutChangingTheJournal) {
     Tools tools(config, files, processes, http, clock);
     const auto before_inspection = raw.value(
         "SELECT payload FROM session_messages WHERE session='" + s.id + "' AND position=1");
-    auto inspection = state.repair(s.id, false, false, false, tools, files);
+    auto inspection = state.repair(s.id, false, false, false, tools);
     EXPECT_FALSE(inspection["changed"]);
     EXPECT_EQ(raw.value("SELECT payload FROM session_messages WHERE session='" + s.id +
                         "' AND position=1"),
               before_inspection);
     if (mode == "missing" || mode == "outside" || mode == "symlink")
       EXPECT_FALSE(inspection["issues"].empty());
-    auto report = state.repair(s.id, false, false, true, tools, files);
+    auto report = state.repair(s.id, false, false, true, tools);
     EXPECT_TRUE(report["changed"]);
     EXPECT_EQ(raw.value("SELECT result FROM tools WHERE session='" + s.id + "'"), journal);
     auto saved = state.load_id(s.id, false);
@@ -553,7 +553,7 @@ TEST_F(Pr17, RepairQuarantinesUnavailableReferencesWithoutChangingTheJournal) {
       auto child = state.fork(saved);
       EXPECT_THAT(tools.execution_state(child.messages).dump(), HasSubstr("original_reference"));
     }
-    EXPECT_NO_THROW(state.repair(s.id, false, false, true, tools, files));
+    EXPECT_NO_THROW(state.repair(s.id, false, false, true, tools));
     EXPECT_FALSE(fs::exists(config.cwd / "historical only"));
     if (mode == "unreadable")
       ::chmod(path.c_str(), 0600);
@@ -573,7 +573,7 @@ TEST_F(Pr17, RepairFailureNamesItsBackupAndRemovesOnlyNewPartialArchives) {
            "RAISE(FAIL,'publication failed'); END");
   Tools tools(config, files, processes, http, clock);
   try {
-    state.repair(s.id, false, false, true, tools, files);
+    state.repair(s.id, false, false, true, tools);
     FAIL();
   } catch (const Error &e) {
     EXPECT_THAT(e.what(), HasSubstr("backup:"));
@@ -610,7 +610,7 @@ TEST_F(Pr17, RepairQueuesConcurrentWritersWithoutKeepingALookupSnapshot) {
     });
     started.get_future().wait();
   };
-  EXPECT_NO_THROW(state.repair(s.id, false, false, true, tools, files));
+  EXPECT_NO_THROW(state.repair(s.id, false, false, true, tools));
   ASSERT_TRUE(writer.joinable());
   writer.join();
   EXPECT_FALSE(error);
@@ -628,7 +628,7 @@ TEST_F(Pr17, RepairedUnknownsSurviveRelocationAndSubsequentCompaction) {
   s.messages = {message};
   state.save(s);
   Tools tools(config, files, processes, http, clock);
-  state.repair(s.id, false, false, true, tools, files);
+  state.repair(s.id, false, false, true, tools);
   s = state.load_id(s.id, false);
   state.reconcile(s);
   auto child = state.fork(s);
