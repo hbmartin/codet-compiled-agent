@@ -1205,14 +1205,16 @@ TEST_F(PublicationFault, RecoverySeparatesStoredBaselineFromUnsavedSuffixAndRequ
         f.store.reconcile(f.session, false);
         const Session &view = f.session;
         if (revision) {
-          if (immutable)
+          if (immutable) {
             ASSERT_NO_THROW(f.store.revise_messages(view, {0}));
-          else
+          } else {
             ASSERT_NO_THROW(f.store.revise_messages(f.session, {0}));
-        } else if (immutable)
+          }
+        } else if (immutable) {
           ASSERT_NO_THROW(f.store.append_messages(view, 1));
-        else
+        } else {
           ASSERT_NO_THROW(f.store.append_messages(f.session, 1));
+        }
         const auto loaded = f.store.load_id(f.session.id);
         ASSERT_EQ(loaded.messages.size(), 3u);
         EXPECT_EQ(loaded.messages[0].text, revision ? "requested caller edit" : "summary");
@@ -1423,8 +1425,9 @@ TEST_F(PublicationFault, ConstRecoveryReceiptSkipsSqlScansButChecksCallerPrefixA
     recovered.messages.push_back(Message{"user", "suffix"});
     fault::transcript_rows_read = 0;
     ASSERT_NO_THROW(f.store.append_messages(view, first));
-    if (i)
+    if (i) {
       EXPECT_EQ(fault::transcript_rows_read, 0u);
+    }
   }
   auto previous = recovered.messages[0].text;
   recovered.messages[0].text = "unrequested edit";
