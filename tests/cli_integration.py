@@ -1122,6 +1122,46 @@ class CliTests(unittest.TestCase):
         self.assertEqual(saved['checkpoint_state'][0]['checkpoint_state'],checkpoint['checkpoint_state'])
         r=self.run_cli('exec','resume',session,'simple');self.assertEqual(r.returncode,0,r.stderr)
 
+    def test_session_token_reads_export_and_token_only_repair(self):
+        import sqlite3
+        result=self.run_cli('exec','--json','simple')
+        self.assertEqual(result.returncode,0,result.stderr)
+        session=json.loads(result.stdout.splitlines()[0])['thread_id']
+        self.server.requests.clear()
+        tables=('sessions','session_messages','provider_parts','provider_revisions','tools','session_references')
+        def rows():
+            with sqlite3.connect(self.home/'state.sqlite3') as db:
+                return {table:db.execute('SELECT * FROM '+table+' ORDER BY rowid').fetchall() for table in tables}
+        for missing in (False,True):
+            before=rows()
+            with sqlite3.connect(self.home/'state.sqlite3') as db:
+                if missing:db.execute('DELETE FROM session_revisions WHERE session=?',(session,))
+                else:db.execute("UPDATE session_revisions SET revision='broken' WHERE session=?",(session,))
+            exported=self.run_cli('export',session,'--output-format','json')
+            self.assertEqual(exported.returncode,0,exported.stderr)
+            self.assertEqual(json.loads(exported.stdout)['id'],session)
+            inspected=self.run_cli('repair',session)
+            self.assertEqual(inspected.returncode,0,inspected.stderr)
+            self.assertIn('session revision token',inspected.stdout)
+            failed=self.run_cli('exec','resume',session,'simple')
+            self.assertNotEqual(failed.returncode,0)
+            self.assertIn('session revision token',failed.stderr)
+            self.assertEqual(rows(),before)
+            repaired=self.run_cli('repair','--last','--session-token')
+            self.assertEqual(repaired.returncode,0,repaired.stderr)
+            report=json.loads(repaired.stdout)
+            self.assertTrue(report['session_token_regenerated'])
+            self.assertFalse(report['provider_cache_reset'])
+            self.assertTrue(pathlib.Path(report['backup']).is_file())
+            self.assertEqual(rows(),before)
+            noop=self.run_cli('repair',session,'--session-token')
+            self.assertEqual(noop.returncode,0,noop.stderr)
+            self.assertFalse(json.loads(noop.stdout)['changed'])
+            self.assertFalse(self.server.requests)
+        for args in (('exec','--session-token','simple'),('repair',session,'--session-token','--provider-cache'),('repair',session,'--session-token','--recovery')):
+            invalid=self.run_cli(*args)
+            self.assertEqual(invalid.returncode,2,invalid.stderr)
+
     def test_ephemeral_session_not_saved(self):
         r=self.run_cli('exec','--ephemeral','simple');self.assertEqual(r.returncode,0,r.stderr)
         r=self.run_cli('sessions');self.assertEqual(json.loads(r.stdout),[])

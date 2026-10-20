@@ -308,3 +308,56 @@ remain unchanged.
 [PR #24 follow-up validation](validation/pr24-session-revisions.json) records executed offline checks,
 source hashes and benchmarks separately from cached Tiger cross-build/static verification. No
 live-provider or Tiger hardware execution is claimed.
+
+## Recovery publication and token repair
+
+Read-only reconciliation now keeps the persisted source baseline separate from the caller's
+unsaved messages. An unsaved suffix can be appended after reconciliation, and requested revisions
+can publish caller edits alongside the recovery delta. Unrequested prefix changes and genuine
+legacy/recovery source conflicts remain errors. Stable IDs and original storage coordinates survive
+inserted or reordered results. A fork can use a never-saved parent or a readable parent whose session
+token is damaged, without writing or repairing that parent.
+
+Loads, exports and inspection accept missing or malformed **session** tokens without regenerating
+them. Revision tables/triggers must still match their verified definitions; provider-cache integrity
+and SQLite operational failures remain enforced. Existing-session mutations validate the session
+token before issuing token-rotating SQL, including metadata, turn status and tool journals.
+
+`codet repair SESSION --session-token` (or `codet repair --last --session-token`) privately backs up
+raw selected-session rows, checks the captured version again, and regenerates only the session token.
+It does not decode or rewrite the transcript, clear provider state, change the tool journal or update
+session metadata. A valid token is a no-op without a backup. This option cannot be combined with
+`--provider-cache` or `--recovery`; those existing repair modes retain their original behavior.
+Schema version 8 and the existing trigger definitions are unchanged.
+
+Completion replaces a provenance-identified provisional result rather than appending another result
+for that call. Live calls introduced after a recovery snapshot are not synthesized as interrupted
+history. The returned output stays available across both publication attempts; completion requires
+its matching pending journal row, or an exactly matching already-completed journal/transcript pair.
+Publication is atomic, with nonthrowing in-memory acknowledgement after the owning commit. Receipts
+remain diagnostic artifacts with automatic dispatch disabled.
+
+Tool receipts and repair backup locations are reported through `StateStore::set_diagnostics`, with
+stderr as the default. Confirmed publications and unconfirmed candidates are distinguished using
+the configured filesystem. The original exception is rethrown unchanged: subtype, message, code,
+provider payload, allocation failures and non-standard exceptions are preserved. Diagnostic and
+receipt failures cannot replace it. Operational revision queries report the SQLite result code and
+relevant context rather than classifying busy/I/O failures as corruption.
+
+One optional commit receipt per StateStore remembers an acknowledged immutable recovery projection,
+its committed version, and input/canonical message fingerprints, within an 8 MiB accounted-data
+budget. Matching versions avoid repeated transcript SQL scans, recovery, and stored-payload hashing.
+Caller-prefix checking remains linear because Session exposes a mutable message vector. Eviction,
+oversized receipts and version changes use strict content validation; correctness never requires a
+cache hit. Receipts are published only after owning commits and do not cache filesystem authority.
+`codet_persistence_bench recovery` reports scans and elapsed time at increasing history sizes,
+including an oversized receipt that must use the fallback.
+
+The ordinary-row concurrency policy is deliberately unchanged. An ordinary revision or replacement
+may overwrite an external edit, including after re-preparation observes a newer token. This repair
+does not add load-time optimistic concurrency or resolve the preparation/retry lost-update issue
+identified as review comment 3. Raw-byte conflict guarantees above apply to the legacy/recovery
+paths that already enforce them. Per-row revision-trigger overhead is also unchanged.
+
+Source-matched executed checks and benchmark results are recorded in
+[recovery publication validation](validation/recovery-publication-repair.json).

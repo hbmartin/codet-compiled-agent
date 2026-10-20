@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 #include <new>
 #include <sqlite3.h>
+#include <typeinfo>
 using namespace codet;
 namespace fault {
 bool after_commit = false, after_token = false, fired = false;
@@ -17,6 +18,7 @@ bool provider_read_error = false, rollback_read = false, token_error = false;
 bool infrastructure_error = false;
 bool read_failed = false;
 sqlite3 *observed_connection = nullptr;
+sqlite3 *before_write_connection = nullptr;
 size_t steps_after_failure = 0, checkpoint_reads = 0;
 int countdown = -1, skip = 0;
 std::function<void()> provider_read_done, journal_read_done, before_write;
@@ -36,6 +38,7 @@ void disable() noexcept {
   provider_read_done = {};
   journal_read_done = {};
   before_write = {};
+  before_write_connection = nullptr;
   measure_allocations = false;
   failed_query = nullptr;
   failed_allocation = failed_rollback = false;
@@ -94,7 +97,8 @@ extern "C" int sqlite3_exec(sqlite3 *db, const char *sql,
   using Execute =
       int (*)(sqlite3 *, const char *, int (*)(void *, int, char **, char **), void *, char **);
   static const auto execute = reinterpret_cast<Execute>(dlsym(RTLD_NEXT, "sqlite3_exec"));
-  if (std::strcmp(sql, "BEGIN IMMEDIATE") == 0 && fault::before_write) {
+  if (std::strcmp(sql, "BEGIN IMMEDIATE") == 0 && fault::before_write &&
+      (!fault::before_write_connection || fault::before_write_connection == db)) {
     auto callback = std::move(fault::before_write);
     fault::before_write = {};
     callback();
@@ -994,6 +998,8 @@ TEST_F(PublicationFault, SessionRevisionRetriesOnlySelectedChangesAndKeepsToolOu
     for (int invalidations : {1, 2}) {
       SCOPED_TRACE(std::to_string(unrelated) + ":" + std::to_string(invalidations));
       ProjectionFixture f(true);
+      std::string diagnostics;
+      f.store.set_diagnostics([&](const auto &text) { diagnostics += text; });
       auto copied = f.session;
       f.store.revise_messages(f.session, {});
       auto other = f.store.create();
@@ -1004,11 +1010,11 @@ TEST_F(PublicationFault, SessionRevisionRetriesOnlySelectedChangesAndKeepsToolOu
       copied.messages.push_back(assistant);
       f.store.append_messages(copied, 1);
       f.store.tool_started(copied.id, call);
-      int executed = 0, commits = 0;
+      int commits = 0;
       Message result;
       result.role = "tool";
       result.tool_call_id = call.id;
-      result.text = "returned output " + std::to_string(++executed);
+      result.text = "returned output";
       std::function<void()> commit;
       commit = [&] {
         ++commits;
@@ -1026,7 +1032,6 @@ TEST_F(PublicationFault, SessionRevisionRetriesOnlySelectedChangesAndKeepsToolOu
         failure = error.what();
       }
       fault::before_write = {};
-      EXPECT_EQ(executed, 1);
       if (unrelated || invalidations == 1) {
         EXPECT_TRUE(failure.empty()) << failure;
         EXPECT_EQ(copied.messages.back().text, result.text);
@@ -1035,7 +1040,7 @@ TEST_F(PublicationFault, SessionRevisionRetriesOnlySelectedChangesAndKeepsToolOu
         EXPECT_EQ(commits, unrelated ? 1 : invalidations);
       } else {
         EXPECT_NE(failure.find("changed twice"), std::string::npos) << failure;
-        EXPECT_NE(failure.find("tool result preserved at"), std::string::npos) << failure;
+        EXPECT_NE(diagnostics.find("tool result preserved at"), std::string::npos) << failure;
         EXPECT_EQ(f.value("SELECT status FROM tools WHERE call_id='completed-once'"), "running");
         EXPECT_EQ(copied.messages.size(), 2u);
       }
@@ -1045,6 +1050,8 @@ TEST_F(PublicationFault, RepairSelectedSameConnectionChangesRetryAndUnrelatedCha
   for (bool unrelated : {false, true})
     for (int invalidations : {1, 2}) {
       ProjectionFixture f;
+      std::string diagnostics;
+      f.store.set_diagnostics([&](const auto &text) { diagnostics += text; });
       Config config;
       config.home = f.temp.root / "home";
       config.cwd = f.temp.root;
@@ -1081,7 +1088,7 @@ TEST_F(PublicationFault, RepairSelectedSameConnectionChangesRetryAndUnrelatedCha
         EXPECT_EQ(report.contains("backups"), !unrelated && invalidations == 1);
       } else {
         EXPECT_NE(failure.find("changed twice"), std::string::npos) << failure;
-        EXPECT_NE(failure.find("; backup:"), std::string::npos);
+        EXPECT_NE(diagnostics.find("Session repair backup:"), std::string::npos);
       }
     }
 }
@@ -1151,4 +1158,524 @@ TEST_F(PublicationFault, ConstLegacyValidationSerializesOnlySuffixAndMutableHand
   f.store.append_messages(f.session, first);
   EXPECT_EQ(fault::transcript_rows_read, 0u);
   EXPECT_EQ(fault::checkpoint_reads, 0u);
+}
+
+namespace {
+Message pending_call(const std::string &id) {
+  Message message;
+  message.role = "assistant";
+  message.calls = {{id, "exec_command", Json::object()}};
+  return message;
+}
+Message returned_result(const std::string &id) {
+  Message result;
+  result.role = "tool";
+  result.tool_call_id = id;
+  result.text = "actual returned output";
+  return result;
+}
+void make_legacy(ProjectionFixture &f) {
+  const auto bytes = Json(f.session.messages).dump();
+  sqlite3_stmt *update = nullptr;
+  ASSERT_EQ(sqlite3_prepare_v2(f.db, "UPDATE sessions SET message_format=0,messages=?", -1, &update,
+                               nullptr),
+            SQLITE_OK);
+  sqlite3_bind_text(update, 1, bytes.c_str(), -1, SQLITE_TRANSIENT);
+  ASSERT_EQ(sqlite3_step(update), SQLITE_DONE);
+  sqlite3_finalize(update);
+  f.exec("DELETE FROM session_messages");
+}
+} // namespace
+TEST_F(PublicationFault, RecoverySeparatesStoredBaselineFromUnsavedSuffixAndRequestedEdits) {
+  for (bool blob : {false, true})
+    for (bool immutable : {false, true})
+      for (bool revision : {false, true}) {
+        ProjectionFixture f;
+        if (revision) {
+          f.session.messages.push_back(pending_call("historical"));
+          f.store.append_messages(f.session, 1);
+        }
+        if (blob)
+          make_legacy(f);
+        f.session = f.store.load_id(f.session.id, false);
+        if (revision)
+          f.session.messages[0].text = "requested caller edit";
+        else
+          f.session.messages.push_back(pending_call("unsaved"));
+        f.store.reconcile(f.session, false);
+        const Session &view = f.session;
+        if (revision) {
+          if (immutable)
+            ASSERT_NO_THROW(f.store.revise_messages(view, {0}));
+          else
+            ASSERT_NO_THROW(f.store.revise_messages(f.session, {0}));
+        } else if (immutable)
+          ASSERT_NO_THROW(f.store.append_messages(view, 1));
+        else
+          ASSERT_NO_THROW(f.store.append_messages(f.session, 1));
+        const auto loaded = f.store.load_id(f.session.id);
+        ASSERT_EQ(loaded.messages.size(), 3u);
+        EXPECT_EQ(loaded.messages[0].text, revision ? "requested caller edit" : "summary");
+        EXPECT_EQ(loaded.messages.back().tool_call_id, revision ? "historical" : "unsaved");
+      }
+}
+TEST_F(PublicationFault, ReadOnlyRecoveryAndForkSupportMissingTokensAndNeverSavedParents) {
+  ProjectionFixture f;
+  auto parent = f.session;
+  parent.messages.push_back(Message{"user", "unsaved suffix"});
+  f.exec("DELETE FROM session_revisions");
+  ASSERT_NO_THROW(f.store.reconcile(parent, false));
+  EXPECT_EQ(f.value("SELECT count(*) FROM session_revisions"), "0");
+  auto child = f.store.fork(parent);
+  EXPECT_EQ(child.messages.back().text, "unsaved suffix");
+  EXPECT_EQ(f.value("SELECT count(*) FROM session_revisions"), "1");
+  Session memory{unique_id(), "never saved", {Message{"user", "memory only"}}};
+  child = f.store.fork(memory);
+  ASSERT_EQ(child.messages.size(), 1u);
+  EXPECT_EQ(child.messages[0].text, "memory only");
+}
+TEST_F(PublicationFault, EveryExistingSessionMutatorRejectsDamagedTokensBeforeRotatingThem) {
+  for (bool missing : {false, true})
+    for (const auto *mode :
+         {"save", "const-save", "append", "revise", "replace", "metadata", "provider", "begin",
+          "finish", "start", "finished", "complete", "references"}) {
+      SCOPED_TRACE(std::string(mode) + (missing ? ":missing" : ":malformed"));
+      ProjectionFixture f;
+      f.session.messages.push_back(pending_call("running"));
+      f.store.append_messages(f.session, 1);
+      const auto call = f.session.messages.back().calls.front();
+      f.store.tool_started(f.session.id, call);
+      f.exec(missing ? "DELETE FROM session_revisions"
+                     : "UPDATE session_revisions SET revision='broken'");
+      const auto rows = f.value("SELECT group_concat(payload) FROM session_messages");
+      auto result = returned_result(call.id);
+      auto &s = f.session;
+      const Session &view = s;
+      std::string diagnostics;
+      f.store.set_diagnostics([&](const auto &text) { diagnostics += text; });
+      EXPECT_NO_THROW(f.store.load_id(s.id));
+      EXPECT_NO_THROW(f.store.last());
+      const auto action = [&] {
+        if (std::strcmp(mode, "save") == 0)
+          f.store.save(s);
+        else if (std::strcmp(mode, "const-save") == 0)
+          f.store.save(view);
+        else if (std::strcmp(mode, "append") == 0)
+          f.store.append_messages(s, s.messages.size());
+        else if (std::strcmp(mode, "revise") == 0)
+          f.store.revise_messages(s, {});
+        else if (std::strcmp(mode, "replace") == 0)
+          f.store.replace_history(s);
+        else if (std::strcmp(mode, "metadata") == 0)
+          f.store.update_metadata(s);
+        else if (std::strcmp(mode, "provider") == 0)
+          f.store.save_provider_state(s);
+        else if (std::strcmp(mode, "begin") == 0)
+          f.store.begin_turn(s.id);
+        else if (std::strcmp(mode, "finish") == 0)
+          f.store.finish_turn(s.id, "complete");
+        else if (std::strcmp(mode, "start") == 0)
+          f.store.tool_started(s.id, {"new", "exec_command", Json::object()});
+        else if (std::strcmp(mode, "finished") == 0)
+          f.store.tool_finished(s.id, call, Json(result));
+        else if (std::strcmp(mode, "complete") == 0)
+          f.store.complete_tool(s, call, result);
+        else {
+          result.result_file = "results/owner/new.json";
+          f.store.remember_references(s.id, {result});
+        }
+      };
+      EXPECT_THROW(action(), Error);
+      EXPECT_EQ(f.value("SELECT group_concat(payload) FROM session_messages"), rows);
+      EXPECT_EQ(f.value("SELECT status FROM tools WHERE call_id='running'"), "running");
+      EXPECT_EQ(f.value("SELECT count(*) FROM session_revisions"), missing ? "0" : "1");
+      if (!missing)
+        EXPECT_EQ(f.value("SELECT revision FROM session_revisions"), "broken");
+    }
+}
+TEST_F(PublicationFault, TokenOnlyRepairPreservesRawRowsAndRequiresNoDecoding) {
+  for (bool missing : {false, true}) {
+    ProjectionFixture f(true);
+    f.exec("UPDATE sessions SET messages='unreadable legacy JSON';INSERT INTO provider_parts "
+           "VALUES((SELECT id FROM sessions),0,'unreadable provider JSON')");
+    f.exec(missing ? "DELETE FROM session_revisions"
+                   : "UPDATE session_revisions SET revision='broken'");
+    const auto messages = f.value("SELECT messages FROM sessions");
+    const auto provider = f.value("SELECT payload FROM provider_parts");
+    const auto provider_token = f.value("SELECT revision FROM provider_revisions");
+    const auto metadata = f.value("SELECT name||status||updated||message_format FROM sessions");
+    auto report = f.store.repair_session_token(f.session.id, false);
+    EXPECT_EQ(report["session_token_regenerated"], true);
+    EXPECT_EQ(report["provider_cache_reset"], false);
+    const auto backup = Json::parse(f.files.read(report["backup"].get<std::string>()));
+    EXPECT_EQ(backup["session_revisions"].size(), missing ? 0u : 1u);
+    EXPECT_EQ(f.value("SELECT messages FROM sessions"), messages);
+    EXPECT_EQ(f.value("SELECT payload FROM provider_parts"), provider);
+    EXPECT_EQ(f.value("SELECT revision FROM provider_revisions"), provider_token);
+    EXPECT_EQ(f.value("SELECT name||status||updated||message_format FROM sessions"), metadata);
+    report = f.store.repair_session_token("", true);
+    EXPECT_EQ(report["changed"], false);
+    EXPECT_FALSE(report.contains("backup"));
+  }
+}
+TEST_F(PublicationFault, TokenOnlyRepairRetriesOnceAndReportsBackupsSeparately) {
+  for (int invalidations : {1, 2}) {
+    ProjectionFixture f;
+    f.exec("UPDATE session_revisions SET revision='broken'");
+    int changed = 0;
+    std::string diagnostics;
+    f.store.set_diagnostics([&](const auto &text) { diagnostics += text; });
+    std::function<void()> mutate;
+    mutate = [&] {
+      ++changed;
+      f.exec(("UPDATE session_revisions SET revision='broken-" + std::to_string(changed) + "'")
+                 .c_str());
+      if (changed < invalidations)
+        fault::before_write = mutate;
+    };
+    fault::before_write = mutate;
+    if (invalidations == 1) {
+      auto report = f.store.repair_session_token(f.session.id, false);
+      EXPECT_EQ(report["backups"].size(), 2u);
+    } else {
+      EXPECT_THROW(f.store.repair_session_token(f.session.id, false), Error);
+      EXPECT_NE(diagnostics.find("Session repair backup:"), std::string::npos);
+      EXPECT_EQ(f.value("SELECT revision FROM session_revisions"), "broken-2");
+    }
+    EXPECT_EQ(changed, invalidations);
+  }
+}
+TEST_F(PublicationFault, ToolCompletionReplacesProvisionalResultsAndCanRepeatIdentically) {
+  for (bool blob : {false, true}) {
+    ProjectionFixture f;
+    f.session.messages.push_back(pending_call("running"));
+    f.store.append_messages(f.session, 1);
+    const auto call = f.session.messages.back().calls.front();
+    f.store.tool_started(f.session.id, call);
+    if (blob)
+      make_legacy(f);
+    auto recovered = f.store.load_id(f.session.id);
+    ASSERT_EQ(recovered.messages.size(), 3u);
+    const auto result_id = recovered.messages.back().message_id;
+    ASSERT_NO_THROW(f.store.complete_tool(recovered, call, returned_result(call.id)));
+    EXPECT_EQ(recovered.messages.size(), 3u);
+    EXPECT_EQ(recovered.messages.back().message_id, result_id);
+    EXPECT_EQ(recovered.messages.back().text, "actual returned output");
+    EXPECT_EQ(Json(f.store.load_id(recovered.id).messages), Json(recovered.messages));
+    ASSERT_NO_THROW(f.store.complete_tool(recovered, call, returned_result(call.id)));
+    auto different = returned_result(call.id);
+    different.text = "different output";
+    std::string diagnostics;
+    f.store.set_diagnostics([&](const auto &text) { diagnostics += text; });
+    EXPECT_THROW(f.store.complete_tool(recovered, call, different), Error);
+    EXPECT_EQ(f.store.load_id(recovered.id).messages.back().text, "actual returned output");
+    EXPECT_NE(diagnostics.find("Uncommitted tool result preserved at"), std::string::npos);
+  }
+}
+TEST_F(PublicationFault, RetainedConstRecoveryDoesNotSynthesizeOtherLiveCalls) {
+  ProjectionFixture f;
+  f.session.messages.push_back(pending_call("historical"));
+  f.store.append_messages(f.session, 1);
+  auto recovered = f.store.load_id(f.session.id);
+  auto live = pending_call("first-live");
+  live.calls.push_back({"second-live", "exec_command", Json::object()});
+  const auto first = recovered.messages.size();
+  recovered.messages.push_back(live);
+  const Session &view = recovered;
+  f.store.append_messages(view, first);
+  for (const auto &call : live.calls)
+    f.store.tool_started(recovered.id, call);
+  ASSERT_NO_THROW(f.store.complete_tool(recovered, live.calls[0], returned_result("first-live")));
+  EXPECT_EQ(f.value("SELECT status FROM tools WHERE call_id='second-live'"), "running");
+  EXPECT_EQ(recovered.messages.size(), 5u);
+  ASSERT_NO_THROW(f.store.complete_tool(recovered, live.calls[1], returned_result("second-live")));
+  EXPECT_EQ(recovered.messages.size(), 6u);
+  EXPECT_EQ(Json(f.store.load_id(recovered.id).messages), Json(recovered.messages));
+}
+TEST_F(PublicationFault, UnavailableAbsoluteCheckpointCanRepeatConstRecoveryWritesWithoutReload) {
+  for (bool blob : {false, true}) {
+    ProjectionFixture f;
+    f.session.messages.push_back(pending_call("historical"));
+    f.store.append_messages(f.session, 1);
+    if (blob)
+      make_legacy(f);
+    fs::remove(f.archive);
+    auto recovered = f.store.load_id(f.session.id);
+    const Session &view = recovered;
+    for (int i = 0; i < 3; ++i) {
+      const auto first = recovered.messages.size();
+      recovered.messages.push_back(Message{"user", "suffix"});
+      ASSERT_NO_THROW(f.store.append_messages(view, first));
+      // Token changes force the strict fallback rather than the receipt fast path.
+      f.exec("UPDATE sessions SET status='unrelated metadata change'");
+    }
+    EXPECT_EQ(f.store.load_id(recovered.id).messages.size(), recovered.messages.size());
+  }
+}
+TEST_F(PublicationFault, ConstRecoveryReceiptSkipsSqlScansButChecksCallerPrefixAndExternalBytes) {
+  ProjectionFixture f;
+  f.session.messages.push_back(pending_call("historical"));
+  f.store.append_messages(f.session, 1);
+  auto recovered = f.store.load_id(f.session.id);
+  const Session &view = recovered;
+  for (int i = 0; i < 3; ++i) {
+    const auto first = recovered.messages.size();
+    recovered.messages.push_back(Message{"user", "suffix"});
+    fault::transcript_rows_read = 0;
+    ASSERT_NO_THROW(f.store.append_messages(view, first));
+    if (i)
+      EXPECT_EQ(fault::transcript_rows_read, 0u);
+  }
+  auto previous = recovered.messages[0].text;
+  recovered.messages[0].text = "unrequested edit";
+  EXPECT_THROW(f.store.revise_messages(view, {}), Error);
+  recovered.messages[0].text = previous;
+  f.exec("UPDATE session_messages SET payload=json_set(payload,'$.unknown_external_field',true) "
+         "WHERE position=0");
+  EXPECT_THROW(f.store.revise_messages(view, {}), Error);
+}
+TEST_F(PublicationFault, CompletionKeepsExceptionTypesAndDiagnosticFailuresCannotReplaceThem) {
+  ProjectionFixture f;
+  f.session.messages.push_back(pending_call("running"));
+  f.store.append_messages(f.session, 1);
+  const auto call = f.session.messages.back().calls.front();
+  f.store.tool_started(f.session.id, call);
+  f.store.set_diagnostics([](const auto &) { throw std::bad_alloc(); });
+  const auto before = Json(f.session.messages);
+  fault::before_write = [] { throw HookFailure("original subtype"); };
+  EXPECT_THROW(f.store.complete_tool(f.session, call, returned_result(call.id)), HookFailure);
+  fault::before_write = [] { throw std::logic_error("original logic error"); };
+  EXPECT_THROW(f.store.complete_tool(f.session, call, returned_result(call.id)), std::logic_error);
+  fault::before_write = [] {
+    const auto invalid = Json::parse("{invalid");
+    (void)invalid;
+  };
+  EXPECT_THROW(f.store.complete_tool(f.session, call, returned_result(call.id)), Json::exception);
+  fault::before_write = [] { throw std::bad_alloc(); };
+  EXPECT_THROW(f.store.complete_tool(f.session, call, returned_result(call.id)), std::bad_alloc);
+  fault::before_write = [] { throw 42; };
+  try {
+    f.store.complete_tool(f.session, call, returned_result(call.id));
+    FAIL();
+  } catch (int value) {
+    EXPECT_EQ(value, 42);
+  }
+  EXPECT_EQ(Json(f.session.messages), before);
+  fault::before_write = [] { throw ProviderError("original provider", 429, "original body"); };
+  try {
+    f.store.complete_tool(f.session, call, returned_result(call.id));
+    FAIL();
+  } catch (const ProviderError &error) {
+    EXPECT_EQ(error.http_status, 429);
+    EXPECT_EQ(error.body, "original body");
+    EXPECT_STREQ(error.what(), "original provider");
+  }
+  fault::before_write = [] { throw Error("original cancellation", 130); };
+  try {
+    f.store.complete_tool(f.session, call, returned_result(call.id));
+    FAIL();
+  } catch (const Error &error) {
+    EXPECT_EQ(error.code, 130);
+    EXPECT_STREQ(error.what(), "original cancellation");
+  }
+}
+TEST_F(PublicationFault, RevisionSchemaOperationalFailuresRetainSqliteResultCodes) {
+  for (const auto *query : {"PRAGMA schema_version", "SELECT sql FROM sqlite_master WHERE name=?"})
+    for (int status : {SQLITE_BUSY, SQLITE_IOERR}) {
+      ProjectionFixture f;
+      if (std::strcmp(query, "PRAGMA schema_version"))
+        f.exec("CREATE TABLE changed_schema(value)");
+      fault::failed_query = query;
+      fault::failed_status = status;
+      try {
+        f.store.load_id(f.session.id);
+        FAIL();
+      } catch (const Error &error) {
+        EXPECT_NE(std::string(error.what()).find("SQLite " + std::to_string(status)),
+                  std::string::npos);
+      }
+      fault::disable();
+      EXPECT_NO_THROW(f.store.load_id(f.session.id));
+    }
+}
+
+TEST_F(PublicationFault, AgentExecutesACompletedToolOnceAcrossPublicationRetries) {
+  struct OneTool : Provider {
+    int requests = 0;
+    ProviderResult complete(const Config &, const std::string &, const std::vector<Message> &,
+                            const Json &, const Cancellation &, const ChunkSink &,
+                            const ItemSink &) override {
+      ProviderResult response;
+      response.message.role = "assistant";
+      if (++requests == 1)
+        response.message.calls = {
+            {"once", "exec_command", {{"cmd", "printf returned-once"}, {"yield_time_ms", 1000}}}};
+      else
+        response.message.text = "finished";
+      return response;
+    }
+  };
+  struct CountedProcesses : Processes {
+    NativeProcesses native;
+    int executions = 0;
+    std::function<void()> dispatch;
+    ProcessResult run(const ProcessSpec &spec, const Cancellation &cancel) override {
+      ++executions;
+      dispatch();
+      return native.run(spec, cancel);
+    }
+    std::string start(const ProcessSpec &spec) override {
+      ++executions;
+      dispatch();
+      return native.start(spec);
+    }
+    ProcessResult poll(const std::string &id) override {
+      return native.poll(id);
+    }
+    ProcessStatus status(const std::string &id) override {
+      return native.status(id);
+    }
+    ProcessResult take_output(const std::string &id) override {
+      return native.take_output(id);
+    }
+    void stop(const std::string &id) override {
+      native.stop(id);
+    }
+  };
+  for (int invalidations : {1, 2}) {
+    TempDirectory temp;
+    Config config;
+    config.home = temp.root / "home";
+    config.cwd = temp.root / "work";
+    config.state_root = temp.root / "state";
+    config.roots = {config.cwd};
+    config.provider = "openai";
+    config.model = "fixture";
+    config.approval = "never";
+    config.permission_mode = "bypass";
+    fs::create_directories(config.cwd);
+    fs::create_directories(config.home);
+    NativeFileSystem files;
+    CountedProcesses processes;
+    NoHttp http;
+    SystemClock clock;
+    Cancellation cancel;
+    StateStore store(config.state_root);
+    auto session = store.create();
+    auto *state_connection = fault::observed_connection;
+    int changed = 0;
+    std::function<void()> invalidate;
+    invalidate = [&] {
+      ++changed;
+      const auto query = "UPDATE sessions SET status='changed-" + std::to_string(changed) + "'";
+      ASSERT_EQ(sqlite3_exec(state_connection, query.c_str(), nullptr, nullptr, nullptr),
+                SQLITE_OK);
+      if (changed < invalidations)
+        fault::before_write = invalidate;
+    };
+    processes.dispatch = [&] {
+      fault::before_write_connection = state_connection;
+      fault::before_write = invalidate;
+    };
+    std::string diagnostics;
+    store.set_diagnostics([&](const auto &text) { diagnostics += text; });
+    OneTool provider;
+    Tools tools(config, files, processes, http, clock);
+    Agent agent(config, provider, tools, store, {});
+    if (invalidations == 1) {
+      EXPECT_NO_THROW(agent.run(session, "run the fixture command", cancel));
+      const auto loaded = store.load_id(session.id);
+      EXPECT_NE(Json(loaded.messages).dump().find("returned-once"), std::string::npos);
+      EXPECT_EQ(provider.requests, 2);
+    } else {
+      EXPECT_THROW(agent.run(session, "run the fixture command", cancel), Error);
+      EXPECT_NE(diagnostics.find("Uncommitted tool result preserved at"), std::string::npos);
+      EXPECT_EQ(provider.requests, 1);
+    }
+    fault::disable();
+    EXPECT_EQ(changed, invalidations);
+    EXPECT_EQ(processes.executions, 1);
+  }
+}
+
+TEST_F(PublicationFault, CompletionAndConstReceiptAcknowledgementsDoNotAllocateAfterCommit) {
+  for (bool completion : {false, true}) {
+    ProjectionFixture f;
+    f.session.messages.push_back(pending_call("running"));
+    f.store.append_messages(f.session, 1);
+    const auto call = f.session.messages.back().calls.front();
+    f.store.tool_started(f.session.id, call);
+    auto recovered = f.store.load_id(f.session.id);
+    auto result = returned_result(call.id);
+    result.replay = Json::array({{{"nested", Json::array({Json::object(), 1, 2})}}});
+    bool failed = false;
+    fault::after_commit = true;
+    fault::fired = false;
+    try {
+      if (completion)
+        f.store.complete_tool(recovered, call, result);
+      else {
+        const auto first = recovered.messages.size();
+        recovered.messages.push_back(Message{"user", "suffix"});
+        const Session &view = recovered;
+        f.store.append_messages(view, first);
+      }
+    } catch (...) {
+      failed = true;
+    }
+    const bool allocated = fault::fired;
+    fault::disable();
+    EXPECT_FALSE(failed);
+    EXPECT_FALSE(allocated);
+    EXPECT_NO_THROW(f.store.load_id(f.session.id));
+  }
+}
+TEST_F(PublicationFault, ConstReceiptEvictionUsesFullValidationAndMutableHandoffKeepsCanonicalIds) {
+  ProjectionFixture f;
+  f.session.messages.push_back(pending_call("historical"));
+  f.store.append_messages(f.session, 1);
+  auto recovered = f.store.load_id(f.session.id);
+  const Session &view = recovered;
+  auto first = recovered.messages.size();
+  recovered.messages.push_back(Message{"user", "first suffix"});
+  f.store.append_messages(view, first);
+  auto other = f.store.create();
+  f.store.save(other); // Another publication evicts the one optional receipt.
+  fault::transcript_rows_read = 0;
+  EXPECT_NO_THROW(f.store.revise_messages(view, {}));
+  EXPECT_GT(fault::transcript_rows_read, 0u);
+  first = recovered.messages.size();
+  recovered.messages.push_back(Message{"user", "mutable suffix"});
+  EXPECT_NO_THROW(f.store.append_messages(recovered, first));
+  EXPECT_EQ(Json(f.store.load_id(recovered.id, false).messages), Json(recovered.messages));
+}
+
+TEST_F(PublicationFault, CompletionPreservesPrivateRevisionExceptionIdentity) {
+  for (bool infrastructure : {false, true}) {
+    ProjectionFixture f;
+    f.session.messages.push_back(pending_call("running"));
+    f.store.append_messages(f.session, 1);
+    const auto call = f.session.messages.back().calls.front();
+    f.store.tool_started(f.session.id, call);
+    f.store.set_diagnostics([](const auto &) {});
+    if (infrastructure)
+      f.exec("DROP TRIGGER session_revision_tools_UPDATE");
+    else
+      f.exec("UPDATE session_revisions SET revision='broken'");
+    std::string expected, observed;
+    try {
+      f.store.save(f.session);
+      FAIL();
+    } catch (const Error &error) {
+      expected = typeid(error).name();
+    }
+    try {
+      f.store.complete_tool(f.session, call, returned_result(call.id));
+      FAIL();
+    } catch (const Error &error) {
+      observed = typeid(error).name();
+    }
+    EXPECT_EQ(observed, expected);
+    EXPECT_NE(observed, typeid(Error).name());
+  }
 }

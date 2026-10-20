@@ -309,6 +309,8 @@ TEST_F(Pr18, ArchiveReadsAndBackupsAllowUnrelatedCommitsWithoutRetry) {
 }
 TEST_F(Pr18, SecondInvalidationStopsWithoutRepairWritesAndListsBothBackups) {
   StateStore state(files, config.state_root);
+  std::string diagnostics;
+  state.set_diagnostics([&](const auto &text) { diagnostics += text; });
   auto s = state.create();
   codet::Message m;
   m.role = "assistant";
@@ -330,10 +332,10 @@ TEST_F(Pr18, SecondInvalidationStopsWithoutRepairWritesAndListsBothBackups) {
     FAIL();
   } catch (const Error &e) {
     EXPECT_THAT(e.what(), HasSubstr("changed twice"));
-    const std::string text = e.what();
-    const auto first = text.find("; backup:");
+    const std::string text = diagnostics;
+    const auto first = text.find("Session repair backup:");
     ASSERT_NE(first, std::string::npos);
-    EXPECT_NE(text.find("; backup:", first + 1), std::string::npos);
+    EXPECT_NE(text.find("Session repair backup:", first + 1), std::string::npos);
   }
   EXPECT_EQ(backups, 2u);
   EXPECT_EQ(archives(), 0u);
@@ -524,6 +526,8 @@ TEST_F(Pr18, CacheChargesTheExistingSerializedArchiveTextConservatively) {
 }
 TEST_F(Pr18, BackupWriteFailureAfterPublicationStillNamesTheRetainedBackup) {
   StateStore state(files, config.state_root);
+  std::string diagnostics;
+  state.set_diagnostics([&](const auto &text) { diagnostics += text; });
   auto s = state.create();
   files.on_backup = [] { throw Error("after backup publication"); };
   Tools tools(config, files, processes, http, clock);
@@ -531,7 +535,8 @@ TEST_F(Pr18, BackupWriteFailureAfterPublicationStillNamesTheRetainedBackup) {
     state.repair(s.id, false, true, false, tools);
     FAIL();
   } catch (const Error &e) {
-    EXPECT_THAT(e.what(), HasSubstr("after backup publication; backup:"));
+    EXPECT_STREQ(e.what(), "after backup publication");
+    EXPECT_THAT(diagnostics, HasSubstr("Session repair backup:"));
   }
   size_t n = 0;
   for (const auto &entry : fs::directory_iterator(config.state_root / "repairs"))
@@ -541,6 +546,8 @@ TEST_F(Pr18, BackupWriteFailureAfterPublicationStillNamesTheRetainedBackup) {
 }
 TEST_F(Pr18, DeferredRepairCommitFailureRollsBackRowsAndRemovesNewCandidates) {
   StateStore state(files, config.state_root);
+  std::string diagnostics;
+  state.set_diagnostics([&](const auto &text) { diagnostics += text; });
   auto s = state.create();
   codet::Message m;
   m.role = "assistant";
@@ -558,7 +565,8 @@ TEST_F(Pr18, DeferredRepairCommitFailureRollsBackRowsAndRemovesNewCandidates) {
     state.repair(s.id, false, false, true, tools);
     FAIL();
   } catch (const Error &e) {
-    EXPECT_THAT(e.what(), HasSubstr("backup:"));
+    EXPECT_THAT(e.what(), HasSubstr("FOREIGN KEY"));
+    EXPECT_THAT(diagnostics, HasSubstr("Session repair backup:"));
   }
   EXPECT_EQ(raw.value("SELECT payload FROM session_messages"), before);
   EXPECT_EQ(archives(), 0u);
@@ -876,6 +884,8 @@ TEST_F(Pr18, InvalidRevisionTokensAreReportedAndRepairedEvenWithNoProviderRows) 
 }
 TEST_F(Pr18, TokenRepairRollsBackAndPreservesItsBackupOnDeferredCommitFailure) {
   StateStore state(files, config.state_root);
+  std::string diagnostics;
+  state.set_diagnostics([&](const auto &text) { diagnostics += text; });
   auto s = state.create();
   Tools tools(config, files, processes, http, clock);
   Db raw(config.state_root / "state.sqlite3");
@@ -892,7 +902,8 @@ TEST_F(Pr18, TokenRepairRollsBackAndPreservesItsBackupOnDeferredCommitFailure) {
   } catch (const Error &e) {
     error = e.what();
   }
-  EXPECT_THAT(error, HasSubstr("backup:"));
+  EXPECT_THAT(error, HasSubstr("FOREIGN KEY"));
+  EXPECT_THAT(diagnostics, HasSubstr("Session repair backup:"));
   EXPECT_EQ(raw.value("SELECT revision FROM provider_revisions WHERE session='" + s.id + "'"),
             "invalid");
   raw.exec("DROP TRIGGER refuse_token");
@@ -1649,6 +1660,8 @@ TEST_F(Pr22, PublishedVirtualBackupsAreReportedWithoutNativeFilesystemQueries) {
     VirtualBackupFiles virtual_files;
     virtual_files.unreadable_backup = unreadable;
     StateStore state(virtual_files, config.state_root, artifact_directory(config));
+    std::string diagnostics;
+    state.set_diagnostics([&](const auto &text) { diagnostics += text; });
     Tools tools(config, virtual_files, processes, http, clock);
     auto s = state.create();
     try {
@@ -1657,9 +1670,9 @@ TEST_F(Pr22, PublishedVirtualBackupsAreReportedWithoutNativeFilesystemQueries) {
     } catch (const Error &error) {
       ASSERT_EQ(virtual_files.backups.size(), 1u);
       EXPECT_THAT(error.what(), HasSubstr("published virtual backup"));
-      EXPECT_THAT(error.what(), HasSubstr(virtual_files.backups.begin()->first.string()));
+      EXPECT_THAT(diagnostics, HasSubstr(virtual_files.backups.begin()->first.string()));
       if (unreadable) {
-        EXPECT_THAT(error.what(), HasSubstr("publication unconfirmed"));
+        EXPECT_THAT(diagnostics, HasSubstr("publication unconfirmed"));
       }
     }
   }
@@ -1905,6 +1918,8 @@ TEST_F(Pr23, BackupDiagnosticsDistinguishRetainedFilesFromUnconfirmedCandidates)
     after.unreadable_backup = stage == 2;
     auto &injected = stage == 0 ? static_cast<VirtualBackupFiles &>(before) : after;
     StateStore state(injected, config.state_root, artifact_directory(config));
+    std::string diagnostics;
+    state.set_diagnostics([&](const auto &text) { diagnostics += text; });
     Tools tools(config, injected, processes, http, clock);
     const auto s = state.create();
     try {
@@ -1913,11 +1928,11 @@ TEST_F(Pr23, BackupDiagnosticsDistinguishRetainedFilesFromUnconfirmedCandidates)
     } catch (const Error &error) {
       const std::string message = error.what();
       if (stage == 1) {
-        EXPECT_THAT(message, HasSubstr("; backup: "));
-        EXPECT_THAT(message, Not(HasSubstr("publication unconfirmed")));
+        EXPECT_THAT(diagnostics, HasSubstr("Session repair backup: "));
+        EXPECT_THAT(diagnostics, Not(HasSubstr("publication unconfirmed")));
       } else {
-        EXPECT_THAT(message, HasSubstr("backup candidate (publication unconfirmed): "));
-        EXPECT_THAT(message, Not(HasSubstr("; backup: ")));
+        EXPECT_THAT(diagnostics, HasSubstr("backup candidate (publication unconfirmed): "));
+        EXPECT_THAT(diagnostics, Not(HasSubstr("Session repair backup: ")));
       }
       EXPECT_THAT(message, HasSubstr(stage == 0 ? "failure before backup publication"
                                                 : "published virtual backup"));
@@ -2103,7 +2118,7 @@ TEST_F(Pr24, MissingAndMalformedSessionTokensAreRepairableInBothMutationModes) {
       raw.exec(missing
                    ? "DELETE FROM session_revisions WHERE session='" + s.id + "'"
                    : "UPDATE session_revisions SET revision='broken' WHERE session='" + s.id + "'");
-      EXPECT_THROW(state.load_id(s.id, false), Error);
+      EXPECT_NO_THROW(state.load_id(s.id, false));
       const auto inspection = state.repair(s.id, false, false, false, tools);
       EXPECT_THAT(inspection["issues"].dump(), HasSubstr("session revision token"));
       const auto report = state.repair(s.id, false, !recovery, recovery, tools);
@@ -2379,6 +2394,8 @@ TEST_F(Pr24, ToolReceiptDiagnosticsUseConfiguredPublicationVerification) {
     VirtualToolReceiptFiles injected;
     injected.readable = readable;
     StateStore state(injected, config.state_root);
+    std::string diagnostics;
+    state.set_diagnostics([&](const auto &text) { diagnostics += text; });
     auto s = state.create();
     ToolCall call{unique_id(), "exec_command", Json::object()};
     codet::Message assistant;
@@ -2399,8 +2416,8 @@ TEST_F(Pr24, ToolReceiptDiagnosticsUseConfiguredPublicationVerification) {
     }
     EXPECT_THAT(failure, HasSubstr("outcome is no longer pending"));
     EXPECT_THAT(failure, Not(HasSubstr("published virtually")));
-    EXPECT_THAT(failure, HasSubstr(readable ? "uncommitted tool result preserved at"
-                                            : "receipt candidate (publication unconfirmed)"));
+    EXPECT_THAT(diagnostics, HasSubstr(readable ? "Uncommitted tool result preserved at"
+                                                : "receipt candidate (publication unconfirmed)"));
     ASSERT_EQ(injected.receipts.size(), 1u);
     EXPECT_FALSE(fs::exists(injected.receipts.begin()->first));
     EXPECT_EQ(Json::parse(injected.receipts.begin()->second)["message"]["text"], result.text);
@@ -2438,4 +2455,104 @@ TEST_F(Pr24, RecoveryMappingsSurviveArchiveLossAndRelocationWithoutAuthorizingRe
   EXPECT_EQ(loaded.messages[2].checkpoint_state["recovery_record"], reference);
   EXPECT_NO_THROW(append(relocated, loaded));
   EXPECT_THAT(tools.execution_state(loaded.messages).dump(), HasSubstr("recovery_unavailable"));
+}
+
+TEST_F(Pr23, ReconciliationRetriesExternalSelectedCommitsDuringArchivePreparation) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  for (int invalidations : {1, 2}) {
+    SCOPED_TRACE(invalidations);
+    auto original = legacy(state, tools, raw);
+    codet::Message assistant;
+    assistant.role = "assistant";
+    assistant.calls = {{unique_id(), "exec_command", Json::object()}};
+    original.messages.push_back(assistant);
+    state.append_messages(original, 1);
+    const auto path = fs::path(*absolute_checkpoint_reference(original.messages[0]));
+    const auto bytes = files.read(path, 1024 * 1024);
+    fs::remove(path);
+    auto loaded = state.load_id(original.id, false);
+    const auto before = Json(loaded.messages);
+    const auto projection = loaded.checkpoint_projection;
+    files.atomic_write(path, bytes, true);
+    int commits = 0;
+    size_t opens = 0;
+    files.on_open = [&](const fs::path &) {
+      ++opens;
+      if (commits < invalidations) {
+        ++commits;
+        raw.exec("UPDATE sessions SET status='commit-" + unique_id() + "' WHERE id='" +
+                 original.id + "'");
+      }
+    };
+    std::string failure;
+    try {
+      state.reconcile(loaded);
+    } catch (const Error &error) {
+      failure = error.what();
+    }
+    files.on_open = {};
+    EXPECT_EQ(commits, invalidations);
+    EXPECT_EQ(opens, 2u);
+    if (invalidations == 1) {
+      EXPECT_TRUE(failure.empty()) << failure;
+      EXPECT_EQ(loaded.messages.size(), 3u);
+    } else {
+      EXPECT_THAT(failure, HasSubstr("preparation changed twice"));
+      EXPECT_EQ(Json(loaded.messages), before);
+      EXPECT_EQ(loaded.checkpoint_projection, projection);
+      EXPECT_EQ(raw.value("SELECT count(*) FROM tools WHERE session='" + loaded.id + "'"), "0");
+      EXPECT_EQ(
+          raw.value("SELECT count(*) FROM session_messages WHERE session='" + loaded.id + "'"),
+          "2");
+      EXPECT_NO_THROW(state.reconcile(loaded)); // Retry without reloading the unchanged snapshot.
+    }
+  }
+}
+
+TEST_F(Pr24, TokenOnlyBackupFailuresRetainOriginalErrorAndNeverChangeTheToken) {
+  for (int stage : {0, 1, 2}) {
+    config.state_root = temp.root / std::to_string(stage);
+    BeforeBackupFiles before;
+    VirtualBackupFiles after;
+    after.unreadable_backup = stage == 2;
+    auto &injected = stage == 0 ? static_cast<VirtualBackupFiles &>(before) : after;
+    StateStore state(injected, config.state_root);
+    auto s = state.create();
+    Db raw(config.state_root / "state.sqlite3");
+    raw.exec("UPDATE session_revisions SET revision='broken'");
+    std::string diagnostics;
+    state.set_diagnostics([&](const auto &text) { diagnostics += text; });
+    try {
+      state.repair_session_token(s.id, false);
+      FAIL();
+    } catch (const Error &error) {
+      EXPECT_STREQ(error.what(),
+                   stage == 0 ? "failure before backup publication" : "published virtual backup");
+    }
+    EXPECT_EQ(token(raw, s.id), "broken");
+    EXPECT_THAT(diagnostics,
+                HasSubstr(stage == 1 ? "Session repair backup: "
+                                     : "backup candidate (publication unconfirmed): "));
+  }
+}
+TEST_F(Pr24, TokenOnlyDeferredCommitFailureRollsBackAndRetainsTheBackup) {
+  StateStore state(files, config.state_root);
+  auto s = state.create();
+  Db raw(config.state_root / "state.sqlite3");
+  raw.exec("UPDATE session_revisions SET revision='broken';CREATE TABLE parent(id PRIMARY KEY);"
+           "CREATE TABLE poison(id REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED);"
+           "CREATE TRIGGER refuse_session_token AFTER UPDATE ON session_revisions BEGIN INSERT "
+           "INTO poison VALUES(1); END");
+  std::string diagnostics;
+  state.set_diagnostics([&](const auto &text) { diagnostics += text; });
+  try {
+    state.repair_session_token(s.id, false);
+    FAIL();
+  } catch (const Error &error) {
+    EXPECT_THAT(error.what(), HasSubstr("FOREIGN KEY"));
+  }
+  EXPECT_EQ(token(raw, s.id), "broken");
+  EXPECT_THAT(diagnostics, HasSubstr("Session repair backup: "));
 }
