@@ -4,12 +4,11 @@ rules:
     severity: ERROR
     message: Use the permission-aware Processes API instead of an implicit command processor.
     # This AST rule intentionally applies to every production source/header.
-    # It also prevents files without a historical regression rule from being
-    # omitted by Semgrep's path/rule selection.
     pattern-either:
       - pattern: system(...)
       - pattern: ::system(...)
       - pattern: std::system(...)
+      - pattern: ::std::system(...)
       - pattern: popen(...)
       - pattern: ::popen(...)
       - pattern: _popen(...)

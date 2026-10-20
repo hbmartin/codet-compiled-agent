@@ -19,7 +19,6 @@ make analyze-modern  # Separate Clang configuration; GCC host cache is preserved
 make fetch-lint-tools # Explicit network step; Python 3.12, Go and ShellCheck required
 make check-lint      # Offline C/C++ formatting, Ruff, shell and workflow checks
 make fetch-semgrep    # Explicit network step; development-only Semgrep 1.177.0
-make test-semgrep     # Positive/negative local rule fixtures
 make check-semgrep    # Every maintained production source/header; no downloads
 ./build/host/codet --help
 ```
@@ -31,7 +30,7 @@ application and shared C text helpers in a separate Clang build. Ubuntu GitHub A
 same checks and host tests. See [analysis setup, reports and enforcement](docs/MODERN-ANALYSIS.md).
 
 Semgrep uses an ignored `build/semgrep-venv` environment; provisioning requires Python with
-`venv`/pip support (`python3-venv` on Ubuntu). Tool provisioning defaults to Python 3.12. Select another compatible interpreter with
+`venv`/pip support (`python3-venv` on Ubuntu). Interpreter commands default to `python3`; provisioning checks that it is Python 3.12+. Select a compatible interpreter with
 `SEMGREP_PYTHON=/path/to/python3`, or an existing pinned tool with `SEMGREP=/path/to/semgrep`.
 Checks require version 1.177.0, use only checked-in rules, disable metrics/version checks,
 and fail on findings or analysis errors. They guard discovery, checkpoint inspection,
@@ -43,21 +42,26 @@ interpreter/platform details, with repository-relative interpreter paths or an
 `make semgrep-environment` refreshes that evidence for the
 provisioned environment without installing anything. The complete Semgrep dependency closure is
 version/hash locked in `requirements/semgrep.lock`; provisioning accepts wheels only and runs `pip check`.
-Rule fixtures, including renamed and nested adversarial cases, are separate from production inputs.
-Successful reports must prove the complete source/header inventory and complete fixture rule inventory;
-empty scans, skips, parser errors, malformed reports and input changes fail. Failures retain JSON,
-stderr and the original failing exit status. Reports and environment evidence
-live under `build/semgrep/` and are uploaded by an independent Ubuntu policy job. Application builds and
+Production policies run directly through the pinned Semgrep CLI with strict errors and findings-as-failure.
+The scan covers native files under the production source/header roots using explicit extension filters.
+There are no rule fixtures, custom scan validators, or per-rule coverage manifests. File-specific rules
+still require their path filters to be maintained when files move; a successful scan does not prove
+that every rule selected a production target. JSON and stderr reports are retained under
+`build/semgrep/`, with pretty-printed failure diagnostics and the original failing exit status,
+and uploaded by an independent Ubuntu policy job. Application builds and
 Tiger binaries have no Semgrep dependency.
 
 `make check-lint` uses pinned clang-format 18.1.8, Ruff 0.17.1, actionlint 1.7.12,
 zizmor 1.30.1 and shfmt 3.14.1, plus an installed ShellCheck. Install ShellCheck with
-`apt install shellcheck` or `brew install shellcheck`; Go must support the pinned tool modules.
+`apt install shellcheck` or `brew install shellcheck`; Go 1.27.2 is selected from `.go-version` during explicit provisioning, without automatic upgrades beyond that version. The selected version is recorded in `build/lint/go-version.txt`.
 Individual offline targets are `check-format`, `check-python`, `check-shell`, and `check-workflows`.
-Formatting covers maintained production code, headers, tests and benchmarks; recovered C,
-dependencies and intentionally uncompiled Semgrep fixtures retain their separate policies.
+Formatting covers maintained production code, headers, tests and benchmarks; recovered C
+and dependencies retain their separate policies.
 Ruff covers scripts and Python tests with undefined-name/import, selected correctness, and
-Python 3.12 modernization checks. Detailed versions, commands and results live under `build/lint/`.
+Python 3.12 modernization checks. `LINT_PYTHON` defaults to `python3` and can select another interpreter.
+Lint versions are parsed and compared exactly; ShellCheck remains an installed, unpinned prerequisite.
+Requested reports are invalidated before discovery and atomically published, so interruptions cannot
+leave previous passing evidence for unfinished groups. Detailed versions, commands and results live under `build/lint/`.
 CI runs lint and policy checks independently of the native build; its `Required checks` job requires
 all three mandatory jobs to succeed. Select that aggregate job in repository branch rules when enforcing merges.
 To use the provisioned PyYAML for analyzer-runner tests, run

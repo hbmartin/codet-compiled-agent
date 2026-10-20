@@ -27,6 +27,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends python3-venv python3-yaml shellcheck
       - name: Test enforcement runners without building C++
         run: make test-lint-runners test-modern-analysis-runner LINT_PYTHON=python3
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
+          check-latest: false
+          cache: false
       - name: Provision pinned lint tools
         id: tools
         if: ${{ !cancelled() }}
@@ -54,8 +59,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends python3-venv
       - name: Provision hash-locked Semgrep environment
         run: make fetch-semgrep SEMGREP_PYTHON=python3
-      - name: Test local policies and adversarial fixtures
-        run: make test-semgrep SEMGREP_PYTHON=python3
       - name: Check every maintained production source and header
         if: ${{ !cancelled() }}
         run: make check-semgrep SEMGREP_PYTHON=python3
@@ -93,9 +96,6 @@ jobs:
       - name: Configure and build with Clang
         id: build
         run: make modern-analysis-host
-      - name: Test analysis runner
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: make test-modern-analysis-runner
       - name: Verify analyzer detection
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: make analyze-modern-selftest

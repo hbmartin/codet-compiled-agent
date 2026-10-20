@@ -432,6 +432,13 @@ struct ProviderStateUpdate {
   size_t unchanged = 0;
 };
 class StateStore {
+public:
+  struct StartupOptions {
+    const Cancellation *cancellation = nullptr;
+    DiagnosticSink diagnostics;
+  };
+
+private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
   void append_transcript(const Session &, Session *, size_t, bool,
@@ -443,13 +450,16 @@ class StateStore {
     std::string *source = nullptr;
   };
   Session read_session(const std::string &, const ReadOptions &);
-  StateStore(const fs::path &, const fs::path &, const std::string &, FileSystem *);
+  StateStore(const fs::path &, const fs::path &, const std::string &, FileSystem *,
+             const StartupOptions &);
 
 public:
   explicit StateStore(const fs::path &, const fs::path &artifact_root = {},
                       const std::string &durability = "durable");
   StateStore(FileSystem &, const fs::path &, const fs::path &artifact_root = {},
              const std::string &durability = "durable");
+  StateStore(FileSystem &, const fs::path &, const fs::path &, const std::string &,
+             const StartupOptions &);
   ~StateStore();
   void set_diagnostics(DiagnosticSink);
   Session create(const std::string &name = "");

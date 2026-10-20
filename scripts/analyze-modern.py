@@ -415,7 +415,7 @@ def actual_header_canaries(entries, folder, root):
             arguments.append(str(source) if not arg.startswith("-") and
                              candidate.resolve() == Path(source_entry["file"]).resolve() else arg)
         result.append(dict(source_entry, file=str(source), arguments=arguments,
-                           expected_diagnostic="arrayIndexOutOfBounds"))
+                           expectation="defective", expected_diagnostic="arrayIndexOutOfBounds"))
     # Exercise each loaded model with both defective and safe calls. These are
     # parsed through actual application/dependency headers, never executed.
     contracts = {
@@ -434,23 +434,53 @@ def actual_header_canaries(entries, folder, root):
                  'gzFile h = gzopen("/unexecuted", "rb"); if (h) gzclose(h);'),
     }
     template = result[-1]
+    # Keep SDK/library search paths, but do not preprocess application-only
+    # headers or the toml++ compatibility overlay for library model contracts.
+    omit = set()
+    for index, width, _, path in include_arguments(template):
+        if (path.is_relative_to(root / "include") or path.is_relative_to(root / ".deps") or
+                path.name == "generated"):
+            omit.update(range(index, index + width))
+    library_arguments = [arg for index, arg in enumerate(template["arguments"]) if index not in omit]
     for model in CPPCHECK_LIBRARIES:
         header, defective, safe = contracts[model]
         for kind, body in (("defective", defective), ("safe", safe)):
             source = (folder / ("library-" + model + "-" + kind + ".cpp")).resolve()
-            source.write_text('#include "codet/core.hpp"\n#include ' + header +
+            source.write_text('#include ' + header +
                               '\nvoid codet_library_canary() { ' + body + ' }\n')
             result.append(dict(template, file=str(source),
-                arguments=[str(source) if a == template["file"] else a for a in template["arguments"]],
+                arguments=[str(source) if a == template["file"] else a for a in library_arguments],
                 expected_diagnostic=("nullPointer" if model == "bsd" else "leakReturnValNotUsed")
                     if kind == "defective" else None,
-                library_model=model, expected_clean=(kind == "safe")))
+                library_model=model, expectation="clean" if kind == "safe" else "defective"))
     fatal = (folder / "suppressed-fatal.cpp").resolve()
     fatal.write_text("#include \"codet/core.hpp\"\n// cppcheck-suppress syntaxError\nint invalid( {\n")
-    template = result[-1]
     result.append(dict(template, file=str(fatal), arguments=[str(fatal) if a == template["file"] else a
-                                                          for a in template["arguments"]], expected_failure=True))
+                                                          for a in template["arguments"]],
+                       expectation="fatal", expected_diagnostic=None))
     return result
+
+
+def canary_passed(probe, run):
+    kind = probe.get("expectation")
+    if kind not in {"defective", "clean", "fatal"} or any(
+            key in probe for key in ("expected_clean", "expected_failure")):
+        raise ValueError("Invalid or contradictory canary expectation")
+    if bool(probe.get("expected_diagnostic")) != (kind == "defective"):
+        raise ValueError("Invalid canary diagnostic expectation")
+    if kind == "fatal":
+        return bool(run["failure"]) and run["exit_code"] not in (None, 0) and bool(
+            run.get("completion_proof", {}).get("critical_error"))
+    if run["failure"]:
+        return False
+    source = Path(probe["file"]).resolve()
+    directory = Path(probe["directory"])
+    attributed = [d for d in run.get("all_diagnostics", []) if any(
+        loc.get("file") and (directory / loc["file"]).resolve() == source
+        for loc in d.get("locations", []))]
+    if kind == "clean":
+        return not any(d.get("severity") != "information" for d in attributed)
+    return any(d.get("id") == probe["expected_diagnostic"] for d in attributed)
 
 
 def run_tool(tool, entries, folder, jobs, timeout, root=ROOT):
@@ -484,17 +514,10 @@ def run_tool(tool, entries, folder, jobs, timeout, root=ROOT):
         all_results = parallel_map(one, list(enumerate(normalized)), jobs)
         results = all_results[:len(entries)]
         for probe, run in zip(probes, all_results[len(entries):], strict=True):
-            if probe.get("expected_failure"):
-                passed = bool(run["failure"]) and run["exit_code"] != 0 and run.get("completion_proof", {}).get("critical_error", False)
-            elif probe.get("expected_clean"):
-                passed = not run["failure"] and not any(
-                    d.get("severity") != "information" and any(
-                        Path(loc.get("file", "")).resolve() == Path(probe["file"])
-                        for loc in d.get("locations", []))
-                    for d in run.get("all_diagnostics", []))
-            else:
-                passed = not run["failure"] and any(d.get("id") == probe["expected_diagnostic"] for d in run.get("all_diagnostics", []))
-            canaries.append(dict(source=probe["file"], expected_failure=probe.get("expected_failure", False), passed=passed, result=run))
+            passed = canary_passed(probe, run)
+            canaries.append(dict(source=probe["file"], expectation=probe["expectation"],
+                                 expected_diagnostic=probe.get("expected_diagnostic"),
+                                 library_model=probe.get("library_model"), passed=passed, result=run))
     else:
         results = parallel_map(lambda entry: clang_one(tool, entry, binaries[0], folder,
                                                        database, timeout, root), entries, jobs)

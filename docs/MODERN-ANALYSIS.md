@@ -98,7 +98,7 @@ truncation, termination and return-value tests.
 
 All analyzers attribute findings using resolved repository and source paths. A primary location or execution/call path in first-party code gates the run; translation-unit import identity alone does not. Dependency-only findings stay in reports. Every parser/internal failure, limit bail-out (including normal-depth branch/valueflow limits), crash, malformed report or missing completion record fails regardless of location. Inline suppression cannot hide a fatal Cppcheck failure: safety/critical-error evidence is checked separately.
 
-Cppcheck runs each translation unit in a separate project/cache. Coverage requires valid XML, a normal exit, no fatal/incomplete diagnostic, a successful checker completion report with semantic bounds/uninitialized checkers, and a nonempty semantic cache artifact. Progress messages and checker counts alone establish nothing. Each real gate additionally analyzes defective C and C++ bounds canaries, six defective/safe library-contract pairs through Codet's actual dependency headers, and a syntax-error canary with an inline suppression. Defect canaries must report the expected diagnostic, safe canaries must have no noninformational diagnostics attributed to their source, and the syntax canary must fail analysis. Raw reports and completion proofs are retained.
+Cppcheck runs each translation unit in a separate project/cache. Coverage requires valid XML, a normal exit, no fatal/incomplete diagnostic, a successful checker completion report with semantic bounds/uninitialized checkers, and a nonempty semantic cache artifact. Progress messages and checker counts alone establish nothing. Each real gate additionally analyzes defective C and C++ bounds canaries, six defective/safe library-contract pairs through Codet's actual dependency headers, and a syntax-error canary with an inline suppression. Library-contract probes include only their library headers and omit application/toml++ search paths, avoiding unnecessary compatibility preprocessing. Probe expectations are explicit and mutually exclusive. Defect canaries must report the expected diagnostic attributed to their own source, safe canaries must have no noninformational diagnostics attributed to their source, and the syntax canary must fail analysis. Raw reports and completion proofs are retained.
 
 Cppcheck's SimpleCpp preprocessor rejects toml++'s nested operator token-paste macro (also
 reproduced with upstream Cppcheck 2.22). For this tool only, the runner copies the dependency
@@ -126,18 +126,25 @@ temporary inputs and mocked tools. `make analyze-modern-selftest` additionally g
 deliberately defective C/C++ fixtures and checks that each installed tool detects the expected
 problem. Those fixtures are analyzed only: they are never linked or executed.
 
-`scripts/modern_sources.py` owns the maintained native inventory shared by analysis,
-formatting and Semgrep. The compiler-database check continues to fail if any application source
-lacks a command. Semgrep additionally parses maintained production headers and validates its
-successful JSON against the expected file inventory; all checked-in rules must have passing,
-nonvacuous fixtures. An always-applicable command-processor policy prevents the historical
-file-specific rule filters from silently removing otherwise uncovered files. Reports retain
-source/rule hashes; changes during a run fail. These structural rules do not establish
-authorization dominance, transaction ordering or race freedom.
+`scripts/modern_sources.py` owns the maintained native inventory shared by analysis and
+formatting. The compiler-database check fails if any application source lacks a command.
+Semgrep runs directly against the production source/header roots with native-extension filters,
+using the pinned CLI, strict analysis errors and findings-as-failure. It has no custom coverage
+validator or rule-test fixtures. Named-file policies must be updated when files move; passing
+Semgrep does not independently prove per-rule production targeting. Structural policies do not
+establish authorization dominance, transaction ordering or race freedom.
 
 Lint setup and commands are documented in [README.md](../README.md). `make test-lint-runners`
-checks missing tools, wrong versions, findings, malformed/empty reports, incomplete source/rule
-inventories and stale success manifests without installing or invoking analyzers.
+checks exact tool identity, missing tools, timeout and interruption handling, atomic publication
+and stale success evidence, plus report/environment utilities. Analyzer-runner unit tests run in
+the independent lint job; real analyzer detection remains in the native job.
+
+CLI startup accepts construction-time cancellation and diagnostics through an additive
+`StateStore::StartupOptions` overload. Contended migration waits emit one waiting diagnostic,
+then check cancellation between nonblocking attempts at intervals no longer than 20 ms.
+Existing constructors retain their interruptible blocking fallback. Lock trust checks and schema
+version 8 are unchanged. Signal integration tests synchronize on migration diagnostics or a
+blocked fixture request instead of assuming startup completes within a fixed delay.
 
 The `Modern checks` GitHub Actions workflow runs on Ubuntu 24.04 for pull requests, pushes to main and
 manual dispatch. Feature-branch pushes do not duplicate PR runs. It installs Clang 18, provisions pinned Cppcheck 2.22.0, fetches checksum-verified dependencies,
@@ -152,3 +159,6 @@ failure and retained for 14 days. Provider tests use hermetic fixtures rather th
 ## Superseded coverage evidence
 
 Earlier Cppcheck 2.13 passes are invalid as C++ coverage evidence. A dependency's suppressed syntax error caused the parser to abandon translation units after printing `Checking`, leaving empty caches and only four active checkers. Those runs did not analyze the application meaningfully. This pipeline replaces that evidence with source-hashed per-TU semantic completion records, real-header canaries and unsuppressible critical-failure checks. The 2.22.0 feasibility run exercised 125 active C++ checkers; the count is informative, never the coverage criterion. The installed 2.13 experimental Clang-parser probe crashed and is not an approved backend.
+
+Executed source hashes, suite results, tool versions and canary preprocessing evidence for this
+follow-up are recorded in [enforcement validation](validation/lint-enforcement-followup.json).

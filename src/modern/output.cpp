@@ -261,8 +261,8 @@ void OutputSpool::close() {
     }
   } else {
     // Only remove our own empty file, never a substituted directory entry.
-    struct stat own {
-    }, current{};
+    struct stat own {};
+    struct stat current {};
     if (::fstat(fd_, &own) == 0 && ::lstat(path_.c_str(), &current) == 0 &&
         own.st_dev == current.st_dev && own.st_ino == current.st_ino)
       (void)::unlink(path_.c_str());

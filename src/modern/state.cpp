@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <fcntl.h>
 #include <limits>
@@ -13,6 +14,7 @@
 #include <sqlite3.h>
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <thread>
 #include <tuple>
 #include <unistd.h>
 
@@ -1617,12 +1619,16 @@ struct StateStore::Impl {
 };
 StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
                        const std::string &durability)
-    : StateStore(home, artifact_root, durability, nullptr) {}
+    : StateStore(home, artifact_root, durability, nullptr, {}) {}
 StateStore::StateStore(FileSystem &files, const fs::path &home, const fs::path &artifact_root,
                        const std::string &durability)
-    : StateStore(home, artifact_root, durability, &files) {}
+    : StateStore(home, artifact_root, durability, &files, {}) {}
+StateStore::StateStore(FileSystem &files, const fs::path &home, const fs::path &artifact_root,
+                       const std::string &durability, const StartupOptions &startup)
+    : StateStore(home, artifact_root, durability, &files, startup) {}
 StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
-                       const std::string &durability, FileSystem *files)
+                       const std::string &durability, FileSystem *files,
+                       const StartupOptions &startup)
     : impl_(std::make_unique<Impl>()) {
   if (files)
     impl_->files = files;
@@ -1676,10 +1682,36 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
         migration_stat.st_uid != ::geteuid() || ::fchmod(migration_fd, 0600) ||
         ::fcntl(migration_fd, F_SETFD, FD_CLOEXEC) < 0)
       throw Error("Database migration lock must be an owned regular file");
-    if (::flock(migration_fd, LOCK_EX)) {
+    bool notified = false;
+    const auto notify_waiting = [&]() noexcept {
+      try {
+        report_diagnostic(startup.diagnostics, "Waiting for database migration");
+      } catch (...) {
+        return;
+      }
+    };
+    for (;;) {
+      if (startup.cancellation && startup.cancellation->requested.load())
+        throw Error("Interrupted waiting for database migration", 130);
+      if (::flock(migration_fd, LOCK_EX | LOCK_NB) == 0)
+        break;
       if (errno == EINTR)
         throw Error("Interrupted waiting for database migration", 130);
-      throw Error("Cannot acquire database migration lock");
+      if (errno != EWOULDBLOCK && errno != EAGAIN)
+        throw Error("Cannot acquire database migration lock");
+      if (!notified && startup.diagnostics) {
+        notified = true;
+        notify_waiting();
+      }
+      // Existing constructors retain their interruptible blocking behavior.
+      if (!startup.cancellation) {
+        if (::flock(migration_fd, LOCK_EX) == 0)
+          break;
+        if (errno == EINTR)
+          throw Error("Interrupted waiting for database migration", 130);
+        throw Error("Cannot acquire database migration lock");
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
   };
   if (version() < 8) {
