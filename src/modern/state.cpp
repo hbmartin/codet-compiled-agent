@@ -52,6 +52,9 @@ template <class T> T session_json(const std::string &bytes) {
   throw Error(std::string(operation) + " (SQLite " + std::to_string(status) +
               "): " + sqlite3_errmsg(db));
 }
+bool valid_revision_token(const std::string &token) {
+  return token.size() == 32 && token.find_first_not_of("0123456789abcdef") == std::string::npos;
+}
 constexpr size_t provider_cache_limit = size_t{8} * 1024 * 1024;
 [[noreturn]] void corrupt_provider() {
   throw ProviderCacheCorruption(
@@ -399,6 +402,14 @@ fs::path repair_directory(const fs::path &home) {
   return dir;
 }
 } // namespace
+struct SessionVersion {
+  std::string token;
+  int schema = 0;
+  bool present = false;
+  bool operator==(const SessionVersion &other) const {
+    return token == other.token && schema == other.schema && present == other.present;
+  }
+};
 // Immutable snapshot provenance. Pending payloads are shared, never copied on acknowledgement.
 struct SessionProjection {
   struct Mapping {
@@ -406,8 +417,14 @@ struct SessionProjection {
     size_t source_position = 0;
   };
   struct Recovery {
+    struct Provisional {
+      std::string message_id, status;
+    };
     std::string source, journal;
     std::vector<std::string> baseline;
+    SessionVersion version;
+    std::set<std::string> calls;
+    std::map<std::string, Provisional> provisional;
   };
   struct Pending {
     std::string source, normalized; // Stored source bytes and their read-only normalization.
@@ -430,6 +447,80 @@ struct StateStore::Impl {
   mutable fs::path artifact_anchor;
   NativeFileSystem native_files;
   FileSystem *files = &native_files;
+  DiagnosticSink diagnostics;
+  void diagnostic(const std::string &message) const noexcept {
+    try {
+      report_diagnostic(diagnostics, message);
+    } catch (...) {
+      // Diagnostics must never replace the exception or fail an owning commit.
+      return;
+    }
+  }
+  bool publication_confirmed(const fs::path &path, const std::string &bytes) const noexcept {
+    try {
+      return files->read(path, bytes.size()) == bytes;
+    } catch (...) {
+      return false;
+    }
+  }
+  void require_session_token(const std::string &id) {
+    (void)session_version(id);
+  }
+  struct Backup {
+    std::string path;
+    bool confirmed = false;
+  };
+  Json raw_backup(const std::string &id) const {
+    Json backup = {{"session", id}, {"kind", "session_repair_backup"}};
+    for (const auto *table : {"sessions", "session_messages", "provider_parts", "tools",
+                              "session_references", "provider_revisions", "session_revisions"}) {
+      const auto query = std::string("SELECT * FROM ") + table +
+                         (std::string(table) == "sessions" ? " WHERE id=?" : " WHERE session=?");
+      Statement rows(db, query.c_str());
+      rows.text(1, id);
+      backup[table] = Json::array();
+      int status;
+      while ((status = sqlite3_step(rows.p)) == SQLITE_ROW) {
+        Json row = Json::object();
+        for (int i = 0; i < sqlite3_column_count(rows.p); ++i) {
+          const auto value = column(rows.p, i);
+          const auto type = sqlite3_column_type(rows.p, i);
+          Json stored = type == SQLITE_NULL ? Json() : Json(value);
+          if (type != SQLITE_NULL && safe_text(value) != value)
+            stored = {{"encoding", "base64"}, {"bytes", base64_encode(value)}};
+          row[sqlite3_column_name(rows.p, i)] = std::move(stored);
+        }
+        backup[table].push_back(std::move(row));
+      }
+      if (status != SQLITE_DONE)
+        sql_read_error(db, "Cannot back up session repair rows", status);
+    }
+    return backup;
+  }
+  void write_backup(std::vector<Backup> &backups, const std::string &id, const Json &backup) {
+    const auto bytes = backup.dump();
+    backups.push_back(
+        {(repair_directory(home) / (id + "-backup-" + unique_id() + ".json")).string(), false});
+    auto &record = backups.back();
+    try {
+      files->atomic_write(record.path, bytes, true);
+      record.confirmed = true;
+    } catch (...) {
+      record.confirmed = publication_confirmed(record.path, bytes);
+      throw;
+    }
+  }
+  void report_backups(const std::vector<Backup> &backups) const noexcept {
+    for (const auto &backup : backups)
+      try {
+        diagnostic((backup.confirmed
+                        ? "Session repair backup: "
+                        : "Session repair backup candidate (publication unconfirmed): ") +
+                   backup.path);
+      } catch (...) {
+        continue;
+      }
+  }
   bool anchor() const {
     if (!artifact_anchor.empty())
       return true;
@@ -509,14 +600,15 @@ struct StateStore::Impl {
     if (!sqlite3_get_autocommit(db))
       throw Error("Transcript writes require their own transaction");
   }
-  struct SessionVersion {
-    std::string token;
-    int schema = 0;
-    bool present = false;
-    bool operator==(const SessionVersion &other) const {
-      return token == other.token && schema == other.schema && present == other.present;
-    }
-  };
+  using SessionVersion = codet::SessionVersion;
+  bool session_exists(const std::string &id) const {
+    Statement exists(db, "SELECT 1 FROM sessions WHERE id=?");
+    exists.text(1, id);
+    const auto status = sqlite3_step(exists.p);
+    if (status != SQLITE_ROW && status != SQLITE_DONE)
+      sql_read_error(db, "Cannot inspect session existence", status);
+    return status == SQLITE_ROW;
+  }
   SessionVersion session_version(const std::string &id, bool allow_invalid = false) {
     verify_revisions();
     Statement q(db, "SELECT revision FROM session_revisions WHERE session=?");
@@ -534,8 +626,7 @@ struct StateStore::Impl {
       if (found == SQLITE_DONE)
         return {token, verified_schema, status == SQLITE_ROW};
     }
-    if (!allow_invalid && (status != SQLITE_ROW || token.size() != 32 ||
-                           token.find_first_not_of("0123456789abcdef") != std::string::npos))
+    if (!allow_invalid && (status != SQLITE_ROW || !valid_revision_token(token)))
       throw InvalidSessionToken("Invalid session revision token; explicit session repair required");
     return {token, verified_schema, status == SQLITE_ROW};
   }
@@ -559,11 +650,20 @@ struct StateStore::Impl {
     MemoryPublication memory = MemoryPublication::publish;
     CanonicalInput input = CanonicalInput::normalize;
     RecoveryInput recovery = RecoveryInput::prepare;
+    const Message *suffix = nullptr; // Prepared append overlay; caller history stays untouched.
   };
   struct PreparedJournal {
     std::string id, name, args, status;
     std::shared_ptr<const std::string> payload;
   };
+  struct CommitReceipt {
+    std::string session;
+    std::weak_ptr<const SessionProjection> projection;
+    SessionVersion version;
+    std::vector<std::string> input, canonical;
+  };
+  std::shared_ptr<CommitReceipt> receipt;
+  mutable uint64_t transcript_rows = 0;
   struct PreparedTranscript {
     WriteKind kind = WriteKind::append;
     size_t first = 0;
@@ -576,7 +676,75 @@ struct StateStore::Impl {
     std::map<size_t, std::set<std::string>> expected;
     std::shared_ptr<const SessionProjection> committed;
     JsonRetirement retirement;
+    std::shared_ptr<CommitReceipt> receipt;
   };
+  bool receipt_matches(const Session &s, const SessionVersion &version) const {
+    return receipt && receipt->session == s.id &&
+           receipt->projection.lock() == s.checkpoint_projection && receipt->version == version;
+  }
+  void prepare_receipt(const Session &s, PreparedTranscript &plan) const {
+    constexpr size_t receipt_limit = size_t{8} * 1024 * 1024;
+    const auto overhead = sizeof(CommitReceipt) + s.id.size() + 32 + 2 * sizeof(void *);
+    if (!s.checkpoint_projection || !s.checkpoint_projection->recovery ||
+        overhead > receipt_limit ||
+        s.messages.size() >
+            (receipt_limit - overhead) / (size_t{2} * 64 + size_t{2} * sizeof(std::string)))
+      return;
+    try {
+      auto next = std::make_shared<CommitReceipt>();
+      next->session = s.id;
+      next->projection = s.checkpoint_projection;
+      next->input = message_fingerprints(s.messages);
+      next->canonical.reserve(s.messages.size());
+      std::map<std::string, std::string> names;
+      for (size_t i = 0; i < s.messages.size(); ++i) {
+        for (const auto &call : s.messages[i].calls)
+          names[call.id] = call.name;
+        const auto row = plan.rows.find(i);
+        if (row != plan.rows.end())
+          next->canonical.push_back(digest(*row->second.payload));
+        else if (receipt_matches(s, plan.version) && i < receipt->canonical.size())
+          next->canonical.push_back(receipt->canonical[i]);
+        else {
+          auto message = lexical(s.messages[i], s.id, i, names[s.messages[i].tool_call_id]);
+          known_projection(message, i, s.checkpoint_projection, s.id);
+          next->canonical.push_back(digest(safe_json(Json(message)).dump()));
+        }
+      }
+      plan.receipt = std::move(next);
+    } catch (const std::bad_alloc &) {
+      // Optional knowledge cannot turn a valid write into an allocation failure.
+      return;
+    }
+  }
+  void capture_receipt(const std::string &id, PreparedTranscript &plan) {
+    if (plan.receipt)
+      plan.receipt->version = session_version(id);
+  }
+  void publish_receipt(PreparedTranscript &plan) noexcept {
+    receipt = std::move(plan.receipt);
+  }
+  template <class Prepare, class Write, class Publish>
+  void publish_retry(const std::string &id, Prepare prepare_plan, Write write, Publish publish,
+                     const char *exhausted) {
+    static_assert(noexcept(publish(std::declval<PreparedTranscript &>())),
+                  "Commit acknowledgement must not throw");
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      auto plan = prepare_plan();
+      {
+        Transaction transaction(db);
+        if (!prepared_current(id, plan))
+          continue;
+        write(plan);
+        capture_receipt(id, plan);
+        transaction.commit();
+      }
+      publish_receipt(plan);
+      publish(plan);
+      return;
+    }
+    throw Error(exhausted);
+  }
   std::optional<std::string> stored_payload(const std::string &id, size_t position,
                                             Statement &row) const {
     sqlite3_reset(row.p);
@@ -604,6 +772,7 @@ struct StateStore::Impl {
     rows.text(1, id);
     int status;
     while ((status = sqlite3_step(rows.p)) == SQLITE_ROW) {
+      ++transcript_rows;
       if (sqlite3_column_int64(rows.p, 0) != static_cast<sqlite3_int64>(out.messages.size()))
         throw StoredDataCorruption("Corrupt session messages: noncontiguous positions");
       auto bytes = column(rows.p, 1);
@@ -625,6 +794,11 @@ struct StateStore::Impl {
   }
   PreparedTranscript prepare(const Session &s, std::vector<size_t> positions,
                              const PrepareOptions &options) {
+    const auto message_count = s.messages.size() + (options.suffix ? 1u : 0u);
+    const auto input_at = [&](size_t position) -> const Message & {
+      return options.suffix && position == s.messages.size() ? *options.suffix
+                                                             : s.messages.at(position);
+    };
     const auto kind = options.kind;
     const auto first = options.first;
     const auto &tool = options.tool;
@@ -675,11 +849,11 @@ struct StateStore::Impl {
           known_projection(stored[i], i, s.checkpoint_projection, s.id);
         const std::set<size_t> requested(positions.begin(), positions.end());
         if ((kind == WriteKind::append && stored.size() != first) ||
-            (kind == WriteKind::revise && stored.size() != s.messages.size()))
+            (kind == WriteKind::revise && stored.size() != message_count))
           throw Error("Session changed before legacy transcript write");
         std::map<std::string, std::string> context;
-        for (size_t i = 0; i < s.messages.size(); ++i) {
-          const auto &input = s.messages[i];
+        for (size_t i = 0; i < message_count; ++i) {
+          const auto &input = input_at(i);
           for (const auto &call : input.calls)
             context[call.id] = call.name;
           const bool equal = i < stored.size() && same_message(input, stored[i]);
@@ -699,7 +873,7 @@ struct StateStore::Impl {
         }
         if (plan.blob) {
           positions.clear();
-          for (size_t i = 0; i < s.messages.size(); ++i)
+          for (size_t i = 0; i < message_count; ++i)
             positions.push_back(i);
         }
       }
@@ -709,7 +883,7 @@ struct StateStore::Impl {
                               (previous && (!previous->pending.empty() || previous->recovery));
     for (const auto position : positions)
       provenance_changed = provenance_changed ||
-                           absolute_checkpoint_reference(s.messages.at(position)) ||
+                           absolute_checkpoint_reference(input_at(position)) ||
                            (previous && previous->mappings.count(position));
     auto compact = std::make_shared<SessionProjection>();
     compact->session = s.id;
@@ -720,10 +894,10 @@ struct StateStore::Impl {
         for (const auto &row : previous->pending) {
           plan.expected[row.first] = {row.second->source, row.second->normalized};
           if (kind != WriteKind::replace && !requested.count(row.first)) {
-            if (row.first >= s.messages.size())
+            if (row.first >= message_count)
               throw Error("Pending checkpoint message missing from snapshot");
             auto message = session_json<Message>(*row.second->payload);
-            auto input = s.messages.at(row.first);
+            auto input = input_at(row.first);
             known_projection(input, row.first, previous, s.id);
             if (!same_message(input, message))
               throw Error("Unrequested checkpoint message changed");
@@ -736,7 +910,7 @@ struct StateStore::Impl {
     if (!plan.blob && !plan.legacy_rows && !canonical) {
       std::set<std::string> needed;
       for (const auto position : positions) {
-        const auto &message = s.messages.at(position);
+        const auto &message = input_at(position);
         if (message.role == "tool" && (tool.empty() || position != first))
           needed.insert(message.tool_call_id);
       }
@@ -760,7 +934,7 @@ struct StateStore::Impl {
     for (const auto position : positions) {
       if (compact->mappings.count(position) || plan.legacy_rows)
         expect_source(position);
-      const auto &input = s.messages.at(position);
+      const auto &input = input_at(position);
       auto message =
           (plan.blob || plan.legacy_rows) ? std::move(materialized.at(position))
           : canonical
@@ -785,9 +959,9 @@ struct StateStore::Impl {
     for (auto row = compact->mappings.begin(); row != compact->mappings.end();) {
       const auto position = row->first;
       const auto prepared = plan.rows.find(position);
-      const Message *message = prepared != plan.rows.end()    ? &prepared->second.message
-                               : position < s.messages.size() ? &s.messages[position]
-                                                              : nullptr;
+      const Message *message = prepared != plan.rows.end() ? &prepared->second.message
+                               : position < message_count  ? &input_at(position)
+                                                           : nullptr;
       if (!message || !message->checkpoint_state.is_object() ||
           message->message_id != row->second.message_id ||
           message->checkpoint_state.value("recovery_record", std::string{}) !=
@@ -803,7 +977,7 @@ struct StateStore::Impl {
         entry.second.insert(digest(*target->second.payload));
     }
     for (const auto &entry : plan.rows)
-      plan.retirement.prepare(publish_memory ? s.messages.at(entry.first) : entry.second.message);
+      plan.retirement.prepare(publish_memory ? input_at(entry.first) : entry.second.message);
     for (auto &mapping : compact->mappings)
       mapping.second.source_position = mapping.first;
     plan.committed = provenance_changed ? std::move(compact) : previous;
@@ -883,23 +1057,29 @@ struct StateStore::Impl {
     std::string result, status, name, args;
   };
   using Journal = std::map<std::string, JournalEntry>;
-  Journal read_journal(const std::string &id, const std::vector<Message> &messages) const {
+  Journal read_journal(const std::string &id, const std::vector<Message> &messages,
+                       const std::vector<Message> *extra = nullptr) const {
     Journal journal;
+    std::set<std::string> queried;
     Statement row(db, "SELECT result,status,name,args FROM tools WHERE session=? AND call_id=?");
-    for (const auto &message : messages)
-      for (const auto &call : message.calls) {
-        if (journal.count(call.id))
-          continue;
-        sqlite3_reset(row.p);
-        row.text(1, id);
-        row.text(2, call.id);
-        const auto status = sqlite3_step(row.p);
-        if (status == SQLITE_ROW)
-          journal.emplace(call.id, JournalEntry{column(row.p, 0), column(row.p, 1),
-                                                column(row.p, 2), column(row.p, 3)});
-        else if (status != SQLITE_DONE)
-          sql_read_error(db, "Cannot read tool journal", status);
-      }
+    for (const auto *inputs : {&messages, extra}) {
+      if (!inputs)
+        continue;
+      for (const auto &message : *inputs)
+        for (const auto &call : message.calls) {
+          if (!queried.insert(call.id).second)
+            continue;
+          sqlite3_reset(row.p);
+          row.text(1, id);
+          row.text(2, call.id);
+          const auto status = sqlite3_step(row.p);
+          if (status == SQLITE_ROW)
+            journal.emplace(call.id, JournalEntry{column(row.p, 0), column(row.p, 1),
+                                                  column(row.p, 2), column(row.p, 3)});
+          else if (status != SQLITE_DONE)
+            sql_read_error(db, "Cannot read tool journal", status);
+        }
+    }
     return journal;
   }
   struct Recovered {
@@ -908,7 +1088,8 @@ struct StateStore::Impl {
     std::vector<size_t> origins;
   };
   static Recovered recover(const std::vector<Message> &messages, const Journal &journal,
-                           const std::string &id) {
+                           const std::string &id,
+                           const std::set<std::string> *historical = nullptr) {
     std::map<std::string, const ToolCall *> calls;
     std::map<std::string, const Message *> answers;
     for (const auto &message : messages) {
@@ -936,6 +1117,14 @@ struct StateStore::Impl {
       recovered.origins.push_back(static_cast<size_t>(&message - messages.data()));
       recovered.messages.push_back(message);
       for (const auto &call : message.calls) {
+        if (historical && !historical->count(call.id)) {
+          // Calls added after this recovery snapshot are live, not interrupted history.
+          if (answers.count(call.id)) {
+            recovered.messages.push_back(*answers.at(call.id));
+            recovered.origins.push_back(static_cast<size_t>(answers.at(call.id) - messages.data()));
+          }
+          continue;
+        }
         const auto record = journal.find(call.id);
         const bool recorded = record != journal.end();
         const auto status = recorded ? record->second.status : "not_started";
@@ -1061,18 +1250,30 @@ struct StateStore::Impl {
         out += std::to_string(part->size()) + ":" + digest(*part);
     return digest(out);
   }
+  static std::string message_fingerprint(const Message &message) {
+    return digest(safe_json(Json(message)).dump());
+  }
   static std::vector<std::string> message_fingerprints(const std::vector<Message> &messages) {
     std::vector<std::string> out;
     out.reserve(messages.size());
     for (const auto &message : messages)
-      out.push_back(digest(safe_json(Json(message)).dump()));
+      out.push_back(message_fingerprint(message));
     return out;
   }
-  static std::shared_ptr<const SessionProjection>
-  recovered_projection(const std::string &id,
-                       const std::shared_ptr<const SessionProjection> &previous,
-                       const std::vector<Message> &before, const Recovered &recovered,
-                       std::string source, const Journal &journal) {
+  static void prepare_journal(PreparedTranscript &plan, const std::vector<Message> &messages,
+                              const std::map<std::string, std::pair<size_t, std::string>> &writes) {
+    for (const auto &message : messages)
+      for (const auto &call : message.calls) {
+        const auto entry = writes.find(call.id);
+        if (entry != writes.end())
+          plan.journal.push_back({call.id, call.name, safe_json(call.arguments).dump(),
+                                  entry->second.second, plan.rows.at(entry->second.first).payload});
+      }
+  }
+  static std::shared_ptr<const SessionProjection> recovered_projection(
+      const std::string &id, const std::shared_ptr<const SessionProjection> &previous,
+      const std::vector<Message> &before, const Recovered &recovered, std::string source,
+      const Journal &journal, const SessionVersion &version, const Recovered *persisted = nullptr) {
     if (same_messages(before, recovered.messages))
       return previous;
     auto projection = std::make_shared<SessionProjection>();
@@ -1092,7 +1293,16 @@ struct StateStore::Impl {
     auto recovery = std::make_shared<SessionProjection::Recovery>();
     recovery->source = std::move(source);
     recovery->journal = journal_signature(journal);
-    recovery->baseline = message_fingerprints(recovered.messages);
+    recovery->baseline = message_fingerprints(persisted ? persisted->messages : recovered.messages);
+    recovery->version = version;
+    for (const auto &message : recovered.messages)
+      for (const auto &call : message.calls)
+        recovery->calls.insert(call.id);
+    for (const auto &entry : recovered.writes)
+      recovery->provisional.emplace(
+          entry.first,
+          SessionProjection::Recovery::Provisional{
+              recovered.messages.at(entry.second.first).message_id, entry.second.second});
     projection->recovery = std::move(recovery);
     return projection;
   }
@@ -1100,6 +1310,27 @@ struct StateStore::Impl {
                                        const PrepareOptions &options) {
     Transaction snapshot(db, false);
     const auto version = session_version(s.id);
+    if (receipt_matches(s, version)) {
+      const auto &acknowledged = *receipt;
+      const std::set<size_t> requested(positions.begin(), positions.end());
+      if ((options.kind == WriteKind::append && options.first != acknowledged.canonical.size()) ||
+          (options.kind == WriteKind::revise && s.messages.size() != acknowledged.canonical.size()))
+        throw Error("Session changed before recovered transcript write");
+      for (size_t i = 0; i < acknowledged.canonical.size(); ++i) {
+        const auto fingerprint = message_fingerprint(s.messages.at(i));
+        if ((options.kind == WriteKind::append || !requested.count(i)) &&
+            fingerprint != acknowledged.input[i] && fingerprint != acknowledged.canonical[i])
+          throw Error("Unrequested recovered transcript message changed");
+        if (options.memory == MemoryPublication::publish && !requested.count(i) &&
+            fingerprint != acknowledged.canonical[i])
+          positions.push_back(i);
+      }
+      auto verified = options;
+      verified.recovery = RecoveryInput::verified;
+      auto plan = prepare(s, std::move(positions), verified);
+      snapshot.commit();
+      return plan;
+    }
     std::vector<Message> stored;
     bool blob = false;
     std::string signature;
@@ -1121,15 +1352,13 @@ struct StateStore::Impl {
     }
     portable_messages(stored, s.id);
     ensure_message_ids(stored);
-    const bool absolute = std::any_of(stored.begin(), stored.end(), [](const Message &m) {
-      return absolute_checkpoint_reference(m);
-    });
     Session view{s.id, s.name, std::move(stored)};
     known_projections(view, s.checkpoint_projection);
     const auto journal = read_journal(s.id, view.messages);
-    auto recovered = recover(view.messages, journal, s.id);
-    const bool already_recovered = !blob && !absolute && recovered.writes.empty() &&
-                                   same_messages(view.messages, recovered.messages);
+    auto recovered =
+        recover(view.messages, journal, s.id, &s.checkpoint_projection->recovery->calls);
+    const bool already_recovered =
+        !blob && recovered.writes.empty() && same_messages(view.messages, recovered.messages);
     view.messages = std::move(recovered.messages);
     known_projections(view, s.checkpoint_projection);
     const auto &baseline = *s.checkpoint_projection->recovery;
@@ -1201,13 +1430,14 @@ struct StateStore::Impl {
       plan = prepare(working, std::move(all), publication);
     }
     plan.version = version;
-    for (const auto &message : view.messages)
-      for (const auto &call : message.calls) {
-        const auto entry = recovered.writes.find(call.id);
-        if (entry != recovered.writes.end())
-          plan.journal.push_back({call.id, call.name, safe_json(call.arguments).dump(),
-                                  entry->second.second, plan.rows.at(entry->second.first).payload});
-      }
+    auto writes = recovered.writes;
+    for (const auto &row : plan.rows) {
+      const auto provisional = baseline.provisional.find(row.second.message.tool_call_id);
+      if (provisional != baseline.provisional.end() &&
+          provisional->second.message_id == row.second.message.message_id)
+        writes.emplace(provisional->first, std::make_pair(row.first, provisional->second.status));
+    }
+    prepare_journal(plan, s.messages, writes);
     snapshot.commit();
     return plan;
   }
@@ -1265,6 +1495,7 @@ struct StateStore::Impl {
     if (paths.empty())
       return;
     Transaction transaction(db);
+    require_session_token(id);
     insert_reference_rows(db, id, paths);
     transaction.commit();
     if (transaction.owner) {
@@ -1303,8 +1534,9 @@ struct StateStore::Impl {
   int verified_schema = -1;
   void verify_revisions() {
     Statement version(db, "PRAGMA schema_version");
-    if (sqlite3_step(version.p) != SQLITE_ROW)
-      throw Error("Cannot inspect provider revision schema");
+    const auto schema_status = sqlite3_step(version.p);
+    if (schema_status != SQLITE_ROW)
+      sql_read_error(db, "Cannot inspect revision schema version", schema_status);
     const auto current = sqlite3_column_int(version.p, 0);
     if (current == verified_schema)
       return;
@@ -1315,9 +1547,10 @@ struct StateStore::Impl {
       Statement q(db, "SELECT sql FROM sqlite_master WHERE name=?");
       q.text(1, definition.first);
       const auto status = sqlite3_step(q.p);
-      if (status != SQLITE_ROW && status != SQLITE_DONE)
-        throw Error("Cannot inspect provider revision infrastructure: " +
-                    std::string(sqlite3_errmsg(db)));
+      if (status != SQLITE_ROW && status != SQLITE_DONE) {
+        const auto context = "Cannot inspect revision infrastructure " + definition.first;
+        sql_read_error(db, context.c_str(), status);
+      }
       if (status == SQLITE_DONE || column(q.p, 0) != definition.second)
         throw RevisionIntegrityError("Invalid revision infrastructure: " + definition.first);
     }
@@ -1333,7 +1566,7 @@ struct StateStore::Impl {
     if (status != SQLITE_ROW)
       throw Error("Cannot inspect provider revision");
     const auto token = column(q.p, 0);
-    if (token.size() != 32 || token.find_first_not_of("0123456789abcdef") != std::string::npos)
+    if (!valid_revision_token(token))
       throw InvalidRevisionToken(
           "Invalid provider revision token; explicit provider-cache repair required");
     return token;
@@ -1519,7 +1752,7 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
             } catch (const Json::exception &) {
               continue; // Loading this session still reports its corrupt transcript.
             }
-            remember_references(column(sessions.p, 0), parsed);
+            insert_reference_rows(impl_->db, column(sessions.p, 0), impl_->message_paths(parsed));
           }
           if (status != SQLITE_DONE)
             throw Error("Cannot backfill session references: " +
@@ -1534,7 +1767,7 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
             } catch (const Json::exception &) {
               continue; // Reconciliation retains its existing corrupt-record handling.
             }
-            remember_references(column(journal.p, 0), {parsed});
+            insert_reference_rows(impl_->db, column(journal.p, 0), impl_->message_paths({parsed}));
           }
           if (status != SQLITE_DONE)
             throw Error("Cannot backfill journal references: " +
@@ -1651,6 +1884,9 @@ StateStore::~StateStore() {
       std::fprintf(stderr, "Session synchronization failed: %s\n", e.what());
     }
   }
+}
+void StateStore::set_diagnostics(DiagnosticSink sink) {
+  impl_->diagnostics = std::move(sink);
 }
 uint64_t StateStore::serialized_bytes() const {
   return impl_->serialized;
@@ -1804,8 +2040,8 @@ Session StateStore::read_session(const std::string &id, const ReadOptions &optio
       s.provider_state["messages"] = Json::array();
   }
   const auto journal = repair ? impl_->read_journal(s.id, s.messages) : Impl::Journal{};
-  if (validate_revision)
-    (void)impl_->session_version(s.id);
+  const auto version =
+      validate_revision ? impl_->session_version(s.id, true) : Impl::SessionVersion{};
   // Capture every required input before optional population, which may lose the read transaction.
   if (provider_state && snapshot.owner)
     provider_token = impl_->load_provider_token(s.id);
@@ -1852,7 +2088,7 @@ Session StateStore::read_session(const std::string &id, const ReadOptions &optio
     if (project)
       s.checkpoint_projection =
           Impl::recovered_projection(s.id, s.checkpoint_projection, s.messages, recovered,
-                                     std::move(source_signature), journal);
+                                     std::move(source_signature), journal, version);
     s.messages = std::move(recovered.messages);
   }
   return s;
@@ -1875,14 +2111,20 @@ void StateStore::reconcile(Session &destination, bool persist) {
     Impl::Journal journal;
     bool stored_equal = true;
     std::string source_signature;
+    Impl::Recovered persisted;
     {
       Transaction snapshot(impl_->db, false);
-      version = impl_->session_version(session.id);
+      version = impl_->session_version(session.id, !persist);
       ReadOptions read_options;
       read_options.provider = false;
       read_options.project = false;
-      read_options.source = &source_signature;
-      auto stored = read_session(session.id, read_options);
+      read_options.source = persist ? nullptr : &source_signature;
+      Session stored{session.id, session.name, {}};
+      if (persist || impl_->session_exists(session.id))
+        stored = read_session(session.id, read_options);
+      else
+        source_signature = "rows:" + digest("");
+      impl_->known_projections(stored, session.checkpoint_projection);
       if (persist) {
         impl_->known_projections(stored, session.checkpoint_projection);
         const auto comparison = Impl::compare_messages(stored.messages, session.messages);
@@ -1890,16 +2132,19 @@ void StateStore::reconcile(Session &destination, bool persist) {
           throw Error("Session modified by another process: reload before recovery");
         stored_equal = comparison.exact;
       }
-      journal = impl_->read_journal(session.id, session.messages);
+      journal =
+          impl_->read_journal(session.id, session.messages, persist ? nullptr : &stored.messages);
+      if (!persist)
+        persisted = impl_->recover(stored.messages, journal, session.id);
       snapshot.commit();
     }
     auto recovered = impl_->recover(session.messages, journal, session.id);
     const bool unchanged = impl_->same_messages(recovered.messages, session.messages) &&
                            recovered.writes.empty() && stored_equal;
     if (!persist) {
-      auto projection =
-          Impl::recovered_projection(session.id, session.checkpoint_projection, session.messages,
-                                     recovered, std::move(source_signature), journal);
+      auto projection = Impl::recovered_projection(
+          session.id, session.checkpoint_projection, session.messages, recovered,
+          std::move(source_signature), journal, version, &persisted);
       destination.messages.swap(recovered.messages);
       destination.checkpoint_projection = std::move(projection);
       return;
@@ -1913,14 +2158,7 @@ void StateStore::reconcile(Session &destination, bool persist) {
     options.kind = unchanged ? Impl::WriteKind::revise : Impl::WriteKind::replace;
     options.input = Impl::CanonicalInput::ready;
     auto prepared = impl_->prepare(session, std::move(positions), options);
-    for (const auto &message : session.messages)
-      for (const auto &call : message.calls) {
-        const auto entry = recovered.writes.find(call.id);
-        if (entry != recovered.writes.end())
-          prepared.journal.push_back({call.id, call.name, safe_json(call.arguments).dump(),
-                                      entry->second.second,
-                                      prepared.rows.at(entry->second.first).payload});
-      }
+    Impl::prepare_journal(prepared, session.messages, recovered.writes);
     JsonRetirement retirement;
     for (const auto &message : destination.messages)
       retirement.prepare(message);
@@ -1984,20 +2222,32 @@ Session StateStore::fork(const Session &parent) {
       message.artifact_index = artifact_index_reference(s.id);
   save(s);
   remember_references(s.id, s.messages);
-  Statement refs(impl_->db, "INSERT OR IGNORE INTO session_references(session,kind,path) "
-                            "SELECT ?,kind,path FROM session_references WHERE session=?");
-  refs.text(1, s.id);
-  refs.text(2, parent.id);
-  refs.run();
+  {
+    JournalTransaction publication(impl_->db);
+    impl_->require_session_token(s.id);
+    Statement refs(impl_->db, "INSERT OR IGNORE INTO session_references(session,kind,path) "
+                              "SELECT ?,kind,path FROM session_references WHERE session=?");
+    refs.text(1, s.id);
+    refs.text(2, parent.id);
+    refs.run();
+    publication.commit();
+  }
   reconcile(s);
-  Statement q(impl_->db, "UPDATE sessions SET parent=? WHERE id=?");
-  q.text(1, parent.id);
-  q.text(2, s.id);
-  q.run();
+  {
+    JournalTransaction publication(impl_->db);
+    impl_->require_session_token(s.id);
+    Statement q(impl_->db, "UPDATE sessions SET parent=? WHERE id=?");
+    q.text(1, parent.id);
+    q.text(2, s.id);
+    q.run();
+    publication.commit();
+  }
   return s;
 }
 void StateStore::update_metadata(const Session &s) {
   auto owner = acquire(s.id);
+  JournalTransaction transaction(impl_->db);
+  impl_->require_session_token(s.id);
   Statement q(impl_->db,
               "INSERT INTO "
               "sessions(id,name,updated,messages,provider,model,reasoning_effort,message_format) "
@@ -2011,11 +2261,13 @@ void StateStore::update_metadata(const Session &s) {
   if (s.effort)
     q.text(5, *s.effort);
   q.run();
+  transaction.commit();
 }
 void StateStore::save_provider_state(const Session &s,
                                      const std::optional<ProviderStateUpdate> &hint) {
   auto owner = acquire(s.id);
   Transaction tx(impl_->db);
+  impl_->require_session_token(s.id);
   const auto token = impl_->provider_token(s.id);
   const auto &messages = provider_messages(s.provider_state);
   const bool incremental = s.provider_state.is_object() && hint && hint->revision &&
@@ -2133,6 +2385,9 @@ uint64_t StateStore::provider_revision(const std::string &id) const {
 uint64_t StateStore::provider_rows_read() const {
   return impl_->rows_read;
 }
+uint64_t StateStore::transcript_rows_read() const {
+  return impl_->transcript_rows;
+}
 size_t StateStore::provider_cache_bytes() const {
   return impl_->cached_bytes;
 }
@@ -2147,30 +2402,33 @@ void StateStore::append_transcript(const Session &source, Session *destination, 
   options.first = first;
   options.memory =
       destination ? Impl::MemoryPublication::publish : Impl::MemoryPublication::discard;
-  for (int attempt = 0; attempt < 2; ++attempt) {
-    std::vector<size_t> positions;
-    for (size_t i = first; i < source.messages.size(); ++i)
-      positions.push_back(i);
-    auto prepared = impl_->prepare(source, std::move(positions), options);
-    {
-      Transaction tx(impl_->db);
-      if (!impl_->prepared_current(source.id, prepared))
-        continue;
-      update_metadata(source);
-      impl_->apply_prepared_transcript(source, prepared);
-      if (provider_state)
-        save_provider_state(source, hint);
-      tx.commit();
-    }
-    if (destination)
-      impl_->publish_transcript(*destination, prepared);
-    else
-      impl_->discard_prepared(prepared);
-    if (provider_state)
-      impl_->publish_provider(source, impl_->pending_provider_bytes, impl_->pending_provider_token);
-    return;
-  }
-  throw Error("Transcript preparation changed twice; no changes applied; retry write");
+  impl_->publish_retry(
+      source.id,
+      [&] {
+        std::vector<size_t> positions;
+        for (size_t i = first; i < source.messages.size(); ++i)
+          positions.push_back(i);
+        auto prepared = impl_->prepare(source, std::move(positions), options);
+        if (!destination)
+          impl_->prepare_receipt(source, prepared);
+        return prepared;
+      },
+      [&](Impl::PreparedTranscript &prepared) {
+        update_metadata(source);
+        impl_->apply_prepared_transcript(source, prepared);
+        if (provider_state)
+          save_provider_state(source, hint);
+      },
+      [&](Impl::PreparedTranscript &prepared) noexcept {
+        if (destination)
+          impl_->publish_transcript(*destination, prepared);
+        else
+          impl_->discard_prepared(prepared);
+        if (provider_state)
+          impl_->publish_provider(source, impl_->pending_provider_bytes,
+                                  impl_->pending_provider_token);
+      },
+      "Transcript preparation changed twice; no changes applied; retry write");
 }
 void StateStore::append_messages(Session &s, size_t first, bool provider_state,
                                  const std::optional<ProviderStateUpdate> &hint) {
@@ -2188,22 +2446,24 @@ void StateStore::revise_transcript(const Session &source, Session *destination,
   options.kind = Impl::WriteKind::revise;
   options.memory =
       destination ? Impl::MemoryPublication::publish : Impl::MemoryPublication::discard;
-  for (int attempt = 0; attempt < 2; ++attempt) {
-    auto prepared = impl_->prepare(source, positions, options);
-    {
-      Transaction tx(impl_->db);
-      if (!impl_->prepared_current(source.id, prepared))
-        continue;
-      impl_->apply_prepared_transcript(source, prepared);
-      tx.commit();
-    }
-    if (destination)
-      impl_->publish_transcript(*destination, prepared);
-    else
-      impl_->discard_prepared(prepared);
-    return;
-  }
-  throw Error("Transcript preparation changed twice; no changes applied; retry write");
+  impl_->publish_retry(
+      source.id,
+      [&] {
+        auto prepared = impl_->prepare(source, positions, options);
+        if (!destination)
+          impl_->prepare_receipt(source, prepared);
+        return prepared;
+      },
+      [&](Impl::PreparedTranscript &prepared) {
+        impl_->apply_prepared_transcript(source, prepared);
+      },
+      [&](Impl::PreparedTranscript &prepared) noexcept {
+        if (destination)
+          impl_->publish_transcript(*destination, prepared);
+        else
+          impl_->discard_prepared(prepared);
+      },
+      "Transcript preparation changed twice; no changes applied; retry write");
 }
 void StateStore::revise_messages(Session &s, const std::vector<size_t> &positions) {
   revise_transcript(s, &s, positions);
@@ -2218,28 +2478,28 @@ void StateStore::replace_transcript(const Session &source, Session *destination)
   options.kind = Impl::WriteKind::replace;
   options.memory =
       destination ? Impl::MemoryPublication::publish : Impl::MemoryPublication::discard;
-  for (int attempt = 0; attempt < 2; ++attempt) {
-    std::vector<size_t> positions;
-    for (size_t i = 0; i < source.messages.size(); ++i)
-      positions.push_back(i);
-    auto prepared = impl_->prepare(source, std::move(positions), options);
-    {
-      Transaction tx(impl_->db);
-      if (!impl_->prepared_current(source.id, prepared))
-        continue;
-      update_metadata(source);
-      impl_->apply_prepared_transcript(source, prepared);
-      save_provider_state(source);
-      tx.commit();
-    }
-    if (destination)
-      impl_->publish_transcript(*destination, prepared);
-    else
-      impl_->discard_prepared(prepared);
-    impl_->publish_provider(source, impl_->pending_provider_bytes, impl_->pending_provider_token);
-    return;
-  }
-  throw Error("Transcript preparation changed twice; no changes applied; retry write");
+  impl_->publish_retry(
+      source.id,
+      [&] {
+        std::vector<size_t> positions;
+        for (size_t i = 0; i < source.messages.size(); ++i)
+          positions.push_back(i);
+        return impl_->prepare(source, std::move(positions), options);
+      },
+      [&](Impl::PreparedTranscript &prepared) {
+        update_metadata(source);
+        impl_->apply_prepared_transcript(source, prepared);
+        save_provider_state(source);
+      },
+      [&](Impl::PreparedTranscript &prepared) noexcept {
+        if (destination)
+          impl_->publish_transcript(*destination, prepared);
+        else
+          impl_->discard_prepared(prepared);
+        impl_->publish_provider(source, impl_->pending_provider_bytes,
+                                impl_->pending_provider_token);
+      },
+      "Transcript preparation changed twice; no changes applied; retry write");
 }
 void StateStore::replace_history(Session &s) {
   replace_transcript(s, &s);
@@ -2256,37 +2516,129 @@ void StateStore::save(const Session &s) {
 void StateStore::complete_tool(Session &s, const ToolCall &call, Message result) {
   impl_->require_owned_write();
   auto owner = acquire(s.id);
-  const auto first = s.messages.size();
-  s.messages.push_back(std::move(result));
   try {
-    Impl::PrepareOptions options;
-    options.first = first;
-    options.tool = call.name;
-    for (int attempt = 0; attempt < 2; ++attempt) {
-      auto prepared = impl_->prepare(s, {first}, options);
-      {
-        Transaction tx(impl_->db);
-        if (!impl_->prepared_current(s.id, prepared))
-          continue;
-        impl_->apply_tool_result(s.id, call, *prepared.rows.at(first).payload);
-        update_metadata(s);
-        impl_->apply_prepared_transcript(s, prepared);
-        tx.commit();
-      }
-      impl_->publish_transcript(s, prepared);
-      return;
-    }
-    throw Error("Tool result preparation changed twice; no changes applied; retry publication");
+    if (result.role != "tool" || result.tool_call_id != call.id)
+      throw Error("Mismatched tool completion result");
+    Session working;
+    size_t position = 0;
+    bool already_complete = false;
+    JsonRetirement retirement;
+    const bool has_result =
+        std::any_of(s.messages.begin(), s.messages.end(), [&](const Message &m) {
+          return m.role == "tool" && m.tool_call_id == call.id;
+        });
+    const bool overlay =
+        !has_result && (!s.checkpoint_projection || !s.checkpoint_projection->recovery);
+    impl_->publish_retry(
+        s.id,
+        [&] {
+          if (!overlay)
+            working = Session{s.id, s.name, s.messages};
+          working.provider = s.provider;
+          working.model = s.model;
+          working.effort = s.effort;
+          working.checkpoint_projection = s.checkpoint_projection;
+          position = overlay ? s.messages.size() : working.messages.size();
+          for (size_t i = 0; i < working.messages.size(); ++i)
+            if (working.messages[i].role == "tool" && working.messages[i].tool_call_id == call.id) {
+              if (position != working.messages.size())
+                throw Error("Ambiguous duplicate tool results in session");
+              position = i;
+            }
+          if (!overlay) {
+            auto completed = result;
+            if (position < working.messages.size()) {
+              completed.message_id = working.messages[position].message_id;
+              working.messages[position] = std::move(completed);
+            } else
+              working.messages.push_back(std::move(completed));
+          }
+          Impl::PreparedTranscript prepared;
+          already_complete = false;
+          {
+            Transaction snapshot(impl_->db, false);
+            impl_->require_session_token(s.id);
+            Statement entry(
+                impl_->db,
+                "SELECT result,status,name,args FROM tools WHERE session=? AND call_id=?");
+            entry.text(1, s.id);
+            entry.text(2, call.id);
+            const auto status = sqlite3_step(entry.p);
+            if (status != SQLITE_ROW && status != SQLITE_DONE)
+              sql_read_error(impl_->db, "Cannot inspect tool completion", status);
+            if (status != SQLITE_ROW ||
+                (column(entry.p, 1) != "running" && column(entry.p, 1) != "complete"))
+              throw Error("Session modified by another process: tool outcome is no longer pending");
+            if (column(entry.p, 2) != call.name ||
+                stored_json(column(entry.p, 3)) != call.arguments)
+              throw Error("Ambiguous journaled tool call id");
+            already_complete = column(entry.p, 1) == "complete";
+            if (has_result && !already_complete) {
+              const auto projection = s.checkpoint_projection;
+              if (!projection || !projection->recovery ||
+                  !projection->recovery->provisional.count(call.id) ||
+                  projection->recovery->provisional.at(call.id).message_id !=
+                      s.messages[position].message_id)
+                throw Error("Existing tool result is not a provisional recovery outcome");
+            }
+            Impl::PrepareOptions options;
+            options.kind = position < s.messages.size() || already_complete
+                               ? Impl::WriteKind::revise
+                               : Impl::WriteKind::append;
+            options.first = position;
+            options.tool = call.name;
+            if (overlay)
+              options.suffix = &result;
+            prepared = impl_->prepare(overlay ? s : working, {position}, options);
+            if (already_complete) {
+              Statement row(impl_->db,
+                            "SELECT payload FROM session_messages WHERE session=? AND position=?");
+              const auto payload = impl_->stored_payload(s.id, position, row);
+              if (!payload || *payload != *prepared.rows.at(position).payload ||
+                  column(entry.p, 0) != *payload)
+                throw Error("Session modified by another process: completed tool result differs");
+            }
+            snapshot.commit();
+          }
+          retirement.prepare(result);
+          if (overlay)
+            s.messages.reserve(s.messages.size() + 1);
+          else
+            for (const auto &message : s.messages)
+              retirement.prepare(message);
+          return prepared;
+        },
+        [&](Impl::PreparedTranscript &prepared) {
+          if (!already_complete)
+            impl_->apply_tool_result(s.id, call, *prepared.rows.at(position).payload);
+          update_metadata(overlay ? s : working);
+          impl_->apply_prepared_transcript(overlay ? s : working, prepared);
+        },
+        [&](Impl::PreparedTranscript &prepared) noexcept {
+          if (overlay) {
+            static_assert(std::is_nothrow_move_constructible<Message>::value,
+                          "Tool publication must not throw");
+            impl_->publish_transcript(s, prepared);
+            s.messages.push_back(std::move(prepared.rows.find(position)->second.message));
+          } else {
+            impl_->publish_transcript(working, prepared);
+            s.messages.swap(working.messages);
+            s.checkpoint_projection.swap(working.checkpoint_projection);
+            for (auto &message : working.messages)
+              retirement.retire(message);
+          }
+          retirement.retire(result);
+        },
+        "Tool result preparation changed twice; no changes applied; retry publication");
   } catch (...) {
     const auto failure = std::current_exception();
-    std::string receipt;
     try {
       const auto path =
           repair_directory(impl_->home) / (s.id + "-tool-result-" + unique_id() + ".json");
       const auto bytes = safe_json(Json({{"kind", "uncommitted_tool_result"},
                                          {"session", s.id},
                                          {"call", call},
-                                         {"message", s.messages.back()},
+                                         {"message", result},
                                          {"dispatch_allowed", false}}))
                              .dump();
       bool confirmed = false;
@@ -2294,32 +2646,16 @@ void StateStore::complete_tool(Session &s, const ToolCall &call, Message result)
         impl_->files->atomic_write(path, bytes, true);
         confirmed = true;
       } catch (...) {
-        try {
-          confirmed = impl_->files->read(path, bytes.size()) == bytes;
-        } catch (...) {
-          confirmed = false;
-        }
+        confirmed = impl_->publication_confirmed(path, bytes);
       }
-      receipt = (confirmed ? "; uncommitted tool result preserved at "
-                           : "; tool result receipt candidate (publication unconfirmed): ") +
-                path.string();
+      impl_->diagnostic((confirmed ? "Uncommitted tool result preserved at "
+                                   : "Tool result receipt candidate (publication unconfirmed): ") +
+                        path.string());
     } catch (...) {
-      receipt.clear();
-    }
-    s.messages.resize(first);
-    try {
+      // Preserve the original failure, including allocation and non-standard exceptions.
       std::rethrow_exception(failure);
-    } catch (const ProviderError &error) {
-      throw ProviderError(std::string(error.what()) + receipt, error.http_status, error.body);
-    } catch (const Error &error) {
-      throw Error(std::string(error.what()) + receipt, error.code);
-    } catch (const std::bad_alloc &) {
-      if (!receipt.empty())
-        std::fprintf(stderr, "%s\n", receipt.c_str());
-      throw;
-    } catch (const std::exception &error) {
-      throw Error(std::string(error.what()) + receipt);
     }
+    std::rethrow_exception(failure);
   }
 }
 void StateStore::remember_references(const std::string &id, const std::vector<Message> &messages) {
@@ -2389,6 +2725,66 @@ void StateStore::discard_recovery_record(const RecoveryCandidate &candidate, Too
     throw Error("Cannot inspect recovery candidate references");
   tools.discard_recovery_candidate(candidate);
 }
+Json StateStore::repair_session_token(const std::string &selector, bool last) {
+  impl_->require_owned_write();
+  const auto id = select_session(impl_->db, selector, last);
+  auto owner = acquire(id);
+  std::vector<Impl::Backup> backups;
+  backups.reserve(2);
+  try {
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      Impl::SessionVersion version;
+      Json backup;
+      {
+        Transaction snapshot(impl_->db, false);
+        version = impl_->session_version(id, true);
+        if (version.present && valid_revision_token(version.token)) {
+          Json report = {{"session", id},
+                         {"changed", false},
+                         {"session_token_regenerated", false},
+                         {"provider_cache_reset", false}};
+          if (!backups.empty()) {
+            report["backups"] = Json::array();
+            for (const auto &record : backups)
+              report["backups"].push_back(record.path);
+          }
+          return report;
+        }
+        backup = impl_->raw_backup(id);
+        snapshot.commit();
+      }
+      impl_->write_backup(backups, id, backup);
+      backup = nullptr;
+      Json report = {{"session", id},
+                     {"changed", true},
+                     {"session_token_regenerated", true},
+                     {"provider_cache_reset", false},
+                     {"backup", backups.back().path}};
+      if (backups.size() > 1) {
+        report["backups"] = Json::array();
+        for (const auto &record : backups)
+          report["backups"].push_back(record.path);
+      }
+      {
+        Transaction publication(impl_->db);
+        if (!impl_->session_current(id, version, true))
+          continue;
+        Statement marker(impl_->db, "INSERT INTO session_revisions(session,revision) "
+                                    "VALUES(?,lower(hex(randomblob(16)))) ON CONFLICT(session) "
+                                    "DO UPDATE SET revision=excluded.revision");
+        marker.text(1, id);
+        marker.run();
+        publication.commit();
+      }
+      return report;
+    }
+    throw Error(
+        "Session token repair preparation changed twice; no repair changes applied; retry repair");
+  } catch (...) {
+    impl_->report_backups(backups);
+    throw;
+  }
+}
 Json StateStore::repair(const std::string &selector, bool last, bool provider_cache, bool recovery,
                         Tools &tools) {
   if (!sqlite3_get_autocommit(impl_->db))
@@ -2396,11 +2792,7 @@ Json StateStore::repair(const std::string &selector, bool last, bool provider_ca
   const auto id = select_session(impl_->db, selector, last);
   auto owner = acquire(id);
   const bool mutate = provider_cache || recovery;
-  struct Backup {
-    std::string path;
-    bool confirmed = false;
-  };
-  std::vector<Backup> backups;
+  std::vector<Impl::Backup> backups;
   backups.reserve(2);
   // One retry only. Preparation never holds the database's writer lock.
   for (int attempt = 0; attempt < 2; ++attempt) {
@@ -2417,8 +2809,7 @@ Json StateStore::repair(const std::string &selector, bool last, bool provider_ca
       {
         Transaction snapshot(impl_->db, false);
         version = impl_->session_version(id, true);
-        if (version.token.size() != 32 ||
-            version.token.find_first_not_of("0123456789abcdef") != std::string::npos)
+        if (!valid_revision_token(version.token))
           report["issues"].push_back(
               "Invalid session revision token; explicit session repair required");
         ReadOptions read_options;
@@ -2445,34 +2836,8 @@ Json StateStore::repair(const std::string &selector, bool last, bool provider_ca
         if (sqlite3_get_autocommit(impl_->db))
           throw Error("Repair read snapshot ended unexpectedly");
         journal = recovery_facts(id);
-        if (mutate) {
-          backup = {{"session", id}, {"kind", "session_repair_backup"}};
-          for (const auto *table :
-               {"sessions", "session_messages", "provider_parts", "tools", "session_references",
-                "provider_revisions", "session_revisions"}) {
-            const auto query =
-                std::string("SELECT * FROM ") + table +
-                (std::string(table) == "sessions" ? " WHERE id=?" : " WHERE session=?");
-            Statement rows(impl_->db, query.c_str());
-            rows.text(1, id);
-            backup[table] = Json::array();
-            int status;
-            while ((status = sqlite3_step(rows.p)) == SQLITE_ROW) {
-              Json row = Json::object();
-              for (int i = 0; i < sqlite3_column_count(rows.p); ++i) {
-                const auto value = column(rows.p, i);
-                const auto type = sqlite3_column_type(rows.p, i);
-                Json stored = type == SQLITE_NULL ? Json() : Json(value);
-                if (type != SQLITE_NULL && safe_text(value) != value)
-                  stored = {{"encoding", "base64"}, {"bytes", base64_encode(value)}};
-                row[sqlite3_column_name(rows.p, i)] = std::move(stored);
-              }
-              backup[table].push_back(std::move(row));
-            }
-            if (status != SQLITE_DONE)
-              throw Error("Cannot back up session repair rows");
-          }
-        }
+        if (mutate)
+          backup = impl_->raw_backup(id);
         snapshot.commit();
       }
       auto execution = tools.observe_execution(session.messages, [&] { return journal; });
@@ -2514,24 +2879,8 @@ Json StateStore::repair(const std::string &selector, bool last, bool provider_ca
       }
       if (!mutate)
         return report;
-      const auto backup_bytes = backup.dump();
-      auto backup_path =
-          (repair_directory(impl_->home) / (id + "-backup-" + unique_id() + ".json")).string();
-      backups.push_back({std::move(backup_path), false});
-      try {
-        impl_->files->atomic_write(backups.back().path, backup_bytes, true);
-        backups.back().confirmed = true;
-      } catch (...) {
-        const auto failure = std::current_exception();
-        try {
-          backups.back().confirmed =
-              impl_->files->read(backups.back().path, backup_bytes.size()) == backup_bytes;
-        } catch (...) {
-          backups.back().confirmed =
-              false; // Preserve the attempted location, not a retained backup.
-        }
-        std::rethrow_exception(failure);
-      }
+      impl_->write_backup(backups, id, backup);
+      backup = nullptr;
       report["backup"] = backups.back().path;
       if (backups.size() > 1) {
         report["backups"] = Json::array();
@@ -2641,20 +2990,8 @@ Json StateStore::repair(const std::string &selector, bool last, bool provider_ca
     } catch (...) {
       const auto failure = std::current_exception();
       cleanup();
-      if (backups.empty())
-        std::rethrow_exception(failure);
-      std::string suffix;
-      for (const auto &backup : backups)
-        suffix +=
-            (backup.confirmed ? "; backup: " : "; backup candidate (publication unconfirmed): ") +
-            backup.path;
-      try {
-        std::rethrow_exception(failure);
-      } catch (const Error &error) {
-        throw Error(std::string(error.what()) + suffix, error.code);
-      } catch (const std::exception &error) {
-        throw Error(std::string(error.what()) + suffix);
-      }
+      impl_->report_backups(backups);
+      std::rethrow_exception(failure);
     }
   }
   throw Error("Repair preparation exhausted"); // Both attempts return or throw above.
@@ -2677,16 +3014,22 @@ Json StateStore::list() {
 }
 void StateStore::begin_turn(const std::string &id) {
   auto owner = acquire(id);
+  JournalTransaction transaction(impl_->db);
+  impl_->require_session_token(id);
   Statement q(impl_->db, "UPDATE sessions SET status='running' WHERE id=?");
   q.text(1, id);
   q.run();
+  transaction.commit();
 }
 void StateStore::finish_turn(const std::string &id, const std::string &status) {
   auto owner = acquire(id);
+  JournalTransaction transaction(impl_->db);
+  impl_->require_session_token(id);
   Statement q(impl_->db, "UPDATE sessions SET status=? WHERE id=?");
   q.text(1, status);
   q.text(2, id);
   q.run();
+  transaction.commit();
   if (status == "complete" && impl_->durability == "fast")
     sync();
 }
@@ -2700,6 +3043,8 @@ void StateStore::tool_started(const std::string &id, const ToolCall &t) {
         (void)sqlite3_exec(impl.db, "PRAGMA synchronous=NORMAL", nullptr, nullptr, nullptr);
     }
   } restore{*impl_};
+  JournalTransaction transaction(impl_->db);
+  impl_->require_session_token(id);
   Statement q(
       impl_->db,
       "INSERT OR IGNORE INTO tools(session,call_id,name,args,status) VALUES(?,?,?,?,'running')");
@@ -2710,6 +3055,7 @@ void StateStore::tool_started(const std::string &id, const ToolCall &t) {
   q.run();
   if (sqlite3_changes(impl_->db) != 1)
     throw Error("Session modified by another process: tool call already recorded");
+  transaction.commit();
 }
 void StateStore::tool_finished(const std::string &id, const ToolCall &t, const Json &result) {
   auto owner = acquire(id);
@@ -2718,6 +3064,7 @@ void StateStore::tool_finished(const std::string &id, const ToolCall &t, const J
   const auto payload = safe_json(Json(messages.front())).dump();
   auto paths = message_references(messages);
   JournalTransaction transaction(impl_->db);
+  impl_->require_session_token(id);
   impl_->apply_tool_result(id, t, payload);
   impl_->remember_paths(id, std::move(paths));
   transaction.commit();

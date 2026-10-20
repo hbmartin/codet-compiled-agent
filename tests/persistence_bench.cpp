@@ -211,8 +211,52 @@ void provider_bench() {
         << std::endl;
   }
 }
+void recovery_bench() {
+  for (size_t count : {128u, 1024u, 8192u, 65537u}) {
+    TempDirectory temp;
+    StateStore state(temp.root / "state");
+    auto original = state.create();
+    original.messages.resize(count, Message{"user", "ordinary prefix"});
+    Message assistant;
+    assistant.role = "assistant";
+    assistant.calls = {{"historical", "exec_command", Json::object()}};
+    original.messages.push_back(assistant);
+    state.save(original);
+    auto session = state.load_id(original.id);
+    const Session &view = session;
+    const auto start = std::chrono::steady_clock::now();
+    for (int append = 0; append < 3; ++append) {
+      const auto first = session.messages.size();
+      session.messages.push_back(Message{"user", "tiny suffix"});
+      const auto before = state.transcript_rows_read();
+      state.append_messages(view, first);
+      const auto read = state.transcript_rows_read() - before;
+      if (append && count < 65537 && read)
+        throw Error("Eligible const recovery receipt rescanned the database");
+      if (append && count == 65537 && !read)
+        throw Error("Oversized recovery receipt did not use strict fallback");
+      std::cout << Json({{"prefix_messages", count},
+                         {"append", append},
+                         {"transcript_rows_read", read},
+                         {"peak_rss_bytes", peak_rss()},
+                         {"seconds",
+                          std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
+                              .count()}})
+                       .dump()
+                << std::endl;
+    }
+    auto loaded = state.load_id(session.id);
+    if (loaded.messages.size() != session.messages.size())
+      throw Error("Const recovery benchmark lost transcript messages");
+  }
+}
+
 } // namespace
 int main(int argc, char **argv) {
+  if (argc > 1 && std::string(argv[1]) == "recovery") {
+    recovery_bench();
+    return 0;
+  }
   if (argc > 1 && std::string(argv[1]) == "provider") {
     provider_bench();
     return 0;

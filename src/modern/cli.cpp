@@ -27,7 +27,7 @@ Usage: codet [OPTIONS] [PROMPT]
        codet [exec] fork [SESSION] [--last] [PROMPT]
        codet login --import FILE | --with-api-key | status
        codet sessions | export SESSION | doctor
-       codet repair SESSION [--last] [--provider-cache] [--recovery]
+       codet repair SESSION [--last] [--provider-cache] [--recovery] [--session-token]
        codet memory consolidate
 
   -i, --image PATH              Attach an image (repeatable, up to four)
@@ -60,6 +60,7 @@ Native sign-in, multiagent, goals, MCP, ACP, LSP and plugins are deferred.
 struct Options {
   bool exec = false, last = false, json = false, ephemeral = false, key = false;
   bool help = false, version = false, repair_provider = false, repair_recovery = false;
+  bool repair_token = false;
   std::string command, action, session, profile, provider, model,
       format = "text", ui, mode, approval, durability, color = "auto";
   fs::path cwd = fs::current_path(), schema, output, import;
@@ -128,6 +129,8 @@ Options parse(const std::vector<std::string> &args) {
           o.repair_provider = true;
         else if (a == "--recovery")
           o.repair_recovery = true;
+        else if (a == "--session-token")
+          o.repair_token = true;
         else if (a == "--ephemeral")
           o.ephemeral = true;
         else if (a == "--durability")
@@ -221,11 +224,14 @@ Options parse(const std::vector<std::string> &args) {
       o.positionals.erase(o.positionals.begin());
     }
   }
-  if ((o.repair_provider || o.repair_recovery) && o.command != "repair")
-    throw Error("--provider-cache and --recovery require repair", 2);
+  if ((o.repair_provider || o.repair_recovery || o.repair_token) && o.command != "repair")
+    throw Error("--provider-cache, --recovery and --session-token require repair", 2);
+  if (o.repair_token && (o.repair_provider || o.repair_recovery))
+    throw Error("--session-token cannot be combined with --provider-cache or --recovery", 2);
   if (o.command == "repair" &&
       ((!o.last && o.session.empty()) || !o.positionals.empty() || o.ephemeral))
-    throw Error("Use repair SESSION or repair --last with optional --provider-cache / --recovery",
+    throw Error("Use repair SESSION or repair --last with optional --provider-cache / --recovery / "
+                "--session-token",
                 2);
   return o;
 }
@@ -745,11 +751,16 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   if (will_run && o.command != "resume" && o.command != "fork")
     provider_preflight();
   StateStore state(files, state_home, artifact_directory(config), config.durability);
+  state.set_diagnostics(diagnostic);
   if (o.command == "sessions") {
     std::cout << state.list().dump(2) << '\n';
     return 0;
   }
   if (o.command == "repair") {
+    if (o.repair_token) {
+      std::cout << state.repair_session_token(o.session, o.last).dump(2) << '\n';
+      return 0;
+    }
     Tools inspection(config, files, processes, http, clock);
     std::cout
         << state.repair(o.session, o.last, o.repair_provider, o.repair_recovery, inspection).dump(2)

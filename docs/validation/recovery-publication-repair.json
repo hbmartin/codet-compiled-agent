@@ -1,0 +1,351 @@
+{
+  "recorded_utc": "2026-10-20T22:40:43.158978+00:00",
+  "branch": "codex/recovery-publication-repair",
+  "implementation_commit": "940b944ae935e5a74eaf5969912444357f675db6",
+  "baseline": "e076ef6eed084e2596eb4b5469f1d15e63a3c9f4",
+  "review_comments": {
+    "addressed": [
+      1,
+      2,
+      4,
+      5,
+      6,
+      7,
+      8,
+      10,
+      11,
+      12,
+      13,
+      14
+    ],
+    "unchanged_at_user_request": [
+      3
+    ],
+    "deferred": [
+      9
+    ]
+  },
+  "compatibility": {
+    "sqlite_schema_version": 8,
+    "schema_migration_added": false,
+    "revision_trigger_definitions_unchanged": true,
+    "session_overloads_unchanged": true,
+    "new_cli_flag": "repair --session-token (exclusive with --provider-cache/--recovery)",
+    "new_public_methods": [
+      "StateStore::repair_session_token",
+      "StateStore::set_diagnostics",
+      "StateStore::transcript_rows_read"
+    ],
+    "maximum_publication_attempts": 2,
+    "strict_analyzer_configuration_unchanged": true,
+    "unowned_transcript_writes_rejected": true,
+    "filesystem_trust_checks_retained": true,
+    "immutable_projection_provenance": true,
+    "post_commit_acknowledgement_noexcept": true,
+    "commit_receipt_accounted_data_limit_bytes": 8388608,
+    "provider_and_archive_cache_limits_unchanged": true
+  },
+  "coverage": [
+    "Stored recovery baselines remain independent of unsaved suffixes and requested revisions in row/blob layouts and mutable/const writes.",
+    "Readable loads, last, exports and forks tolerate damaged session tokens without regenerating them; ordinary session mutations reject them before token-rotating SQL.",
+    "Token-only repair preserves unreadable raw transcript/provider bytes, provider revisions, journal, references and metadata; valid tokens are no-ops; backup/commit failures and two invalidations preserve original errors.",
+    "Completion replaces provenance-identified provisional outcomes, supports retained const recovery and multiple live calls, rejects differing repeated output, and reloads without duplicate results.",
+    "An agent-level process executor counter verifies one actual execution with one or two forced publication invalidations.",
+    "Original Error subtypes, private revision subtypes, JSON exceptions, provider status/body, cancellation code, allocation failures and non-standard exceptions survive receipt/diagnostic failure.",
+    "Missing absolute checkpoint archives, strict cache fallback, receipt eviction, prefix edits, external unknown JSON fields, and mutable handoff after const writes remain covered.",
+    "Both same-connection reconciliation invalidations and the restored external-connection/archive-read scenario retain the two-attempt bound.",
+    "Allocation interception verifies nonthrowing completion and const-receipt acknowledgement after an owning commit; matching nothrow allocator overloads keep sanitizer allocation pairs consistent."
+  ],
+  "checks": {
+    "lint": {
+      "executed": true,
+      "passed": true,
+      "enforcement_runner_tests": 17,
+      "groups": {
+        "format": true,
+        "python": true,
+        "shell": true,
+        "workflows": true
+      },
+      "log": "build/recovery-repair-current-main-lint.log"
+    },
+    "macos_host": {
+      "executed": true,
+      "passed": true,
+      "ctest_groups": 10,
+      "fault_tests": 41,
+      "unit_tests_passed": 468,
+      "unit_tests_total": 470,
+      "unit_tests_skipped": 2,
+      "cli_integration_tests": 56,
+      "log": "build/recovery-repair-current-main-macos-ctest.log"
+    },
+    "linux_amd64": {
+      "executed": true,
+      "passed": true,
+      "ctest_groups": 10,
+      "fault_tests": 41,
+      "unit_tests_passed": 465,
+      "unit_tests_total": 470,
+      "unit_tests_skipped": 5,
+      "cli_integration_tests": 56,
+      "log": "build/recovery-repair-current-main-ctest.log"
+    },
+    "asan_ubsan": {
+      "executed": true,
+      "passed": true,
+      "ctest_groups": 10,
+      "fault_tests": 41,
+      "unit_tests_passed": 465,
+      "unit_tests_total": 470,
+      "unit_tests_skipped": 5,
+      "cli_integration_tests": 56,
+      "log": "build/recovery-repair-current-main-sanitize.log"
+    },
+    "foundation": {
+      "executed": true,
+      "passed": true,
+      "ctest_groups": 1,
+      "log": "build/recovery-repair-current-main-foundation.log"
+    },
+    "analysis": {
+      "executed": true,
+      "passed": true,
+      "sources_per_tool": 25,
+      "tools": [
+        {
+          "tool": "clang-tidy",
+          "passed": true,
+          "findings": 0
+        },
+        {
+          "tool": "cppcheck",
+          "passed": true,
+          "findings": 0
+        },
+        {
+          "tool": "clang-analyzer",
+          "passed": true,
+          "findings": 0
+        }
+      ],
+      "real_header_cppcheck_canaries": 15,
+      "selftests": {
+        "clang-tidy": true,
+        "cppcheck": true,
+        "clang-analyzer": true
+      },
+      "runner_tests": 33,
+      "manifest": "build/recovery-repair/analysis/manifest.json",
+      "manifest_sha256": "0a4ce503fc5449b75884c25d9c12d695606f0ce89dee0a2a04a9824cafaf4b6a"
+    },
+    "semgrep": {
+      "executed": true,
+      "passed": true,
+      "version": "1.177.0",
+      "rules": 30,
+      "scanned_targets": 38,
+      "findings": 0,
+      "fixture_report_sha256": "a9403725b37ded02283ab3528fb1f3f43222894ddb5120e4d3cf6a632d3bb649",
+      "scan_report_sha256": "f4d94fe9acaba08beff8ac5605ec7a5fb4f80c08cda5573301966aa2ec7dedf5",
+      "scan_manifest_sha256": "4713c13b0821091e54f3d98186ba1c4b29a0555be1a17adef8f4b38dad63ae71",
+      "test_manifest_sha256": "1ecdb985a76ed0eb21158afdb0d8d9d0852367610ad92cf138e72eb727dbb089"
+    },
+    "format": {
+      "executed": true,
+      "passed": true,
+      "version": "clang-format 18.1.8",
+      "scope": "all maintained native inputs under the current-main lint inventory"
+    },
+    "tiger": {
+      "executed": true,
+      "passed": true,
+      "target_runtime_executed": false,
+      "verification": "GCC 14.2, PPC32 big-endian/G3 Mach-O, target dependency paths, no LC_RPATH",
+      "log": "build/recovery-repair-current-main-tiger.log"
+    },
+    "ordinary_row_policy_probe": {
+      "executed": true,
+      "passed": true,
+      "log": "build/recovery-repair-current-main-comment3.log",
+      "interpretation": "Confirms comment 3 remains unchanged; this is a known lost-update limitation, not a claim of concurrency safety."
+    }
+  },
+  "recovery_benchmark": {
+    "executed": true,
+    "passed": true,
+    "rows": [
+      {
+        "append": 0,
+        "peak_rss_bytes": 26234880,
+        "prefix_messages": 128,
+        "seconds": 0.023270375,
+        "transcript_rows_read": 129
+      },
+      {
+        "append": 1,
+        "peak_rss_bytes": 26234880,
+        "prefix_messages": 128,
+        "seconds": 0.034011291,
+        "transcript_rows_read": 0
+      },
+      {
+        "append": 2,
+        "peak_rss_bytes": 26234880,
+        "prefix_messages": 128,
+        "seconds": 0.044993375,
+        "transcript_rows_read": 0
+      },
+      {
+        "append": 0,
+        "peak_rss_bytes": 29642752,
+        "prefix_messages": 1024,
+        "seconds": 0.320052334,
+        "transcript_rows_read": 1025
+      },
+      {
+        "append": 1,
+        "peak_rss_bytes": 29642752,
+        "prefix_messages": 1024,
+        "seconds": 0.557934751,
+        "transcript_rows_read": 0
+      },
+      {
+        "append": 2,
+        "peak_rss_bytes": 29642752,
+        "prefix_messages": 1024,
+        "seconds": 0.622752626,
+        "transcript_rows_read": 0
+      },
+      {
+        "append": 0,
+        "peak_rss_bytes": 60850176,
+        "prefix_messages": 8192,
+        "seconds": 0.942398126,
+        "transcript_rows_read": 8193
+      },
+      {
+        "append": 1,
+        "peak_rss_bytes": 60850176,
+        "prefix_messages": 8192,
+        "seconds": 1.343127167,
+        "transcript_rows_read": 0
+      },
+      {
+        "append": 2,
+        "peak_rss_bytes": 60850176,
+        "prefix_messages": 8192,
+        "seconds": 1.742090209,
+        "transcript_rows_read": 0
+      },
+      {
+        "append": 0,
+        "peak_rss_bytes": 267706368,
+        "prefix_messages": 65537,
+        "seconds": 5.946318086,
+        "transcript_rows_read": 65538
+      },
+      {
+        "append": 1,
+        "peak_rss_bytes": 293773312,
+        "prefix_messages": 65537,
+        "seconds": 9.665069921,
+        "transcript_rows_read": 65540
+      },
+      {
+        "append": 2,
+        "peak_rss_bytes": 294354944,
+        "prefix_messages": 65537,
+        "seconds": 13.255666506,
+        "transcript_rows_read": 65541
+      }
+    ],
+    "metric": "Rows decoded by full transcript reads; targeted payload checks and caller-prefix validation are not counted.",
+    "result": "Eligible repeat appends decode zero transcript SQL rows; the oversized receipt uses full validation. Caller-prefix work remains linear."
+  },
+  "execution_notes": [
+    "The branch started from freshly fetched main, then rebased onto e076ef6 after linting PR #26 merged; final checks include its strict warning, lint and policy gates.",
+    "An earlier pre-rebase Linux CTest attempt hung after its child exited under emulation; final current-main runs use --timeout 180 and pass all ten groups.",
+    "Initial local validation exposed missing pinned Cppcheck selection, policy placement of fingerprint hashing, migration-backfill guards and diagnostic assertions; all were resolved without weakening checks.",
+    "No live provider calls or PowerPC/Tiger hardware execution. Platform/permission opt-in skips are retained.",
+    "No analyzer scripts, suppressions, rule definitions, tool locks or CI workflows were changed."
+  ],
+  "implementation_files_sha256": {
+    "docs/RELIABILITY-MODERNIZATION.md": "85d8b4752cedb0661e422958eb1aa813b560f16bb6c73bb748478c22ef063b90",
+    "include/codet/core.hpp": "ed657663f3342414aea4103a19b8258cbf7bd5cf3abbea73259e3c57c0ffe259",
+    "src/modern/cli.cpp": "9ba5b0977a3b9ffb0c20b22c64697289fe39e73e234f5a026cef4332e3380bfd",
+    "src/modern/state.cpp": "311bf9ec9b385c4dce2e0a2c1c1f54c61856447f94517c3e9caf8b809202bd44",
+    "tests/cli_integration.py": "f342cf27d9ff91bde88b182460bd3bd54205829c502b2b12c88706e675d73e35",
+    "tests/persistence_bench.cpp": "d5d39f7bb2f8f2cf4d4f52db83523e606633a76b4b7d4bc6c9630281f79ccd20",
+    "tests/pr17_test.cpp": "749d29889780f88787d01105826088e197e63411676827bc513c613f5fba8f88",
+    "tests/pr18_test.cpp": "7d680b74073a82eb1222f2b83e2e53443b3c7c4038d48e1a1dcb59ce50a83367",
+    "tests/publication_fault_test.cpp": "28f392dc5789c36757b03402017e48fbb0ff1032c7ad0c7fc384aeadc548deca"
+  },
+  "analysis_sources_sha256": {
+    "src/modern/agent.cpp": "a01c5c0de5684f19bd0d755deb7cceff238e242f26ae113c43541a4778b5df36",
+    "src/modern/artifacts.cpp": "6bd6b5576aa7167b2fba7a085efe17ab381a689c3a9f8fdfd00a4cf9a2fe145c",
+    "src/modern/capture_catalog.cpp": "87b6f01c9b26202c42d1ecf0affbd70e4f302534de797fd1c397ed82055ecbc6",
+    "src/modern/cli.cpp": "9ba5b0977a3b9ffb0c20b22c64697289fe39e73e234f5a026cef4332e3380bfd",
+    "src/modern/computer.cpp": "280112859a870db9deaa3d51cc1311f5fcdefa3eaec4ee7f3daac68145172ff9",
+    "src/modern/config.cpp": "6ef1d1b7829a83339e773843cbeff09db275db4a3dd8499e7c0fa0dad0d802ca",
+    "src/modern/context.cpp": "30ef96299db52a88a0904e30461f945da4e13b20ff7d5e15969534ed2de10825",
+    "src/modern/failure.cpp": "aabbc34d0e235141e79fee2c370d4ed7f3450eb89787ed467fb1b1bacf383a2a",
+    "src/modern/hooks.cpp": "21afab2dbdfae97ed2406bc5d28e30bc55e63598cac07e418c9f41b9971e2c06",
+    "src/modern/images.cpp": "16b071f39cec995e25b25e1b266f89bf9b4a771fd24ccc87ae3e6c50d305cfe0",
+    "src/modern/inspection.cpp": "431da4f3b207ec6c4821ccf6af3de22e949b4e3875927d3d9aa2cb9899a1794c",
+    "src/modern/instructions.cpp": "04e7f17b7ccbdd3e223cacf5e75971a4ea4ec3dfaa240508806aef48739119f6",
+    "src/modern/interaction.cpp": "1e18bf1c1f8cb1a221fc458661687f148c0479365c2912bdeb58265d0a2f82ed",
+    "src/modern/main.cpp": "67bb002f35e6fab656016cccd493ea985199858b106598fa8337185925583e1c",
+    "src/modern/output.cpp": "b1f5a641499ec3264d893b43033eb06f1fc208af638810bba8b0c4efd8eab640",
+    "src/modern/patch.cpp": "8c99791527f8a6b09b35674802db3c29cafe2adde4700a67ca7adda60562f770",
+    "src/modern/platform.cpp": "4c81e93afbb2790268aa6ca33bbda7093bc07b7fc720c809fab3429324f5ac1b",
+    "src/modern/prompts.cpp": "57082e86bf22ccad9d788b2bcff866788507bec072a7531797237a6fcfa0d367",
+    "src/modern/provider.cpp": "77a129be4087bf028481ecb8ba22dd9c6d723c3623f67d9230ce55e81b8cb2a7",
+    "src/modern/reliability.cpp": "d924d9c1e8875c7b7e053509e2ab2fe3e24e5aee814c706dbdc9c4e608461356",
+    "src/modern/state.cpp": "311bf9ec9b385c4dce2e0a2c1c1f54c61856447f94517c3e9caf8b809202bd44",
+    "src/modern/support.cpp": "40dfad2759619972f3b0eba053a24b00877b05ce2defb648b727ebd608dd594a",
+    "src/modern/tool_registry.cpp": "bbec68092f2561c5d4596e5976c7766e5715eb4ccddf03ef61b99a8ed7b00a93",
+    "src/modern/tools.cpp": "7cce428421e53452797feda0d5bfaa2eac9cb75a470f3c9da7dd39a43067b5fc",
+    "src/text_compat.c": "b41e7c65ca2060ec538d4469722fd357293fcf3c603c93288edab02b34dbe431"
+  },
+  "analysis_inputs_sha256": {
+    "include/app-functions.h": "8e363fc9efb6f09bed6e406c8cda95f46e18f7ca0412ee16654c9a40f26d9340",
+    "include/app-globals.h": "58b79e8bc8e47df7317aa276e7b63cd06b88f72a304e9d1ed9b7f1161b694d6c",
+    "include/app.h": "7b4aff9d8012d627b4ce9220436240b64d9a16bf9bc0b81653bf63ed753170a3",
+    "include/callback-contracts.h": "c9bd4045bd5fbb7ba1e43cbfe582281349dc1e54c7dddfcabf41b29734c3c3e8",
+    "include/codet/artifacts.hpp": "bb6e85fa55389308906389ed202fa134673ad40d8a2acffa176a208e0a7359cf",
+    "include/codet/computer.hpp": "aa4e4ef2a400b761ed98f8dfe3b596d140eb06fa58ca7689ed927276c860eeb7",
+    "include/codet/context.hpp": "69642ff7cbe971372e0a5e0eec3060ee7dd3cae548adb1e8eb7ca9ae6801c1b5",
+    "include/codet/core.hpp": "ed657663f3342414aea4103a19b8258cbf7bd5cf3abbea73259e3c57c0ffe259",
+    "include/codet/diagnostics.hpp": "31ead6755d8a6ce63d365b1a3507b20d06b868bbc3ecbc2893a26f34db750da9",
+    "include/codet/interaction.hpp": "ac2bae0c6d600d8866c06090444b842acbcb5baa31475825a20d34e36b512f03",
+    "include/codet/output.hpp": "d67f248b095142d77f43701d400529ede8006835558b1c2044ea758d72327225",
+    "include/codet/patch.hpp": "5852178d6a37ef71b560421c84543fe789e0fb5c87d45e337088f48008ec2915",
+    "include/codet/process_control.hpp": "144592cd14597dc1d52750f4eaff9b48be7b3c517991109e93d502300db1f8e6",
+    "include/codet/prompt.hpp": "cedf0270b29cc6731329907bae32be3b3870c9d803e8d354601a731d863752d1",
+    "include/codet/support.hpp": "e28f6ef49aa795f66db598cd5814686f2614b8f36669f476792d74acc61d4547",
+    "include/codet/tool_registry.hpp": "6024b8a00ec83280267cc9a874eff3d9d70b60a87dc5e2394e9f9aafa51e0771",
+    "include/embedded-strings.h": "6ffac0e9967e511dd10556aed94a2ef0201c926bd01d699208e4e26834ec2e86",
+    "include/imported-interfaces.h": "f28bc5576423cc04e2138d46b5accbdc64c3e294dcce7a080fcb4da6e16f2c8b",
+    "include/observed-abi.h": "a6526dee44e4e156cdc8f2cd8a9f5ea28cd1a25c8ea3a1deb31d0e28055f2d64",
+    "include/recovered-declarations.h": "328a2d82bcdb6bab00b171749643475b7e55f40ae7508fb305782a606ffa02a9",
+    "include/recovered-layouts.h": "68c1c0b0313d38632390b8919ddc297d6240bed0c2d1de307fce3f0cb431f195",
+    "include/recovered-storage.h": "a655bf2e2172d9293a2920b3f5ffb6ed6e7164e03b16d1c3400547d00648ce09",
+    "include/recovered-types.h": "22d85c337901a5b84de45b08c20409256586c6cc9e5ca4a13ec783788ca76caa",
+    "include/text_compat.h": "6ff5d6fe7251e3b156983ec5d1e4c2dea5bf08cdf40ac68734e1546850dd0da7"
+  },
+  "validation_logs_sha256": {
+    "build/recovery-repair-current-main-macos-ctest.log": "8110ed65ff58cd69b3a7e348f9b2ad4e0a84f8a351c22c8e9729e24c88d3f558",
+    "build/recovery-repair-current-main-ctest.log": "26b1346ab5a892a829e72b04f4a754db3d86bdb23429978b03e2ff6b259f155d",
+    "build/recovery-repair-current-main-sanitize.log": "26569735a6b382330f58993d29dc1dd9ad161ad62194780f88e05beba38cb07e",
+    "build/recovery-repair-current-main-foundation.log": "a93c2f9ec4619391d4d5f443f5dd00582b5a278dca5ec1d180a13c1621b9b3d6",
+    "build/recovery-repair-current-main-analysis.log": "2df0735c9d9b8fed7f0b242b95e9e77ba33454e5ea1fc84cb773580280889c1b",
+    "build/recovery-repair-current-main-selftest.log": "740d555865ff458e6ea3a80a11ab83ce36bd761be27466ba58af1b8f395df79b",
+    "build/recovery-repair-current-main-analysis-runner.log": "72ff1b1db6d8543e79ecd7b2ccb9e186af8bfb2fa4cc70bff4feacdfe55dce95",
+    "build/recovery-repair-current-main-semgrep.log": "40f2ae453282b2267db159e3a7095802ff37b7c46cd5c369e677435172f9d1f4",
+    "build/recovery-repair-current-main-tiger.log": "6fbab9f6f5fe9dc92f247da4f98a60b4d6a5e7f8d416a368c77b0711223ac66a",
+    "build/recovery-repair-current-main-lint.log": "748ac0caf57f7536f6aad93e38cf2c8ae000d28f91b2d24909327dba1bf7d34c",
+    "build/recovery-repair-current-main-comment3.log": "8028dba4e369528570fbe23a9fad76d399200f4a2658309b6b16f088eac99ef1",
+    "build/recovery-repair-current-main-bench.jsonl": "64aaaeef846c04a06e07d8825fa30548d0edb56397c65f3008d80ed2cec71dd1"
+  }
+}

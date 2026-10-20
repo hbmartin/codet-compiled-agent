@@ -451,6 +451,7 @@ public:
   StateStore(FileSystem &, const fs::path &, const fs::path &artifact_root = {},
              const std::string &durability = "durable");
   ~StateStore();
+  void set_diagnostics(DiagnosticSink);
   Session create(const std::string &name = "");
   // Default loads are repaired snapshots, never persistent recovery writes.
   Session load(const std::string &id_or_name, bool repair = true);
@@ -475,8 +476,10 @@ public:
                            const std::optional<ProviderStateUpdate> & = std::nullopt);
   uint64_t provider_revision(const std::string &) const;
   uint64_t provider_rows_read() const;
+  uint64_t transcript_rows_read() const;
   Json recovery_facts(const std::string &) const;
   Json repair(const std::string &, bool last, bool provider_cache, bool recovery, class Tools &);
+  Json repair_session_token(const std::string &, bool last);
   std::string preserve_response(const Session &, const Message &);
   void discard_recovery_record(const RecoveryCandidate &, class Tools &);
   void sync();

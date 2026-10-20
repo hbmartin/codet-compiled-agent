@@ -564,6 +564,8 @@ TEST_F(Pr17, RepairQuarantinesUnavailableReferencesWithoutChangingTheJournal) {
 }
 TEST_F(Pr17, RepairFailureNamesItsBackupAndRemovesOnlyNewPartialArchives) {
   StateStore state(config.state_root);
+  std::string diagnostics;
+  state.set_diagnostics([&](const auto &text) { diagnostics += text; });
   auto s = state.create();
   codet::Message message;
   message.role = "assistant";
@@ -579,7 +581,8 @@ TEST_F(Pr17, RepairFailureNamesItsBackupAndRemovesOnlyNewPartialArchives) {
     state.repair(s.id, false, false, true, tools);
     FAIL();
   } catch (const Error &e) {
-    EXPECT_THAT(e.what(), HasSubstr("backup:"));
+    EXPECT_STREQ(e.what(), "publication failed");
+    EXPECT_THAT(diagnostics, HasSubstr("Session repair backup:"));
   }
   EXPECT_EQ(state.load_id(s.id, false).messages[0].result_file, message.result_file);
   const auto results = config.state_root / "artifacts/results";
