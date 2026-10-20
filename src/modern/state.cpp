@@ -164,6 +164,29 @@ struct Transaction {
     finished = true;
   }
 };
+// Nested transcript operations roll back their own partial work without owning the caller's commit.
+struct TranscriptTransaction {
+  sqlite3 *db;
+  bool owner, finished = false;
+  explicit TranscriptTransaction(sqlite3 *connection)
+      : db(connection), owner(sqlite3_get_autocommit(connection) != 0) {
+    sql(db, owner ? "BEGIN IMMEDIATE" : "SAVEPOINT codet_transcript_write");
+  }
+  ~TranscriptTransaction() {
+    if (!finished) {
+      if (owner)
+        (void)sqlite3_exec(db, "ROLLBACK", nullptr, nullptr, nullptr);
+      else {
+        (void)sqlite3_exec(db, "ROLLBACK TO codet_transcript_write", nullptr, nullptr, nullptr);
+        (void)sqlite3_exec(db, "RELEASE codet_transcript_write", nullptr, nullptr, nullptr);
+      }
+    }
+  }
+  void commit() {
+    sql(db, owner ? "COMMIT" : "RELEASE codet_transcript_write");
+    finished = true;
+  }
+};
 std::string column(sqlite3_stmt *p, int n) {
   auto *s = sqlite3_column_text(p, n);
   return s ? std::string(reinterpret_cast<const char *>(s),
@@ -242,6 +265,61 @@ std::string select_session(sqlite3 *db, const std::string &selector, bool last) 
     sql_read_error(db, "Cannot select session", status);
   return column(q.p, 0);
 }
+// nlohmann JSON destruction allocates a flattening stack for nonempty containers.
+// Reserve that work before COMMIT, then empty retired trees from leaves upward.
+struct JsonRetirement {
+  std::vector<Json *> nodes;
+  void prepare(const Json &value) {
+    std::vector<const Json *> scan{&value};
+    for (size_t i = 0; i < scan.size(); ++i)
+      if (scan[i]->is_structured())
+        for (const auto &child : *scan[i])
+          scan.push_back(&child);
+    nodes.resize(std::max(nodes.size(), scan.size()));
+  }
+  void retire(Json &value) noexcept {
+    size_t used = 1;
+    nodes[0] = &value;
+    for (size_t i = 0; i < used; ++i) {
+      if (auto *object = nodes[i]->get_ptr<Json::object_t *>()) {
+        for (auto &child : *object)
+          nodes[used++] = &child.second;
+      } else if (auto *array = nodes[i]->get_ptr<Json::array_t *>()) {
+        for (auto &child : *array)
+          nodes[used++] = &child;
+      }
+    }
+    while (used) {
+      auto *node = nodes[--used];
+      if (auto *object = node->get_ptr<Json::object_t *>())
+        object->clear();
+      else if (auto *array = node->get_ptr<Json::array_t *>())
+        array->clear();
+    }
+  }
+  void prepare(const Message &message) {
+    prepare(message.replay);
+    prepare(message.checkpoint_state);
+    for (auto &call : message.calls)
+      prepare(call.arguments);
+  }
+  void retire(Message &message) noexcept {
+    retire(message.replay);
+    retire(message.checkpoint_state);
+    for (auto &call : message.calls)
+      retire(call.arguments);
+  }
+  void prepare(const Session &session) {
+    prepare(session.provider_state);
+    for (auto &message : session.messages)
+      prepare(message);
+  }
+  void retire(Session &session) noexcept {
+    retire(session.provider_state);
+    for (auto &message : session.messages)
+      retire(message);
+  }
+};
 fs::path repair_directory(const fs::path &home) {
   const auto dir = home / "repairs";
   if (fs::is_symlink(dir))
@@ -252,17 +330,20 @@ fs::path repair_directory(const fs::path &home) {
   return dir;
 }
 } // namespace
-// Only rows with validated legacy checkpoint projections retain extra payload data.
+// Immutable snapshot provenance. Pending payloads are shared, never copied on acknowledgement.
 struct SessionProjection {
-  struct Row {
-    size_t position = 0;
-    std::string message_id, source_fingerprint, original_reference, portable_reference, payload;
-    bool pending = true;
+  struct Mapping {
+    std::string message_id, original_reference, portable_reference;
+  };
+  struct Pending {
+    std::set<std::string> accepted; // Exact stored-byte fingerprints; empty means an absent row.
+    std::shared_ptr<const std::string> payload; // Null means an expected removal.
+    std::set<std::string> references;
   };
   std::string session;
-  std::vector<Row> rows;
-  // Expected results of a full replacement whose outer transaction may be externally owned.
-  std::map<size_t, std::string> replacements;
+  std::map<size_t, Mapping> mappings;
+  std::map<size_t, std::shared_ptr<const Pending>> pending;
+  std::string blob_fingerprint;
 };
 struct StateStore::Impl {
   sqlite3 *db = nullptr;
@@ -311,132 +392,297 @@ struct StateStore::Impl {
     message.checkpoint_state["recovery_record"] = found->second;
   }
   static void known_projection(Message &message, size_t position,
-                               const std::shared_ptr<SessionProjection> &projection,
+                               const std::shared_ptr<const SessionProjection> &projection,
                                const std::string &id) {
     if (!projection || projection->session != id)
       return;
     const auto *reference = absolute_checkpoint_reference(message);
-    if (!reference)
-      return;
-    for (const auto &row : projection->rows)
-      if (row.position == position && row.message_id == message.message_id &&
-          *reference == row.original_reference) {
-        message.checkpoint_state["recovery_record"] = row.portable_reference;
-        return;
-      }
+    const auto row = projection->mappings.find(position);
+    if (reference && row != projection->mappings.end() &&
+        row->second.message_id == message.message_id &&
+        *reference == row->second.original_reference)
+      message.checkpoint_state["recovery_record"] = row->second.portable_reference;
   }
   static void known_projections(Session &session,
-                                const std::shared_ptr<SessionProjection> &projection) {
-    for (size_t i = 0; i < session.messages.size(); ++i)
-      known_projection(session.messages[i], i, projection, session.id);
+                                const std::shared_ptr<const SessionProjection> &projection) {
+    if (!projection || projection->session != session.id)
+      return;
+    for (const auto &row : projection->mappings)
+      if (row.first < session.messages.size())
+        known_projection(session.messages[row.first], row.first, projection, session.id);
   }
-  static void retain_projection(const Session &s, size_t position, const Message &message,
-                                const std::string &original, const std::string &source) {
-    if (!s.checkpoint_projection || s.checkpoint_projection->session != s.id) {
-      s.checkpoint_projection = std::make_shared<SessionProjection>();
-      s.checkpoint_projection->session = s.id;
-    } else if (!s.checkpoint_projection.unique())
-      s.checkpoint_projection = std::make_shared<SessionProjection>(*s.checkpoint_projection);
-    auto &rows = s.checkpoint_projection->rows;
-    rows.erase(std::remove_if(rows.begin(), rows.end(),
-                              [&](const auto &row) { return row.position == position; }),
-               rows.end());
-    rows.push_back({position, message.message_id, source, original,
-                    message.checkpoint_state.at("recovery_record").get<std::string>(),
-                    safe_json(Json(message)).dump(), true});
+  static Message lexical(Message message, const std::string &id, size_t position,
+                         const std::string &tool) {
+    std::vector<Message> messages{std::move(message)};
+    portable_messages(messages, id, tool);
+    auto normalized = std::move(messages.front());
+    if (normalized.message_id.empty())
+      normalized.message_id =
+          digest(safe_json(Json(normalized)).dump() + ":" + std::to_string(position));
+    return normalized;
   }
+  enum class WriteKind : std::uint8_t { append, revise, replace };
   struct PreparedRow {
-    size_t position = 0;
-    std::string payload;
+    std::optional<Message> message;
+    std::shared_ptr<const std::string> payload;
     std::set<std::string> references;
   };
-  std::vector<PreparedRow> prepare(const Session &s, const std::vector<size_t> &positions) const {
-    std::vector<PreparedRow> prepared;
-    prepared.reserve(positions.size());
-    std::map<std::string, std::string> references;
-    for (const auto position : positions) {
-      auto message = s.messages.at(position);
-      if (message.message_id.empty() && absolute_checkpoint_reference(message)) {
-        std::vector<Message> lexical{std::move(message)};
-        portable_messages(lexical, s.id);
-        message = std::move(lexical.front());
-        message.message_id =
-            digest(safe_json(Json(message)).dump() + ":" + std::to_string(position));
-      }
-      known_projection(message, position, s.checkpoint_projection, s.id);
-      if (const auto *ref = absolute_checkpoint_reference(message)) {
-        const auto original = *ref;
-        const auto source = digest(safe_json(Json(s.messages.at(position))).dump());
-        project(message, references);
-        if (!absolute_checkpoint_reference(message))
-          retain_projection(s, position, message, original, source);
-      }
-      prepared.push_back(
-          {position, safe_json(Json(message)).dump(), message_references({message})});
-    }
-    return prepared;
+  struct PreparedTranscript {
+    WriteKind kind = WriteKind::append;
+    size_t first = 0;
+    bool blob = false;
+    std::string blob_fingerprint;
+    std::map<size_t, PreparedRow> rows;
+    std::map<size_t, std::set<std::string>> expected;
+    std::shared_ptr<const SessionProjection> committed, nested;
+    JsonRetirement retirement;
+  };
+  std::optional<std::string> stored_payload(const std::string &id, size_t position,
+                                            Statement &row) const {
+    sqlite3_reset(row.p);
+    row.text(1, id);
+    sqlite3_bind_int64(row.p, 2, static_cast<sqlite3_int64>(position));
+    const auto status = sqlite3_step(row.p);
+    if (status == SQLITE_DONE)
+      return std::nullopt;
+    if (status != SQLITE_ROW)
+      sql_read_error(db, "Cannot inspect checkpoint normalization", status);
+    auto payload = column(row.p, 0);
+    sqlite3_reset(row.p);
+    return payload;
   }
-  void pending_projections(const Session &s, size_t before,
-                           const std::shared_ptr<SessionProjection> &projection) {
-    if (!projection || projection->session != s.id)
-      return;
-    for (const auto &row : projection->rows) {
-      if (!row.pending || row.position >= before)
-        continue;
-      Statement current(db, "SELECT payload FROM session_messages WHERE session=? AND position=?");
-      current.text(1, s.id);
-      sqlite3_bind_int64(current.p, 2, static_cast<sqlite3_int64>(row.position));
-      const auto status = sqlite3_step(current.p);
+  PreparedTranscript prepare(const Session &s, std::vector<size_t> positions, WriteKind kind,
+                             size_t first = 0, const std::string &tool = "") const {
+    PreparedTranscript plan;
+    plan.kind = kind;
+    plan.first = first;
+    Transaction snapshot(db, false);
+    {
+      Statement format(db, "SELECT message_format,messages FROM sessions WHERE id=?");
+      format.text(1, s.id);
+      const auto status = sqlite3_step(format.p);
       if (status != SQLITE_ROW && status != SQLITE_DONE)
-        sql_read_error(db, "Cannot inspect checkpoint normalization", status);
-      const auto replacement = projection->replacements.find(row.position);
-      if (status == SQLITE_DONE) {
-        if (replacement != projection->replacements.end() && replacement->second.empty())
-          continue;
-        throw Error("Session modified by another process: checkpoint row missing");
+        sql_read_error(db, "Cannot inspect transcript storage", status);
+      plan.blob = status == SQLITE_ROW && sqlite3_column_int(format.p, 0) == 0;
+      if (plan.blob) {
+        plan.blob_fingerprint = digest(column(format.p, 1));
+        if (s.checkpoint_projection && !s.checkpoint_projection->blob_fingerprint.empty() &&
+            s.checkpoint_projection->blob_fingerprint != plan.blob_fingerprint)
+          throw Error("Session modified by another process: legacy transcript changed");
+        positions.clear();
+        for (size_t i = 0; i < s.messages.size(); ++i)
+          positions.push_back(i);
       }
-      const auto payload = column(current.p, 0);
-      if (replacement != projection->replacements.end() && digest(payload) == replacement->second)
-        continue; // An externally committed full replacement already published its references.
-      if (payload != row.payload) {
-        if (digest(payload) != row.source_fingerprint)
-          throw Error("Session modified by another process: checkpoint row changed");
-        Statement update(db,
-                         "UPDATE session_messages SET payload=? WHERE session=? AND position=?");
-        update.text(1, row.payload);
-        update.text(2, s.id);
-        sqlite3_bind_int64(update.p, 3, static_cast<sqlite3_int64>(row.position));
-        update.run();
-        serialized += row.payload.size();
-      }
-      insert_reference_rows(db, s.id, {row.portable_reference});
     }
+    const auto previous = s.checkpoint_projection;
+    bool provenance_changed =
+        kind == WriteKind::replace || plan.blob || (previous && !previous->pending.empty());
+    for (const auto position : positions)
+      provenance_changed = provenance_changed ||
+                           absolute_checkpoint_reference(s.messages.at(position)) ||
+                           (previous && previous->mappings.count(position));
+    auto compact = std::make_shared<SessionProjection>();
+    compact->session = s.id;
+    if (provenance_changed && previous && previous->session == s.id) {
+      compact->mappings = previous->mappings;
+      if (!plan.blob)
+        for (const auto &row : previous->pending) {
+          plan.expected.emplace(row.first, row.second->accepted);
+          if (kind != WriteKind::replace && row.second->payload && row.first < s.messages.size()) {
+            plan.rows.emplace(
+                row.first, PreparedRow{std::nullopt, row.second->payload, row.second->references});
+            auto message = s.messages.at(row.first);
+            known_projection(message, row.first, previous, s.id);
+            plan.rows.at(row.first).message = std::move(message);
+          }
+        }
+    }
+    if (kind == WriteKind::replace || plan.blob)
+      plan.rows.clear();
+    std::map<std::string, std::string> names, references;
+    bool needs_names = false;
+    for (const auto position : positions)
+      needs_names = needs_names ||
+                    (s.messages.at(position).role == "tool" && (tool.empty() || position != first));
+    if (needs_names)
+      for (const auto &message : s.messages)
+        for (const auto &call : message.calls)
+          names.emplace(call.id, call.name);
+    Statement source(db, "SELECT payload FROM session_messages WHERE session=? AND position=?");
+    if (kind == WriteKind::replace)
+      for (const auto &mapping : compact->mappings)
+        if (!plan.blob && !plan.expected.count(mapping.first)) {
+          const auto stored = stored_payload(s.id, mapping.first, source);
+          plan.expected[mapping.first].insert(stored ? digest(*stored) : std::string{});
+        }
+    for (const auto position : positions) {
+      if (!plan.blob && compact->mappings.count(position) && !plan.expected.count(position)) {
+        const auto stored = stored_payload(s.id, position, source);
+        plan.expected[position].insert(stored ? digest(*stored) : std::string{});
+      }
+      const auto &input = s.messages.at(position);
+      auto message = lexical(input, s.id, position,
+                             !tool.empty() && position == first ? tool : names[input.tool_call_id]);
+      known_projection(message, position, previous, s.id);
+      const auto *absolute = absolute_checkpoint_reference(message);
+      const auto original = absolute ? *absolute : std::string{};
+      project(message, references);
+      if (!original.empty() && !absolute_checkpoint_reference(message)) {
+        compact->mappings[position] = {
+            message.message_id, original,
+            message.checkpoint_state.at("recovery_record").get<std::string>()};
+        if (!plan.blob && !plan.expected.count(position)) {
+          const auto stored = stored_payload(s.id, position, source);
+          plan.expected[position].insert(stored ? digest(*stored) : std::string{});
+        }
+      }
+      auto payload = std::make_shared<const std::string>(safe_json(Json(message)).dump());
+      auto paths = message_references({message});
+      plan.rows[position] = {std::move(message), std::move(payload), std::move(paths)};
+    }
+    for (auto row = compact->mappings.begin(); row != compact->mappings.end();) {
+      const auto position = row->first;
+      const auto prepared = plan.rows.find(position);
+      const Message *message = prepared != plan.rows.end() && prepared->second.message
+                                   ? &*prepared->second.message
+                               : position < s.messages.size() ? &s.messages[position]
+                                                              : nullptr;
+      if (!message || !message->checkpoint_state.is_object() ||
+          message->message_id != row->second.message_id ||
+          message->checkpoint_state.value("recovery_record", std::string{}) !=
+              row->second.portable_reference)
+        row = compact->mappings.erase(row);
+      else
+        ++row;
+    }
+    for (auto &entry : plan.expected) {
+      const auto target = plan.rows.find(entry.first);
+      if (target != plan.rows.end())
+        entry.second.insert(digest(*target->second.payload));
+      else if (kind == WriteKind::replace)
+        entry.second.insert("");
+    }
+    if (!provenance_changed) {
+      for (const auto &entry : plan.rows)
+        plan.retirement.prepare(s.messages.at(entry.first));
+      plan.committed = previous;
+      plan.nested = previous;
+      snapshot.commit();
+      return plan;
+    }
+    auto nested = std::make_shared<SessionProjection>(*compact);
+    for (const auto &entry : plan.expected) {
+      auto pending = std::make_shared<SessionProjection::Pending>();
+      pending->accepted = entry.second;
+      const auto prepared = plan.rows.find(entry.first);
+      if (prepared != plan.rows.end()) {
+        pending->payload = prepared->second.payload;
+        pending->references = prepared->second.references;
+        pending->accepted.insert(digest(*pending->payload));
+      } else if (kind == WriteKind::replace)
+        pending->accepted.insert("");
+      else if (previous && previous->pending.count(entry.first))
+        *pending = *previous->pending.at(entry.first);
+      nested->pending.emplace(entry.first, std::move(pending));
+    }
+    for (const auto &entry : plan.rows)
+      plan.retirement.prepare(s.messages.at(entry.first));
+    // Blob materialization may be rolled back by an outer transaction.
+    if (plan.blob)
+      nested->blob_fingerprint = plan.blob_fingerprint;
+    plan.committed = std::move(compact);
+    plan.nested = std::move(nested);
+    snapshot.commit();
+    return plan;
   }
-  static void acknowledge(const Session &s) noexcept {
-    if (s.checkpoint_projection && s.checkpoint_projection->session == s.id) {
-      auto &projection = *s.checkpoint_projection;
-      projection.replacements.clear();
-      auto &rows = projection.rows;
-      rows.erase(
-          std::remove_if(
-              rows.begin(), rows.end(),
-              [&](const auto &row) {
-                if (row.position >= s.messages.size())
-                  return true;
-                const auto &message = s.messages[row.position];
-                if (!message.message_id.empty() && message.message_id != row.message_id)
-                  return true;
-                if (!message.checkpoint_state.is_object())
-                  return true;
-                const auto ref = message.checkpoint_state.find("recovery_record");
-                return ref == message.checkpoint_state.end() || !ref->is_string() ||
-                       (ref->template get_ref<const std::string &>() != row.original_reference &&
-                        ref->template get_ref<const std::string &>() != row.portable_reference);
-              }),
-          rows.end());
-      for (auto &row : rows)
-        row.pending = false;
+  void apply_prepared_transcript(const Session &s, const PreparedTranscript &plan) {
+    if (plan.blob) {
+      Statement blob(db, "SELECT message_format,messages FROM sessions WHERE id=?");
+      blob.text(1, s.id);
+      const auto status = sqlite3_step(blob.p);
+      if (status != SQLITE_ROW || sqlite3_column_int(blob.p, 0) != 0 ||
+          digest(column(blob.p, 1)) != plan.blob_fingerprint)
+        throw Error("Session modified by another process: legacy transcript changed");
     }
+    Statement current(db, "SELECT payload FROM session_messages WHERE session=? AND position=?");
+    std::map<size_t, std::optional<std::string>> observed;
+    for (const auto &entry : plan.expected) {
+      auto payload = stored_payload(s.id, entry.first, current);
+      if (!entry.second.count(payload ? digest(*payload) : std::string{}))
+        throw Error("Session modified by another process: checkpoint row changed");
+      observed.emplace(entry.first, std::move(payload));
+    }
+    const bool replace = plan.blob || plan.kind == WriteKind::replace;
+    if (replace)
+      reset_message_rows(db, s.id);
+    else if (plan.kind == WriteKind::append) {
+      Statement count(db, "SELECT count(*) FROM session_messages WHERE session=?");
+      count.text(1, s.id);
+      if (sqlite3_step(count.p) != SQLITE_ROW ||
+          sqlite3_column_int64(count.p, 0) != static_cast<sqlite3_int64>(plan.first))
+        throw Error("Session changed before message append");
+    }
+    Statement insert(db, "INSERT INTO session_messages(session,position,payload) VALUES(?,?,?)");
+    Statement update(db, "UPDATE session_messages SET payload=? WHERE session=? AND position=?");
+    std::set<std::string> paths;
+    for (const auto &entry : plan.rows) {
+      const auto &row = entry.second;
+      if (replace || (plan.kind == WriteKind::append && entry.first >= plan.first)) {
+        insert_message_row(insert, s.id, entry.first, *row.payload);
+        serialized += row.payload->size();
+      } else if (!observed.count(entry.first) || !observed.at(entry.first) ||
+                 *observed.at(entry.first) != *row.payload) {
+        sqlite3_reset(update.p);
+        update.text(1, *row.payload);
+        update.text(2, s.id);
+        sqlite3_bind_int64(update.p, 3, static_cast<sqlite3_int64>(entry.first));
+        update.run();
+        if (sqlite3_changes(db) != 1)
+          throw Error("Session message missing during revision");
+        serialized += row.payload->size();
+      }
+      paths.insert(row.references.begin(), row.references.end());
+    }
+    remember_paths(s.id, std::move(paths));
+  }
+  static void publish_transcript(Session &s, PreparedTranscript &plan, bool owning) noexcept {
+    static_assert(std::is_nothrow_swappable<Message>::value, "Message publication must not throw");
+    for (auto &row : plan.rows)
+      if (row.second.message && row.first < s.messages.size()) {
+        std::swap(s.messages[row.first], *row.second.message);
+        plan.retirement.retire(*row.second.message);
+      }
+    s.checkpoint_projection = owning ? std::move(plan.committed) : std::move(plan.nested);
+  }
+  std::vector<std::string> reconciliation_inputs(const std::string &id) const {
+    std::vector<std::string> inputs;
+    for (const auto *query :
+         {"SELECT message_format,messages FROM sessions WHERE id=?",
+          "SELECT position,payload FROM session_messages WHERE session=? ORDER BY position",
+          "SELECT call_id,result,status,name,args FROM tools WHERE session=? ORDER BY call_id"}) {
+      Statement rows(db, query);
+      rows.text(1, id);
+      int status;
+      while ((status = sqlite3_step(rows.p)) == SQLITE_ROW)
+        for (int i = 0; i < sqlite3_column_count(rows.p); ++i)
+          inputs.push_back(std::to_string(sqlite3_column_type(rows.p, i)) + ":" +
+                           column(rows.p, i));
+      if (status != SQLITE_DONE)
+        sql_read_error(db, "Cannot inspect reconciliation inputs", status);
+      inputs.emplace_back();
+    }
+    return inputs;
+  }
+  void apply_tool_result(const std::string &id, const ToolCall &call,
+                         const std::string &payload) const {
+    Statement q(db, "UPDATE tools SET status='complete',result=? WHERE session=? AND "
+                    "call_id=? AND status='running'");
+    q.text(1, payload);
+    q.text(2, id);
+    q.text(3, call.id);
+    q.run();
+    if (sqlite3_changes(db) != 1)
+      throw Error("Session modified by another process: tool outcome is no longer pending");
   }
   std::set<std::string> message_paths(const std::vector<Message> &messages) const {
     auto paths = message_references(messages);
@@ -916,9 +1162,18 @@ Session StateStore::read_session(const std::string &id, bool repair, bool provid
   if (sqlite3_column_type(q.p, 6) != SQLITE_NULL && !column(q.p, 6).empty())
     s.effort = column(q.p, 6);
   std::map<size_t, std::string> source_rows;
-  if (sqlite3_column_int(q.p, 7) == 0)
-    s.messages = session_json<std::vector<Message>>(column(q.p, 2));
-  else {
+  auto projection = std::make_shared<SessionProjection>();
+  projection->session = s.id;
+  if (sqlite3_column_int(q.p, 7) == 0) {
+    const auto blob = column(q.p, 2);
+    s.messages = session_json<std::vector<Message>>(blob);
+    if (project) {
+      projection->blob_fingerprint = digest(blob);
+      for (size_t i = 0; i < s.messages.size(); ++i)
+        if (absolute_checkpoint_reference(s.messages[i]))
+          source_rows.emplace(i, std::string{});
+    }
+  } else {
     Statement rows(
         impl_->db,
         "SELECT position,payload FROM session_messages WHERE session=? ORDER BY position");
@@ -971,6 +1226,7 @@ Session StateStore::read_session(const std::string &id, bool repair, bool provid
     if (sqlite3_get_autocommit(impl_->db))
       impl_->populate_provider(s, bytes, !normalized);
   }
+  sqlite3_reset(q.p); // Finish the coherent load snapshot before any later write preparation.
   portable_messages(s.messages, s.id);
   ensure_message_ids(s.messages);
   if (project) {
@@ -979,15 +1235,29 @@ Session StateStore::read_session(const std::string &id, bool repair, bool provid
       auto &message = s.messages.at(entry.first);
       const auto original = *absolute_checkpoint_reference(message);
       impl_->project(message, references);
-      if (!absolute_checkpoint_reference(message))
-        impl_->retain_projection(s, entry.first, message, original, entry.second);
+      if (!absolute_checkpoint_reference(message)) {
+        projection->mappings.emplace(
+            entry.first, SessionProjection::Mapping{
+                             message.message_id, original,
+                             message.checkpoint_state.at("recovery_record").get<std::string>()});
+        if (projection->blob_fingerprint.empty()) {
+          auto pending = std::make_shared<SessionProjection::Pending>();
+          pending->payload = std::make_shared<const std::string>(safe_json(Json(message)).dump());
+          pending->references = message_references({message});
+          pending->accepted = {entry.second, digest(*pending->payload)};
+          projection->pending.emplace(entry.first, std::move(pending));
+        }
+      }
     }
   }
+  if (project && (!projection->mappings.empty() || !projection->blob_fingerprint.empty()))
+    s.checkpoint_projection = std::move(projection);
   if (repair)
     reconcile(s, false);
   return s;
 }
-void StateStore::reconcile(Session &session, bool persist) {
+void StateStore::reconcile(Session &destination, bool persist) {
+  auto session = destination;
   portable_messages(session.messages, session.id);
   ensure_message_ids(session.messages);
   impl_->known_projections(session, session.checkpoint_projection);
@@ -1006,9 +1276,10 @@ void StateStore::reconcile(Session &session, bool persist) {
   for (const auto &answer : answers)
     if (!calls.count(answer.first))
       throw Error("Orphan tool result in session");
-  auto previous = session.messages;
-  sql(impl_->db, persist ? "BEGIN IMMEDIATE" : "BEGIN");
-  try {
+  Transaction snapshot(impl_->db, false);
+  const auto inputs =
+      persist ? impl_->reconciliation_inputs(session.id) : std::vector<std::string>{};
+  {
     Json stored_messages;
     if (persist) {
       auto stored = read_session(session.id, false, false, false);
@@ -1120,45 +1391,72 @@ void StateStore::reconcile(Session &session, bool persist) {
     }
     portable_messages(repaired, session.id);
     ensure_message_ids(repaired);
-    if (Json(repaired) == Json(session.messages) && recoveries.empty() &&
-        (!persist || Json(repaired) == stored_messages)) {
-      if (persist)
-        impl_->pending_projections(session, session.messages.size(), session.checkpoint_projection);
-      sql(impl_->db, "COMMIT");
-      if (persist)
-        impl_->acknowledge(session);
+    const bool unchanged = Json(repaired) == Json(session.messages) && recoveries.empty() &&
+                           (!persist || Json(repaired) == stored_messages);
+    snapshot.commit();
+    session.messages = std::move(repaired);
+    if (!persist) {
+      destination.messages.swap(session.messages);
+      destination.checkpoint_projection.swap(session.checkpoint_projection);
       return;
     }
-    if (persist)
-      for (const auto &entry : recoveries) {
-        const auto &call = calls.at(entry.first);
-        Statement write(
-            impl_->db,
-            "INSERT INTO tools(session,call_id,name,args,result,status) VALUES(?,?,?,?,?,?) "
-            "ON CONFLICT(session,call_id) DO UPDATE SET "
-            "result=excluded.result,status=excluded.status "
-            "WHERE tools.status!='complete'");
-        write.text(1, session.id);
-        write.text(2, call.id);
-        write.text(3, call.name);
-        write.text(4, safe_json(call.arguments).dump());
-        write.text(5, Json(entry.second.first).dump());
-        write.text(6, entry.second.second);
-        write.run();
-      }
-    session.messages = std::move(repaired);
-    if (persist) {
-      remember_references(session.id, session.messages);
-      save(session);
+    std::vector<size_t> positions;
+    if (!unchanged)
+      for (size_t i = 0; i < session.messages.size(); ++i)
+        positions.push_back(i);
+    auto prepared = impl_->prepare(session, std::move(positions),
+                                   unchanged ? Impl::WriteKind::revise : Impl::WriteKind::replace);
+    struct RecoveryWrite {
+      std::string id, name, args, result, status;
+    };
+    std::vector<RecoveryWrite> writes;
+    for (auto &entry : recoveries) {
+      const auto &call = calls.at(entry.first);
+      for (const auto &row : prepared.rows)
+        if (row.second.message && row.second.message->role == "tool" &&
+            row.second.message->tool_call_id == entry.first)
+          entry.second.first.message_id = row.second.message->message_id;
+      writes.push_back({entry.first, call.name, safe_json(call.arguments).dump(),
+                        safe_json(Json(entry.second.first)).dump(), entry.second.second});
     }
-    sql(impl_->db, "COMMIT");
-    if (persist)
-      impl_->acknowledge(session);
-  } catch (...) {
-    session.messages.swap(previous);
-    if (!sqlite3_get_autocommit(impl_->db))
-      (void)sqlite3_exec(impl_->db, "ROLLBACK", nullptr, nullptr, nullptr);
-    throw;
+    JsonRetirement retirement;
+    retirement.prepare(session.provider_state);
+    for (auto &message : destination.messages)
+      retirement.prepare(message);
+    stored_messages = nullptr;
+    recoveries.clear();
+    answers.clear();
+    calls.clear();
+    TranscriptTransaction publication(impl_->db);
+    if (impl_->reconciliation_inputs(session.id) != inputs)
+      throw Error("Session modified by another process: reload before recovery");
+    for (const auto &entry : writes) {
+      Statement write(
+          impl_->db,
+          "INSERT INTO tools(session,call_id,name,args,result,status) VALUES(?,?,?,?,?,?) "
+          "ON CONFLICT(session,call_id) DO UPDATE SET "
+          "result=excluded.result,status=excluded.status WHERE tools.status!='complete'");
+      write.text(1, session.id);
+      write.text(2, entry.id);
+      write.text(3, entry.name);
+      write.text(4, entry.args);
+      write.text(5, entry.result);
+      write.text(6, entry.status);
+      write.run();
+    }
+    if (!unchanged)
+      update_metadata(session);
+    impl_->apply_prepared_transcript(session, prepared);
+    if (!unchanged)
+      save_provider_state(session);
+    publication.commit();
+    impl_->publish_transcript(session, prepared, publication.owner);
+    if (!unchanged && publication.owner)
+      impl_->publish_provider(session, impl_->pending_provider_bytes,
+                              impl_->pending_provider_token);
+    destination.messages.swap(session.messages);
+    destination.checkpoint_projection.swap(session.checkpoint_projection);
+    retirement.retire(session);
   }
 }
 Session StateStore::last(bool repair) {
@@ -1167,12 +1465,10 @@ Session StateStore::last(bool repair) {
 }
 Session StateStore::fork(const Session &parent) {
   auto recovered = parent;
-  portable_messages(recovered.messages, parent.id);
-  ensure_message_ids(recovered.messages);
-  impl_->known_projections(recovered, parent.checkpoint_projection);
-  impl_->portable(recovered.messages, parent.id);
-  ensure_message_ids(recovered.messages);
   reconcile(recovered, false);
+  std::map<std::string, std::string> fork_references;
+  for (auto &message : recovered.messages)
+    impl_->project(message, fork_references);
   Session s{unique_id(), parent.name.empty() ? "" : parent.name + " (fork)", recovered.messages};
   s.provider = parent.provider;
   s.model = parent.model;
@@ -1341,111 +1637,97 @@ uint64_t StateStore::provider_rows_read() const {
 size_t StateStore::provider_cache_bytes() const {
   return impl_->cached_bytes;
 }
-void StateStore::append_messages(const Session &s, size_t first, bool provider_state,
+void StateStore::append_messages(Session &s, size_t first, bool provider_state,
                                  const std::optional<ProviderStateUpdate> &hint) {
   if (first > s.messages.size())
     throw Error("Invalid message append position");
   auto owner = acquire(s.id);
-  const auto previous = s.checkpoint_projection;
   std::vector<size_t> positions;
   for (size_t i = first; i < s.messages.size(); ++i)
     positions.push_back(i);
-  const auto prepared = impl_->prepare(s, positions);
-  Transaction tx(impl_->db);
+  auto prepared = impl_->prepare(s, std::move(positions), Impl::WriteKind::append, first);
+  TranscriptTransaction tx(impl_->db);
   update_metadata(s);
-  Statement count(impl_->db, "SELECT count(*) FROM session_messages WHERE session=?");
-  count.text(1, s.id);
-  if (sqlite3_step(count.p) != SQLITE_ROW ||
-      sqlite3_column_int64(count.p, 0) != static_cast<sqlite3_int64>(first))
-    throw Error("Session changed before message append");
-  impl_->pending_projections(s, first, previous);
-  Statement row(impl_->db, "INSERT INTO session_messages(session,position,payload) VALUES(?,?,?)");
-  for (const auto &message : prepared) {
-    impl_->serialized += message.payload.size();
-    insert_message_row(row, s.id, message.position, message.payload);
-    impl_->remember_paths(s.id, message.references);
-  }
+  impl_->apply_prepared_transcript(s, prepared);
   if (provider_state)
     save_provider_state(s, hint);
   tx.commit();
-  if (tx.owner)
-    impl_->acknowledge(s);
+  impl_->publish_transcript(s, prepared, tx.owner);
   if (provider_state && tx.owner)
     impl_->publish_provider(s, impl_->pending_provider_bytes, impl_->pending_provider_token);
   else if (provider_state)
     impl_->clear_provider_cache();
 }
-void StateStore::revise_messages(const Session &s, const std::vector<size_t> &positions) {
-  auto owner = acquire(s.id);
-  const auto previous = s.checkpoint_projection;
-  const auto prepared = impl_->prepare(s, positions);
-  Transaction tx(impl_->db);
-  impl_->pending_projections(s, s.messages.size(), previous);
-  for (const auto &message : prepared) {
-    Statement q(impl_->db, "UPDATE session_messages SET payload=? WHERE session=? AND position=?");
-    impl_->serialized += message.payload.size();
-    q.text(1, message.payload);
-    q.text(2, s.id);
-    sqlite3_bind_int64(q.p, 3, static_cast<sqlite3_int64>(message.position));
-    q.run();
-    if (sqlite3_changes(impl_->db) != 1)
-      throw Error("Session message missing during revision");
-    impl_->remember_paths(s.id, message.references);
-  }
-  tx.commit();
-  if (tx.owner)
-    impl_->acknowledge(s);
+void StateStore::append_messages(const Session &s, size_t first, bool provider_state,
+                                 const std::optional<ProviderStateUpdate> &hint) {
+  auto copy = s;
+  JsonRetirement retirement;
+  retirement.prepare(copy);
+  append_messages(copy, first, provider_state, hint);
+  retirement.retire(copy);
 }
-void StateStore::replace_history(const Session &s) {
+void StateStore::revise_messages(Session &s, const std::vector<size_t> &positions) {
+  auto owner = acquire(s.id);
+  auto prepared = impl_->prepare(s, positions, Impl::WriteKind::revise);
+  TranscriptTransaction tx(impl_->db);
+  impl_->apply_prepared_transcript(s, prepared);
+  tx.commit();
+  impl_->publish_transcript(s, prepared, tx.owner);
+}
+void StateStore::revise_messages(const Session &s, const std::vector<size_t> &positions) {
+  auto copy = s;
+  JsonRetirement retirement;
+  retirement.prepare(copy);
+  revise_messages(copy, positions);
+  retirement.retire(copy);
+}
+void StateStore::replace_history(Session &s) {
   auto owner = acquire(s.id);
   std::vector<size_t> positions;
   for (size_t i = 0; i < s.messages.size(); ++i)
     positions.push_back(i);
-  const auto prepared = impl_->prepare(s, positions);
-  if (s.checkpoint_projection && s.checkpoint_projection->session == s.id) {
-    s.checkpoint_projection = std::make_shared<SessionProjection>(*s.checkpoint_projection);
-    auto &projection = *s.checkpoint_projection;
-    projection.replacements.clear();
-    for (const auto &row : projection.rows)
-      projection.replacements.emplace(row.position, row.position < prepared.size()
-                                                        ? digest(prepared[row.position].payload)
-                                                        : std::string{});
-  }
-  Transaction tx(impl_->db);
+  auto prepared = impl_->prepare(s, std::move(positions), Impl::WriteKind::replace);
+  TranscriptTransaction tx(impl_->db);
   update_metadata(s);
-  reset_message_rows(impl_->db, s.id);
-  Statement row(impl_->db, "INSERT INTO session_messages(session,position,payload) VALUES(?,?,?)");
-  for (const auto &message : prepared) {
-    insert_message_row(row, s.id, message.position, message.payload);
-    impl_->serialized += message.payload.size();
-    impl_->remember_paths(s.id, message.references);
-  }
+  impl_->apply_prepared_transcript(s, prepared);
   save_provider_state(s);
   tx.commit();
-  if (tx.owner) {
-    impl_->acknowledge(s);
+  impl_->publish_transcript(s, prepared, tx.owner);
+  if (tx.owner)
     impl_->publish_provider(s, impl_->pending_provider_bytes, impl_->pending_provider_token);
-  } else
+  else
     impl_->clear_provider_cache();
 }
-void StateStore::save(const Session &s) {
+void StateStore::replace_history(const Session &s) {
+  auto copy = s;
+  JsonRetirement retirement;
+  retirement.prepare(copy);
+  replace_history(copy);
+  retirement.retire(copy);
+}
+void StateStore::save(Session &s) {
   replace_history(s);
+}
+void StateStore::save(const Session &s) {
+  auto copy = s;
+  JsonRetirement retirement;
+  retirement.prepare(copy);
+  save(copy);
+  retirement.retire(copy);
 }
 void StateStore::complete_tool(Session &s, const ToolCall &call, Message result) {
   auto owner = acquire(s.id);
-  std::vector<Message> normalized{std::move(result)};
-  impl_->portable(normalized, s.id, call.name);
-  ensure_message_ids(normalized);
-  result = std::move(normalized.front());
-  Transaction tx(impl_->db);
-  tool_finished(s.id, call, Json(result));
   const auto first = s.messages.size();
   s.messages.push_back(std::move(result));
   try {
-    append_messages(s, first);
+    auto prepared = impl_->prepare(s, {first}, Impl::WriteKind::append, first, call.name);
+    const auto &row = prepared.rows.at(first);
+    TranscriptTransaction tx(impl_->db);
+    impl_->apply_tool_result(s.id, call, *row.payload);
+    update_metadata(s);
+    impl_->apply_prepared_transcript(s, prepared);
     tx.commit();
-    if (tx.owner)
-      impl_->acknowledge(s);
+    impl_->publish_transcript(s, prepared, tx.owner);
   } catch (...) {
     s.messages.resize(first);
     throw;
@@ -1636,16 +1918,21 @@ Json StateStore::repair(const std::string &selector, bool last, bool provider_ca
       }
       if (!mutate)
         return report;
+      const auto backup_bytes = backup.dump();
       auto backup_path =
           (repair_directory(impl_->home) / (id + "-backup-" + unique_id() + ".json")).string();
       backups.push_back(std::move(backup_path));
       try {
-        impl_->files->atomic_write(backups.back(), backup.dump(), true);
+        impl_->files->atomic_write(backups.back(), backup_bytes, true);
       } catch (...) {
-        std::error_code status;
-        if (!fs::is_regular_file(backups.back(), status))
-          backups.pop_back();
-        throw;
+        const auto failure = std::current_exception();
+        try {
+          if (impl_->files->read(backups.back(), backup_bytes.size()) != backup_bytes)
+            backups.back() += " (publication unconfirmed)";
+        } catch (...) {
+          backups.back() += " (publication unconfirmed)";
+        }
+        std::rethrow_exception(failure);
       }
       report["backup"] = backups.back();
       if (backups.size() > 1)
@@ -1694,7 +1981,6 @@ Json StateStore::repair(const std::string &selector, bool last, bool provider_ca
           session.messages.push_back(std::move(marker));
         }
         impl_->portable(session.messages, id);
-        ensure_message_ids(session.messages);
         payloads.reserve(session.messages.size());
         for (const auto &message : session.messages)
           payloads.push_back(safe_json(Json(message)).dump());
@@ -1818,20 +2104,13 @@ void StateStore::tool_started(const std::string &id, const ToolCall &t) {
 }
 void StateStore::tool_finished(const std::string &id, const ToolCall &t, const Json &result) {
   auto owner = acquire(id);
-  Transaction transaction(impl_->db);
-  Statement q(impl_->db, "UPDATE tools SET status='complete',result=? WHERE session=? AND "
-                         "call_id=? AND status='running'");
-  auto message = result.get<Message>();
-  std::vector<Message> portable{message};
-  impl_->portable(portable, id, t.name);
-  ensure_message_ids(portable);
-  q.text(1, safe_json(Json(portable.front())).dump());
-  q.text(2, id);
-  q.text(3, t.id);
-  q.run();
-  if (sqlite3_changes(impl_->db) != 1)
-    throw Error("Session modified by another process: tool outcome is no longer pending");
-  remember_references(id, portable);
+  std::vector<Message> messages{result.get<Message>()};
+  impl_->portable(messages, id, t.name);
+  const auto payload = safe_json(Json(messages.front())).dump();
+  auto paths = message_references(messages);
+  TranscriptTransaction transaction(impl_->db);
+  impl_->apply_tool_result(id, t, payload);
+  impl_->remember_paths(id, std::move(paths));
   transaction.commit();
 }
 } // namespace codet
