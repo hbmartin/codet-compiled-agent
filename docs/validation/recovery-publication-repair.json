@@ -1,0 +1,337 @@
+{
+  "recorded_utc": "2026-10-20T22:29:04.841004+00:00",
+  "branch": "codex/recovery-publication-repair",
+  "implementation_commit": "730aecce7e35a90c8ad4e3c530ede75e5a8bac85",
+  "baseline": "c262e510955c6c571fb7aa4c96003b9c2ace91a8",
+  "review_comments": {
+    "addressed": [
+      1,
+      2,
+      4,
+      5,
+      6,
+      7,
+      8,
+      10,
+      11,
+      12,
+      13,
+      14
+    ],
+    "unchanged_at_user_request": [
+      3
+    ],
+    "deferred": [
+      9
+    ]
+  },
+  "compatibility": {
+    "sqlite_schema_version": 8,
+    "schema_migration_added": false,
+    "revision_trigger_definitions_unchanged": true,
+    "session_overloads_unchanged": true,
+    "new_cli_flag": "repair --session-token (exclusive with --provider-cache/--recovery)",
+    "new_public_methods": [
+      "StateStore::repair_session_token",
+      "StateStore::set_diagnostics",
+      "StateStore::transcript_rows_read"
+    ],
+    "maximum_publication_attempts": 2,
+    "strict_analyzer_configuration_unchanged": true,
+    "unowned_transcript_writes_rejected": true,
+    "filesystem_trust_checks_retained": true,
+    "immutable_projection_provenance": true,
+    "post_commit_acknowledgement_noexcept": true,
+    "commit_receipt_accounted_data_limit_bytes": 8388608,
+    "provider_and_archive_cache_limits_unchanged": true
+  },
+  "coverage": [
+    "Stored recovery baselines remain independent of unsaved suffixes and requested revisions in row/blob layouts and mutable/const writes.",
+    "Readable loads, last, exports and forks tolerate damaged session tokens without regenerating them; ordinary session mutations reject them before token-rotating SQL.",
+    "Token-only repair preserves unreadable raw transcript/provider bytes, provider revisions, journal, references and metadata; valid tokens are no-ops; backup/commit failures and two invalidations preserve original errors.",
+    "Completion replaces provenance-identified provisional outcomes, supports retained const recovery and multiple live calls, rejects differing repeated output, and reloads without duplicate results.",
+    "An agent-level process executor counter verifies one actual execution with one or two forced publication invalidations.",
+    "Original Error subtypes, private revision subtypes, JSON exceptions, provider status/body, cancellation code, allocation failures and non-standard exceptions survive receipt/diagnostic failure.",
+    "Missing absolute checkpoint archives, strict cache fallback, receipt eviction, prefix edits, external unknown JSON fields, and mutable handoff after const writes remain covered.",
+    "Both same-connection reconciliation invalidations and the restored external-connection/archive-read scenario retain the two-attempt bound.",
+    "Allocation interception verifies nonthrowing completion and const-receipt acknowledgement after an owning commit; matching nothrow allocator overloads keep sanitizer allocation pairs consistent."
+  ],
+  "checks": {
+    "macos_host": {
+      "executed": true,
+      "passed": true,
+      "ctest_groups": 8,
+      "fault_tests": 40,
+      "unit_tests_passed": 468,
+      "unit_tests_total": 470,
+      "unit_tests_skipped": 2,
+      "cli_integration_tests": 56,
+      "log": "build/recovery-repair-macos-ctest.log"
+    },
+    "linux_amd64": {
+      "executed": true,
+      "passed": true,
+      "ctest_groups": 8,
+      "fault_tests": 40,
+      "unit_tests_passed": 465,
+      "unit_tests_total": 470,
+      "unit_tests_skipped": 5,
+      "cli_integration_tests": 56,
+      "log": "build/recovery-repair-ctest-final.log"
+    },
+    "asan_ubsan": {
+      "executed": true,
+      "passed": true,
+      "ctest_groups": 8,
+      "fault_tests": 40,
+      "unit_tests_passed": 465,
+      "unit_tests_total": 470,
+      "unit_tests_skipped": 5,
+      "cli_integration_tests": 56,
+      "log": "build/recovery-repair-sanitize-final.log"
+    },
+    "foundation": {
+      "executed": true,
+      "passed": true,
+      "ctest_groups": 1,
+      "log": "build/recovery-repair-foundation.log"
+    },
+    "analysis": {
+      "executed": true,
+      "passed": true,
+      "sources_per_tool": 25,
+      "tools": [
+        {
+          "tool": "clang-tidy",
+          "passed": true,
+          "findings": 0
+        },
+        {
+          "tool": "cppcheck",
+          "passed": true,
+          "findings": 0
+        },
+        {
+          "tool": "clang-analyzer",
+          "passed": true,
+          "findings": 0
+        }
+      ],
+      "real_header_cppcheck_canaries": 3,
+      "selftests": {
+        "clang-tidy": true,
+        "cppcheck": true,
+        "clang-analyzer": true
+      },
+      "runner_tests": 33,
+      "manifest": "build/recovery-repair/analysis/manifest.json",
+      "manifest_sha256": "78665b2724129f141a0bf612ec5fa93e55333a10dba8207061ad8b5c5d5b3b95"
+    },
+    "semgrep": {
+      "executed": true,
+      "passed": true,
+      "version": "1.177.0",
+      "rules": 29,
+      "scanned_targets": 7,
+      "findings": 0,
+      "fixture_report_sha256": "59f7be3118054c0883e983f776d345254e2cca79fda6d55e380cc782a9ebf2d2",
+      "scan_report_sha256": "1875b6957d141f504fa335def3dbbb0533d7cae0c97a18cfd427b54349e802fa"
+    },
+    "format": {
+      "executed": true,
+      "passed": true,
+      "version": "clang-format 18.1.8",
+      "scope": "changed C++ and headers"
+    },
+    "tiger": {
+      "executed": true,
+      "passed": true,
+      "target_runtime_executed": false,
+      "verification": "GCC 14.2, PPC32 big-endian/G3 Mach-O, target dependency paths, no LC_RPATH",
+      "log": "build/recovery-repair-tiger-final.log"
+    },
+    "ordinary_row_policy_probe": {
+      "executed": true,
+      "passed": true,
+      "log": "build/recovery-repair-comment3-policy.log",
+      "interpretation": "Confirms comment 3 remains unchanged; this is a known lost-update limitation, not a claim of concurrency safety."
+    }
+  },
+  "recovery_benchmark": {
+    "executed": true,
+    "passed": true,
+    "rows": [
+      {
+        "append": 0,
+        "peak_rss_bytes": 26333184,
+        "prefix_messages": 128,
+        "seconds": 0.02456,
+        "transcript_rows_read": 129
+      },
+      {
+        "append": 1,
+        "peak_rss_bytes": 26464256,
+        "prefix_messages": 128,
+        "seconds": 0.035259708,
+        "transcript_rows_read": 0
+      },
+      {
+        "append": 2,
+        "peak_rss_bytes": 26464256,
+        "prefix_messages": 128,
+        "seconds": 0.045063916,
+        "transcript_rows_read": 0
+      },
+      {
+        "append": 0,
+        "peak_rss_bytes": 30060544,
+        "prefix_messages": 1024,
+        "seconds": 0.129186209,
+        "transcript_rows_read": 1025
+      },
+      {
+        "append": 1,
+        "peak_rss_bytes": 30060544,
+        "prefix_messages": 1024,
+        "seconds": 0.184238584,
+        "transcript_rows_read": 0
+      },
+      {
+        "append": 2,
+        "peak_rss_bytes": 30060544,
+        "prefix_messages": 1024,
+        "seconds": 0.255730959,
+        "transcript_rows_read": 0
+      },
+      {
+        "append": 0,
+        "peak_rss_bytes": 61288448,
+        "prefix_messages": 8192,
+        "seconds": 1.157800834,
+        "transcript_rows_read": 8193
+      },
+      {
+        "append": 1,
+        "peak_rss_bytes": 61288448,
+        "prefix_messages": 8192,
+        "seconds": 1.558668084,
+        "transcript_rows_read": 0
+      },
+      {
+        "append": 2,
+        "peak_rss_bytes": 61288448,
+        "prefix_messages": 8192,
+        "seconds": 1.94767475,
+        "transcript_rows_read": 0
+      },
+      {
+        "append": 0,
+        "peak_rss_bytes": 268218368,
+        "prefix_messages": 65537,
+        "seconds": 5.901081127,
+        "transcript_rows_read": 65538
+      },
+      {
+        "append": 1,
+        "peak_rss_bytes": 294289408,
+        "prefix_messages": 65537,
+        "seconds": 9.507759546,
+        "transcript_rows_read": 65540
+      },
+      {
+        "append": 2,
+        "peak_rss_bytes": 294866944,
+        "prefix_messages": 65537,
+        "seconds": 13.180596464,
+        "transcript_rows_read": 65541
+      }
+    ],
+    "metric": "Rows decoded by full transcript reads; targeted payload checks and caller-prefix validation are not counted.",
+    "result": "Eligible repeat appends decode zero transcript SQL rows; the oversized receipt uses full validation. Caller-prefix work remains linear."
+  },
+  "execution_notes": [
+    "The branch starts from freshly fetched main and contains no changes from the still-independent linting PR #26.",
+    "One Linux CTest attempt hung after its child exited under emulation; the final full rerun with --timeout 180 passed all eight groups.",
+    "Initial local validation exposed missing pinned Cppcheck selection, policy placement of fingerprint hashing, migration-backfill guards and diagnostic assertions; all were resolved without weakening checks.",
+    "No live provider calls or PowerPC/Tiger hardware execution. Platform/permission opt-in skips are retained.",
+    "No analyzer scripts, suppressions, rule definitions, tool locks or CI workflows were changed."
+  ],
+  "implementation_files_sha256": {
+    "docs/RELIABILITY-MODERNIZATION.md": "85d8b4752cedb0661e422958eb1aa813b560f16bb6c73bb748478c22ef063b90",
+    "include/codet/core.hpp": "ac20cb0254b226d419004c4a81336d2a6aceb03f15e04e5cd6cc42e00c75b8e7",
+    "src/modern/cli.cpp": "d916afc6da7903b8314424f94bbd5d655f77e667778f9824912fa3dc4454eef7",
+    "src/modern/state.cpp": "f5bc4bf84c173126f3a375d00dd99a01e3f6d2c63abb16ff84a87c0635e7d403",
+    "tests/cli_integration.py": "e9eee949efd93a11a578829385f859d67ccb8d3b7512287c4aec044dd3facde4",
+    "tests/persistence_bench.cpp": "d5d39f7bb2f8f2cf4d4f52db83523e606633a76b4b7d4bc6c9630281f79ccd20",
+    "tests/pr17_test.cpp": "49991005f57e432637afea61eec5bfebf9082914e9a07cf4c79dc382a0f7422a",
+    "tests/pr18_test.cpp": "860e3f593978904f41a48d10378da6672dfb0ba1075fa03b251778a0e503f15f",
+    "tests/publication_fault_test.cpp": "8baff665011230159ccf7cd1a5c0429a1ce3732a5e67f4c31ef15b19eb5001f0"
+  },
+  "analysis_sources_sha256": {
+    "src/modern/agent.cpp": "a01c5c0de5684f19bd0d755deb7cceff238e242f26ae113c43541a4778b5df36",
+    "src/modern/artifacts.cpp": "1d20eb535c6a8cfaef48bb22ba180faca274b52f686aff607f6c069dbd44a4fc",
+    "src/modern/capture_catalog.cpp": "6deb5a69a6c957f6f72aebc958b6e3973bff12c86e588af2ffd047d0f2d5e5ee",
+    "src/modern/cli.cpp": "d916afc6da7903b8314424f94bbd5d655f77e667778f9824912fa3dc4454eef7",
+    "src/modern/computer.cpp": "ccb8fd5b7c0847a18ac44f32dd2319df25e4a173fec947fd1ea5a67f3c86263e",
+    "src/modern/config.cpp": "42c685ae9ac5499363c20de5bb8b99d15ff0a6596aed57dd607ca3936649d8c5",
+    "src/modern/context.cpp": "fe6439e0bfbd5282fa951c7e792190e89fddf1519b9247b898b95247a356bd09",
+    "src/modern/failure.cpp": "aabbc34d0e235141e79fee2c370d4ed7f3450eb89787ed467fb1b1bacf383a2a",
+    "src/modern/hooks.cpp": "21afab2dbdfae97ed2406bc5d28e30bc55e63598cac07e418c9f41b9971e2c06",
+    "src/modern/images.cpp": "bb703b2e4516c75d9dfda05af4e1cfac57fb0d4d84e7ee56fb1a631b528b1510",
+    "src/modern/inspection.cpp": "b36fadfea5ef50b49e8a547ad3f275be1935df8436874bfac14089750cfa2379",
+    "src/modern/instructions.cpp": "04e7f17b7ccbdd3e223cacf5e75971a4ea4ec3dfaa240508806aef48739119f6",
+    "src/modern/interaction.cpp": "1e18bf1c1f8cb1a221fc458661687f148c0479365c2912bdeb58265d0a2f82ed",
+    "src/modern/main.cpp": "67bb002f35e6fab656016cccd493ea985199858b106598fa8337185925583e1c",
+    "src/modern/output.cpp": "ce028a4b378e211cf54332a41abc776393e989ed51c7e471097e8112426c63a0",
+    "src/modern/patch.cpp": "8c99791527f8a6b09b35674802db3c29cafe2adde4700a67ca7adda60562f770",
+    "src/modern/platform.cpp": "016762d75b12c415fa0634598f95c5a67a9ec8ff4a7a1395e455e9e70a1af4ba",
+    "src/modern/prompts.cpp": "57082e86bf22ccad9d788b2bcff866788507bec072a7531797237a6fcfa0d367",
+    "src/modern/provider.cpp": "6f8735df0af6a084a6f19277b6a7309bcdc2204a8235cb864da87759633711f9",
+    "src/modern/reliability.cpp": "d924d9c1e8875c7b7e053509e2ab2fe3e24e5aee814c706dbdc9c4e608461356",
+    "src/modern/state.cpp": "f5bc4bf84c173126f3a375d00dd99a01e3f6d2c63abb16ff84a87c0635e7d403",
+    "src/modern/support.cpp": "40dfad2759619972f3b0eba053a24b00877b05ce2defb648b727ebd608dd594a",
+    "src/modern/tool_registry.cpp": "bbec68092f2561c5d4596e5976c7766e5715eb4ccddf03ef61b99a8ed7b00a93",
+    "src/modern/tools.cpp": "7fb448cf9be854916b284042bb230663a2cd52c7457990ae2f2cc6d1b21b821a",
+    "src/text_compat.c": "00213a0ad26fd98c9bd9a0a45fb84f9b853fcac8df7fed05c79e4d6444fb2205"
+  },
+  "analysis_inputs_sha256": {
+    "include/app-functions.h": "8e363fc9efb6f09bed6e406c8cda95f46e18f7ca0412ee16654c9a40f26d9340",
+    "include/app-globals.h": "58b79e8bc8e47df7317aa276e7b63cd06b88f72a304e9d1ed9b7f1161b694d6c",
+    "include/app.h": "7b4aff9d8012d627b4ce9220436240b64d9a16bf9bc0b81653bf63ed753170a3",
+    "include/callback-contracts.h": "c9bd4045bd5fbb7ba1e43cbfe582281349dc1e54c7dddfcabf41b29734c3c3e8",
+    "include/codet/artifacts.hpp": "bb6e85fa55389308906389ed202fa134673ad40d8a2acffa176a208e0a7359cf",
+    "include/codet/computer.hpp": "aa4e4ef2a400b761ed98f8dfe3b596d140eb06fa58ca7689ed927276c860eeb7",
+    "include/codet/context.hpp": "69642ff7cbe971372e0a5e0eec3060ee7dd3cae548adb1e8eb7ca9ae6801c1b5",
+    "include/codet/core.hpp": "ac20cb0254b226d419004c4a81336d2a6aceb03f15e04e5cd6cc42e00c75b8e7",
+    "include/codet/diagnostics.hpp": "31ead6755d8a6ce63d365b1a3507b20d06b868bbc3ecbc2893a26f34db750da9",
+    "include/codet/interaction.hpp": "ac2bae0c6d600d8866c06090444b842acbcb5baa31475825a20d34e36b512f03",
+    "include/codet/output.hpp": "d67f248b095142d77f43701d400529ede8006835558b1c2044ea758d72327225",
+    "include/codet/patch.hpp": "5852178d6a37ef71b560421c84543fe789e0fb5c87d45e337088f48008ec2915",
+    "include/codet/process_control.hpp": "144592cd14597dc1d52750f4eaff9b48be7b3c517991109e93d502300db1f8e6",
+    "include/codet/prompt.hpp": "cedf0270b29cc6731329907bae32be3b3870c9d803e8d354601a731d863752d1",
+    "include/codet/support.hpp": "3b67a474dc3b7373172807c0b1120f380379f1f46c8238d84d3aca3fbfc7b6dc",
+    "include/codet/tool_registry.hpp": "6024b8a00ec83280267cc9a874eff3d9d70b60a87dc5e2394e9f9aafa51e0771",
+    "include/embedded-strings.h": "6ffac0e9967e511dd10556aed94a2ef0201c926bd01d699208e4e26834ec2e86",
+    "include/imported-interfaces.h": "f28bc5576423cc04e2138d46b5accbdc64c3e294dcce7a080fcb4da6e16f2c8b",
+    "include/observed-abi.h": "a6526dee44e4e156cdc8f2cd8a9f5ea28cd1a25c8ea3a1deb31d0e28055f2d64",
+    "include/recovered-declarations.h": "328a2d82bcdb6bab00b171749643475b7e55f40ae7508fb305782a606ffa02a9",
+    "include/recovered-layouts.h": "68c1c0b0313d38632390b8919ddc297d6240bed0c2d1de307fce3f0cb431f195",
+    "include/recovered-storage.h": "a655bf2e2172d9293a2920b3f5ffb6ed6e7164e03b16d1c3400547d00648ce09",
+    "include/recovered-types.h": "22d85c337901a5b84de45b08c20409256586c6cc9e5ca4a13ec783788ca76caa",
+    "include/text_compat.h": "6ff5d6fe7251e3b156983ec5d1e4c2dea5bf08cdf40ac68734e1546850dd0da7"
+  },
+  "validation_logs_sha256": {
+    "build/recovery-repair-macos-ctest.log": "6970d9f63c5ac95fe19a7bbf8e8543a3b674b6335414174122a2f75701d49e25",
+    "build/recovery-repair-ctest-final.log": "064f9cc6972f708efacc6036d7c10001f3abb2d3d78df3e57bf44d3a34178c12",
+    "build/recovery-repair-sanitize-final.log": "48a4c4a313eba5dbbf7d1cf339d23336014284892b121218a1e3836ab7a63f5c",
+    "build/recovery-repair-foundation.log": "b65aec82b57499e41bff20dcb5d0c64be448b9be6846cc8513318239675e3351",
+    "build/recovery-repair-analysis-final.log": "2df0735c9d9b8fed7f0b242b95e9e77ba33454e5ea1fc84cb773580280889c1b",
+    "build/recovery-repair-analysis-selftest.log": "740d555865ff458e6ea3a80a11ab83ce36bd761be27466ba58af1b8f395df79b",
+    "build/recovery-repair-analysis-runner.log": "e5535044d07b0ed4759664404e3a30b6fd62cff6d6240da5c9e6379185581c87",
+    "build/recovery-repair-semgrep-final.log": "c5ffe45fe86ce3166c58dcb268276d747dcc1b60a02c30f660007e358a5b83d8",
+    "build/recovery-repair-tiger-final.log": "f09986a3b0ca51897d06008cb6f804946fa8ffc160803b27111898df91406989",
+    "build/recovery-repair-format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "build/recovery-repair-comment3-policy.log": "c72d3cc0550dc033a67a1bcb3d6593615818511c9c1c2d9ff103fd7141e72d1f",
+    "build/recovery-repair-recovery-bench-final.jsonl": "2e98148a2c7afed97ec3162371bfc17ce731e90155edca800c748613819ba738"
+  }
+}
