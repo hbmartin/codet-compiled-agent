@@ -136,3 +136,53 @@ rules:
           - pattern: append_messages(...)
           - pattern: tool_finished(...)
           - pattern: remember_references(...)
+  - id: codet-transcript-write-ownership
+    languages: [cpp]
+    severity: ERROR
+    message: Public transcript mutation implementations must reject unowned transactions before preparation or publication.
+    paths:
+      include: ["**/state.cpp"]
+    patterns:
+      - pattern-either:
+          - pattern: |
+              void StateStore::append_transcript(...) { ... }
+          - pattern: |
+              void StateStore::revise_transcript(...) { ... }
+          - pattern: |
+              void StateStore::replace_transcript(...) { ... }
+          - pattern: |
+              void StateStore::complete_tool(...) { ... }
+      - pattern-not: |
+          void StateStore::$METHOD(...) {
+            impl_->require_owned_write();
+            ...
+          }
+  - id: codet-transcript-no-session-copy
+    languages: [cpp]
+    severity: ERROR
+    message: Borrow provider state and prepare transcript deltas; do not copy the complete Session in reconciliation or const adapters.
+    paths:
+      include: ["**/state.cpp"]
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              void StateStore::reconcile(Session &$SOURCE, ...) { ... }
+          - pattern-inside: |
+              void StateStore::append_messages(const Session &$SOURCE, ...) { ... }
+          - pattern-inside: |
+              void StateStore::revise_messages(const Session &$SOURCE, ...) { ... }
+          - pattern-inside: |
+              void StateStore::replace_history(const Session &$SOURCE, ...) { ... }
+          - pattern-inside: |
+              void StateStore::save(const Session &$SOURCE, ...) { ... }
+      - pattern: $TYPE $COPY = $SOURCE;
+  - id: codet-recovery-prepared-result
+    languages: [cpp]
+    severity: ERROR
+    message: Reconstructed journal outcomes must use the prepared canonical transcript payload.
+    paths:
+      include: ["**/state.cpp"]
+    patterns:
+      - pattern-inside: |
+          void StateStore::reconcile(...) { ... }
+      - pattern: safe_json(Json($RESULT)).dump()

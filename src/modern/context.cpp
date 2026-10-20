@@ -170,11 +170,13 @@ RenderedOutput context_excerpt(const std::string &input, size_t limit, unsigned 
               text.substr(tail),
           omitted};
 }
+void ensure_message_id(Message &message, size_t position) {
+  if (message.message_id.empty())
+    message.message_id = digest(safe_json(Json(message)).dump() + ":" + std::to_string(position));
+}
 void ensure_message_ids(std::vector<Message> &messages) {
   for (size_t i = 0; i < messages.size(); ++i)
-    if (messages[i].message_id.empty())
-      messages[i].message_id =
-          digest(safe_json(Json(messages[i])).dump() + ":" + std::to_string(i));
+    ensure_message_id(messages[i], i);
 }
 std::vector<size_t> protected_history(const std::vector<Message> &messages) {
   size_t human = messages.size(), batch = messages.size();

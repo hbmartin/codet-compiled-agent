@@ -19,7 +19,9 @@ bool read_failed = false;
 sqlite3 *observed_connection = nullptr;
 size_t steps_after_failure = 0, checkpoint_reads = 0;
 int countdown = -1, skip = 0;
-std::function<void()> provider_read_done;
+std::function<void()> provider_read_done, journal_read_done, before_write;
+bool measure_allocations = false;
+size_t largest_allocation = 0, journal_reads = 0, transcript_rows_read = 0;
 const char *failed_query = nullptr;
 int failed_status = SQLITE_IOERR;
 bool failed_allocation = false, failed_rollback = false;
@@ -32,6 +34,9 @@ void disable() noexcept {
   provider_read_error = rollback_read = token_error = read_failed = false;
   infrastructure_error = false;
   provider_read_done = {};
+  journal_read_done = {};
+  before_write = {};
+  measure_allocations = false;
   failed_query = nullptr;
   failed_allocation = failed_rollback = false;
   failed_status = SQLITE_IOERR;
@@ -39,6 +44,8 @@ void disable() noexcept {
 }
 } // namespace fault
 void *operator new(std::size_t n) {
+  if (fault::measure_allocations)
+    fault::largest_allocation = std::max(fault::largest_allocation, n);
   if (fault::countdown == 0) {
     fault::countdown = -1;
     fault::fired = true;
@@ -71,6 +78,11 @@ extern "C" int sqlite3_exec(sqlite3 *db, const char *sql,
   using Execute =
       int (*)(sqlite3 *, const char *, int (*)(void *, int, char **, char **), void *, char **);
   static const auto execute = reinterpret_cast<Execute>(dlsym(RTLD_NEXT, "sqlite3_exec"));
+  if (std::strcmp(sql, "BEGIN IMMEDIATE") == 0 && fault::before_write) {
+    auto callback = std::move(fault::before_write);
+    fault::before_write = {};
+    callback();
+  }
   const bool write_commit =
       std::strcmp(sql, "COMMIT") == 0 && sqlite3_txn_state(db, "main") == SQLITE_TXN_WRITE;
   const int result = execute(db, sql, callback, context, error);
@@ -82,6 +94,10 @@ extern "C" int sqlite3_exec(sqlite3 *db, const char *sql,
 }
 extern "C" int sqlite3_step(sqlite3_stmt *statement) {
   fault::observed_connection = sqlite3_db_handle(statement);
+  if (std::strcmp(
+          sqlite3_sql(statement),
+          "SELECT position,payload FROM session_messages WHERE session=? ORDER BY position") == 0)
+    ++fault::transcript_rows_read;
   if (std::strcmp(sqlite3_sql(statement),
                   "SELECT payload FROM session_messages WHERE session=? AND position=?") == 0)
     ++fault::checkpoint_reads;
@@ -127,6 +143,16 @@ extern "C" int sqlite3_step(sqlite3_stmt *statement) {
     auto callback = std::move(fault::provider_read_done);
     fault::provider_read_done = {};
     callback();
+  }
+  if (result == SQLITE_DONE &&
+      std::strcmp(sqlite3_sql(statement),
+                  "SELECT result,status,name,args FROM tools WHERE session=? AND call_id=?") == 0) {
+    ++fault::journal_reads;
+    if (fault::journal_read_done) {
+      auto callback = std::move(fault::journal_read_done);
+      fault::journal_read_done = {};
+      callback();
+    }
   }
   if (result == SQLITE_ROW && fault::after_token &&
       std::strcmp(sqlite3_sql(statement),
@@ -174,6 +200,7 @@ struct PublicationFault : testing::Test {
     fault::fired = false;
     fault::steps_after_failure = fault::checkpoint_reads = 0;
     fault::observed_connection = nullptr;
+    fault::journal_reads = fault::largest_allocation = fault::transcript_rows_read = 0;
   }
   void TearDown() override {
     fault::disable();
@@ -528,94 +555,6 @@ TEST_F(PublicationFault, OptionalReferenceKnowledgeCannotFailCommittedRows) {
   EXPECT_NO_THROW(store.save(s));
 }
 
-TEST_F(PublicationFault, CheckpointProvenanceSurvivesNestedCommitAndRollbackBeforeReload) {
-  for (const bool rollback : {true, false}) {
-    SCOPED_TRACE(rollback);
-    TempDirectory temp;
-    NativeFileSystem files;
-    const auto root = temp.root / "artifacts";
-    const auto path = root / "results/owner/archive.json";
-    fs::create_directories(path.parent_path());
-    files.atomic_write(path, "{}", true);
-    StateStore store(files, temp.root / "state", root);
-    auto s = store.create();
-    Message cp;
-    cp.role = "system";
-    cp.message_id = "checkpoint";
-    cp.text = "summary";
-    cp.checkpoint_state = {{"recovery_record", path.string()}};
-    s.messages = {cp};
-    store.save(s);
-    auto *db = fault::observed_connection;
-    sqlite3_stmt *replace = nullptr;
-    ASSERT_EQ(
-        sqlite3_prepare_v2(db, "UPDATE session_messages SET payload=?", -1, &replace, nullptr),
-        SQLITE_OK);
-    const auto original = Json(cp).dump();
-    sqlite3_bind_text(replace, 1, original.c_str(), -1, SQLITE_TRANSIENT);
-    ASSERT_EQ(sqlite3_step(replace), SQLITE_DONE);
-    sqlite3_finalize(replace);
-    auto loaded = store.load_id(s.id, false);
-    auto copied = loaded;
-    db = fault::observed_connection;
-    fs::remove(path);
-    ASSERT_EQ(sqlite3_exec(db, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr), SQLITE_OK);
-    loaded.messages.push_back(Message{"user", "first"});
-    ASSERT_NO_THROW(store.append_messages(loaded, 1));
-    ASSERT_EQ(sqlite3_exec(db, rollback ? "ROLLBACK" : "COMMIT", nullptr, nullptr, nullptr),
-              SQLITE_OK);
-    if (rollback)
-      ASSERT_NO_THROW(store.append_messages(loaded, 1));
-    // An externally committed nested transaction has no owning acknowledgement either.
-    loaded.messages.push_back(Message{"user", "second"});
-    ASSERT_NO_THROW(store.append_messages(loaded, 2));
-    ASSERT_NO_THROW(store.revise_messages(copied, {}));
-    ASSERT_NO_THROW(store.reconcile(loaded));
-    EXPECT_FALSE(absolute_checkpoint_reference(store.load_id(s.id, false).messages[0]));
-  }
-}
-
-TEST_F(PublicationFault, NestedFullReplacementSupersedesPendingRowsAfterExternalCommit) {
-  for (bool drop : {false, true}) {
-    TempDirectory temp;
-    NativeFileSystem files;
-    const auto root = temp.root / "artifacts";
-    const auto path = root / "results/owner/archive.json";
-    fs::create_directories(path.parent_path());
-    files.atomic_write(path, "{}", true);
-    StateStore store(files, temp.root / "state", root);
-    auto s = store.create();
-    Message cp;
-    cp.role = "system";
-    cp.message_id = "checkpoint";
-    cp.text = "summary";
-    cp.checkpoint_state = {{"recovery_record", path.string()}};
-    s.messages = {cp};
-    store.save(s);
-    auto *db = fault::observed_connection;
-    sqlite3_stmt *row = nullptr;
-    ASSERT_EQ(sqlite3_prepare_v2(db, "UPDATE session_messages SET payload=?", -1, &row, nullptr),
-              SQLITE_OK);
-    const auto original = Json(cp).dump();
-    sqlite3_bind_text(row, 1, original.c_str(), -1, SQLITE_TRANSIENT);
-    ASSERT_EQ(sqlite3_step(row), SQLITE_DONE);
-    sqlite3_finalize(row);
-    auto loaded = store.load_id(s.id, false);
-    db = fault::observed_connection;
-    if (drop)
-      loaded.messages.clear();
-    else
-      loaded.messages[0].text = "new summary";
-    ASSERT_EQ(sqlite3_exec(db, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr), SQLITE_OK);
-    ASSERT_NO_THROW(store.replace_history(loaded));
-    ASSERT_EQ(sqlite3_exec(db, "COMMIT", nullptr, nullptr, nullptr), SQLITE_OK);
-    const auto first = loaded.messages.size();
-    loaded.messages.push_back(Message{"user", "next"});
-    ASSERT_NO_THROW(store.append_messages(loaded, first));
-    ASSERT_NO_THROW(store.reconcile(loaded));
-  }
-}
-
 TEST_F(PublicationFault, OwningCheckpointAcknowledgementDoesNotAllocateAfterCommit) {
   TempDirectory temp;
   NativeFileSystem files;
@@ -711,80 +650,44 @@ struct ProjectionFixture {
   }
 };
 } // namespace
-TEST_F(PublicationFault, NestedCheckpointRevisionsRecognizeCommitAndRollbackBeforeReload) {
-  for (bool rollback : {false, true}) {
-    ProjectionFixture f;
-    auto &s = f.session;
-    auto copy = s;
-    const auto original = copy.checkpoint_projection;
-    s.messages[0].text = "nested revision";
-    f.exec("BEGIN IMMEDIATE");
-    ASSERT_NO_THROW(f.store.revise_messages(s, {0}));
-    EXPECT_EQ(copy.checkpoint_projection, original);
-    f.exec(rollback ? "ROLLBACK" : "COMMIT");
-    fs::remove(f.archive);
-    s.messages.push_back(Message{"user", "next"});
-    EXPECT_NO_THROW(f.store.append_messages(s, 1));
-    EXPECT_EQ(Json::parse(f.value("SELECT payload FROM session_messages WHERE position=0"))["text"],
-              "nested revision");
-    EXPECT_NO_THROW(f.store.reconcile(s));
-  }
-}
-TEST_F(PublicationFault, FailedNestedRevisionRollsBackItsPartialWorkToAnOperationSavepoint) {
-  ProjectionFixture f;
-  auto &s = f.session;
-  s.messages.push_back(Message{"user", "original"});
-  f.store.append_messages(s, 1);
-  const auto before = f.value("SELECT payload FROM session_messages WHERE position=0");
-  const auto provenance = s.checkpoint_projection;
-  s.messages[0].text = "revised";
-  s.messages[1].text = "revised second";
-  f.exec("BEGIN IMMEDIATE;CREATE TRIGGER fail_second BEFORE UPDATE ON session_messages WHEN "
-         "NEW.position=1 BEGIN SELECT RAISE(ABORT,'second row failure'); END");
-  EXPECT_THROW(f.store.revise_messages(s, {0, 1}), Error);
-  EXPECT_EQ(sqlite3_get_autocommit(f.db), 0);
-  EXPECT_EQ(f.value("SELECT payload FROM session_messages WHERE position=0"), before);
-  EXPECT_EQ(s.checkpoint_projection, provenance);
-  f.exec("DROP TRIGGER fail_second;COMMIT");
-  EXPECT_NO_THROW(f.store.revise_messages(s, {0, 1}));
-  EXPECT_NO_THROW(f.store.reconcile(s));
-}
 TEST_F(PublicationFault, PreparationAllocationFailuresLeaveSnapshotAndNextWriteUsable) {
-  for (int skip : {0, 2, 5, 12, 30}) {
-    ProjectionFixture f;
-    auto &s = f.session;
-    const auto provenance = s.checkpoint_projection;
-    const auto before = f.value("SELECT payload FROM session_messages WHERE position=0");
-    s.messages[0].text = "revised";
-    fault::countdown = skip;
-    bool failed = false;
-    try {
-      f.store.revise_messages(s, {0});
-    } catch (const std::bad_alloc &) {
-      failed = true;
+  for (const auto *mode : {"append", "revise", "replace"})
+    for (int skip : {0, 2, 5, 12, 30}) {
+      SCOPED_TRACE(std::string(mode) + ":" + std::to_string(skip));
+      ProjectionFixture f;
+      auto &s = f.session;
+      const auto provenance = s.checkpoint_projection;
+      const auto before = f.value("SELECT payload FROM session_messages WHERE position=0");
+      if (std::strcmp(mode, "append") == 0)
+        s.messages.push_back(Message{"user", "new suffix"});
+      else
+        s.messages[0].text = "revised";
+      const auto incoming = Json(s.messages);
+      const auto write = [&] {
+        if (std::strcmp(mode, "append") == 0)
+          f.store.append_messages(s, 1);
+        else if (std::strcmp(mode, "revise") == 0)
+          f.store.revise_messages(s, {0});
+        else
+          f.store.replace_history(s);
+      };
+      fault::countdown = skip;
+      bool failed = false;
+      try {
+        write();
+      } catch (const std::bad_alloc &) {
+        failed = true;
+      }
+      fault::disable();
+      ASSERT_TRUE(failed);
+      EXPECT_EQ(s.checkpoint_projection, provenance);
+      EXPECT_EQ(Json(s.messages), incoming);
+      EXPECT_EQ(f.value("SELECT payload FROM session_messages WHERE position=0"), before);
+      EXPECT_NO_THROW(write());
+      EXPECT_NO_THROW(f.store.reconcile(s));
     }
-    fault::disable();
-    ASSERT_TRUE(failed);
-    EXPECT_EQ(s.checkpoint_projection, provenance);
-    EXPECT_EQ(f.value("SELECT payload FROM session_messages WHERE position=0"), before);
-    EXPECT_NO_THROW(f.store.revise_messages(s, {0}));
-    EXPECT_NO_THROW(f.store.reconcile(s));
-  }
 }
-TEST_F(PublicationFault, BlobConversionSurvivesOuterCommitRollbackAndDeferredFailure) {
-  for (bool rollback : {false, true}) {
-    ProjectionFixture f(true);
-    auto &s = f.session;
-    f.exec("BEGIN IMMEDIATE");
-    s.messages.push_back(Message{"user", "next"});
-    ASSERT_NO_THROW(f.store.append_messages(s, 1));
-    f.exec(rollback ? "ROLLBACK" : "COMMIT");
-    if (rollback)
-      ASSERT_NO_THROW(f.store.append_messages(s, 1));
-    s.messages.push_back(Message{"user", "again"});
-    EXPECT_NO_THROW(f.store.append_messages(s, 2));
-    EXPECT_NO_THROW(f.store.reconcile(s));
-  }
+TEST_F(PublicationFault, BlobConversionDeferredFailureRetainsItsOriginalStorage) {
   ProjectionFixture f(true);
   const auto provenance = f.session.checkpoint_projection;
   f.exec("CREATE TABLE parent(id PRIMARY KEY);CREATE TABLE poison(id REFERENCES parent(id) "
@@ -826,4 +729,224 @@ TEST_F(PublicationFault, ReconciliationRetiresCopiedJsonWithoutAllocatingAfterCo
   EXPECT_FALSE(failed);
   EXPECT_FALSE(allocated);
   EXPECT_NO_THROW(f.store.reconcile(f.session));
+}
+
+TEST_F(PublicationFault, PublicTranscriptMutationsRejectUnownedTransactionsWithoutPublication) {
+  for (bool blob : {false, true})
+    for (bool rollback : {false, true})
+      for (const auto *mode :
+           {"save", "const-save", "append", "const-append", "revise", "const-revise", "replace",
+            "const-replace", "complete", "reconcile"}) {
+        SCOPED_TRACE(std::string(mode) + (blob ? ":blob" : ":rows") +
+                     (rollback ? ":rollback" : ":commit"));
+        ProjectionFixture f(blob);
+        auto &s = f.session;
+        if (!blob) {
+          s.messages.push_back(Message{"user", "ordinary original"});
+          f.store.append_messages(s, 1);
+        }
+        const auto first = s.messages.size();
+        const auto clean = s;
+        if (std::strstr(mode, "append"))
+          s.messages.push_back(Message{"user", "new suffix"});
+        else if (std::strcmp(mode, "complete") && std::strcmp(mode, "reconcile")) {
+          s.messages[0].text = "uncommitted checkpoint change";
+          if (!blob)
+            s.messages[1].text = "uncommitted ordinary change";
+        }
+        const auto incoming = Json(s.messages);
+        const auto provenance = s.checkpoint_projection;
+        const auto stored = f.value(blob ? "SELECT messages FROM sessions"
+                                         : "SELECT payload FROM session_messages WHERE position=0");
+        const auto bytes = f.store.serialized_bytes();
+        const Session &immutable = s;
+        f.exec("BEGIN IMMEDIATE");
+        const auto changes = sqlite3_total_changes(f.db);
+        std::string failure;
+        try {
+          if (std::strcmp(mode, "save") == 0)
+            f.store.save(s);
+          else if (std::strcmp(mode, "const-save") == 0)
+            f.store.save(immutable);
+          else if (std::strcmp(mode, "append") == 0)
+            f.store.append_messages(s, first);
+          else if (std::strcmp(mode, "const-append") == 0)
+            f.store.append_messages(immutable, first);
+          else if (std::strcmp(mode, "revise") == 0)
+            f.store.revise_messages(s, blob ? std::vector<size_t>{0} : std::vector<size_t>{0, 1});
+          else if (std::strcmp(mode, "const-revise") == 0)
+            f.store.revise_messages(immutable,
+                                    blob ? std::vector<size_t>{0} : std::vector<size_t>{0, 1});
+          else if (std::strcmp(mode, "replace") == 0)
+            f.store.replace_history(s);
+          else if (std::strcmp(mode, "const-replace") == 0)
+            f.store.replace_history(immutable);
+          else if (std::strcmp(mode, "complete") == 0)
+            f.store.complete_tool(s, ToolCall{"call", "exec_command", Json::object()},
+                                  s.messages[0]);
+          else
+            f.store.reconcile(s);
+        } catch (const Error &error) {
+          failure = error.what();
+        }
+        EXPECT_NE(failure.find("require their own transaction"), std::string::npos) << failure;
+        EXPECT_EQ(sqlite3_get_autocommit(f.db), 0);
+        EXPECT_EQ(sqlite3_total_changes(f.db), changes);
+        EXPECT_EQ(Json(s.messages), incoming);
+        EXPECT_EQ(s.checkpoint_projection, provenance);
+        EXPECT_EQ(f.store.serialized_bytes(), bytes);
+        f.exec(rollback ? "ROLLBACK" : "COMMIT");
+        EXPECT_EQ(f.value(blob ? "SELECT messages FROM sessions"
+                               : "SELECT payload FROM session_messages WHERE position=0"),
+                  stored);
+        s = clean; // Caller edits are not undone by rejection; retry from the retained clean
+                   // snapshot.
+        s.messages.push_back(Message{"user", "ordinary next write"});
+        ASSERT_NO_THROW(f.store.append_messages(s, first));
+        EXPECT_EQ(
+            Json::parse(f.value("SELECT payload FROM session_messages WHERE position=0"))["text"],
+            "summary");
+      }
+}
+TEST_F(PublicationFault, ConstAdaptersAndReconciliationBorrowLargeProviderState) {
+  ProjectionFixture f;
+  auto &s = f.session;
+  s.provider_state = snapshot(std::string(9 * 1024 * 1024, 'x'));
+  f.exec("INSERT INTO tools(session,call_id,name,args,result,status) SELECT "
+         "id,'historical','exec_command','{}',printf('%.*c',9437184,'x'),'complete' FROM sessions");
+  for (const auto *mode : {"append", "revise", "read-reconcile", "write-reconcile"}) {
+    SCOPED_TRACE(mode);
+    if (std::strcmp(mode, "append") == 0)
+      s.messages.push_back(Message{"user", "tiny suffix"});
+    const Session &immutable = s;
+    fault::largest_allocation = 0;
+    fault::measure_allocations = true;
+    if (std::strcmp(mode, "append") == 0)
+      f.store.append_messages(immutable, 1);
+    else if (std::strcmp(mode, "revise") == 0)
+      f.store.revise_messages(immutable, {});
+    else
+      f.store.reconcile(s, std::strcmp(mode, "write-reconcile") == 0);
+    const auto largest = fault::largest_allocation;
+    fault::measure_allocations = false;
+    EXPECT_LT(largest, 128u * 1024u);
+    EXPECT_EQ(
+        s.provider_state["messages"][0]["wire"][0]["content"].get_ref<const std::string &>().size(),
+        9u * 1024u * 1024u);
+  }
+}
+TEST_F(PublicationFault, ConstPreparedJsonCleanupDoesNotAllocateAfterCommit) {
+  for (bool immutable : {false, true}) {
+    ProjectionFixture f;
+    f.session.messages[0].replay =
+        Json::array({{{"deep", Json::array({1, Json::object(), Json::array({2, 3})})}}});
+    const Session &view = f.session;
+    fault::fired = false;
+    fault::after_commit = true;
+    bool failed = false;
+    try {
+      if (immutable)
+        f.store.revise_messages(view, {0});
+      else
+        f.store.revise_messages(f.session, {0});
+    } catch (...) {
+      failed = true;
+    }
+    const auto allocated = fault::fired;
+    fault::disable();
+    EXPECT_FALSE(failed);
+    EXPECT_FALSE(allocated);
+  }
+}
+TEST_F(PublicationFault, ReconciliationDetectsSameConnectionDmlAndDdlAndRetriesOnlyOnce) {
+  for (bool ddl : {false, true})
+    for (int invalidations : {1, 2}) {
+      SCOPED_TRACE(std::to_string(invalidations) + (ddl ? ":ddl" : ":dml"));
+      ProjectionFixture f;
+      Message assistant;
+      assistant.role = "assistant";
+      assistant.calls = {{"unrecorded", "exec_command", Json::object()}};
+      f.session.messages.push_back(assistant);
+      f.store.append_messages(f.session, 1);
+      const auto stored = f.value("SELECT payload FROM session_messages WHERE position=0");
+      const auto before = Json(f.session.messages);
+      const auto projection = f.session.checkpoint_projection;
+      int fired = 0;
+      std::function<void()> callback;
+      callback = [&] {
+        ++fired;
+        if (ddl)
+          f.exec(("CREATE TABLE concurrent_" + std::to_string(fired) + "(value)").c_str());
+        else
+          f.exec(("UPDATE sessions SET status='other-" + std::to_string(fired) + "'").c_str());
+        if (fired < invalidations)
+          fault::journal_read_done = callback;
+      };
+      fault::journal_read_done = callback;
+      std::string failure;
+      try {
+        f.store.reconcile(f.session);
+      } catch (const Error &error) {
+        failure = error.what();
+      }
+      EXPECT_FALSE(fault::journal_read_done);
+      EXPECT_EQ(fired, invalidations);
+      if (invalidations == 1)
+        EXPECT_TRUE(failure.empty()) << failure;
+      else {
+        EXPECT_NE(failure.find("preparation changed twice"), std::string::npos) << failure;
+        EXPECT_EQ(Json(f.session.messages), before);
+        EXPECT_EQ(f.session.checkpoint_projection, projection);
+        EXPECT_EQ(f.value("SELECT payload FROM session_messages WHERE position=0"), stored);
+      }
+    }
+}
+
+TEST_F(PublicationFault, OptionalTokenSnapshotLossUsesAlreadyCapturedLoadInputs) {
+  ProjectionFixture f;
+  Message assistant;
+  assistant.role = "assistant";
+  assistant.calls = {{"pending", "exec_command", Json::object()}};
+  f.session.messages.push_back(assistant);
+  f.store.append_messages(f.session, 1);
+  fault::failed_query = "SELECT revision FROM provider_revisions WHERE session=?";
+  fault::failed_status = SQLITE_IOERR;
+  fault::failed_rollback = true;
+  Session loaded;
+  EXPECT_NO_THROW(loaded = f.store.load_id(f.session.id));
+  const auto consumed = fault::failed_query == nullptr;
+  const auto steps = fault::steps_after_failure;
+  fault::disable();
+  EXPECT_TRUE(consumed);
+  EXPECT_EQ(steps, 0u);
+  ASSERT_EQ(loaded.messages.size(), 3u);
+  EXPECT_NE(loaded.messages.back().text.find("not_started"), std::string::npos);
+  EXPECT_EQ(f.store.provider_cache_bytes(), 0u);
+  EXPECT_NO_THROW(f.store.reconcile(loaded));
+}
+
+TEST_F(PublicationFault, LegacySnapshotHandoffChecksItsVersionThenRestoresSuffixOnlyWrites) {
+  ProjectionFixture f(true);
+  auto copied = f.session;
+  f.store.revise_messages(f.session, {});
+  copied.messages.push_back(Message{"user", "first suffix"});
+  const auto incoming = Json(copied.messages);
+  const auto provenance = copied.checkpoint_projection;
+  bool fired = false;
+  fault::before_write = [&] {
+    fired = true;
+    f.exec("UPDATE sessions SET status='concurrent metadata'");
+  };
+  EXPECT_THROW(f.store.append_messages(copied, 1), Error);
+  EXPECT_TRUE(fired);
+  EXPECT_FALSE(fault::before_write);
+  EXPECT_EQ(Json(copied.messages), incoming);
+  EXPECT_EQ(copied.checkpoint_projection, provenance);
+  EXPECT_EQ(f.value("SELECT count(*) FROM session_messages"), "1");
+  EXPECT_NO_THROW(f.store.append_messages(copied, 1)); // Same snapshot, after the stale attempt.
+  fault::transcript_rows_read = fault::checkpoint_reads = 0;
+  copied.messages.push_back(Message{"user", "ordinary suffix"});
+  EXPECT_NO_THROW(f.store.append_messages(copied, 2));
+  EXPECT_EQ(fault::transcript_rows_read, 0u);
+  EXPECT_EQ(fault::checkpoint_reads, 0u);
 }

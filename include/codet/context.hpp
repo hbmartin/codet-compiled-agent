@@ -17,5 +17,6 @@ bool reduce_completed_result(Message &, const std::string &, Tools &);
 std::optional<size_t> fit_result_preview(Message &, Message, size_t, const std::string &, Tools &);
 std::vector<size_t> batch_result_reserves(const std::vector<ToolCall> &, Tools &);
 size_t batch_result_bytes(const Message &, const ToolCall &, Tools &);
+void ensure_message_id(Message &, size_t position);
 void ensure_message_ids(std::vector<Message> &);
 } // namespace codet

@@ -149,11 +149,12 @@ struct PreparationFixture {
     // ruleid: codet-transcript-preparation-is-pure
     s.checkpoint_projection->pending = next;
     // ok: codet-transcript-preparation-is-pure
-    plan.nested = next;
+    plan.committed = next;
     return plan;
   }
 };
 void StateStore::complete_tool(Session &s, const ToolCall &call, Message result) {
+  impl_->require_owned_write();
   // ruleid: codet-prepared-transcript-publication
   append_messages(s, first);
   // ruleid: codet-prepared-transcript-publication
@@ -168,4 +169,32 @@ void StateStore::reconcile(Session &s, bool persist) {
   remember_references(s.id, s.messages);
   // ok: codet-prepared-transcript-publication
   impl_->apply_prepared_transcript(s, prepared);
+}
+
+// ruleid: codet-transcript-write-ownership
+void StateStore::append_transcript(const Session &s) {
+  auto prepared = impl_->prepare(s);
+  impl_->apply_prepared_transcript(s, prepared);
+}
+// ok: codet-transcript-write-ownership
+void StateStore::revise_transcript(const Session &s) {
+  impl_->require_owned_write();
+  auto prepared = impl_->prepare(s);
+}
+void StateStore::append_messages(const Session &s, size_t first) {
+  // ruleid: codet-transcript-no-session-copy
+  auto copy = s;
+  append_transcript(copy, &copy, first);
+}
+void StateStore::replace_history(const Session &s) {
+  // ok: codet-transcript-no-session-copy
+  replace_transcript(s, nullptr);
+}
+void StateStore::reconcile(Session &destination, bool persist) {
+  // ruleid: codet-transcript-no-session-copy
+  auto session = destination;
+  // ruleid: codet-recovery-prepared-result
+  const auto result = safe_json(Json(recovery)).dump();
+  // ok: codet-recovery-prepared-result
+  const auto canonical = prepared.rows.at(position).payload;
 }

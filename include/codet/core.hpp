@@ -434,6 +434,10 @@ struct ProviderStateUpdate {
 class StateStore {
   struct Impl;
   std::unique_ptr<Impl> impl_;
+  void append_transcript(const Session &, Session *, size_t, bool,
+                         const std::optional<ProviderStateUpdate> &);
+  void revise_transcript(const Session &, Session *, const std::vector<size_t> &);
+  void replace_transcript(const Session &, Session *);
   Session read_session(const std::string &, bool, bool, bool project = true);
   StateStore(const fs::path &, const fs::path &, const std::string &, FileSystem *);
 

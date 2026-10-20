@@ -6,6 +6,7 @@ fs::path artifact_index_path(const fs::path &, const std::string &);
 std::string artifact_index_reference(const std::string &);
 ImageArtifact portable_image(ImageArtifact);
 fs::path resolve_image(const fs::path &, const ImageArtifact &);
+void portable_message(Message &, const std::string &, const std::string &tool = "");
 void portable_messages(std::vector<Message> &, const std::string &, const std::string &tool = "");
 bool result_name(const fs::path &);
 // Callers retain distinct trust policies; path and identity checks share one implementation.
@@ -39,6 +40,7 @@ bool normalize_checkpoint_reference(Message &, const FileSystem &, const fs::pat
                                     const fs::path &anchor);
 void cleanup_recovery_candidates(StateStore &, Tools &, const std::vector<RecoveryCandidate> &,
                                  const DiagnosticSink & = {}) noexcept;
+std::set<std::string> message_references(const Message &);
 std::set<std::string> message_references(const std::vector<Message> &);
 fs::path archive_image_history(const fs::path &, FileSystem &, const std::string &,
                                const std::vector<Message> &);
