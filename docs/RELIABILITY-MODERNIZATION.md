@@ -189,3 +189,36 @@ writer lock. New archives and subsequent reads retain strict validation.
 regressions, the offline matrix and benchmarks. Tiger evidence is cross-build/static verification;
 no Tiger hardware or live-provider execution is claimed. Schema 7, provider wire formats, tool
 schemas, private archive restoration requirements and the two-attempt repair policy are unchanged.
+
+## PR #22 prepared transcript publication
+
+Checkpoint provenance is immutable across copied snapshots. Compact validated mappings survive
+commit, while pending payloads and exact stored-byte fingerprints describe only unresolved writes.
+Preparation never changes the snapshot. An owning commit publishes canonical messages and compact
+provenance with nonthrowing swaps; nested writes retain both original and written expectations so
+the next operation can recognize an outer commit or rollback. An operation savepoint protects the
+caller's transaction from partial transcript writes. Retired JSON cleanup reserves its workspace
+before commit because the JSON library's ordinary container destruction can allocate.
+
+Mutable transcript-write overloads publish canonical message IDs and metadata back to the session.
+Existing const overloads operate on private copies. IDs use the filesystem-independent, tool-aware
+message view and actual transcript position before checkpoint projection. Stored IDs and provider
+source associations are preserved. Both row and legacy blob layouts project checkpoints on read;
+reads and exports do not write. The next successful transcript mutation materializes a legacy blob
+as canonical rows, with source verification and reference registration in the same transaction.
+
+Reconciliation prepares against coherent transcript and journal reads, then verifies those inputs
+before applying prepared rows. Tool completion shares one canonical result between journal and
+transcript publication. Owned publication and prepared internal nesting perform no archive opens
+or message serialization; unprepared externally nested calls still validate their inputs. Pending
+normalization and an explicit revision update a position once. Ordinary appends reuse compact
+provenance without inspecting acknowledged rows or copying pending payload strings.
+
+Repair backup failures verify their publication through the configured filesystem and identify
+retained locations. When verification also fails, the reported location is marked publication
+unconfirmed. Lazy anchor pinning, strict private-file checks, schema 7 and the two-attempt repair
+policy are unchanged.
+
+[PR #22 follow-up validation](validation/pr22-persistence-checkpoints.json) records the source-hashed
+regressions, offline matrix, benchmarks and Tiger cross-build/static verification. Tiger hardware
+and live-provider execution remain outside that evidence.

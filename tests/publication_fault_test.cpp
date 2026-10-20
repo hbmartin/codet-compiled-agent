@@ -17,7 +17,7 @@ bool provider_read_error = false, rollback_read = false, token_error = false;
 bool infrastructure_error = false;
 bool read_failed = false;
 sqlite3 *observed_connection = nullptr;
-size_t steps_after_failure = 0;
+size_t steps_after_failure = 0, checkpoint_reads = 0;
 int countdown = -1, skip = 0;
 std::function<void()> provider_read_done;
 const char *failed_query = nullptr;
@@ -71,8 +71,10 @@ extern "C" int sqlite3_exec(sqlite3 *db, const char *sql,
   using Execute =
       int (*)(sqlite3 *, const char *, int (*)(void *, int, char **, char **), void *, char **);
   static const auto execute = reinterpret_cast<Execute>(dlsym(RTLD_NEXT, "sqlite3_exec"));
+  const bool write_commit =
+      std::strcmp(sql, "COMMIT") == 0 && sqlite3_txn_state(db, "main") == SQLITE_TXN_WRITE;
   const int result = execute(db, sql, callback, context, error);
-  if (result == SQLITE_OK && fault::after_commit && std::strcmp(sql, "COMMIT") == 0) {
+  if (result == SQLITE_OK && fault::after_commit && write_commit) {
     fault::after_commit = false;
     fault::arm();
   }
@@ -80,6 +82,9 @@ extern "C" int sqlite3_exec(sqlite3 *db, const char *sql,
 }
 extern "C" int sqlite3_step(sqlite3_stmt *statement) {
   fault::observed_connection = sqlite3_db_handle(statement);
+  if (std::strcmp(sqlite3_sql(statement),
+                  "SELECT payload FROM session_messages WHERE session=? AND position=?") == 0)
+    ++fault::checkpoint_reads;
   using Step = int (*)(sqlite3_stmt *);
   static const auto step = reinterpret_cast<Step>(dlsym(RTLD_NEXT, "sqlite3_step"));
   if (fault::read_failed)
@@ -167,7 +172,7 @@ struct PublicationFault : testing::Test {
   void SetUp() override {
     fault::disable();
     fault::fired = false;
-    fault::steps_after_failure = 0;
+    fault::steps_after_failure = fault::checkpoint_reads = 0;
     fault::observed_connection = nullptr;
   }
   void TearDown() override {
@@ -375,7 +380,7 @@ TEST_F(PublicationFault, RepairStopsImmediatelyOnOperationalReadFailureWithOrWit
     SCOPED_TRACE(rollback);
     fault::provider_read_error = true;
     fault::rollback_read = rollback;
-    fault::steps_after_failure = 0;
+    fault::steps_after_failure = fault::checkpoint_reads = 0;
     std::string failure;
     try {
       (void)store.repair(s.id, false, true, false, tools);
@@ -428,7 +433,7 @@ TEST_F(PublicationFault, SessionLoadAndRepairPreserveOperationalAndAllocationFai
     fault::failed_query = query;
     fault::failed_status = status;
     fault::failed_rollback = rollback;
-    fault::steps_after_failure = 0;
+    fault::steps_after_failure = fault::checkpoint_reads = 0;
   };
   for (const int status : {SQLITE_IOERR, SQLITE_BUSY, SQLITE_CORRUPT}) {
     SCOPED_TRACE(status);
@@ -652,4 +657,173 @@ TEST_F(PublicationFault, OwningCheckpointAcknowledgementDoesNotAllocateAfterComm
   EXPECT_FALSE(failed);
   EXPECT_FALSE(allocated);
   EXPECT_NO_THROW(store.reconcile(s));
+}
+
+namespace {
+struct ProjectionFixture {
+  TempDirectory temp;
+  NativeFileSystem files;
+  fs::path root = temp.root / "artifacts", archive = root / "results/owner/archive.json";
+  StateStore store{files, temp.root / "state", root};
+  Session session;
+  sqlite3 *db = nullptr;
+  explicit ProjectionFixture(bool blob = false) {
+    fs::create_directories(archive.parent_path());
+    files.atomic_write(archive, "{}", true);
+    session = store.create();
+    Message cp;
+    cp.role = "system";
+    cp.message_id = "checkpoint";
+    cp.text = "summary";
+    cp.checkpoint_state = {{"recovery_record", archive.string()}};
+    session.messages = {cp};
+    store.save(session);
+    db = fault::observed_connection;
+    const auto payload = Json(cp).dump(2);
+    const auto query = blob ? "UPDATE sessions SET message_format=0,messages=?"
+                            : "UPDATE session_messages SET payload=?";
+    sqlite3_stmt *q = nullptr;
+    if (sqlite3_prepare_v2(db, query, -1, &q, nullptr) != SQLITE_OK)
+      throw Error("Cannot prepare fixture");
+    const auto bytes = blob ? Json(std::vector<Message>{cp}).dump(2) : payload;
+    sqlite3_bind_text(q, 1, bytes.c_str(), -1, SQLITE_TRANSIENT);
+    const auto status = sqlite3_step(q);
+    sqlite3_finalize(q);
+    if (status != SQLITE_DONE)
+      throw Error("Cannot store fixture");
+    if (blob)
+      exec("DELETE FROM session_messages");
+    session = store.load_id(session.id, false);
+  }
+  void exec(const char *query) const {
+    if (sqlite3_exec(db, query, nullptr, nullptr, nullptr) != SQLITE_OK)
+      throw Error(sqlite3_errmsg(db));
+  }
+  std::string value(const char *query) const {
+    sqlite3_stmt *q = nullptr;
+    if (sqlite3_prepare_v2(db, query, -1, &q, nullptr) != SQLITE_OK)
+      throw Error("Cannot inspect fixture");
+    std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> statement(q, sqlite3_finalize);
+    if (sqlite3_step(q) != SQLITE_ROW)
+      throw Error("Missing fixture row");
+    const auto *bytes = sqlite3_column_text(q, 0);
+    return bytes ? reinterpret_cast<const char *>(bytes) : "";
+  }
+};
+} // namespace
+TEST_F(PublicationFault, NestedCheckpointRevisionsRecognizeCommitAndRollbackBeforeReload) {
+  for (bool rollback : {false, true}) {
+    ProjectionFixture f;
+    auto &s = f.session;
+    auto copy = s;
+    const auto original = copy.checkpoint_projection;
+    s.messages[0].text = "nested revision";
+    f.exec("BEGIN IMMEDIATE");
+    ASSERT_NO_THROW(f.store.revise_messages(s, {0}));
+    EXPECT_EQ(copy.checkpoint_projection, original);
+    f.exec(rollback ? "ROLLBACK" : "COMMIT");
+    fs::remove(f.archive);
+    s.messages.push_back(Message{"user", "next"});
+    EXPECT_NO_THROW(f.store.append_messages(s, 1));
+    EXPECT_EQ(Json::parse(f.value("SELECT payload FROM session_messages WHERE position=0"))["text"],
+              "nested revision");
+    EXPECT_NO_THROW(f.store.reconcile(s));
+  }
+}
+TEST_F(PublicationFault, FailedNestedRevisionRollsBackItsPartialWorkToAnOperationSavepoint) {
+  ProjectionFixture f;
+  auto &s = f.session;
+  s.messages.push_back(Message{"user", "original"});
+  f.store.append_messages(s, 1);
+  const auto before = f.value("SELECT payload FROM session_messages WHERE position=0");
+  const auto provenance = s.checkpoint_projection;
+  s.messages[0].text = "revised";
+  s.messages[1].text = "revised second";
+  f.exec("BEGIN IMMEDIATE;CREATE TRIGGER fail_second BEFORE UPDATE ON session_messages WHEN "
+         "NEW.position=1 BEGIN SELECT RAISE(ABORT,'second row failure'); END");
+  EXPECT_THROW(f.store.revise_messages(s, {0, 1}), Error);
+  EXPECT_EQ(sqlite3_get_autocommit(f.db), 0);
+  EXPECT_EQ(f.value("SELECT payload FROM session_messages WHERE position=0"), before);
+  EXPECT_EQ(s.checkpoint_projection, provenance);
+  f.exec("DROP TRIGGER fail_second;COMMIT");
+  EXPECT_NO_THROW(f.store.revise_messages(s, {0, 1}));
+  EXPECT_NO_THROW(f.store.reconcile(s));
+}
+TEST_F(PublicationFault, PreparationAllocationFailuresLeaveSnapshotAndNextWriteUsable) {
+  for (int skip : {0, 2, 5, 12, 30}) {
+    ProjectionFixture f;
+    auto &s = f.session;
+    const auto provenance = s.checkpoint_projection;
+    const auto before = f.value("SELECT payload FROM session_messages WHERE position=0");
+    s.messages[0].text = "revised";
+    fault::countdown = skip;
+    bool failed = false;
+    try {
+      f.store.revise_messages(s, {0});
+    } catch (const std::bad_alloc &) {
+      failed = true;
+    }
+    fault::disable();
+    ASSERT_TRUE(failed);
+    EXPECT_EQ(s.checkpoint_projection, provenance);
+    EXPECT_EQ(f.value("SELECT payload FROM session_messages WHERE position=0"), before);
+    EXPECT_NO_THROW(f.store.revise_messages(s, {0}));
+    EXPECT_NO_THROW(f.store.reconcile(s));
+  }
+}
+TEST_F(PublicationFault, BlobConversionSurvivesOuterCommitRollbackAndDeferredFailure) {
+  for (bool rollback : {false, true}) {
+    ProjectionFixture f(true);
+    auto &s = f.session;
+    f.exec("BEGIN IMMEDIATE");
+    s.messages.push_back(Message{"user", "next"});
+    ASSERT_NO_THROW(f.store.append_messages(s, 1));
+    f.exec(rollback ? "ROLLBACK" : "COMMIT");
+    if (rollback)
+      ASSERT_NO_THROW(f.store.append_messages(s, 1));
+    s.messages.push_back(Message{"user", "again"});
+    EXPECT_NO_THROW(f.store.append_messages(s, 2));
+    EXPECT_NO_THROW(f.store.reconcile(s));
+  }
+  ProjectionFixture f(true);
+  const auto provenance = f.session.checkpoint_projection;
+  f.exec("CREATE TABLE parent(id PRIMARY KEY);CREATE TABLE poison(id REFERENCES parent(id) "
+         "DEFERRABLE INITIALLY DEFERRED);CREATE TRIGGER fail_blob AFTER INSERT ON session_messages "
+         "BEGIN INSERT INTO poison VALUES(1); END");
+  f.session.messages.push_back(Message{"user", "next"});
+  EXPECT_THROW(f.store.append_messages(f.session, 1), Error);
+  EXPECT_EQ(f.value("SELECT message_format FROM sessions"), "0");
+  EXPECT_EQ(f.session.checkpoint_projection, provenance);
+  f.exec("DROP TRIGGER fail_blob");
+  EXPECT_NO_THROW(f.store.append_messages(f.session, 1));
+}
+TEST_F(PublicationFault, AcknowledgedMappingsNeedNoRowReadsOrPayloadCopiesDuringOrdinaryAppends) {
+  ProjectionFixture f;
+  f.store.revise_messages(f.session, {});
+  const auto compact = f.session.checkpoint_projection;
+  fault::checkpoint_reads = 0;
+  const auto bytes = f.store.serialized_bytes();
+  for (int i = 0; i < 10; ++i) {
+    f.session.messages.push_back(Message{"user", "next"});
+    f.store.append_messages(f.session, f.session.messages.size() - 1);
+    EXPECT_EQ(f.session.checkpoint_projection, compact);
+  }
+  EXPECT_EQ(fault::checkpoint_reads, 0u);
+  EXPECT_LT(f.store.serialized_bytes() - bytes, 5000u);
+}
+TEST_F(PublicationFault, ReconciliationRetiresCopiedJsonWithoutAllocatingAfterCommit) {
+  ProjectionFixture f;
+  fault::fired = false;
+  fault::after_commit = true;
+  bool failed = false;
+  try {
+    f.store.reconcile(f.session);
+  } catch (...) {
+    failed = true;
+  }
+  const auto allocated = fault::fired;
+  fault::disable();
+  EXPECT_FALSE(failed);
+  EXPECT_FALSE(allocated);
+  EXPECT_NO_THROW(f.store.reconcile(f.session));
 }

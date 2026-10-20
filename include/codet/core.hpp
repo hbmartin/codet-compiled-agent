@@ -425,7 +425,7 @@ struct Session {
   std::optional<std::string> effort = std::nullopt;
   Json provider_state = nullptr;
   // Persistence provenance only; never serialized or sent to providers.
-  mutable std::shared_ptr<SessionProjection> checkpoint_projection = {};
+  std::shared_ptr<const SessionProjection> checkpoint_projection = {};
 };
 struct ProviderStateUpdate {
   uint64_t revision = 0;
@@ -451,11 +451,16 @@ public:
   void reconcile(Session &, bool persist = true);
   Session last(bool repair = true);
   Session fork(const Session &);
+  void save(Session &);
   void save(const Session &);
   void update_metadata(const Session &);
+  void append_messages(Session &, size_t first, bool provider_state = false,
+                       const std::optional<ProviderStateUpdate> & = std::nullopt);
   void append_messages(const Session &, size_t first, bool provider_state = false,
                        const std::optional<ProviderStateUpdate> & = std::nullopt);
+  void revise_messages(Session &, const std::vector<size_t> &);
   void revise_messages(const Session &, const std::vector<size_t> &);
+  void replace_history(Session &);
   void replace_history(const Session &);
   void complete_tool(Session &, const ToolCall &, Message);
   void save_provider_state(const Session &,

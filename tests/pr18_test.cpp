@@ -917,8 +917,8 @@ TEST_F(Pr18, AbsoluteCheckpointsNormalizeReadOnlyAndRegisterAcrossForkSaveAndRel
   state.save(s);
   Db raw(config.state_root / "state.sqlite3");
   // Reproduce a legacy persisted absolute reference without using the corrected writer.
-  raw.exec("UPDATE session_messages SET payload='" + Json(s.messages[0]).dump() +
-           "' WHERE session='" + s.id +
+  raw.exec("UPDATE session_messages SET payload='" + Json(checkpoint).dump() + "' WHERE session='" +
+           s.id +
            "';"
            "DELETE FROM session_references WHERE session='" +
            s.id + "'");
@@ -1120,6 +1120,8 @@ struct Pr21 : Pr18 {
         files.canonical(artifact_directory(config) / ref).string();
     session.messages = {message};
     state.save(session);
+    // Return the legacy stored view, not save's canonical publication.
+    session.messages = {message};
     raw.exec("UPDATE session_messages SET payload='" + Json(message).dump() + "' WHERE session='" +
              session.id + "';DELETE FROM session_references WHERE session='" + session.id + "'");
     return session;
@@ -1433,4 +1435,285 @@ TEST_F(Pr21, NewCheckpointFallbackIdsUseTheLexicallyPortableViewBeforeProjection
   const auto loaded = state.load_id(s.id, false);
   EXPECT_EQ(loaded.messages[0].message_id, s.messages[0].message_id);
   EXPECT_EQ(loaded.messages[0].checkpoint_state, s.messages[0].checkpoint_state);
+}
+
+namespace {
+struct Pr22 : Pr21 {};
+struct VirtualBackupFiles : RepairFiles {
+  std::map<fs::path, std::string> backups;
+  bool unreadable_backup = false;
+  void atomic_write(const fs::path &path, const std::string &bytes, bool secret) override {
+    if (path.filename().string().find("-backup-") == std::string::npos) {
+      RepairFiles::atomic_write(path, bytes, secret);
+      return;
+    }
+    backups[path] = bytes;
+    throw Error("published virtual backup");
+  }
+  std::string read(const fs::path &path, size_t limit) const override {
+    if (const auto found = backups.find(path); found != backups.end()) {
+      if (unreadable_backup)
+        throw Error("verification unavailable");
+      return found->second;
+    }
+    return RepairFiles::read(path, limit);
+  }
+};
+} // namespace
+TEST_F(Pr22, FailedPreparationDoesNotReplaceProvenanceOrInventStoredFingerprints) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  for (const auto *mode : {"append", "revise", "replace"}) {
+    SCOPED_TRACE(mode);
+    auto original = legacy(state, tools, raw);
+    raw.exec("UPDATE session_messages SET payload='" + Json(original.messages[0]).dump(2) +
+             "' WHERE session='" + original.id + "'");
+    const auto path = fs::path(*absolute_checkpoint_reference(original.messages[0]));
+    const auto archive = files.read(path, 1024 * 1024);
+    fs::remove(path);
+    auto loaded = state.load_id(original.id, false);
+    const auto provenance = loaded.checkpoint_projection;
+    files.atomic_write(path, archive, true);
+    const bool append_mode = std::string(mode) == "append";
+    if (append_mode)
+      loaded.messages.push_back(codet::Message{"user", "next"});
+    const auto messages = Json(loaded.messages);
+    raw.exec("CREATE TRIGGER refuse_prepared BEFORE " +
+             std::string(std::string(mode) == "revise" ? "UPDATE" : "INSERT") +
+             " ON session_messages BEGIN SELECT RAISE(ABORT,'prepared write failure'); END");
+    const auto write = [&] {
+      if (append_mode)
+        state.append_messages(loaded, 1);
+      else if (std::string(mode) == "revise")
+        state.revise_messages(loaded, {0});
+      else
+        state.replace_history(loaded);
+    };
+    EXPECT_THROW(write(), Error);
+    EXPECT_EQ(loaded.checkpoint_projection, provenance);
+    EXPECT_EQ(Json(loaded.messages), messages);
+    raw.exec("DROP TRIGGER refuse_prepared");
+    EXPECT_NO_THROW(write()); // No load may hide speculative provenance before retry.
+    EXPECT_NO_THROW(state.revise_messages(loaded, {}));
+    EXPECT_FALSE(absolute_checkpoint_reference(state.load_id(loaded.id, false).messages[0]));
+  }
+}
+TEST_F(Pr22, CanonicalToolIdsAndMessagesArePublishedTogetherWithExplicitIdsPreserved) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  auto s = state.create();
+  tools.use_session(s.id);
+  auto cp = checkpoint(tools);
+  cp.role = "tool";
+  cp.tool_call_id = "call";
+  cp.result_file = "results/owner/output.json";
+  cp.text = Json({{"content", Json({{"result_path", "/old/root/output.json"}}).dump()}}).dump();
+  cp.checkpoint_state["recovery_record"] =
+      (artifact_directory(config) / cp.checkpoint_state.at("recovery_record").get<std::string>())
+          .string();
+  codet::Message assistant;
+  assistant.role = "assistant";
+  assistant.message_id = "stable-assistant";
+  assistant.calls = {{"call", "exec_command", Json::object()}};
+  s.messages = {assistant, cp};
+  s.provider_state = {{"provider", "anthropic"}, {"messages", Json::array()}};
+  const auto provider = s.provider_state;
+  auto expected = s.messages;
+  portable_messages(expected, s.id);
+  ensure_message_ids(expected);
+  ASSERT_NO_THROW(state.save(s));
+  EXPECT_EQ(s.messages[1].message_id, expected[1].message_id);
+  EXPECT_EQ(s.messages[0].message_id, "stable-assistant");
+  EXPECT_EQ(Json(state.load_id(s.id, false).messages), Json(s.messages));
+  EXPECT_EQ(s.provider_state, provider);
+  EXPECT_NO_THROW(state.reconcile(s));
+}
+TEST_F(Pr22, LegacyBlobsProjectReadOnlyAndMaterializeOnAppend) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  auto original = legacy(state, tools, raw, true);
+  const auto blob = Json(original.messages).dump(2);
+  raw.exec("UPDATE sessions SET message_format=0,messages='" + blob + "' WHERE id='" + original.id +
+           "';DELETE FROM session_messages WHERE session='" + original.id + "'");
+  auto loaded = state.load_id(original.id, false);
+  EXPECT_FALSE(absolute_checkpoint_reference(loaded.messages[0]));
+  EXPECT_EQ(raw.value("SELECT messages FROM sessions WHERE id='" + original.id + "'"), blob);
+  EXPECT_EQ(raw.value("SELECT count(*) FROM session_messages WHERE session='" + original.id + "'"),
+            "0");
+  EXPECT_NO_THROW(append(state, loaded));
+  EXPECT_EQ(raw.value("SELECT message_format FROM sessions WHERE id='" + original.id + "'"), "1");
+  EXPECT_EQ(Json(state.load_id(original.id, false).messages), Json(loaded.messages));
+  EXPECT_THAT(
+      state.references(original.id),
+      Contains(loaded.messages[0].checkpoint_state.at("recovery_record").get<std::string>()));
+}
+TEST_F(Pr22, ReconciliationAndToolPublicationPrepareArchivesBeforeTheirWriterLock) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  auto unrelated = state.create();
+  size_t concurrent_writes = 0;
+  const auto observe = [&](const fs::path &) {
+    raw.exec("UPDATE sessions SET status='preparation' WHERE id='" + unrelated.id + "'");
+    ++concurrent_writes;
+  };
+  auto original = legacy(state, tools, raw);
+  const auto path = fs::path(*absolute_checkpoint_reference(original.messages[0]));
+  const auto archive = files.read(path, 1024 * 1024);
+  fs::remove(path);
+  auto loaded = state.load_id(original.id, false);
+  files.atomic_write(path, archive, true);
+  codet::Message assistant;
+  assistant.role = "assistant";
+  assistant.calls = {{"pending", "exec_command", Json::object()}};
+  loaded.messages.push_back(assistant);
+  state.append_messages(loaded, 1);
+  // Restore a legacy reference and reload while unavailable, forcing recovery-branch preparation.
+  raw.exec("UPDATE session_messages SET payload='" + Json(original.messages[0]).dump() +
+           "' WHERE session='" + original.id + "' AND position=0");
+  fs::remove(path);
+  loaded = state.load_id(original.id, false);
+  files.atomic_write(path, archive, true);
+  files.on_open = observe;
+  EXPECT_NO_THROW(state.reconcile(loaded));
+  EXPECT_EQ(concurrent_writes, 1u);
+  files.on_open = {};
+  for (bool transcript : {false, true}) {
+    auto s = state.create();
+    codet::Message call_message;
+    call_message.role = "assistant";
+    ToolCall call{unique_id(), "exec_command", Json::object()};
+    call_message.calls = {call};
+    s.messages = {call_message};
+    state.save(s);
+    state.tool_started(s.id, call);
+    auto result = original.messages[0];
+    result.role = "tool";
+    result.tool_call_id = call.id;
+    files.on_open = observe;
+    if (transcript)
+      EXPECT_NO_THROW(state.complete_tool(s, call, result));
+    else
+      EXPECT_NO_THROW(state.tool_finished(s.id, call, Json(result)));
+    files.on_open = {};
+  }
+  EXPECT_EQ(concurrent_writes, 3u);
+}
+TEST_F(Pr22, SnapshotCopiesStayIndependentAndPendingRevisionWritesEachPositionOnce) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  auto original = legacy(state, tools, raw);
+  auto loaded = state.load_id(original.id, false), copy = loaded;
+  const auto pending = copy.checkpoint_projection;
+  raw.exec("CREATE TABLE pr22_writes(position INTEGER);CREATE TRIGGER pr22_count AFTER UPDATE ON "
+           "session_messages BEGIN INSERT INTO pr22_writes VALUES(NEW.position); END");
+  loaded.messages[0].text = "revised summary";
+  state.revise_messages(loaded, {0});
+  EXPECT_NE(loaded.checkpoint_projection, pending);
+  EXPECT_EQ(copy.checkpoint_projection, pending);
+  EXPECT_EQ(raw.value("SELECT count(*) FROM pr22_writes"), "1");
+  EXPECT_THROW(state.revise_messages(copy, {}),
+               Error); // This snapshot predates a real content edit.
+  EXPECT_NO_THROW(append(state, loaded));
+  EXPECT_EQ(raw.value("SELECT count(*) FROM pr22_writes"), "1");
+  EXPECT_EQ(loaded.messages[0].text, "revised summary");
+}
+TEST_F(Pr22, ConstWriteAdaptersLeaveTheOriginalSnapshotUntouched) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  auto s = state.create();
+  s.messages = {codet::Message{"user", "missing id"}};
+  const auto immutable = s;
+  state.save(immutable);
+  EXPECT_TRUE(immutable.messages[0].message_id.empty());
+  EXPECT_FALSE(state.load_id(s.id, false).messages[0].message_id.empty());
+}
+TEST_F(Pr22, PublishedVirtualBackupsAreReportedWithoutNativeFilesystemQueries) {
+  for (bool unreadable : {false, true}) {
+    VirtualBackupFiles virtual_files;
+    virtual_files.unreadable_backup = unreadable;
+    StateStore state(virtual_files, config.state_root, artifact_directory(config));
+    Tools tools(config, virtual_files, processes, http, clock);
+    auto s = state.create();
+    try {
+      state.repair(s.id, false, true, false, tools);
+      FAIL();
+    } catch (const Error &error) {
+      ASSERT_EQ(virtual_files.backups.size(), 1u);
+      EXPECT_THAT(error.what(), HasSubstr("published virtual backup"));
+      EXPECT_THAT(error.what(), HasSubstr(virtual_files.backups.begin()->first.string()));
+      if (unreadable)
+        EXPECT_THAT(error.what(), HasSubstr("publication unconfirmed"));
+    }
+  }
+}
+
+TEST_F(Pr22, DeferredFailureDoesNotPublishANewlyEstablishedMapping) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  auto original = legacy(state, tools, raw);
+  const auto path = fs::path(*absolute_checkpoint_reference(original.messages[0]));
+  const auto archive = files.read(path, 1024 * 1024);
+  fs::remove(path);
+  auto loaded = state.load_id(original.id, false);
+  const auto provenance = loaded.checkpoint_projection;
+  files.atomic_write(path, archive, true);
+  raw.exec(
+      "CREATE TABLE pr22_parent(id PRIMARY KEY);CREATE TABLE pr22_poison(id REFERENCES "
+      "pr22_parent(id) DEFERRABLE INITIALLY DEFERRED);CREATE TRIGGER pr22_deferred AFTER UPDATE "
+      "ON session_messages BEGIN INSERT INTO pr22_poison VALUES(1); END");
+  EXPECT_THROW(state.revise_messages(loaded, {0}), Error);
+  EXPECT_EQ(loaded.checkpoint_projection, provenance);
+  EXPECT_THAT(row(raw, loaded), HasSubstr(path.string()));
+  raw.exec("DROP TRIGGER pr22_deferred");
+  EXPECT_NO_THROW(state.revise_messages(loaded, {0}));
+  EXPECT_NO_THROW(append(state, loaded));
+  EXPECT_FALSE(absolute_checkpoint_reference(loaded.messages[0]));
+}
+
+TEST_F(Pr22, RepeatedConstAdaptersAcceptTheirIdenticalCommittedCheckpointRewrite) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  auto original = legacy(state, tools, raw);
+  auto loaded = state.load_id(original.id, false);
+  loaded.messages[0].text = "revised through const adapter";
+  const auto immutable = loaded;
+  EXPECT_NO_THROW(state.save(immutable));
+  EXPECT_NO_THROW(state.save(immutable));
+  EXPECT_NO_THROW(state.revise_messages(immutable, {0}));
+  EXPECT_EQ(immutable.checkpoint_projection, loaded.checkpoint_projection);
+}
+
+TEST_F(Pr22, BlobToolCompletionPreservesEachHistoricalToolsNormalizationPolicy) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Db raw(config.state_root / "state.sqlite3");
+  auto s = state.create();
+  codet::Message old_call, old_result, new_call, new_result;
+  old_call.role = new_call.role = "assistant";
+  old_call.calls = {{"read", "read_file", Json::object()}};
+  old_result.role = new_result.role = "tool";
+  old_result.tool_call_id = "read";
+  old_result.result_file = "results/owner/read.json";
+  old_result.text =
+      Json({{"content", Json({{"result_path", "/user/document/value"}}).dump()}}).dump();
+  ToolCall call{"exec", "exec_command", Json::object()};
+  new_call.calls = {call};
+  new_result.tool_call_id = call.id;
+  new_result.result_file = "results/owner/exec.json";
+  new_result.text =
+      Json({{"content", Json({{"result_path", "/legacy/exec/output"}}).dump()}}).dump();
+  s.messages = {old_call, old_result, new_call};
+  state.save(s);
+  raw.exec("UPDATE sessions SET message_format=0,messages='" + Json(s.messages).dump() +
+           "' WHERE id='" + s.id + "';DELETE FROM session_messages WHERE session='" + s.id + "'");
+  auto loaded = state.load_id(s.id, false);
+  state.tool_started(s.id, call);
+  EXPECT_NO_THROW(state.complete_tool(loaded, call, new_result));
+  EXPECT_EQ(loaded.messages[1].text, old_result.text);
+  EXPECT_EQ(Json(state.load_id(s.id, false).messages), Json(loaded.messages));
+  EXPECT_THAT(loaded.messages.back().text, HasSubstr("results/owner/exec.json"));
 }

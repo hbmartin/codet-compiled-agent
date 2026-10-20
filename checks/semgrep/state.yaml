@@ -106,3 +106,33 @@ rules:
           - pattern-inside: |
               Json StateStore::repair(...) { ... }
       - pattern: NativeFileSystem $FILES;
+  - id: codet-transcript-preparation-is-pure
+    languages: [cpp]
+    severity: ERROR
+    message: Preparation must return independent provenance; publish snapshot changes only after successful SQL publication.
+    paths:
+      include: ["**/state.cpp"]
+    patterns:
+      - pattern-inside: |
+          PreparedTranscript prepare(...) { ... }
+      - pattern-either:
+          - pattern: $S.checkpoint_projection = ...
+          - pattern: $S.checkpoint_projection->$FIELD = ...
+  - id: codet-prepared-transcript-publication
+    languages: [cpp]
+    severity: ERROR
+    message: Reconciliation and tool completion must apply prepared rows rather than recursively invoking preparing public write methods.
+    paths:
+      include: ["**/state.cpp"]
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              void StateStore::reconcile(...) { ... }
+          - pattern-inside: |
+              void StateStore::complete_tool(...) { ... }
+      - pattern-either:
+          - pattern: save(...)
+          - pattern: replace_history(...)
+          - pattern: append_messages(...)
+          - pattern: tool_finished(...)
+          - pattern: remember_references(...)

@@ -141,3 +141,31 @@ struct NativeFallback {
   // ok: codet-state-filesystem-dependency
   NativeFileSystem files;
 };
+
+struct PreparationFixture {
+  PreparedTranscript prepare(const Session &s) {
+    // ruleid: codet-transcript-preparation-is-pure
+    s.checkpoint_projection = speculative;
+    // ruleid: codet-transcript-preparation-is-pure
+    s.checkpoint_projection->pending = next;
+    // ok: codet-transcript-preparation-is-pure
+    plan.nested = next;
+    return plan;
+  }
+};
+void StateStore::complete_tool(Session &s, const ToolCall &call, Message result) {
+  // ruleid: codet-prepared-transcript-publication
+  append_messages(s, first);
+  // ruleid: codet-prepared-transcript-publication
+  tool_finished(s.id, call, result);
+  // ok: codet-prepared-transcript-publication
+  impl_->apply_prepared_transcript(s, prepared);
+}
+void StateStore::reconcile(Session &s, bool persist) {
+  // ruleid: codet-prepared-transcript-publication
+  save(s);
+  // ruleid: codet-prepared-transcript-publication
+  remember_references(s.id, s.messages);
+  // ok: codet-prepared-transcript-publication
+  impl_->apply_prepared_transcript(s, prepared);
+}
