@@ -872,7 +872,7 @@ TEST_F(History, MigrationWaitsBeyondSqliteTimeoutWithoutMistakingMigratorsForSes
   EXPECT_EQ(second.get(), 0u);
   size_t backups = 0;
   for (const auto &entry : fs::directory_iterator(config.home))
-    backups += entry.path().filename().string().rfind("state.sqlite3.pre-v7-", 0) == 0;
+    backups += entry.path().filename().string().rfind("state.sqlite3.pre-v8-", 0) == 0;
   EXPECT_EQ(backups, 1u);
 }
 

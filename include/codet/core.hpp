@@ -438,7 +438,11 @@ class StateStore {
                          const std::optional<ProviderStateUpdate> &);
   void revise_transcript(const Session &, Session *, const std::vector<size_t> &);
   void replace_transcript(const Session &, Session *);
-  Session read_session(const std::string &, bool, bool, bool project = true);
+  struct ReadOptions {
+    bool repair = false, provider = true, project = true, validate_revision = true;
+    std::string *source = nullptr;
+  };
+  Session read_session(const std::string &, const ReadOptions &);
   StateStore(const fs::path &, const fs::path &, const std::string &, FileSystem *);
 
 public:

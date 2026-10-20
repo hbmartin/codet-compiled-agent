@@ -317,11 +317,11 @@ TEST_F(Pr17, SchemaSixUpgradeBacksUpAndFailureRollsBackItsSchemaChanges) {
             "0");
   raw.exec("DROP INDEX provider_revision_insert");
   StateStore upgraded(config.state_root);
-  EXPECT_EQ(raw.value("PRAGMA user_version"), "7");
+  EXPECT_EQ(raw.value("PRAGMA user_version"), "8");
   EXPECT_EQ(upgraded.load_id(id, false).provider_state, wire_state("original"));
   size_t backups = 0;
   for (const auto &entry : fs::directory_iterator(config.state_root))
-    if (entry.path().filename().string().find(".pre-v7-") != std::string::npos) {
+    if (entry.path().filename().string().find(".pre-v8-") != std::string::npos) {
       ++backups;
       struct stat st{};
       ASSERT_EQ(::stat(entry.path().c_str(), &st), 0);
@@ -348,7 +348,7 @@ TEST_F(Pr17, SchemaSixUpgradeRequiresActiveSessionsToStop) {
   EXPECT_EQ(raw.value("PRAGMA user_version"), "6");
   lease.reset();
   EXPECT_NO_THROW(StateStore upgraded(config.state_root));
-  EXPECT_EQ(raw.value("PRAGMA user_version"), "7");
+  EXPECT_EQ(raw.value("PRAGMA user_version"), "8");
 }
 TEST_F(Pr17, CodexQualificationIsStableAcrossRuntimeAndLaterTurns) {
   config.provider = "codex";

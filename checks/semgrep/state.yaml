@@ -183,6 +183,56 @@ rules:
     paths:
       include: ["**/state.cpp"]
     patterns:
-      - pattern-inside: |
-          void StateStore::reconcile(...) { ... }
+      - pattern-either:
+          - pattern-inside: |
+              void StateStore::reconcile(...) { ... }
+          - pattern-inside: |
+              PreparedTranscript prepare_recovered(...) { ... }
+          - pattern-inside: |
+              void apply_prepared_journal(...) { ... }
       - pattern: safe_json(Json($RESULT)).dump()
+  - id: codet-session-scoped-preparation-version
+    languages: [cpp]
+    severity: ERROR
+    message: Verify selected-session revisions through session_current; database-wide counters reject unrelated sessions and miss same-connection changes.
+    paths:
+      include: ["**/state.cpp"]
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              Json StateStore::repair(...) { ... }
+          - pattern-inside: |
+              void StateStore::reconcile(...) { ... }
+          - pattern-inside: |
+              PreparedTranscript prepare(...) { ... }
+      - pattern-either:
+          - pattern: Statement $Q($DB, "PRAGMA data_version");
+          - pattern: sqlite3_total_changes(...)
+          - pattern: $IMPL->database_version(...)
+  - id: codet-transcript-selected-revision-guard
+    languages: [cpp]
+    severity: ERROR
+    message: Prepared transcript publication must first check the selected session revision inside the owning transaction.
+    paths:
+      include: ["**/state.cpp"]
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              void StateStore::append_transcript(...) { ... }
+          - pattern-inside: |
+              void StateStore::revise_transcript(...) { ... }
+          - pattern-inside: |
+              void StateStore::replace_transcript(...) { ... }
+          - pattern-inside: |
+              void StateStore::complete_tool(...) { ... }
+      - pattern: |
+          Transaction $TX($DB);
+          ...
+          $IMPL->apply_prepared_transcript($SESSION, $PLAN);
+      - pattern-not: |
+          Transaction $TX($DB);
+          ...
+          if (!$IMPL->prepared_current(..., $PLAN))
+            continue;
+          ...
+          $IMPL->apply_prepared_transcript($SESSION, $PLAN);
