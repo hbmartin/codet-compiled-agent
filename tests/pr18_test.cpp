@@ -1576,7 +1576,13 @@ TEST_F(Pr22, ReconciliationAndToolPublicationPrepareArchivesBeforeTheirWriterLoc
   fs::remove(path);
   loaded = state.load_id(original.id, false);
   files.atomic_write(path, archive, true);
-  files.on_open = observe;
+  bool wrote_during_recovery = false;
+  files.on_open = [&](const fs::path &p) {
+    if (!wrote_during_recovery) {
+      wrote_during_recovery = true;
+      observe(p);
+    }
+  };
   EXPECT_NO_THROW(state.reconcile(loaded));
   EXPECT_EQ(concurrent_writes, 1u);
   files.on_open = {};
@@ -1716,4 +1722,269 @@ TEST_F(Pr22, BlobToolCompletionPreservesEachHistoricalToolsNormalizationPolicy) 
   EXPECT_EQ(loaded.messages[1].text, old_result.text);
   EXPECT_EQ(Json(state.load_id(s.id, false).messages), Json(loaded.messages));
   EXPECT_THAT(loaded.messages.back().text, HasSubstr("results/owner/exec.json"));
+}
+
+namespace {
+struct Pr23 : Pr21 {
+  Session blob(StateStore &state, Db &raw) {
+    auto s = state.create();
+    s.messages = {codet::Message{"user", "original prefix"},
+                  codet::Message{"assistant", "original reply"}};
+    state.save(s);
+    raw.exec("UPDATE sessions SET message_format=0,messages='" + Json(s.messages).dump(2) +
+             "' WHERE id='" + s.id + "';DELETE FROM session_messages WHERE session='" + s.id + "'");
+    return state.load_id(s.id, false);
+  }
+};
+struct BeforeBackupFiles : VirtualBackupFiles {
+  void atomic_write(const fs::path &p, const std::string &bytes, bool secret) override {
+    if (p.filename().string().find("-backup-") != std::string::npos)
+      throw Error("failure before backup publication");
+    VirtualBackupFiles::atomic_write(p, bytes, secret);
+  }
+};
+} // namespace
+TEST_F(Pr23, BlobAppendAndRevisionRejectTruncatedAndUnrequestedChangesBeforeConversion) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Db raw(config.state_root / "state.sqlite3");
+  for (const auto *mode :
+       {"truncated-append", "edited-prefix", "unrequested-revision", "short-revision"}) {
+    SCOPED_TRACE(mode);
+    auto s = blob(state, raw);
+    const auto stored = raw.value("SELECT messages FROM sessions WHERE id='" + s.id + "'");
+    const auto projection = s.checkpoint_projection;
+    if (std::string(mode) == "truncated-append") {
+      s.messages.resize(1);
+      s.messages.push_back(codet::Message{"user", "would overwrite original reply"});
+      EXPECT_THROW(state.append_messages(s, 1), Error);
+    } else if (std::string(mode) == "edited-prefix") {
+      s.messages[0].text = "unrequested prefix edit";
+      s.messages.push_back(codet::Message{"user", "new suffix"});
+      EXPECT_THROW(state.append_messages(s, 2), Error);
+    } else {
+      s.messages[0].text = "unrequested prefix edit";
+      if (std::string(mode) == "short-revision")
+        s.messages.resize(1);
+      else
+        s.messages[1].text = "requested revision";
+      EXPECT_THROW(state.revise_messages(s, {s.messages.size() - 1}), Error);
+    }
+    EXPECT_EQ(s.checkpoint_projection, projection);
+    EXPECT_EQ(raw.value("SELECT message_format FROM sessions WHERE id='" + s.id + "'"), "0");
+    EXPECT_EQ(raw.value("SELECT messages FROM sessions WHERE id='" + s.id + "'"), stored);
+    EXPECT_EQ(raw.value("SELECT count(*) FROM session_messages WHERE session='" + s.id + "'"), "0");
+    // Retry an explicitly valid write before another load can hide pending state.
+    s.messages = Json::parse(stored).get<std::vector<codet::Message>>();
+    s.messages.push_back(codet::Message{"user", "valid suffix"});
+    EXPECT_NO_THROW(state.append_messages(s, 2));
+    EXPECT_EQ(Json(state.load_id(s.id, false).messages), Json(s.messages));
+  }
+}
+TEST_F(Pr23, ValidBlobRevisionAndExplicitReplacementHaveDistinctBoundaries) {
+  StateStore state(files, config.state_root);
+  Db raw(config.state_root / "state.sqlite3");
+  auto s = blob(state, raw);
+  s.messages[1].text = "requested new reply";
+  EXPECT_NO_THROW(state.revise_messages(s, {1}));
+  EXPECT_EQ(s.messages[0].text, "original prefix");
+  EXPECT_EQ(Json(state.load_id(s.id, false).messages), Json(s.messages));
+  auto replacement = blob(state, raw);
+  replacement.messages = {codet::Message{"system", "intentional new history"}};
+  EXPECT_NO_THROW(state.replace_history(replacement));
+  EXPECT_EQ(state.load_id(replacement.id, false).messages.size(), 1u);
+  EXPECT_EQ(raw.value("SELECT message_format FROM sessions WHERE id='" + replacement.id + "'"),
+            "1");
+}
+TEST_F(Pr23, RepairedLoadCapturesJournalBeforeProjectionAllowsAnExternalCommit) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  auto original = legacy(state, tools, raw);
+  ToolCall call{"coherent-call", "exec_command", {{"version", 1}}};
+  codet::Message assistant;
+  assistant.role = "assistant";
+  assistant.calls = {call};
+  original.messages.push_back(assistant);
+  state.append_messages(original, 1);
+  state.tool_started(original.id, call);
+  bool committed = false;
+  files.on_open = [&](const fs::path &) {
+    if (committed)
+      return;
+    committed = true;
+    auto next = original.messages[1];
+    next.calls[0].arguments["version"] = 2;
+    raw.exec("BEGIN IMMEDIATE;UPDATE session_messages SET payload='" + Json(next).dump() +
+             "' WHERE session='" + original.id +
+             "' AND position=1;UPDATE tools SET args='{\"version\":2}' WHERE session='" +
+             original.id + "';COMMIT");
+  };
+  Session loaded;
+  ASSERT_NO_THROW(loaded = state.load_id(original.id));
+  files.on_open = {};
+  ASSERT_TRUE(committed);
+  EXPECT_EQ(loaded.messages[1].calls[0].arguments["version"], 1);
+  EXPECT_THAT(loaded.messages.back().text, HasSubstr("uncertain"));
+  auto current = state.load_id(original.id);
+  EXPECT_EQ(current.messages[1].calls[0].arguments["version"], 2);
+  EXPECT_THROW(state.reconcile(loaded), Error); // A genuine transcript edit remains a conflict.
+  EXPECT_EQ(raw.value("SELECT count(*) FROM session_messages WHERE session='" + original.id + "'"),
+            "2");
+  EXPECT_EQ(raw.value("SELECT status FROM tools WHERE session='" + original.id + "'"), "running");
+}
+TEST_F(Pr23, ReconstructedJournalUsesThePreparedCanonicalTranscriptPayload) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  auto s = state.create();
+  tools.use_session(s.id);
+  auto result = checkpoint(tools);
+  const auto identifier = result.checkpoint_state.at("recovery_record").get<std::string>();
+  const auto path = artifact_directory(config) / identifier;
+  const auto bytes = files.read(path, 1024 * 1024);
+  fs::remove(path);
+  result.checkpoint_state["recovery_record"] = path.string();
+  result.role = "tool";
+  result.tool_call_id = "canonical-call";
+  result.message_id.clear();
+  codet::Message assistant;
+  assistant.role = "assistant";
+  assistant.calls = {{result.tool_call_id, "exec_command", Json::object()}};
+  s.messages = {assistant, result};
+  state.save(s);
+  files.atomic_write(path, bytes, true);
+  EXPECT_NO_THROW(state.reconcile(s));
+  const auto journal = raw.value("SELECT result FROM tools WHERE session='" + s.id + "'");
+  const auto transcript =
+      raw.value("SELECT payload FROM session_messages WHERE session='" + s.id + "' AND position=1");
+  EXPECT_EQ(journal, transcript);
+  EXPECT_EQ(Json::parse(journal)["checkpoint_state"]["recovery_record"], identifier);
+  EXPECT_EQ(Json::parse(journal)["message_id"], s.messages[1].message_id);
+  EXPECT_NO_THROW(state.reconcile(s));
+}
+TEST_F(Pr23, ReconciliationRetriesAnUnrelatedCommitOnceAndLeavesNoSecondInvalidationChanges) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  auto other = state.create();
+  for (int invalidations : {1, 2}) {
+    SCOPED_TRACE(invalidations);
+    auto original = legacy(state, tools, raw);
+    codet::Message assistant;
+    assistant.role = "assistant";
+    assistant.calls = {{unique_id(), "exec_command", Json::object()}};
+    original.messages.push_back(assistant);
+    state.append_messages(original, 1);
+    const auto path = fs::path(*absolute_checkpoint_reference(original.messages[0]));
+    const auto bytes = files.read(path, 1024 * 1024);
+    fs::remove(path);
+    auto loaded = state.load_id(original.id, false);
+    const auto before = Json(loaded.messages);
+    const auto projection = loaded.checkpoint_projection;
+    files.atomic_write(path, bytes, true);
+    int commits = 0;
+    size_t opens = 0;
+    files.on_open = [&](const fs::path &) {
+      ++opens;
+      if (commits < invalidations) {
+        ++commits;
+        raw.exec("UPDATE sessions SET status='commit-" + unique_id() + "' WHERE id='" + other.id +
+                 "'");
+      }
+    };
+    std::string failure;
+    try {
+      state.reconcile(loaded);
+    } catch (const Error &error) {
+      failure = error.what();
+    }
+    files.on_open = {};
+    EXPECT_EQ(commits, invalidations);
+    EXPECT_EQ(opens, 2u);
+    if (invalidations == 1) {
+      EXPECT_TRUE(failure.empty()) << failure;
+      EXPECT_EQ(loaded.messages.size(), 3u);
+    } else {
+      EXPECT_THAT(failure, HasSubstr("preparation changed twice"));
+      EXPECT_EQ(Json(loaded.messages), before);
+      EXPECT_EQ(loaded.checkpoint_projection, projection);
+      EXPECT_EQ(raw.value("SELECT count(*) FROM tools WHERE session='" + loaded.id + "'"), "0");
+      EXPECT_EQ(
+          raw.value("SELECT count(*) FROM session_messages WHERE session='" + loaded.id + "'"),
+          "2");
+      EXPECT_NO_THROW(state.reconcile(loaded)); // Retry without reloading the unchanged snapshot.
+    }
+  }
+}
+TEST_F(Pr23, BackupDiagnosticsDistinguishRetainedFilesFromUnconfirmedCandidates) {
+  for (int stage : {0, 1, 2}) {
+    SCOPED_TRACE(stage);
+    BeforeBackupFiles before;
+    VirtualBackupFiles after;
+    after.unreadable_backup = stage == 2;
+    auto &injected = stage == 0 ? static_cast<VirtualBackupFiles &>(before) : after;
+    StateStore state(injected, config.state_root, artifact_directory(config));
+    Tools tools(config, injected, processes, http, clock);
+    const auto s = state.create();
+    try {
+      state.repair(s.id, false, true, false, tools);
+      FAIL();
+    } catch (const Error &error) {
+      const std::string message = error.what();
+      if (stage == 1) {
+        EXPECT_THAT(message, HasSubstr("; backup: "));
+        EXPECT_THAT(message, Not(HasSubstr("publication unconfirmed")));
+      } else {
+        EXPECT_THAT(message, HasSubstr("backup candidate (publication unconfirmed): "));
+        EXPECT_THAT(message, Not(HasSubstr("; backup: ")));
+      }
+      EXPECT_THAT(message, HasSubstr(stage == 0 ? "failure before backup publication"
+                                                : "published virtual backup"));
+    }
+  }
+}
+
+TEST_F(Pr23, RepeatingAnExplicitConstReplacementCanObserveAnAlreadyRemovedCheckpoint) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  for (bool blob : {false, true}) {
+    auto original = legacy(state, tools, raw);
+    if (blob)
+      raw.exec("UPDATE sessions SET message_format=0,messages='" + Json(original.messages).dump() +
+               "' WHERE id='" + original.id + "';DELETE FROM session_messages WHERE session='" +
+               original.id + "'");
+    auto loaded = state.load_id(original.id, false);
+    auto stale = loaded;
+    loaded.messages.clear();
+    const Session &immutable = loaded;
+    const auto provenance = immutable.checkpoint_projection;
+    EXPECT_NO_THROW(state.replace_history(immutable));
+    EXPECT_NO_THROW(state.replace_history(immutable));
+    EXPECT_EQ(immutable.checkpoint_projection, provenance);
+    EXPECT_EQ(raw.value("SELECT count(*) FROM session_messages WHERE session='" + loaded.id + "'"),
+              "0");
+    EXPECT_THROW(state.revise_messages(stale, {}), Error);
+    stale.messages.push_back(codet::Message{"user", "stale append"});
+    EXPECT_THROW(state.append_messages(stale, 1), Error);
+  }
+}
+
+TEST_F(Pr23, CopiedBlobProjectionRejectsADifferentCommittedCheckpointAfterConversion) {
+  StateStore state(files, config.state_root, artifact_directory(config));
+  Tools tools(config, files, processes, http, clock);
+  Db raw(config.state_root / "state.sqlite3");
+  auto original = legacy(state, tools, raw);
+  raw.exec("UPDATE sessions SET message_format=0,messages='" + Json(original.messages).dump() +
+           "' WHERE id='" + original.id + "';DELETE FROM session_messages WHERE session='" +
+           original.id + "'");
+  auto first = state.load_id(original.id, false);
+  auto stale = first;
+  first.messages[0].text = "committed revision during materialization";
+  state.revise_messages(first, {0});
+  stale.messages.push_back(codet::Message{"user", "new suffix from stale snapshot"});
+  EXPECT_THROW(state.append_messages(stale, 1), Error);
+  EXPECT_THAT(row(raw, first), HasSubstr("committed revision during materialization"));
+  EXPECT_EQ(raw.value("SELECT count(*) FROM session_messages WHERE session='" + first.id + "'"),
+            "1");
 }

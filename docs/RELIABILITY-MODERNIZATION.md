@@ -176,7 +176,8 @@ Loads and exports remain read-only. The next successful append or revision also 
 legacy checkpoint rows and registers their portable references in the same transaction. Only those
 rows are compared and rewritten; ordinary appends retain suffix-only work. Conflicting source edits
 fail without overwriting history. Pending knowledge is acknowledged only after an owning commit;
-rollback and externally controlled nested transactions are checked against actual rows on retry.
+owning rollback preserves pending normalization for retry. Public transcript mutations inside
+unowned transactions are rejected before preparation; see the PR #23 contract below.
 
 StateStore accepts a shared filesystem dependency, retaining its native compatibility constructor.
 Checkpoint preparation, private repair backups, fork index copying and response receipts use that
@@ -193,24 +194,26 @@ schemas, private archive restoration requirements and the two-attempt repair pol
 ## PR #22 prepared transcript publication
 
 Checkpoint provenance is immutable across copied snapshots. Compact validated mappings survive
-commit, while pending payloads and exact stored-byte fingerprints describe only unresolved writes.
+commit, while pending payloads and exact stored-byte fingerprints describe read-only normalizations.
 Preparation never changes the snapshot. An owning commit publishes canonical messages and compact
-provenance with nonthrowing swaps; nested writes retain both original and written expectations so
-the next operation can recognize an outer commit or rollback. An operation savepoint protects the
-caller's transaction from partial transcript writes. Retired JSON cleanup reserves its workspace
-before commit because the JSON library's ordinary container destruction can allocate.
+provenance with nonthrowing swaps; public transcript writes require transaction ownership. Raw
+caller-owned transcript nesting is rejected before preparation; internal atomic operations publish
+already prepared SQL. This replaces the earlier attempt to infer external commit or rollback outcomes
+from row digests. Retired JSON cleanup reserves its workspace before commit because the JSON library's
+ordinary container destruction can allocate.
 
 Mutable transcript-write overloads publish canonical message IDs and metadata back to the session.
-Existing const overloads operate on private copies. IDs use the filesystem-independent, tool-aware
+Existing const overloads borrow unchanged history and provider state, prepare only affected rows,
+and leave the supplied snapshot unchanged. IDs use the filesystem-independent, tool-aware
 message view and actual transcript position before checkpoint projection. Stored IDs and provider
 source associations are preserved. Both row and legacy blob layouts project checkpoints on read;
 reads and exports do not write. The next successful transcript mutation materializes a legacy blob
 as canonical rows, with source verification and reference registration in the same transaction.
 
-Reconciliation prepares against coherent transcript and journal reads, then verifies those inputs
-before applying prepared rows. Tool completion shares one canonical result between journal and
+Reconciliation prepares against coherent transcript and journal reads, then verifies the preparation
+version before applying prepared rows. Tool completion shares one canonical result between journal and
 transcript publication. Owned publication and prepared internal nesting perform no archive opens
-or message serialization; unprepared externally nested calls still validate their inputs. Pending
+or transcript message serialization. Unowned public transcript writes are rejected. Pending
 normalization and an explicit revision update a position once. Ordinary appends reuse compact
 provenance without inspecting acknowledged rows or copying pending payload strings.
 
@@ -222,3 +225,39 @@ policy are unchanged.
 [PR #22 follow-up validation](validation/pr22-persistence-checkpoints.json) records the source-hashed
 regressions, offline matrix, benchmarks and Tiger cross-build/static verification. Tiger hardware
 and live-provider execution remain outside that evidence.
+
+
+## PR #23 owned persistence and coherent recovery
+
+Transcript mutations require an owning transaction. Rejected calls leave the incoming snapshot and
+caller transaction unchanged; they do not undo edits the caller made before entering the API.
+Provider-only nested writes still invalidate optional cache trust. Checkpoint provenance remains
+immutable and records committed mappings or read-only normalizations, never speculative revisions.
+Identical already committed normalizations remain safe to retry from copied or const snapshots.
+An explicit replacement can also repeat an already completed removal; that does not authorize a stale
+append or revision to restore removed rows.
+
+A legacy blob is converted from verified stored history. Append requires the stored count to equal
+the append boundary and an unchanged prefix; revision requires matching length and unchanged
+unrequested positions. A mismatch fails before conversion. Explicit replacement intentionally
+replaces the full history. Canonical IDs retain their position-sensitive formula and provider source
+associations; owning commits publish the same canonical messages to memory and storage.
+
+Loads capture transcript, provider rows/revision and required journal records in one read snapshot,
+then project archives after closing it. Read-only recovery consumes that captured journal. Persistent
+reconciliation prepares rows and canonical journal outcomes before the writer transaction, then
+checks database-wide data version, same-connection change count and schema version. It retries once
+(two preparation attempts total). Unrelated commits can invalidate either attempt. A second
+invalidation applies no reconciliation changes and leaves the destination snapshot unchanged.
+Existing completed full-result journals retain their separate preview semantics.
+
+Compatibility adapters and reconciliation do not copy provider histories. JSON retirement workspace
+is prepared only for replaced objects and owned temporary messages, with capacity assertions and
+allocation-fault coverage protecting the post-commit path. Backup failures preserve the original
+error: confirmed retained backups use `backup`, while unverifiable attempted destinations are named
+as `backup candidate (publication unconfirmed)`. All verification uses the configured filesystem.
+
+[PR #23 follow-up validation](validation/pr23-persistence-reconciliation.json) records the executed
+offline checks and source hashes. Tiger cross-build/static verification is separate from hardware
+execution; no live-provider execution is claimed. Schema 7, lazy anchor pinning, strict archive
+validation and repair's database-wide two-attempt policy remain unchanged.

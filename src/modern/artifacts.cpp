@@ -189,86 +189,98 @@ void cleanup_recovery_candidates(StateStore &state, Tools &tools,
     }
   }
 }
-std::set<std::string> message_references(const std::vector<Message> &messages) {
-  std::set<std::string> out;
+namespace {
+void add_message_references(const Message &m, std::set<std::string> &out) {
   const auto accept = [&](const std::string &value) {
     if (result_name(value))
       out.insert(value);
     else if (capture_name(value))
       out.insert(fs::path(value).filename().string());
   };
-  for (const auto &m : messages) {
-    accept(m.result_file);
-    if (m.checkpoint_state.is_object() &&
-        m.checkpoint_state.value("recovery_record", Json()).is_string())
-      accept(m.checkpoint_state.at("recovery_record").get<std::string>());
-    if (m.role != "tool")
-      continue;
-    const auto envelope = Json::parse(m.text, nullptr, false);
-    if (!envelope.is_object())
-      continue;
-    const auto metadata = envelope.value("metadata", Json::object());
-    if (metadata.is_object() && metadata.value("spill_path", Json()).is_string())
-      accept(metadata.at("spill_path").get<std::string>());
-  }
+  accept(m.result_file);
+  if (m.checkpoint_state.is_object() &&
+      m.checkpoint_state.value("recovery_record", Json()).is_string())
+    accept(m.checkpoint_state.at("recovery_record").get<std::string>());
+  if (m.role != "tool")
+    return;
+  const auto envelope = Json::parse(m.text, nullptr, false);
+  if (!envelope.is_object())
+    return;
+  const auto metadata = envelope.value("metadata", Json::object());
+  if (metadata.is_object() && metadata.value("spill_path", Json()).is_string())
+    accept(metadata.at("spill_path").get<std::string>());
+}
+} // namespace
+std::set<std::string> message_references(const Message &message) {
+  std::set<std::string> out;
+  add_message_references(message, out);
   return out;
+}
+std::set<std::string> message_references(const std::vector<Message> &messages) {
+  std::set<std::string> out;
+  for (const auto &message : messages)
+    add_message_references(message, out);
+  return out;
+}
+void portable_message(Message &message, const std::string &session, const std::string &tool) {
+  for (auto &image : message.images)
+    image = portable_image(std::move(image));
+  if (!message.result_file.empty() && capture_name(message.result_file))
+    message.result_file = fs::path(message.result_file).filename().string();
+  if (message.role == "tool") {
+    auto envelope = Json::parse(message.text, nullptr, false);
+    const auto normalize = [](Json &value) {
+      if (!value.is_object())
+        return;
+      if (value.value("spill_path", Json()).is_string() &&
+          capture_name(value.at("spill_path").get<std::string>()))
+        value["spill_path"] =
+            fs::path(value.at("spill_path").get<std::string>()).filename().string();
+      if (value.value("artifact", Json()).is_object()) {
+        try {
+          value["artifact"] = portable_image(value.at("artifact").get<ImageArtifact>());
+        } catch (const Json::exception &) {
+          return; // Preserve unrelated tool metadata without interpreting it as an image.
+        }
+      }
+    };
+    if (envelope.is_object()) {
+      if (envelope.contains("metadata")) {
+        normalize(envelope["metadata"]);
+        if (result_name(message.result_file) && envelope["metadata"].is_object() &&
+            envelope["metadata"].contains("result_path"))
+          envelope["metadata"]["result_path"] = message.result_file;
+      }
+      const auto &name = tool;
+      const bool owned = name == "exec_command" || name == "write_stdin" || name == "view_image" ||
+                         name.rfind("computer.", 0) == 0;
+      if (owned && envelope.value("content", Json()).is_string()) {
+        auto content = Json::parse(envelope.at("content").get<std::string>(), nullptr, false);
+        if (content.is_object()) {
+          normalize(content);
+          if (result_name(message.result_file) && content.contains("result_path"))
+            content["result_path"] = message.result_file;
+          envelope["content"] = content.dump();
+        }
+      }
+      message.text = envelope.dump();
+    }
+  }
+  if (!message.artifact_index.empty()) {
+    if (fs::path(message.artifact_index).filename() != session + ".jsonl")
+      throw Error("Artifact index belongs to another session");
+    message.artifact_index = artifact_index_reference(session);
+  }
 }
 void portable_messages(std::vector<Message> &messages, const std::string &session,
                        const std::string &tool) {
   std::map<std::string, std::string> names;
-  for (const auto &message : messages)
-    for (const auto &call : message.calls)
-      names[call.id] = call.name;
-  for (auto &message : messages) {
-    for (auto &image : message.images)
-      image = portable_image(std::move(image));
-    if (!message.result_file.empty() && capture_name(message.result_file))
-      message.result_file = fs::path(message.result_file).filename().string();
-    if (message.role == "tool") {
-      auto envelope = Json::parse(message.text, nullptr, false);
-      const auto normalize = [](Json &value) {
-        if (!value.is_object())
-          return;
-        if (value.value("spill_path", Json()).is_string() &&
-            capture_name(value.at("spill_path").get<std::string>()))
-          value["spill_path"] =
-              fs::path(value.at("spill_path").get<std::string>()).filename().string();
-        if (value.value("artifact", Json()).is_object()) {
-          try {
-            value["artifact"] = portable_image(value.at("artifact").get<ImageArtifact>());
-          } catch (const Json::exception &) {
-            return; // Preserve unrelated tool metadata without interpreting it as an image.
-          }
-        }
-      };
-      if (envelope.is_object()) {
-        if (envelope.contains("metadata")) {
-          normalize(envelope["metadata"]);
-          if (result_name(message.result_file) && envelope["metadata"].is_object() &&
-              envelope["metadata"].contains("result_path"))
-            envelope["metadata"]["result_path"] = message.result_file;
-        }
-        const auto name = tool.empty() ? names[message.tool_call_id] : tool;
-        const bool owned = name == "exec_command" || name == "write_stdin" ||
-                           name == "view_image" || name.rfind("computer.", 0) == 0;
-        if (owned && envelope.value("content", Json()).is_string()) {
-          auto content = Json::parse(envelope.at("content").get<std::string>(), nullptr, false);
-          if (content.is_object()) {
-            normalize(content);
-            if (result_name(message.result_file) && content.contains("result_path"))
-              content["result_path"] = message.result_file;
-            envelope["content"] = content.dump();
-          }
-        }
-        message.text = envelope.dump();
-      }
-    }
-    if (!message.artifact_index.empty()) {
-      if (fs::path(message.artifact_index).filename() != session + ".jsonl")
-        throw Error("Artifact index belongs to another session");
-      message.artifact_index = artifact_index_reference(session);
-    }
-  }
+  if (tool.empty())
+    for (const auto &message : messages)
+      for (const auto &call : message.calls)
+        names[call.id] = call.name;
+  for (auto &message : messages)
+    portable_message(message, session, tool.empty() ? names[message.tool_call_id] : tool);
 }
 fs::path archive_image_history(const fs::path &root, FileSystem &files, const std::string &session,
                                const std::vector<Message> &messages) {
