@@ -1149,6 +1149,11 @@ struct StateStore::Impl {
       return normalized.emplace(position, std::move(message)).first->second;
     };
     const auto fingerprints = message_fingerprints(view.messages);
+    std::string canonical_rows;
+    for (const auto &fingerprint : fingerprints)
+      canonical_rows += fingerprint;
+    if (!original_inputs && (!already_recovered || signature != "rows:" + digest(canonical_rows)))
+      throw Error("Session modified by another process: recovery source bytes changed");
     if (fingerprints.size() < baseline.baseline.size())
       throw Error("Session modified by another process: recovered history was shortened");
     for (size_t i = 0; i < baseline.baseline.size(); ++i)

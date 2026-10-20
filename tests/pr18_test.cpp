@@ -2212,13 +2212,20 @@ TEST_F(Pr24, RecoveredWritesRejectGenuineSourceAndUnrequestedCallerEdits) {
   StateStore state(files, config.state_root, artifact_directory(config));
   Tools tools(config, files, processes, http, clock);
   Db raw(config.state_root / "state.sqlite3");
-  for (bool external : {false, true}) {
+  for (int edit : {0, 1, 2}) {
     auto s = shifted(state, tools, raw, false, true);
     const auto projection = s.checkpoint_projection;
-    if (external) {
+    if (edit == 2) {
+      const Session &view = s;
+      state.revise_messages(view, {});
+    }
+    if (edit) {
       auto changed = Json::parse(raw.value("SELECT payload FROM session_messages WHERE session='" +
                                            s.id + "' AND position=1"));
-      changed["text"] = "external edit";
+      if (edit == 1)
+        changed["text"] = "external edit";
+      else
+        changed["unknown_external_field"] = true;
       raw.exec("UPDATE session_messages SET payload='" + changed.dump() + "' WHERE session='" +
                s.id + "' AND position=1");
     } else
@@ -2226,8 +2233,10 @@ TEST_F(Pr24, RecoveredWritesRejectGenuineSourceAndUnrequestedCallerEdits) {
     s.messages.push_back(codet::Message{"user", "new suffix"});
     EXPECT_THROW(state.append_messages(s, 3), Error);
     EXPECT_EQ(s.checkpoint_projection, projection);
-    EXPECT_EQ(raw.value("SELECT count(*) FROM session_messages WHERE session='" + s.id + "'"), "2");
-    EXPECT_EQ(raw.value("SELECT count(*) FROM tools WHERE session='" + s.id + "'"), "0");
+    EXPECT_EQ(raw.value("SELECT count(*) FROM session_messages WHERE session='" + s.id + "'"),
+              edit == 2 ? "3" : "2");
+    EXPECT_EQ(raw.value("SELECT count(*) FROM tools WHERE session='" + s.id + "'"),
+              edit == 2 ? "1" : "0");
   }
 }
 TEST_F(Pr24, RecoveryRollbackRetainsProvenanceForRetryBeforeReload) {
