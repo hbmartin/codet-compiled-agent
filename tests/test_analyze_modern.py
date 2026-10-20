@@ -2,16 +2,18 @@
 import importlib.util
 import json
 import os
+import plistlib
 import signal
 import subprocess
-import threading
-import time
-from pathlib import Path
-import plistlib
 import sys
 import tempfile
+import threading
+import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 SPEC = importlib.util.spec_from_file_location("analyze_modern", Path(__file__).resolve().parents[1] /
                                             "scripts/analyze-modern.py")
@@ -115,7 +117,7 @@ class AnalysisTests(unittest.TestCase):
     def test_tidy_diagnostics_and_malformed_report_fail(self):
         import yaml
         for payload in ({"Diagnostics": [{"DiagnosticName": "bugprone-use-after-move"}]}, [], "[invalid"):
-            def capture(command, cwd, timeout):
+            def capture(command, cwd, timeout, payload=payload):
                 output = next(arg.split("=", 1)[1] for arg in command if arg.startswith("--export-fixes="))
                 Path(output).write_text(payload if isinstance(payload, str) else yaml.safe_dump(payload))
                 return dict(command=command, exit_code=1, failure=None, stdout="", stderr="")
@@ -295,6 +297,7 @@ class AnalysisTests(unittest.TestCase):
         driver = self.root / 'interrupt.py'
         marker = self.root / 'started'
         driver.write_text("import importlib.util,sys,signal\n"
+            + f"sys.path.insert(0,{str(Path(analysis.__file__).parent)!r})\n"
             + f"spec=importlib.util.spec_from_file_location('runner',{str(Path(analysis.__file__))!r})\n"
             + "runner=importlib.util.module_from_spec(spec);spec.loader.exec_module(runner)\n"
             + "def run(i):\n"

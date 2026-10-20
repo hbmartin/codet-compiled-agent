@@ -60,6 +60,16 @@ void *operator new(std::size_t n) {
 void *operator new[](std::size_t n) {
   return ::operator new(n);
 }
+void *operator new(std::size_t n, const std::nothrow_t &) noexcept {
+  try {
+    return ::operator new(n);
+  } catch (const std::bad_alloc &) {
+    return nullptr;
+  }
+}
+void *operator new[](std::size_t n, const std::nothrow_t &tag) noexcept {
+  return ::operator new(n, tag);
+}
 void operator delete(void *p) noexcept {
   std::free(p);
 }
@@ -70,6 +80,12 @@ void operator delete(void *p, std::size_t) noexcept {
   ::operator delete(p);
 }
 void operator delete[](void *p, std::size_t) noexcept {
+  ::operator delete(p);
+}
+void operator delete(void *p, const std::nothrow_t &) noexcept {
+  ::operator delete(p);
+}
+void operator delete[](void *p, const std::nothrow_t &) noexcept {
   ::operator delete(p);
 }
 extern "C" int sqlite3_exec(sqlite3 *db, const char *sql,
@@ -163,6 +179,22 @@ extern "C" int sqlite3_step(sqlite3_stmt *statement) {
   return result;
 }
 namespace {
+TEST(FaultAllocator, NothrowAllocationsUseTheSameReplacementAndFailureInjection) {
+  fault::disable();
+  void *scalar = ::operator new(16, std::nothrow);
+  ASSERT_NE(scalar, nullptr);
+  ::operator delete(scalar);
+  void *array = ::operator new[](16, std::nothrow);
+  ASSERT_NE(array, nullptr);
+  ::operator delete[](array);
+  fault::fired = false;
+  fault::countdown = 0;
+  void *failed = ::operator new(16, std::nothrow);
+  const bool injected = fault::fired;
+  fault::disable();
+  EXPECT_EQ(failed, nullptr);
+  EXPECT_TRUE(injected);
+}
 Json snapshot(const std::string &text) {
   return {{"provider", "anthropic"},
           {"messages",
@@ -384,8 +416,9 @@ TEST_F(PublicationFault, TokenAllocationAndQueryFailuresLeaveValidLoadsSuccessfu
       continue;
     }
     EXPECT_FALSE(failed);
-    if (mode == 0)
+    if (mode == 0) {
       EXPECT_TRUE(fault::fired);
+    }
     EXPECT_EQ(loaded.provider_state, s.provider_state);
     EXPECT_EQ(store.provider_cache_bytes(), 0u);
     EXPECT_EQ(store.provider_revision(s.id), 0u);
@@ -897,9 +930,9 @@ TEST_F(PublicationFault, ReconciliationDetectsSameConnectionDmlAndDdlAndRetriesO
       }
       EXPECT_FALSE(fault::journal_read_done);
       EXPECT_EQ(fired, invalidations);
-      if (invalidations == 1)
+      if (invalidations == 1) {
         EXPECT_TRUE(failure.empty()) << failure;
-      else {
+      } else {
         EXPECT_NE(failure.find("preparation changed twice"), std::string::npos) << failure;
         EXPECT_EQ(Json(f.session.messages), before);
         EXPECT_EQ(f.session.checkpoint_projection, projection);

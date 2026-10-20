@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-import hashlib,json,pathlib,struct,subprocess
+import hashlib
+import json
+import pathlib
+import struct
+import subprocess
+
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 PREFIX='/usr/local/bin/powerpc-apple-darwin8-'
 

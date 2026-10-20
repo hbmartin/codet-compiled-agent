@@ -28,7 +28,7 @@ int open_regular(const fs::path &path, int flags, bool protect) {
   const int fd = ::open(path.c_str(), flags | O_NOFOLLOW | O_NONBLOCK, 0600);
   if (fd < 0)
     throw Error("Cannot open output capture: " + std::string(std::strerror(errno)));
-  struct stat status{};
+  struct stat status {};
   if (::fstat(fd, &status) || !S_ISREG(status.st_mode) || status.st_uid != ::geteuid() ||
       (protect && ::fchmod(fd, 0600)) || ::fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) {
     ::close(fd);
@@ -232,6 +232,10 @@ void OutputSpool::close() {
     int &fd;
     bool &closed;
     std::unique_ptr<char[]> &pending;
+    Release(int &descriptor, bool &done, std::unique_ptr<char[]> &buffer)
+        : fd(descriptor), closed(done), pending(buffer) {}
+    Release(const Release &) = delete;
+    Release &operator=(const Release &) = delete;
     ~Release() {
       if (fd >= 0)
         ::close(fd);
@@ -257,7 +261,8 @@ void OutputSpool::close() {
     }
   } else {
     // Only remove our own empty file, never a substituted directory entry.
-    struct stat own{}, current{};
+    struct stat own {
+    }, current{};
     if (::fstat(fd_, &own) == 0 && ::lstat(path_.c_str(), &current) == 0 &&
         own.st_dev == current.st_dev && own.st_ino == current.st_ino)
       (void)::unlink(path_.c_str());

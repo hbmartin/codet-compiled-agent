@@ -83,7 +83,7 @@ TEST_F(CatalogRecovery, CachedIdentityChecksPreserveProcessAdvisoryLocks) {
   ASSERT_EQ(::fcntl(held.fd, F_SETFD, FD_CLOEXEC), 0);
   // Byte zero is independent of SQLite's lock range. Any raw close of the same inode
   // would nevertheless cancel this process's lock, just as it cancels SQLite's locks.
-  struct flock lock{};
+  struct flock lock {};
   lock.l_type = F_RDLCK;
   lock.l_whence = SEEK_SET;
   lock.l_len = 1;

@@ -89,6 +89,7 @@ std::pair<double, double> desktop_point(double x, double y, size_t width, size_t
 }
 #if defined(__APPLE__) && defined(__ppc__)
 namespace {
+using Coordinate = decltype(CGPoint{}.x);
 std::string string_value(CFTypeRef value, CFIndex limit = 8192) {
   if (!value || CFGetTypeID(value) != CFStringGetTypeID())
     return {};
@@ -98,7 +99,7 @@ std::string string_value(CFTypeRef value, CFIndex limit = 8192) {
     return "[text exceeds observation limit]";
   std::vector<char> buffer(
       static_cast<size_t>(CFStringGetMaximumSizeForEncoding(n, kCFStringEncodingUTF8)) + 1);
-  if (!CFStringGetCString(text, buffer.data(), buffer.size(), kCFStringEncodingUTF8))
+  if (!CFStringGetCString(text, buffer.data(), cf_count(buffer.size()), kCFStringEncodingUTF8))
     return {};
   return buffer.data();
 }
@@ -128,7 +129,7 @@ public:
   explicit DesktopLock(const Cancellation &cancel) {
     const auto path = "/tmp/codet-computer-" + std::to_string(getuid()) + ".lock";
     fd_ = open(path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW, 0600);
-    struct stat st{};
+    struct stat st {};
     if (fd_ < 0 || fstat(fd_, &st) != 0 || !S_ISREG(st.st_mode) || st.st_uid != getuid() ||
         (st.st_mode & 077) != 0) {
       if (fd_ >= 0)
@@ -136,7 +137,7 @@ public:
       throw Error("Cannot acquire private desktop lock");
     }
     (void)fcntl(fd_, F_SETFD, FD_CLOEXEC);
-    struct flock lock{};
+    struct flock lock {};
     lock.l_type = F_WRLCK;
     lock.l_whence = SEEK_SET;
     SystemClock clock;
@@ -231,7 +232,8 @@ class TigerComputer final : public ComputerBackend {
     const auto &s = it->second;
     const auto result = desktop_point(px, py, s.width, s.height, s.rect.origin.x, s.rect.origin.y,
                                       s.rect.size.width, s.rect.size.height);
-    return CGPointMake(result.first, result.second);
+    return CGPointMake(static_cast<Coordinate>(result.first),
+                       static_cast<Coordinate>(result.second));
   }
   Json tree(AXUIElementRef element, int depth, const Cancellation &cancel,
             std::chrono::steady_clock::time_point deadline) {
@@ -291,7 +293,7 @@ class TigerComputer final : public ComputerBackend {
             kAXErrorSuccess) {
       CFArrayRef children = nullptr;
       if (AXUIElementCopyAttributeValues(element, kAXChildrenAttribute, 0,
-                                         std::min<CFIndex>(count, 256 - nodes_.size()),
+                                         std::min(count, cf_count(256 - nodes_.size())),
                                          &children) == kAXErrorSuccess &&
           children) {
         CF<CFArrayRef> owned(children);
@@ -396,7 +398,9 @@ class TigerComputer final : public ComputerBackend {
     const auto display_id = area.display + 1;
     const auto display = active[area.display];
     const auto screen = CGDisplayBounds(display);
-    CGRect rect = CGRectMake(area.bounds.x, area.bounds.y, area.bounds.width, area.bounds.height);
+    CGRect rect = CGRectMake(
+        static_cast<Coordinate>(area.bounds.x), static_cast<Coordinate>(area.bounds.y),
+        static_cast<Coordinate>(area.bounds.width), static_cast<Coordinate>(area.bounds.height));
     rect.origin.x = std::floor(rect.origin.x);
     rect.origin.y = std::floor(rect.origin.y);
     rect.size.width = std::floor(rect.size.width);
@@ -520,8 +524,9 @@ public:
         SystemClock clock;
         for (int i = 1; i <= 12; ++i) {
           cancel.check();
+          const auto step = static_cast<Coordinate>(i);
           cleanup.position =
-              CGPointMake(p.x + (end.x - p.x) * i / 12, p.y + (end.y - p.y) * i / 12);
+              CGPointMake(p.x + (end.x - p.x) * step / 12, p.y + (end.y - p.y) * step / 12);
           post_mouse(kCGEventLeftMouseDragged, cleanup.position, kCGMouseButtonLeft);
           clock.sleep_ms(10, cancel);
         }
@@ -538,13 +543,13 @@ public:
       const auto text = a.at("text").get<std::string>();
       if (text.size() > 65536)
         throw Error("Text exceeds 64 KiB");
-      CF<CFStringRef> value(CFStringCreateWithBytes(nullptr,
-                                                    reinterpret_cast<const UInt8 *>(text.data()),
-                                                    text.size(), kCFStringEncodingUTF8, false));
+      CF<CFStringRef> value(
+          CFStringCreateWithBytes(nullptr, reinterpret_cast<const UInt8 *>(text.data()),
+                                  cf_count(text.size()), kCFStringEncodingUTF8, false));
       if (!value.value)
         throw Error("Text must be valid UTF-8");
       std::vector<UniChar> units(static_cast<size_t>(CFStringGetLength(value)));
-      CFStringGetCharacters(value, CFRangeMake(0, units.size()), units.data());
+      CFStringGetCharacters(value, CFRangeMake(0, cf_count(units.size())), units.data());
       for (size_t i = 0; i < units.size();) {
         cancel.check();
         size_t count = std::min(size_t{20}, units.size() - i);
@@ -635,7 +640,7 @@ public:
           if (text.size() > 65536)
             throw Error("Value limit exceeded");
           value = CFStringCreateWithBytes(nullptr, reinterpret_cast<const UInt8 *>(text.data()),
-                                          text.size(), kCFStringEncodingUTF8, false);
+                                          cf_count(text.size()), kCFStringEncodingUTF8, false);
         } else if (a["value"].is_boolean())
           value = CFRetain(a["value"].get<bool>() ? kCFBooleanTrue : kCFBooleanFalse);
         else if (a["value"].is_number()) {
@@ -663,7 +668,7 @@ public:
         if (path.empty() || path.front() != '/' || fs::path(path).extension() != ".app")
           throw Error("Expected absolute .app bundle path");
         raw = CFURLCreateFromFileSystemRepresentation(
-            nullptr, reinterpret_cast<const UInt8 *>(path.data()), path.size(), true);
+            nullptr, reinterpret_cast<const UInt8 *>(path.data()), cf_count(path.size()), true);
       } else {
         const auto url = a.at("url").get<std::string>();
         if (url.size() > 8192 || (url.rfind("http://", 0) != 0 && url.rfind("https://", 0) != 0))
@@ -683,8 +688,8 @@ public:
       if (PasteboardCreate(kPasteboardClipboard, &raw) != noErr)
         throw Error("Clipboard unavailable");
       CF<PasteboardRef> board(raw);
-      CF<CFDataRef> data(
-          CFDataCreate(nullptr, reinterpret_cast<const UInt8 *>(text.data()), text.size()));
+      CF<CFDataRef> data(CFDataCreate(nullptr, reinterpret_cast<const UInt8 *>(text.data()),
+                                      cf_count(text.size())));
       if (PasteboardClear(board) != noErr ||
           PasteboardPutItemFlavor(board, reinterpret_cast<PasteboardItemID>(1),
                                   CFSTR("public.utf8-plain-text"), data, 0) != noErr)

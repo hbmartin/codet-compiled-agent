@@ -30,7 +30,11 @@ of `build/host`. Normal host and Tiger builds retain their compiler settings. On
 install Clang, Clang-Tidy, Ninja and Python's PyYAML package alongside the normal host
 dependencies. Defaults use `clang` and `clang++`; `CLANG_TIDY` and `CPPCHECK` select binaries strictly: a missing explicit selection fails without a PATH fallback. Cppcheck must report version 2.22.0. The default prefers the provisioned binary under `build/analysis-tools/cppcheck/bin`, then PATH.
 
-Analyzer targets only configure their dedicated compilation database. They do not build the application or GoogleTest. `modern-analysis-host` is the explicit build stage. Fetching analysis tools is separate from offline analysis; application dependency pins are unchanged. Build the complete developer image from the repository root:
+Analyzer targets only configure their dedicated compilation database. They do not build the
+application or GoogleTest. `modern-analysis-host` is the explicit build stage; it also compiles
+both benchmark targets so their warning policy is checked in CI, without executing benchmark
+workloads. Fetching analysis tools is separate from offline analysis; application dependency
+pins are unchanged. Build the complete developer image from the repository root:
 
 ```sh
 make toolchain-image  # Requires Docker and the pinned base toolchain image
@@ -61,6 +65,10 @@ commands for application sources also fail instead of silently reducing coverage
 
 ## Checks and enforcement
 
+- Every maintained CMake target, including foundation tests, main, the C helper,
+  fault tests and benchmarks, uses `-Wall -Wextra -Wpedantic -Werror` plus
+  `-Wconversion -Wsign-conversion`. Clang additionally enforces `-Wshorten-64-to-32`.
+  These are target-local options; third-party targets do not inherit them.
 - Clang-Tidy enables `bugprone-*` and `performance-*`, excluding
   `bugprone-easily-swappable-parameters`. `clang-analyzer-*` is excluded because the standalone
   analyzer runs separately. Readability and modernization checks are not enabled. The runner
@@ -69,6 +77,10 @@ commands for application sources also fail instead of silently reducing coverage
   and enables errors, warnings, performance, portability and completion information. The pinned 2.22.0 built-in parser runs with `--safety`; the experimental Clang parser is excluded. Style and inconclusive
   checks are not enabled. Dependency-only findings are retained in the raw report but excluded
   from the application gate. Parser/internal failures always fail, regardless of location.
+  The pass loads the pinned tool's POSIX, BSD, libcurl, OpenSSL, SQLite and zlib models.
+  Each model has defective and safe real-header contract canaries: defects must be detected
+  and safe callers must remain clean. Missing models or failed model detection cannot
+  produce a passing manifest.
 - Clang Static Analyzer runs its stable default checker set, including C++ checks. It preserves
   semantic compilation flags and removes object/dependency output flags. Diagnostics are read
   from valid plist output, including when Clang itself returns zero.
@@ -86,7 +98,7 @@ truncation, termination and return-value tests.
 
 All analyzers attribute findings using resolved repository and source paths. A primary location or execution/call path in first-party code gates the run; translation-unit import identity alone does not. Dependency-only findings stay in reports. Every parser/internal failure, limit bail-out (including normal-depth branch/valueflow limits), crash, malformed report or missing completion record fails regardless of location. Inline suppression cannot hide a fatal Cppcheck failure: safety/critical-error evidence is checked separately.
 
-Cppcheck runs each translation unit in a separate project/cache. Coverage requires valid XML, a normal exit, no fatal/incomplete diagnostic, a successful checker completion report with semantic bounds/uninitialized checkers, and a nonempty semantic cache artifact. Progress messages and checker counts alone establish nothing. Each real gate additionally analyzes defective C and C++ canaries through Codet's actual dependency headers, and a syntax-error canary with an inline suppression. The former must report the defect and the latter must fail analysis. Raw reports and completion proofs are retained.
+Cppcheck runs each translation unit in a separate project/cache. Coverage requires valid XML, a normal exit, no fatal/incomplete diagnostic, a successful checker completion report with semantic bounds/uninitialized checkers, and a nonempty semantic cache artifact. Progress messages and checker counts alone establish nothing. Each real gate additionally analyzes defective C and C++ bounds canaries, six defective/safe library-contract pairs through Codet's actual dependency headers, and a syntax-error canary with an inline suppression. Defect canaries must report the expected diagnostic, safe canaries must have no noninformational diagnostics attributed to their source, and the syntax canary must fail analysis. Raw reports and completion proofs are retained.
 
 Cppcheck's SimpleCpp preprocessor rejects toml++'s nested operator token-paste macro (also
 reproduced with upstream Cppcheck 2.22). For this tool only, the runner copies the dependency
@@ -114,10 +126,26 @@ temporary inputs and mocked tools. `make analyze-modern-selftest` additionally g
 deliberately defective C/C++ fixtures and checks that each installed tool detects the expected
 problem. Those fixtures are analyzed only: they are never linked or executed.
 
+`scripts/modern_sources.py` owns the maintained native inventory shared by analysis,
+formatting and Semgrep. The compiler-database check continues to fail if any application source
+lacks a command. Semgrep additionally parses maintained production headers and validates its
+successful JSON against the expected file inventory; all checked-in rules must have passing,
+nonvacuous fixtures. An always-applicable command-processor policy prevents the historical
+file-specific rule filters from silently removing otherwise uncovered files. Reports retain
+source/rule hashes; changes during a run fail. These structural rules do not establish
+authorization dominance, transaction ordering or race freedom.
+
+Lint setup and commands are documented in [README.md](../README.md). `make test-lint-runners`
+checks missing tools, wrong versions, findings, malformed/empty reports, incomplete source/rule
+inventories and stale success manifests without installing or invoking analyzers.
+
 The `Modern checks` GitHub Actions workflow runs on Ubuntu 24.04 for pull requests, pushes to main and
 manual dispatch. Feature-branch pushes do not duplicate PR runs. It installs Clang 18, provisions pinned Cppcheck 2.22.0, fetches checksum-verified dependencies,
 builds with Clang, runs both forms of analyzer self-check, analyzes the application and runs
-CTest's unit/CLI/integration suites. After a successful build, check steps run independently so
+CTest's unit/CLI/integration suites. Independent lint and Semgrep jobs do not wait for C++
+provisioning or a successful application build. The aggregate `Required checks` job fails unless
+all mandatory jobs succeed, including when a dependency is skipped or cancelled. In the native
+job, after a successful build, check steps run independently so
 an earlier failure does not hide later results. Reports and test logs are uploaded even on
 failure and retained for 14 days. Provider tests use hermetic fixtures rather than live credentials.
 

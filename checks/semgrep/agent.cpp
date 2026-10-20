@@ -36,3 +36,23 @@ void budgets() {
   // ok: codet-runtime-aware-agent-budget
   auto reserved = request_budget(config, system, schemas, execution);
 }
+
+void nested_publication() {
+  auto attempt = [&] {
+    // ruleid: codet-response-publication-rollback
+    renamed.provider_state = transport.conversation_state();
+  };
+  {
+    ResponseAppend renamed_guard(renamed);
+    // ok: codet-response-publication-rollback
+    renamed.provider_state = transport.conversation_state();
+    renamed_guard.commit();
+  }
+}
+void renamed_budget_arguments() {
+  if (cancelled) return;
+  // ruleid: codet-runtime-aware-agent-budget
+  const auto missing_runtime = prompt_budget(other_config, other_system, other_schemas);
+  // ok: codet-runtime-aware-agent-budget
+  const auto guarded = request_budget(other_config, other_system, other_schemas, observations);
+}

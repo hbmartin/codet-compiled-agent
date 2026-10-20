@@ -40,3 +40,17 @@ void discovery(fs::path dir, fs::directory_entry entry) {
   // ok: codet-discovery-throwing-filesystem
   fs::absolute(dir, error);
 }
+
+void nested_discovery(fs::path renamed_path, fs::directory_entry renamed_entry) {
+  const auto inspect = [&] {
+    // ruleid: codet-discovery-throwing-filesystem
+    fs::status(renamed_path);
+    // ruleid: codet-discovery-throwing-filesystem
+    renamed_entry.is_symlink();
+    std::error_code local_error;
+    // ok: codet-discovery-throwing-filesystem
+    fs::status(renamed_path, local_error);
+    // ok: codet-discovery-throwing-filesystem
+    renamed_entry.is_symlink(local_error);
+  };
+}

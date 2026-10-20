@@ -135,7 +135,7 @@ TEST_F(Followup, CompactionUsesRealAdaptersWithoutToolsAndRetainsNormalTools) {
       codet::Message message;
       message.role = i % 2 ? "assistant" : "user";
       message.images = {image};
-      message.text = std::string(17 + i, 'x');
+      message.text = std::string(static_cast<size_t>(17 + i), 'x');
       for (int j = 0; j < 400; ++j)
         message.text += "雪🌲e\xcc\x81";
       session.messages.push_back(message);
@@ -281,7 +281,8 @@ TEST_F(Followup, ActiveCapturesAreProtectedAndCompletedFilesEvict) {
   EXPECT_TRUE(fs::exists(second.path()));
   second.close();
   third.close();
-  size_t records = 0, bytes = 0;
+  size_t records = 0;
+  uintmax_t bytes = 0;
   for (const auto &entry : fs::directory_iterator(dir))
     if (entry.path().extension() == ".txt") {
       ++records;

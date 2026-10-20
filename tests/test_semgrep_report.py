@@ -4,12 +4,12 @@ import importlib.util
 import io
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +25,15 @@ class SemgrepReports(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / "scripts").mkdir()
         shutil.copy2(ROOT / "Makefile", self.root)
-        shutil.copy2(ROOT / "scripts/semgrep-report.py", self.root / "scripts")
+        for name in ("semgrep-report.py", "check_semgrep.py", "modern_sources.py"):
+            shutil.copy2(ROOT / "scripts" / name, self.root / "scripts")
+        for name in ("src/modern/example.cpp", "src/text_compat.c", "include/text_compat.h"):
+            source = self.root / name
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_text("int example(void);\n")
+        rules = self.root / "checks/semgrep/sample.yaml"
+        rules.parent.mkdir(parents=True)
+        rules.write_text("rules:\n  - id: sample\n")
         (self.root / "toolchain.mk").write_text("", encoding="utf-8")
         self.tool = self.root / "fake-semgrep"
         self.tool.write_text(
@@ -54,14 +62,26 @@ class SemgrepReports(unittest.TestCase):
     def test_invalid_report_still_fails_and_reports_parse_error(self):
         result = self.run_check("check-semgrep", "{invalid", 9)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Report is missing or invalid", result.stderr)
+        self.assertIn("{invalid", result.stderr)
         self.assertIn("Error 9", result.stderr)
 
     def test_success_keeps_report_without_failure_message_or_installing(self):
-        result = self.run_check("check-semgrep", '{"results":[]}', 0)
+        payload = dict(version="1.177.0", results=[], errors=[], skipped_rules=[],
+                       paths=dict(scanned=["src/modern/example.cpp", "src/text_compat.c",
+                                           "include/text_compat.h"]))
+        result = self.run_check("check-semgrep", json.dumps(payload), 0)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("failed", result.stderr)
         self.assertFalse((self.root / "build/semgrep-venv").exists())
+
+    def test_exit_zero_with_incomplete_or_invalid_report_fails(self):
+        for payload in ('{"results":[]}', '{invalid'):
+            with self.subTest(payload=payload):
+                result = self.run_check("check-semgrep", payload, 0)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Semgrep check failed", result.stderr)
+                manifest = json.loads((self.root / "build/semgrep/scan.manifest.json").read_text())
+                self.assertFalse(manifest["passed"])
 
     def test_environment_records_relative_interpreter_and_installed_version(self):
         output = io.StringIO()

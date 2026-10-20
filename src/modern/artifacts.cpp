@@ -101,7 +101,7 @@ std::string checked_artifact_identity(const FileSystem &files, const fs::path &r
     if (fs::is_symlink(current))
       throw Error("Unsafe artifact symlink");
   }
-  struct stat status{};
+  struct stat status {};
   if (::lstat(value.c_str(), &status) ||
       (!S_ISREG(status.st_mode) &&
        !(policy == ArtifactPolicy::file_or_directory && S_ISDIR(status.st_mode))))

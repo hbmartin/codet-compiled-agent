@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
 """Offline cross build. Run inside the pinned toolchain image; never executes PPC code."""
-import hashlib,json,os,pathlib,shutil,subprocess,sys,fcntl
-from verified_sources import extract_verified, file_hash, tree_hashes, remove_tree
+import fcntl
+import hashlib
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+
+from verified_sources import extract_verified, file_hash, remove_tree, tree_hashes
+
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 BUILD=ROOT/'build/tiger-deps'
 STAGE=ROOT/'build/tiger-sysroot'

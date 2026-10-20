@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 """Real CLI + curl + SQLite; only a loopback fixture server, never a live provider."""
-import contextlib,http.server,json,os,pathlib,signal,subprocess,sys,tempfile,threading,time,unittest
+import contextlib
+import http.server
+import json
+import os
+import pathlib
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import unittest
 
 BIN=str(pathlib.Path(sys.argv.pop(1)).resolve())
 FIXTURES=pathlib.Path(__file__).resolve().parent/'fixtures'
@@ -328,8 +339,24 @@ class CliTests(unittest.TestCase):
 
     def test_end_hook_runs_after_interruption(self):
         marker=self.configure_hooks()
+        ready = threading.Event()
+        release = threading.Event()
+        def waiting_reply():
+            ready.set()
+            release.wait(8)
+        self.server.before_reply = waiting_reply
         p=subprocess.Popen([BIN,'-C',str(self.workspace),'exec','--json','fixture-wait'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=self.env)
-        time.sleep(.3);p.send_signal(signal.SIGINT);out,err=p.communicate(timeout=8)
+        try:
+            # Interrupt an established provider wait, after SessionStart has
+            # completed, rather than racing sanitizer/emulator startup time.
+            self.assertTrue(ready.wait(5), 'CLI did not reach the provider before interruption')
+            p.send_signal(signal.SIGINT)
+            out,err=p.communicate(timeout=8)
+        finally:
+            release.set()
+            if p.poll() is None:
+                p.kill()
+                p.communicate(timeout=3)
         self.assertEqual(p.returncode,130,err)
         self.assertEqual([json.loads(x)['hook_event_name'] for x in marker.read_text().splitlines()],['SessionStart','SessionEnd'])
 
@@ -374,7 +401,8 @@ class CliTests(unittest.TestCase):
         self.assertNotIn('Checking fixture',result.stderr)
 
     def test_idle_commands_during_work_do_not_enter_the_model_prompt(self):
-        import pty,select
+        import pty
+        import select
         master,slave=pty.openpty()
         p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','line'],stdin=slave,stdout=slave,stderr=slave,env=self.env)
         received=b''
@@ -404,13 +432,17 @@ class CliTests(unittest.TestCase):
             os.close(master);os.close(slave)
 
     def test_small_core_commands_in_both_terminals_and_effort_resume(self):
-        import fcntl,pty,select,struct,termios
+        import fcntl
+        import pty
+        import select
+        import struct
+        import termios
         for mode in ['line','curses']:
             master,slave=pty.openpty()
             fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',40,120,0,0))
             p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
             received=b''
-            def wait_for(text,retry=None):
+            def wait_for(text,retry=None, master=master):
                 nonlocal received
                 deadline=time.monotonic()+7
                 while text not in received and time.monotonic()<deadline:
@@ -448,7 +480,12 @@ class CliTests(unittest.TestCase):
             self.assertNotIn('reasoning_effort',self.server.requests[-1]['body'])
 
     def test_model_without_effort_clears_pin_in_both_terminals(self):
-        import fcntl,pty,select,sqlite3,struct,termios
+        import fcntl
+        import pty
+        import select
+        import sqlite3
+        import struct
+        import termios
         base=(self.home/'config.toml').read_text()
         for mode in ['line','curses']:
             (self.home/'config.toml').write_text("model_reasoning_effort='low'\n"+base)
@@ -456,7 +493,7 @@ class CliTests(unittest.TestCase):
             fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',40,120,0,0))
             process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
             received=b''
-            def wait_for(text):
+            def wait_for(text, master=master):
                 nonlocal received
                 deadline=time.monotonic()+7
                 while text not in received and time.monotonic()<deadline:
@@ -488,7 +525,9 @@ class CliTests(unittest.TestCase):
 
     def test_invalid_known_model_effort_leaves_saved_selection_unchanged(self):
         (self.home/'auth.json').write_text(json.dumps({'codex':{'access_token':'fixture'}}))
-        import pty,select,sqlite3
+        import pty
+        import select
+        import sqlite3
         master,slave=pty.openpty()
         p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','line','--provider','codex'],stdin=slave,stdout=slave,stderr=slave,env=self.env)
         received=b''
@@ -536,19 +575,20 @@ class CliTests(unittest.TestCase):
         self.assertEqual(invalid.returncode,2)
 
     def test_live_permission_modes_in_both_terminals(self):
-        import pty,select
+        import pty
+        import select
         for mode in ['line','curses']:
             master,slave=pty.openpty()
             p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
             received=b''
-            def wait_for(text):
+            def wait_for(text, master=master):
                 nonlocal received
                 deadline=time.monotonic()+5
                 while text not in received and time.monotonic()<deadline:
                     if select.select([master],[],[],.05)[0]:received+=os.read(master,65536)
                 self.assertIn(text,received)
                 received=b''
-            def after_turn(command,text):
+            def after_turn(command,text, master=master):
                 # Curses can show streamed answer text before the worker becomes idle.
                 # Synchronize on the documented command response, not that progress text.
                 nonlocal received
@@ -587,7 +627,11 @@ class CliTests(unittest.TestCase):
                 os.close(master);os.close(slave)
 
     def test_curses_progress_clears_after_success_failure_and_cancellation(self):
-        import fcntl,pty,select,struct,termios
+        import fcntl
+        import pty
+        import select
+        import struct
+        import termios
         config=self.home/'config.toml'
         config.write_text('stream_idle_timeout_seconds=5\n'+config.read_text())
         master,slave=pty.openpty()
@@ -628,7 +672,9 @@ class CliTests(unittest.TestCase):
             os.close(master);os.close(slave)
 
     def test_cleanup_diagnostics_follow_curses_restoration(self):
-        import pty,select,termios
+        import pty
+        import select
+        import termios
         config=self.home/'config.toml'
         config.write_text(config.read_text()+'\n[hooks]\nSessionEnd=[{command="printf cleanup-detail >&2; exit 3"}]\n')
         master,slave=pty.openpty();original=termios.tcgetattr(slave)
@@ -721,7 +767,11 @@ class CliTests(unittest.TestCase):
         self.assertEqual([json.loads(x)['source'] for x in marker.read_text().splitlines()],['startup','resume','fork'])
 
     def test_diagnostics_render_in_terminal_and_failed_expansion_recovers(self):
-        import fcntl,pty,select,struct,termios
+        import fcntl
+        import pty
+        import select
+        import struct
+        import termios
         config=self.home/'config.toml';base=config.read_text()
         for mode in ['line','curses']:
             config.write_text(base+'\n[hooks]\nUserPromptSubmit=[{command="printf prompt-context"}]\nPreToolUse=[{matcher="Bash",command="printf hook-visible >&2"}]\n')
@@ -729,7 +779,7 @@ class CliTests(unittest.TestCase):
             fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',40,140,0,0))
             p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode,'--permission-mode','bypass'],stdin=slave,stdout=slave,stderr=subprocess.PIPE,env=dict(self.env,TERM='xterm'))
             received=b''
-            def wait_for(text):
+            def wait_for(text, master=master):
                 nonlocal received
                 deadline=time.monotonic()+7
                 while text not in received and time.monotonic()<deadline:
@@ -760,7 +810,8 @@ class CliTests(unittest.TestCase):
                 p.stderr.close();os.close(master);os.close(slave)
 
     def test_curses_replay_and_cleanup_are_ordered_after_success_error_and_interrupt(self):
-        import pty,select
+        import pty
+        import select
         config=self.home/'config.toml';base=config.read_text()
         config.write_text(base+'\n[hooks]\nSessionStart=[{command="printf live-before >&2"}]\nSessionEnd=[{command="printf end-warning >&2"},{command="printf end-error >&2; exit 3"}]\n')
         for prompt,outcome in [('simple',b'fixture done'),('fixture-error',b'Error:'),('fixture-wait',b'Interrupted')]:
@@ -768,7 +819,7 @@ class CliTests(unittest.TestCase):
                 master,slave=pty.openpty();self.server.requests=[]
                 p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','curses'],stdin=slave,stdout=slave,stderr=subprocess.PIPE,env=dict(self.env,TERM='xterm'))
                 received=b''
-                def wait_for(text):
+                def wait_for(text, master=master):
                     nonlocal received
                     deadline=time.monotonic()+7
                     while text not in received and time.monotonic()<deadline:
@@ -794,7 +845,8 @@ class CliTests(unittest.TestCase):
                     p.stderr.close();os.close(master);os.close(slave)
 
     def test_curses_replay_and_cleanup_have_independent_budgets_and_omission_notices(self):
-        import pty,select
+        import pty
+        import select
         config=self.home/'config.toml'
         start=[{'command':"printf 'live-"+str(i)+"-"+('x'*150)+"' >&2"} for i in range(12)]
         end=[{'command':"printf 'end-"+str(i)+"-"+('y'*150)+"' >&2"} for i in range(12)]
@@ -855,7 +907,8 @@ class CliTests(unittest.TestCase):
             p.stdout.close();p.stderr.close()
 
     def test_new_session_lifecycle_and_invalid_hook_bytes_in_both_terminals(self):
-        import pty,select
+        import pty
+        import select
         marker=self.root/'lifecycle.jsonl'
         config=self.home/'config.toml';base=config.read_text()
         for mode in ['line','curses']:
@@ -866,7 +919,7 @@ class CliTests(unittest.TestCase):
             master,slave=pty.openpty()
             p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode,'--permission-mode','bypass'],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
             received=b''
-            def wait_for(text):
+            def wait_for(text, master=master):
                 nonlocal received
                 deadline=time.monotonic()+6
                 while text not in received and time.monotonic()<deadline:
@@ -1080,7 +1133,8 @@ class CliTests(unittest.TestCase):
         r=self.run_cli('exec','fixture-recall')
         self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(r.stdout,'memory recovered\n')
     def test_migration_wait_can_be_interrupted(self):
-        import fcntl, sqlite3
+        import fcntl
+        import sqlite3
         db=sqlite3.connect(self.home/'state.sqlite3')
         db.executescript("CREATE TABLE sessions(id TEXT PRIMARY KEY,name TEXT NOT NULL,parent TEXT,updated INTEGER NOT NULL,messages TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'idle',provider TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',reasoning_effort TEXT);CREATE TABLE tools(session TEXT,call_id TEXT,name TEXT,args TEXT,result TEXT,status TEXT,PRIMARY KEY(session,call_id));CREATE TABLE session_references(session TEXT,kind TEXT,path TEXT,PRIMARY KEY(session,kind,path));PRAGMA user_version=5;")
         db.close()
@@ -1111,7 +1165,11 @@ class CliTests(unittest.TestCase):
                 time.sleep(.3);p.send_signal(sig);out,err=p.communicate(timeout=8)
                 self.assertEqual(p.returncode,130,err);self.assertEqual(json.loads(out.splitlines()[-1])['type'],'turn.failed')
     def test_terminal_modes_restore_terminal(self):
-        import pty,termios,select,fcntl,struct
+        import fcntl
+        import pty
+        import select
+        import struct
+        import termios
         for mode in ['line','curses']:
             master,slave=pty.openpty();before=termios.tcgetattr(slave);fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
             p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
@@ -1138,7 +1196,9 @@ class CliTests(unittest.TestCase):
                 if p.poll() is None:p.kill();p.wait(timeout=5)
                 os.close(master);os.close(slave)
     def test_interactive_interrupt_restores_terminal(self):
-        import pty,termios,select
+        import pty
+        import select
+        import termios
         for mode in ['line','curses']:
             master,slave=pty.openpty();before=termios.tcgetattr(slave)
             p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
@@ -1155,12 +1215,13 @@ class CliTests(unittest.TestCase):
                 if p.poll() is None:p.kill();p.wait(timeout=5)
                 os.close(master);os.close(slave)
     def test_both_terminal_modes_answer_questions(self):
-        import pty,select
+        import pty
+        import select
         for mode,answer in [('line','libcurl with OpenSSL'),('curses','2')]:
             master,slave=pty.openpty()
             p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode,'--permission-mode','plan','fixture-question'],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
             received=b''
-            def wait_text(text):
+            def wait_text(text, master=master):
                 nonlocal received
                 deadline=time.monotonic()+5
                 while text not in received and time.monotonic()<deadline:
@@ -1178,12 +1239,13 @@ class CliTests(unittest.TestCase):
                 os.close(master);os.close(slave)
 
     def test_async_questions_and_sleep_wake_in_both_terminal_modes(self):
-        import pty,select
+        import pty
+        import select
         for mode,answer in [('line','libcurl'),('curses','libcurl')]:
             master,slave=pty.openpty()
             p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode,'fixture-async'],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
             received=b''
-            def wait_text(text):
+            def wait_text(text, master=master):
                 nonlocal received
                 deadline=time.monotonic()+5
                 while text not in received and time.monotonic()<deadline:
@@ -1201,7 +1263,8 @@ class CliTests(unittest.TestCase):
                 os.close(master);os.close(slave)
 
     def test_late_slash_steering_runs_before_a_deferred_new_session(self):
-        import pty,select
+        import pty
+        import select
         config=self.home/'config.toml';base=config.read_text()
         for mode in ['line','curses']:
             marker=self.workspace/('stop-'+mode);release=self.workspace/('release-'+mode)
@@ -1210,7 +1273,7 @@ class CliTests(unittest.TestCase):
             master,slave=pty.openpty();self.server.requests=[]
             process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode,'--permission-mode','bypass'],stdin=slave,stdout=slave,stderr=subprocess.PIPE,env=dict(self.env,TERM='xterm'))
             received=b''
-            def wait_for(text):
+            def wait_for(text, master=master):
                 nonlocal received
                 deadline=time.monotonic()+7
                 while text not in received and time.monotonic()<deadline:

@@ -25,8 +25,8 @@ size_t weight(unsigned char byte, unsigned depth) {
 }
 size_t encoded_size(const std::string &text, unsigned depth) {
   size_t out = 0;
-  for (unsigned char ch : text)
-    out += weight(ch, depth);
+  for (char ch : text)
+    out += weight(static_cast<unsigned char>(ch), depth);
   return out;
 }
 Json essential(const Json &metadata) {

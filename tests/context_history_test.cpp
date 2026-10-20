@@ -302,8 +302,9 @@ TEST_F(History, DefaultBudgetProjectsLargeBatchesWithoutRerunningOrLosingDurable
   EXPECT_EQ(calls, 2u);
   const auto saved = state.load_id(session.id);
   for (const auto &m : saved.messages)
-    if (m.role == "tool")
+    if (m.role == "tool") {
       EXPECT_TRUE(m.previewed);
+    }
 }
 TEST_F(History, SummaryEscapingEmptyAndExhaustionPreserveDurableHistory) {
   for (int failure = 0; failure < 3; ++failure) {
@@ -502,8 +503,9 @@ TEST_F(History, SmallBudgetCompactionProtectsTheNewestBatchAndFollowingFeedback)
       return text_result("Older history summarized.");
     bool call = false, outcome = false, hook = false;
     for (const auto &m : messages) {
-      if (m.role != "tool")
+      if (m.role != "tool") {
         EXPECT_TRUE(m.images.empty());
+      }
       if (!m.calls.empty()) {
         EXPECT_EQ(m.calls[0].id, "finished");
         call = true;
@@ -529,8 +531,9 @@ TEST_F(History, SmallBudgetCompactionProtectsTheNewestBatchAndFollowingFeedback)
   auto restored = state.load_id(session.id);
   state.reconcile(restored);
   for (const auto &m : restored.messages)
-    if (m.role == "tool")
+    if (m.role == "tool") {
       EXPECT_EQ(m.images.size(), 1u);
+    }
   EXPECT_EQ(image_history_position(artifact_directory(config), files, session.id)["observations"],
             1);
 }
@@ -845,9 +848,7 @@ TEST_F(History, PlanAndReadBatchesReserveFuturePromptGrowthInEitherOrder) {
 }
 
 TEST_F(History, MigrationWaitsBeyondSqliteTimeoutWithoutMistakingMigratorsForSessions) {
-  {
-    StateStore initial(config.home);
-  }
+  { StateStore initial(config.home); }
   sqlite3 *db = nullptr;
   ASSERT_EQ(sqlite3_open((config.home / "state.sqlite3").c_str(), &db), SQLITE_OK);
   legacy_layout(db);
@@ -1122,10 +1123,12 @@ TEST_F(History, PastEndLineCountsAndCaseAndHardLinkInspectionUseActualFiles) {
   const bool matches = files.native.open_read(link)->path() == files.native.canonical(link);
   const auto result = read(t, link);
   EXPECT_EQ(result.error, !matches) << result.content;
-  if (!matches)
+  if (!matches) {
     EXPECT_THAT(result.content, HasSubstr("Inspection target changed"));
-  if (fs::exists(config.cwd / "casefile"))
+  }
+  if (fs::exists(config.cwd / "casefile")) {
     EXPECT_FALSE(read(t, config.cwd / "casefile").error);
+  }
 }
 TEST_F(History, PlanPreviewStopsOnceAndStaysInsideEightKiB) {
   Tools t(config, files, processes, http, clock);
@@ -1325,8 +1328,9 @@ TEST_F(History, LargeNewPatchDispatchesOnceAndFourPlanListingsStayRecoverable) {
     Agent agent(config, provider, t, state, {});
     EXPECT_EQ(agent.run(session, "perform requested work once", cancel).text, "done");
     EXPECT_EQ(normal, 2u);
-    if (!listing)
+    if (!listing) {
       EXPECT_EQ(files.native.read(config.cwd / "big").size(), 130001u);
+    }
   }
 }
 TEST_F(History, SchemaFourBackfillsJournalReferencesEvenWhenTranscriptWasCompacted) {
@@ -1395,9 +1399,9 @@ TEST_F(History, SoftFailureCanPromoteOnceWithinSharedHookAndSummaryLimits) {
       return text_result("done");
     };
     Agent agent(config, provider, tools, state, {});
-    if (fail_checkpoint)
+    if (fail_checkpoint) {
       EXPECT_THROW(agent.run(session, "continue", cancel), Error);
-    else
+    } else
       EXPECT_EQ(agent.run(session, "continue", cancel).text, "done");
     EXPECT_EQ(summaries, 2u);
     EXPECT_EQ(ordinary, fail_checkpoint ? 0u : 1u);
@@ -1576,9 +1580,7 @@ TEST_F(History, SchemaFiveSkipsCorruptRowsWithoutChangingThemOrLosingValidRefere
   EXPECT_EQ(reopened.references(good).size(), 2u);
 }
 TEST_F(History, SchemaFiveDatabaseFailureRollsBackAndCanRetry) {
-  {
-    StateStore initial(config.home);
-  }
+  { StateStore initial(config.home); }
   sqlite3 *db = nullptr;
   ASSERT_EQ(sqlite3_open((config.home / "state.sqlite3").c_str(), &db), SQLITE_OK);
   legacy_layout(db);

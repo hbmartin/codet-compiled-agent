@@ -156,7 +156,7 @@ struct ReplayView {
   Json::const_iterator end() const {
     return value.begin() + static_cast<Json::difference_type>(size());
   }
-  operator Json() const {
+  Json materialize() const {
     return Json(begin(), end());
   }
 };
@@ -381,7 +381,7 @@ Json wire_history(const Config &c, const std::string &system, const std::vector<
       else {
         if (m.role == "assistant" && !clean_replay(m).empty() &&
             (m.replay_provider.empty() || m.replay_provider == c.provider))
-          content = clean_replay(m);
+          content = clean_replay(m).materialize();
         else {
           if (!tool_text(m, c, tool_names).empty())
             content.push_back({{"type", "text"}, {"text", tool_text(m, c, tool_names)}});
@@ -424,7 +424,7 @@ Json wire_history(const Config &c, const std::string &system, const std::vector<
         names[t.id] = tool_wire_name(t.name);
       if (m.role == "assistant" && !clean_replay(m).empty() &&
           (m.replay_provider.empty() || m.replay_provider == c.provider))
-        parts = clean_replay(m);
+        parts = clean_replay(m).materialize();
       else if (m.role == "tool")
         parts.push_back({{"functionResponse",
                           {{"name", names[m.tool_call_id]},
@@ -514,8 +514,10 @@ size_t anthropic_image_bytes(const Json &content, size_t &images) {
   return bytes;
 }
 std::string source_hash(const Message &m) {
-  Json value = {
-      {"role", m.role}, {"text", m.text}, {"calls", m.calls}, {"replay", clean_replay(m)}};
+  Json value = {{"role", m.role},
+                {"text", m.text},
+                {"calls", m.calls},
+                {"replay", clean_replay(m).materialize()}};
   for (const auto &image : m.images)
     value["images"].push_back(
         {{"sha256", image.sha256}, {"mime", image.mime}, {"detail", image.detail}});

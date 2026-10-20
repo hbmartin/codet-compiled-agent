@@ -39,8 +39,8 @@ bool literal_shell_command(const std::string &command) {
     return false;
   if (command.find_first_of(";&|`$()<>\\\"'*?[]{}~#") != std::string::npos)
     return false;
-  for (unsigned char ch : command)
-    if (ch < 32 || ch == 127)
+  for (char ch : command)
+    if (static_cast<unsigned char>(ch) < 32 || ch == 127)
       return false;
   std::istringstream words(command);
   std::string first;
@@ -695,7 +695,7 @@ void Tools::discard_recovery_candidate(const RecoveryCandidate &candidate) {
   auto component = file.root;
   for (const auto &part : file.path.lexically_relative(file.root)) {
     component /= part;
-    struct stat status{};
+    struct stat status {};
     if (::lstat(component.c_str(), &status)) {
       if (errno == ENOENT)
         return;
@@ -1509,7 +1509,7 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
         throw Error("Duplicate file in batch/patch");
       if (!before && !after)
         throw Error("Cannot delete a missing file");
-      struct stat st{};
+      struct stat st {};
       const auto mode = stat(p.c_str(), &st) == 0 ? st.st_mode & 0777 : 0644;
       changes.push_back({p, before, std::move(after), static_cast<mode_t>(mode)});
     };

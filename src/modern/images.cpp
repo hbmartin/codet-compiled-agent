@@ -87,7 +87,9 @@ ImageData encode_image(CGImageRef image, const std::string &detail) {
       CGBitmapContextCreate(pixels.data(), w, h, 8, w * 4, colors, kCGImageAlphaPremultipliedLast));
   if (!static_cast<CGContextRef>(context))
     throw Error("Cannot allocate image context");
-  CGContextDrawImage(context, CGRectMake(0, 0, w, h), image);
+  using Coordinate = decltype(CGRect{}.size.width);
+  CGContextDrawImage(
+      context, CGRectMake(0, 0, static_cast<Coordinate>(w), static_cast<Coordinate>(h)), image);
   CF<CGImageRef> resized(CGBitmapContextCreateImage(context));
   CF<CFMutableDataRef> data(CFDataCreateMutable(nullptr, 0));
   CF<CGImageDestinationRef> destination(
@@ -117,8 +119,8 @@ public:
       throw Error("detail must be high or original");
     if (bytes.empty() || bytes.size() > image_file_limit)
       throw Error("Image file exceeds 8 MiB or is empty");
-    CF<CFDataRef> data(
-        CFDataCreate(nullptr, reinterpret_cast<const UInt8 *>(bytes.data()), bytes.size()));
+    CF<CFDataRef> data(CFDataCreate(nullptr, reinterpret_cast<const UInt8 *>(bytes.data()),
+                                    cf_count(bytes.size())));
     CF<CGImageSourceRef> source(CGImageSourceCreateWithData(data, nullptr));
     if (!static_cast<CGImageSourceRef>(source))
       throw Error("Invalid or unsupported image data");

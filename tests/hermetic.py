@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 
+
 def environment(home):
     result = dict(os.environ)
     for key in list(result):

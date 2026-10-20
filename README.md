@@ -16,9 +16,11 @@ make test-foundation  # GoogleTest 1.17.0 + GoogleMock, existing text-helper tes
 make test             # Host unit, integration, CLI and terminal tests
 make test-sanitize    # ASan + UBSan
 make analyze-modern  # Separate Clang configuration; GCC host cache is preserved
+make fetch-lint-tools # Explicit network step; Python 3.12, Go and ShellCheck required
+make check-lint      # Offline C/C++ formatting, Ruff, shell and workflow checks
 make fetch-semgrep    # Explicit network step; development-only Semgrep 1.177.0
 make test-semgrep     # Positive/negative local rule fixtures
-make check-semgrep    # Scoped production checks; no tool or rule downloads
+make check-semgrep    # Every maintained production source/header; no downloads
 ./build/host/codet --help
 ```
 
@@ -29,7 +31,7 @@ application and shared C text helpers in a separate Clang build. Ubuntu GitHub A
 same checks and host tests. See [analysis setup, reports and enforcement](docs/MODERN-ANALYSIS.md).
 
 Semgrep uses an ignored `build/semgrep-venv` environment; provisioning requires Python with
-`venv`/pip support (`python3-venv` on Ubuntu). Select another interpreter with
+`venv`/pip support (`python3-venv` on Ubuntu). Tool provisioning defaults to Python 3.12. Select another compatible interpreter with
 `SEMGREP_PYTHON=/path/to/python3`, or an existing pinned tool with `SEMGREP=/path/to/semgrep`.
 Checks require version 1.177.0, use only checked-in rules, disable metrics/version checks,
 and fail on findings or analysis errors. They guard discovery, checkpoint inspection,
@@ -39,11 +41,27 @@ Runtime regressions cover recovery semantics. Provisioning records `pip freeze -
 interpreter/platform details, with repository-relative interpreter paths or an
 `<external>/basename` marker; interpreter symlinks retain their virtual-environment path.
 `make semgrep-environment` refreshes that evidence for the
-provisioned environment without installing anything. Transitive dependencies remain unlocked.
-Rule fixtures are separate from the ten scoped production inputs. Failures print report
-details while retaining JSON and the failing exit status. Reports and environment evidence
-live under `build/semgrep/` and are uploaded by the existing Ubuntu workflow. Application builds and
+provisioned environment without installing anything. The complete Semgrep dependency closure is
+version/hash locked in `requirements/semgrep.lock`; provisioning accepts wheels only and runs `pip check`.
+Rule fixtures, including renamed and nested adversarial cases, are separate from production inputs.
+Successful reports must prove the complete source/header inventory and complete fixture rule inventory;
+empty scans, skips, parser errors, malformed reports and input changes fail. Failures retain JSON,
+stderr and the original failing exit status. Reports and environment evidence
+live under `build/semgrep/` and are uploaded by an independent Ubuntu policy job. Application builds and
 Tiger binaries have no Semgrep dependency.
+
+`make check-lint` uses pinned clang-format 18.1.8, Ruff 0.17.1, actionlint 1.7.12,
+zizmor 1.30.1 and shfmt 3.14.1, plus an installed ShellCheck. Install ShellCheck with
+`apt install shellcheck` or `brew install shellcheck`; Go must support the pinned tool modules.
+Individual offline targets are `check-format`, `check-python`, `check-shell`, and `check-workflows`.
+Formatting covers maintained production code, headers, tests and benchmarks; recovered C,
+dependencies and intentionally uncompiled Semgrep fixtures retain their separate policies.
+Ruff covers scripts and Python tests with undefined-name/import, selected correctness, and
+Python 3.12 modernization checks. Detailed versions, commands and results live under `build/lint/`.
+CI runs lint and policy checks independently of the native build; its `Required checks` job requires
+all three mandatory jobs to succeed. Select that aggregate job in repository branch rules when enforcing merges.
+To use the provisioned PyYAML for analyzer-runner tests, run
+`make test-modern-analysis-runner ANALYSIS_PYTHON=build/lint-venv/bin/python`.
 
 ## Cross-build for Tiger
 

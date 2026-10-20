@@ -34,3 +34,12 @@ size_t wire_page() {
   // ok: codet-inspection-wire-size
   return result_bytes(page, call.name);
 }
+
+void nested_feedback() {
+  auto report = [&] {
+    // ruleid: codet-post-tool-feedback-not-fatal
+    if (post.blocked) { throw HookFailure(post.reason); }
+    // ok: codet-post-tool-feedback-not-fatal
+    if (post.blocked) { throw Error(post.reason); }
+  };
+}

@@ -1,0 +1,4 @@
+clang-format==18.1.8
+PyYAML==6.0.3
+ruff==0.17.1
+zizmor==1.30.1

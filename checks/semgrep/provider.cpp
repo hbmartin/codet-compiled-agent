@@ -48,3 +48,11 @@ void epoch_reply() {
     // ok: codet-epoch-empty-assistant
     wire.push_back({{"role", "assistant"}, {"content", result.message.replay}});
 }
+
+void renamed_reasoning() {
+  if (cancelled) return;
+  // ruleid: codet-public-reasoning-model-aware
+  if (settings.provider == "openai") { request["reasoning"] = reasoning_fields; }
+  // ok: codet-public-reasoning-model-aware
+  if (public_responses_reasoning(settings)) { request["reasoning"] = reasoning_fields; }
+}

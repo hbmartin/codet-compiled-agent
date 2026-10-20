@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / 'scripts'
 sys.path.insert(0, str(SCRIPTS))
-from verified_sources import extract_verified, file_hash, tree_hashes
+from verified_sources import extract_verified, file_hash, tree_hashes  # noqa: E402 -- standalone scripts
+
 spec = importlib.util.spec_from_file_location('verify_tiger', SCRIPTS / 'verify-tiger.py')
 verify = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(verify)

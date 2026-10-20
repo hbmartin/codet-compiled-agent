@@ -229,8 +229,9 @@ TEST_F(Pr18, OwnedAvailableAndUnreadableReferencesKeepTheirExistingTrustPolicies
                                          ArtifactPolicy::private_owned_regular),
                Error);
   ASSERT_EQ(::chmod(path.c_str(), 0), 0);
-  if (::geteuid() != 0)
+  if (::geteuid() != 0) {
     EXPECT_FALSE(tools.observe_result_reference(ref.string()).error.empty());
+  }
   ASSERT_EQ(::chmod(path.c_str(), 0600), 0);
   if (::geteuid() == 0) {
     ASSERT_EQ(::chown(path.c_str(), 12345, 12345), 0);
@@ -464,15 +465,22 @@ TEST_F(Pr18, ConsumerJsonExceptionsAndCancellationRemainDistinctFromProviderDeco
   CredentialStore credentials(config.home, files, clock);
   ApiProvider api(http, credentials, clock);
   EXPECT_THROW(api.complete(config, "", {}, Json::array(), cancel,
-                            [](const auto &) { (void)Json::parse("{bad"); }),
+                            [](const auto &) {
+                              const auto invalid = Json::parse("{bad");
+                              (void)invalid;
+                            }),
                Json::exception);
   EXPECT_THROW(api.complete(config, "", {}, Json::array(), cancel, {},
-                            [](const auto &) { (void)Json::parse("{bad"); }),
+                            [](const auto &) {
+                              const auto invalid = Json::parse("{bad");
+                              (void)invalid;
+                            }),
                Json::exception);
   try {
     api.complete(config, "", {}, Json::array(), cancel, [&](const auto &) {
       cancel.requested = true;
-      (void)Json::parse("{bad");
+      const auto invalid = Json::parse("{bad");
+      (void)invalid;
     });
     FAIL();
   } catch (const Error &e) {
@@ -1268,9 +1276,9 @@ TEST_F(Pr21, DeferredFailureRetainsPendingRowsForTheNextWriteBeforeReload) {
     raw.exec("CREATE TABLE cp_parent(id INTEGER PRIMARY KEY);CREATE TABLE cp_poison(id INTEGER "
              "REFERENCES cp_parent(id) DEFERRABLE INITIALLY DEFERRED);CREATE TRIGGER refuse_cp "
              "AFTER UPDATE ON session_messages BEGIN INSERT INTO cp_poison VALUES(1); END");
-    if (revise)
+    if (revise) {
       EXPECT_THROW(state.revise_messages(loaded, {}), Error);
-    else {
+    } else {
       EXPECT_THROW(append(state, loaded), Error);
       loaded.messages.resize(1);
     }
@@ -1278,9 +1286,9 @@ TEST_F(Pr21, DeferredFailureRetainsPendingRowsForTheNextWriteBeforeReload) {
     raw.exec("DROP TRIGGER refuse_cp;DROP TABLE cp_poison;DROP TABLE cp_parent");
     fs::remove(fs::path(*absolute_checkpoint_reference(original.messages[0])));
     // No reload may repair the in-memory pending state before this retry.
-    if (revise)
+    if (revise) {
       EXPECT_NO_THROW(state.revise_messages(loaded, {}));
-    else
+    } else
       EXPECT_NO_THROW(append(state, loaded));
     EXPECT_NE(row(raw, loaded), before);
   }
@@ -1599,9 +1607,9 @@ TEST_F(Pr22, ReconciliationAndToolPublicationPrepareArchivesBeforeTheirWriterLoc
     result.role = "tool";
     result.tool_call_id = call.id;
     files.on_open = observe;
-    if (transcript)
+    if (transcript) {
       EXPECT_NO_THROW(state.complete_tool(s, call, result));
-    else
+    } else
       EXPECT_NO_THROW(state.tool_finished(s.id, call, Json(result)));
     files.on_open = {};
   }
@@ -1650,8 +1658,9 @@ TEST_F(Pr22, PublishedVirtualBackupsAreReportedWithoutNativeFilesystemQueries) {
       ASSERT_EQ(virtual_files.backups.size(), 1u);
       EXPECT_THAT(error.what(), HasSubstr("published virtual backup"));
       EXPECT_THAT(error.what(), HasSubstr(virtual_files.backups.begin()->first.string()));
-      if (unreadable)
+      if (unreadable) {
         EXPECT_THAT(error.what(), HasSubstr("publication unconfirmed"));
+      }
     }
   }
 }
@@ -2101,8 +2110,9 @@ TEST_F(Pr24, MissingAndMalformedSessionTokensAreRepairableInBothMutationModes) {
       EXPECT_EQ(inspection["issues"], report["issues"]);
       const auto backup = Json::parse(files.read(report["backup"].get<std::string>(), 1024 * 1024));
       EXPECT_EQ(backup["session_revisions"].size(), missing ? 0u : 1u);
-      if (!missing)
+      if (!missing) {
         EXPECT_EQ(backup["session_revisions"][0]["revision"], "broken");
+      }
       EXPECT_EQ(token(raw, s.id).size(), 32u);
       EXPECT_NO_THROW(s = state.load_id(s.id, false));
       s.messages.push_back(codet::Message{"user", "next write"});
@@ -2145,7 +2155,7 @@ TEST_F(Pr24, SchemaSevenUpgradeSeedsMarkersWithoutConvertingOrDecodingBlobs) {
   for (const auto &entry : fs::directory_iterator(config.state_root))
     if (entry.path().filename().string().find(".pre-v8-") != std::string::npos) {
       ++backups;
-      struct stat st{};
+      struct stat st {};
       ASSERT_EQ(::stat(entry.path().c_str(), &st), 0);
       EXPECT_EQ(st.st_mode & 0777, 0600);
     }
@@ -2300,7 +2310,7 @@ TEST_F(Pr24, FailedToolCompletionKeepsOriginalErrorAndPrivateReceiptWithoutRepla
       EXPECT_EQ(receipt["kind"], "uncommitted_tool_result");
       EXPECT_EQ(receipt["message"]["text"], result.text);
       EXPECT_EQ(receipt["dispatch_allowed"], false);
-      struct stat status{};
+      struct stat status {};
       ASSERT_EQ(::stat(entry.path().c_str(), &status), 0);
       EXPECT_EQ(status.st_mode & 0777, 0600);
       ++receipts;
