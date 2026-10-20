@@ -74,6 +74,8 @@ public:
       throw;
     }
   }
+  NativeRead(const NativeRead &) = delete;
+  NativeRead &operator=(const NativeRead &) = delete;
   ~NativeRead() override {
     if (fd_ >= 0)
       ::close(fd_);

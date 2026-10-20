@@ -4,8 +4,8 @@ import argparse
 import hashlib
 import json
 import pathlib
-import tarfile
 import urllib.request
+
 from verified_sources import extract_verified
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]

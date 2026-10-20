@@ -243,13 +243,13 @@ struct AssistantText {
 void to_json(Json &, const AssistantText &);
 void from_json(const Json &, AssistantText &);
 struct Message {
-  std::string role, text, tool_call_id;
-  std::vector<ToolCall> calls;
+  std::string role = {}, text = {}, tool_call_id = {};
+  std::vector<ToolCall> calls = {};
   Json replay = Json::array();
   std::string replay_provider = "";
-  std::vector<ImageArtifact> images;
-  std::string origin, artifact_index;
-  std::string message_id, result_file;
+  std::vector<ImageArtifact> images = {};
+  std::string origin = {}, artifact_index = {};
+  std::string message_id = {}, result_file = {};
   bool images_archived = false;
   std::vector<AssistantText> assistant_items = {};
   bool previewed = false;

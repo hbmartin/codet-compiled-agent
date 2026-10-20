@@ -17,7 +17,7 @@ int main(int argc, char **argv) {
       const int fd = ::open(argv[2], O_RDWR);
       if (fd < 0)
         return 2;
-      struct flock lock{};
+      struct flock lock {};
       lock.l_type = F_WRLCK;
       lock.l_whence = SEEK_SET;
       lock.l_len = 1;

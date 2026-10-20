@@ -234,3 +234,13 @@ struct RecoveryPreparationFixture {
     auto canonical = plan.rows.at(position).payload;
   }
 };
+void StateStore::save_provider_state(const Session &selected) {
+  auto publish = [&] {
+    // ruleid: codet-provider-cache-owning-commit
+    storage->publish_provider(selected);
+  };
+  if (feature_enabled && owning_transaction.owner) {
+    // ok: codet-provider-cache-owning-commit
+    storage->publish_provider(selected);
+  }
+}

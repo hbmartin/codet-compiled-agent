@@ -46,7 +46,7 @@ MODERN_ANALYSIS = $(ANALYSIS_PYTHON) scripts/analyze-modern.py --build-dir $(MOD
 .PHONY: modern-analysis-configure modern-analysis-host fetch-analysis-tools build-analysis-tools analyze-modern analyze-modern-clang-tidy analyze-modern-cppcheck \
 	analyze-modern-clang-analyzer analyze-modern-selftest test-modern-analysis-runner
 modern-analysis-host: modern-analysis-configure
-	cmake --build $(MODERN_ANALYSIS_BUILD) -j$(MODERN_ANALYSIS_JOBS)
+	cmake --build $(MODERN_ANALYSIS_BUILD) --target all codet_persistence_bench codet_sanitization_bench -j$(MODERN_ANALYSIS_JOBS)
 modern-analysis-configure:
 	cmake -S . -B $(MODERN_ANALYSIS_BUILD) -G Ninja -DCMAKE_BUILD_TYPE=Debug \
 	  -DCMAKE_C_COMPILER=$(MODERN_CC) -DCMAKE_CXX_COMPILER=$(MODERN_CXX) \
@@ -68,15 +68,16 @@ build-analysis-tools:
 test-modern-analysis-runner:
 	$(ANALYSIS_PYTHON) -m unittest discover -s tests -p test_analyze_modern.py -v
 SEMGREP_VERSION := 1.177.0
-SEMGREP_PYTHON ?= python3
+SEMGREP_PYTHON ?= python3.12
 SEMGREP ?= $(CURDIR)/build/semgrep-venv/bin/semgrep
 SEMGREP_RUN = SEMGREP_ENABLE_VERSION_CHECK=0 SEMGREP_SEND_METRICS=off $(SEMGREP)
-SEMGREP_FLAGS = --metrics=off --disable-version-check --strict --no-rewrite-rule-ids
 .PHONY: fetch-semgrep semgrep-environment semgrep-ready test-semgrep check-semgrep
 # Provisioning is explicit; neither check target downloads tools or rules.
 fetch-semgrep:
 	$(SEMGREP_PYTHON) -m venv build/semgrep-venv
-	build/semgrep-venv/bin/python -m pip install --disable-pip-version-check 'semgrep==$(SEMGREP_VERSION)'
+	build/semgrep-venv/bin/python -m pip install --disable-pip-version-check --only-binary=:all: \
+	  --require-hashes -r requirements/semgrep.lock
+	build/semgrep-venv/bin/python -m pip check
 	$(MAKE) semgrep-environment
 semgrep-environment:
 	@mkdir -p build/semgrep
@@ -87,14 +88,35 @@ semgrep-ready:
 	@codet_semgrep_version=$$($(SEMGREP_RUN) --version) && test "$$codet_semgrep_version" = '$(SEMGREP_VERSION)' || { echo 'Semgrep $(SEMGREP_VERSION) is required.'; exit 1; }
 	@mkdir -p build/semgrep
 test-semgrep: semgrep-ready
-	@$(SEMGREP_RUN) scan $(SEMGREP_FLAGS) --test checks/semgrep --json > build/semgrep/tests.json || \
-	  { codet_status=$$?; $(SEMGREP_PYTHON) scripts/semgrep-report.py failure build/semgrep/tests.json; exit $$codet_status; }
+	$(SEMGREP_PYTHON) scripts/check_semgrep.py test --semgrep '$(SEMGREP)'
 check-semgrep: semgrep-ready
-	@$(SEMGREP_RUN) scan $(SEMGREP_FLAGS) --error --config checks/semgrep --json \
-	  src/modern/instructions.cpp src/modern/state.cpp src/modern/tools.cpp \
-	  src/modern/hooks.cpp src/modern/capture_catalog.cpp src/modern/provider.cpp \
-	  src/modern/agent.cpp src/modern/context.cpp src/modern/output.cpp src/modern/cli.cpp > build/semgrep/scan.json || \
-	  { codet_status=$$?; $(SEMGREP_PYTHON) scripts/semgrep-report.py failure build/semgrep/scan.json; exit $$codet_status; }
+	$(SEMGREP_PYTHON) scripts/check_semgrep.py scan --semgrep '$(SEMGREP)'
+
+LINT_PYTHON ?= python3.12
+.PHONY: fetch-lint-tools check-lint check-format check-python check-shell check-workflows test-lint-runners
+fetch-lint-tools:
+	$(LINT_PYTHON) -m venv build/lint-venv
+	build/lint-venv/bin/python -m pip install --disable-pip-version-check --only-binary=:all: \
+	  --require-hashes -r requirements/lint.lock
+	@mkdir -p build/lint-tools/bin
+	GOCACHE='$(CURDIR)/build/lint-tools/go-cache' GOBIN='$(CURDIR)/build/lint-tools/bin' go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+	GOCACHE='$(CURDIR)/build/lint-tools/go-cache' GOBIN='$(CURDIR)/build/lint-tools/bin' go install mvdan.cc/sh/v3/cmd/shfmt@v3.14.1
+	@command -v shellcheck >/dev/null || { echo 'Install ShellCheck (apt install shellcheck or brew install shellcheck).'; exit 1; }
+check-lint:
+	$(LINT_PYTHON) scripts/lint.py all
+check-format:
+	$(LINT_PYTHON) scripts/lint.py format
+check-python:
+	$(LINT_PYTHON) scripts/lint.py python
+check-shell:
+	$(LINT_PYTHON) scripts/lint.py shell
+check-workflows:
+	$(LINT_PYTHON) scripts/lint.py workflows
+test-lint-runners:
+	$(LINT_PYTHON) -m unittest discover -s tests -p test_semgrep_report.py -v
+	$(LINT_PYTHON) -m unittest discover -s tests -p test_check_semgrep.py -v
+	$(LINT_PYTHON) -m unittest discover -s tests -p test_lint.py -v
+
 test-foundation:
 	cmake -S . -B build/foundation -DCODET_FOUNDATION_ONLY=ON
 	cmake --build build/foundation -j4
@@ -151,12 +173,14 @@ help:
 	@printf '%s\n' 'make [modern]     Cross-build the modern C++ application and GoogleTest executable.' \
 	  'make host / test   Build the modern host application / run hermetic tests.' \
 	  'make test-sanitize Run host tests with ASan and UBSan.' \
+	  'make fetch-lint-tools Provision pinned formatter, Ruff, workflow and shell-format tools (network).' \
+	  'make check-lint    Run offline formatting, Python, shell and workflow gates independently of builds.' \
 	  'make fetch-analysis-tools / build-analysis-tools Provision checksum-pinned Cppcheck 2.22.0.' \
 	  'make analyze-modern Configure a dedicated Clang database and run all three analyzers without building.' \
 	  'make analyze-modern-{clang-tidy,cppcheck,clang-analyzer} Run one modern analyzer.' \
 	  'make analyze-modern-selftest / test-modern-analysis-runner Verify detection and runner failure handling.' \
 	  'make fetch-semgrep Explicitly provision development-only Semgrep 1.177.0.' \
-	  'make test-semgrep / check-semgrep Test local rules / gate scoped application patterns offline.' \
+	  'make test-semgrep / check-semgrep Test local rules / gate all production sources and headers offline.' \
 	  'make fetch-tiger-deps / toolchain-image Fetch pinned sources / prepare build utilities (network).' \
 	  'make tiger-sysroot Build pinned target dependencies offline.' \
 	  'make verify-tiger / tiger-package Statically verify / package the modern PPC artifacts.' \

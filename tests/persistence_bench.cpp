@@ -9,7 +9,7 @@
 using namespace codet;
 namespace {
 uint64_t peak_rss() {
-  struct rusage usage{};
+  struct rusage usage {};
   if (getrusage(RUSAGE_SELF, &usage))
     throw Error("Cannot measure benchmark memory");
   const auto rss = static_cast<uint64_t>(usage.ru_maxrss);
@@ -262,7 +262,7 @@ int main(int argc, char **argv) {
       }
       if (close_scans)
         throw Error("At-capacity creation/close scanned the whole store");
-      struct rusage io{};
+      struct rusage io {};
       getrusage(RUSAGE_SELF, &io);
       std::cout
           << Json(
@@ -312,7 +312,7 @@ int main(int argc, char **argv) {
     if (written > transcript * 2)
       throw Error("Append serialized unchanged history");
     if (i % 100 == 0) {
-      struct rusage usage{};
+      struct rusage usage {};
       if (getrusage(RUSAGE_SELF, &usage))
         return 1;
       const auto elapsed =

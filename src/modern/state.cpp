@@ -422,6 +422,9 @@ struct SessionProjection {
   std::shared_ptr<const Recovery> recovery;
 };
 struct StateStore::Impl {
+  Impl() = default;
+  Impl(const Impl &) = delete;
+  Impl &operator=(const Impl &) = delete;
   sqlite3 *db = nullptr;
   fs::path home, artifact_root;
   mutable fs::path artifact_anchor;
@@ -1432,7 +1435,7 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
     const auto migration_path = home / ".migration.lock";
     const int migration_fd =
         ::open(migration_path.c_str(), O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0600);
-    struct stat migration_stat{};
+    struct stat migration_stat {};
     if (migration_fd < 0)
       throw Error("Cannot open database migration lock");
     migration_locks.descriptors.push_back(migration_fd);
@@ -1687,6 +1690,9 @@ std::shared_ptr<void> StateStore::acquire(const std::string &id) {
     throw Error("Session lock directory must not be a symlink");
   fs::create_directories(directory);
   struct Lease {
+    Lease() = default;
+    Lease(const Lease &) = delete;
+    Lease &operator=(const Lease &) = delete;
     int fd = -1;
     ~Lease() {
       if (fd >= 0)
@@ -1696,7 +1702,7 @@ std::shared_ptr<void> StateStore::acquire(const std::string &id) {
   auto lease = std::make_shared<Lease>();
   lease->fd = ::open((directory / (id + ".lock")).c_str(),
                      O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0600);
-  struct stat status{};
+  struct stat status {};
   if (lease->fd < 0 || ::fstat(lease->fd, &status) || !S_ISREG(status.st_mode) ||
       ::fchmod(lease->fd, 0600) || ::fcntl(lease->fd, F_SETFD, FD_CLOEXEC) < 0)
     throw Error("Cannot open private session ownership lock");

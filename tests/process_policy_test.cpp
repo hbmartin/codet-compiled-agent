@@ -136,10 +136,12 @@ TEST_F(Policies, StandardJobFailuresAreIsolatedAndResourceFailuresStillPropagate
   for (auto failure : {BrokenObservation::Failure::allocation, BrokenObservation::Failure::resource,
                        BrokenObservation::Failure::interrupt}) {
     control->failure = failure;
-    if (failure == BrokenObservation::Failure::allocation)
+    if (failure == BrokenObservation::Failure::allocation) {
       EXPECT_THROW(owned.start(command("true"), cancel), std::bad_alloc);
-    if (failure == BrokenObservation::Failure::resource)
+    }
+    if (failure == BrokenObservation::Failure::resource) {
       EXPECT_THROW(owned.start(command("true"), cancel), ProcessResourceError);
+    }
     if (failure == BrokenObservation::Failure::interrupt) {
       try {
         owned.start(command("true"), cancel);
@@ -160,10 +162,12 @@ TEST_F(Policies, StopCleansOwnedChildBeforePropagatingInterruptionOrResourceFail
     const auto id = owned.start(command("sleep 30"), cancel);
     const auto pid = control->selected;
     control->failure = failure;
-    if (failure == BrokenObservation::Failure::allocation)
+    if (failure == BrokenObservation::Failure::allocation) {
       EXPECT_THROW(owned.stop(id), std::bad_alloc);
-    if (failure == BrokenObservation::Failure::resource)
+    }
+    if (failure == BrokenObservation::Failure::resource) {
       EXPECT_THROW(owned.stop(id), ProcessResourceError);
+    }
     if (failure == BrokenObservation::Failure::interrupt) {
       try {
         owned.stop(id);

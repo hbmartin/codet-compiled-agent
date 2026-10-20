@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Build/verify/package the modern PPC agent without executing it."""
-import argparse,json,os,pathlib,subprocess,tarfile
+import argparse
+import os
+import pathlib
+import subprocess
+import tarfile
+
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 IMAGE=os.environ.get('CODET_TOOLCHAIN_IMAGE','codet-tiger-build:gcc14')
 

@@ -41,3 +41,17 @@ void output_file() {
   File capture(output_path);
   sqlite3_open(catalog_path.c_str(), &db);
 }
+
+void renamed_catalog_lifetime() {
+  // ruleid: codet-catalog-descriptor-before-sqlite
+  File renamed_descriptor{database_path, true};
+  sqlite3_open(database_path.c_str(), &connection);
+}
+void isolated_catalog_lifetime() {
+  {
+    // ok: codet-catalog-descriptor-before-sqlite
+    File renamed_descriptor{database_path, true};
+    inspect(renamed_descriptor.fd);
+  }
+  sqlite3_open(database_path.c_str(), &connection);
+}

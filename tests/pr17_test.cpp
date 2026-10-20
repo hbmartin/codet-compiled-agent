@@ -213,7 +213,8 @@ TEST_F(Pr17, InterleavedLargeSessionsKeepTheirCommittedPrefixTickets) {
   const auto reads_a = left.provider_rows_read(), reads_b = right.provider_rows_read();
   const auto bytes_a = left.serialized_bytes(), bytes_b = right.serialized_bytes();
   for (int i = 0; i < 8; ++i) {
-    for (auto pair : {std::make_pair(&left, &a), std::make_pair(&right, &b)}) {
+    const std::pair<StateStore *, Session *> stores[] = {{&left, &a}, {&right, &b}};
+    for (auto pair : stores) {
       auto &store = *pair.first;
       auto &s = *pair.second;
       ProviderStateUpdate hint{store.provider_revision(s.id), s.provider_state["messages"].size()};
@@ -323,7 +324,7 @@ TEST_F(Pr17, SchemaSixUpgradeBacksUpAndFailureRollsBackItsSchemaChanges) {
   for (const auto &entry : fs::directory_iterator(config.state_root))
     if (entry.path().filename().string().find(".pre-v8-") != std::string::npos) {
       ++backups;
-      struct stat st{};
+      struct stat st {};
       ASSERT_EQ(::stat(entry.path().c_str(), &st), 0);
       EXPECT_EQ(st.st_mode & 0777, 0600);
     }
@@ -515,8 +516,9 @@ TEST_F(Pr17, RepairQuarantinesUnavailableReferencesWithoutChangingTheJournal) {
     const std::string mode = kind;
     if (mode == "available" || mode == "unreadable")
       files.native.atomic_write(path, "original", true);
-    if (mode == "unreadable")
+    if (mode == "unreadable") {
       ASSERT_EQ(::chmod(path.c_str(), 0), 0);
+    }
     if (mode == "symlink")
       fs::create_symlink(config.cwd, path);
     result.result_file = mode == "outside" ? (temp.root / "outside" / ref).string() : path.string();
@@ -534,8 +536,9 @@ TEST_F(Pr17, RepairQuarantinesUnavailableReferencesWithoutChangingTheJournal) {
     EXPECT_EQ(raw.value("SELECT payload FROM session_messages WHERE session='" + s.id +
                         "' AND position=1"),
               before_inspection);
-    if (mode == "missing" || mode == "outside" || mode == "symlink")
+    if (mode == "missing" || mode == "outside" || mode == "symlink") {
       EXPECT_FALSE(inspection["issues"].empty());
+    }
     auto report = state.repair(s.id, false, false, true, tools);
     EXPECT_TRUE(report["changed"]);
     EXPECT_EQ(raw.value("SELECT result FROM tools WHERE session='" + s.id + "'"), journal);

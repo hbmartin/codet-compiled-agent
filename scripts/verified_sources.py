@@ -6,6 +6,7 @@ import shutil
 import tarfile
 import tempfile
 
+
 def file_hash(path):
     with pathlib.Path(path).open('rb') as source:
         return hashlib.file_digest(source, 'sha256').hexdigest()

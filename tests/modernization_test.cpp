@@ -86,9 +86,9 @@ TEST_F(Modernization, RawProviderFailuresPreserveBodiesAndRetryRules) {
       EXPECT_EQ(e.http_status, 400);
       EXPECT_EQ(e.body, body);
       const auto details = Json::parse(e.details().dump());
-      if (safe_text(body) == body)
+      if (safe_text(body) == body) {
         EXPECT_EQ(details["body"], body);
-      else
+      } else
         EXPECT_TRUE(details.contains("body_base64"));
     }
     EXPECT_EQ(http.requests, 1);
@@ -462,7 +462,7 @@ TEST_F(Modernization, CorruptPlanResumesAndQuarantinesBeforeReplacement) {
       if (entry.path().filename().string().rfind(id + ".corrupt-", 0) == 0) {
         ++recovered;
         EXPECT_EQ(files.read(entry.path()), damaged);
-        struct stat st{};
+        struct stat st {};
         ASSERT_EQ(::stat(entry.path().c_str(), &st), 0);
         EXPECT_EQ(st.st_mode & 0777, 0600);
       }
@@ -656,7 +656,7 @@ TEST_F(Modernization, LegacyMigrationBacksUpAndPreservesMalformedBytesIndependen
   for (const auto &entry : fs::directory_iterator(config.state_root))
     if (entry.path().filename().string().rfind("state.sqlite3.pre-v8-", 0) == 0) {
       ++backups;
-      struct stat st{};
+      struct stat st {};
       ASSERT_EQ(::stat(entry.path().c_str(), &st), 0);
       EXPECT_EQ(st.st_mode & 0777, 0600);
     }
@@ -699,9 +699,9 @@ TEST_F(Modernization, AbruptExitNeverReexecutesIncompleteToolsInEitherMode) {
       StateStore store(root, {}, mode);
       auto recovered = store.load_id(id, true);
       ASSERT_EQ(recovered.messages.size(), 2u);
-      if (complete)
+      if (complete) {
         EXPECT_EQ(recovered.messages.back().text, "completed once");
-      else
+      } else
         EXPECT_EQ(Json::parse(recovered.messages.back().text)["metadata"]["recovery"], "uncertain");
     }
 }
@@ -898,7 +898,7 @@ TEST_F(Modernization, ProviderSnapshotsFollowOwningAndNestedCommitOutcomes) {
         sqlite3 *connection = nullptr;
         ASSERT_EQ(sqlite3_open((root / "state.sqlite3").c_str(), &connection), SQLITE_OK);
         const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(connection, sqlite3_close);
-        if (fail_commit)
+        if (fail_commit) {
           ASSERT_EQ(sqlite3_exec(db.get(),
                                  "CREATE TABLE parent(id INTEGER PRIMARY KEY);"
                                  "CREATE TABLE poison(id INTEGER REFERENCES parent(id) "
@@ -907,6 +907,7 @@ TEST_F(Modernization, ProviderSnapshotsFollowOwningAndNestedCommitOutcomes) {
                                  "WHEN NEW.position=1 BEGIN INSERT INTO poison VALUES(1); END;",
                                  nullptr, nullptr, nullptr),
                     SQLITE_OK);
+        }
         session.provider_state = conversation_fixture("new");
         const auto write = [&] {
           const std::string action = operation;
@@ -1208,9 +1209,9 @@ TEST_F(Modernization, LegacyEmptyPartsAllowResumeCompactionAndProviderSwitch) {
     config.model = config.provider == "openai" ? "gpt-6.1-sol" : "claude-sonnet-5-5";
     Tools tools(config, files, processes, http, clock);
     Agent agent(config, provider, tools, state, {});
-    if (std::string(action) == "compact")
+    if (std::string(action) == "compact") {
       EXPECT_EQ(agent.compact(session, cancel).text, "Conversation compacted.");
-    else
+    } else
       EXPECT_EQ(agent.run(session, "new turn", cancel).text, "done");
     EXPECT_FALSE(state.load_id(session.id, false).messages.empty());
   }

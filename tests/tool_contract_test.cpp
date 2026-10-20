@@ -25,9 +25,9 @@ std::string png() {
   const std::string b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/"
                           "x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
   std::string out(b64.size(), '\0');
-  const int count =
-      EVP_DecodeBlock(reinterpret_cast<unsigned char *>(&out[0]),
-                      reinterpret_cast<const unsigned char *>(b64.data()), b64.size());
+  const int count = EVP_DecodeBlock(reinterpret_cast<unsigned char *>(&out[0]),
+                                    reinterpret_cast<const unsigned char *>(b64.data()),
+                                    static_cast<int>(b64.size()));
   out.resize(static_cast<size_t>(count) - 1);
   return out;
 }

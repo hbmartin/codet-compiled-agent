@@ -3,10 +3,10 @@
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import subprocess
 import tarfile
 import urllib.request
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / 'analysis-tools.lock.json'

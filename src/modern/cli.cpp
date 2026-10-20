@@ -238,7 +238,7 @@ class Terminal {
   std::string input_, status_, progress_;
   std::string prompt_;
   std::map<std::string, int> bindings_{{"submit", 10}, {"quit", 4}, {"backspace", 127}};
-  struct termios original_{};
+  struct termios original_ {};
   bool restore_ = false;
   const Cancellation *read_cancel_ = nullptr;
   static int read_character(EditLine *edit, wchar_t *character) {
@@ -249,7 +249,9 @@ class Terminal {
     for (;;) {
       if (terminal && terminal->read_cancel_ && terminal->read_cancel_->requested)
         return 0;
-      struct pollfd descriptor{STDIN_FILENO, POLLIN, 0};
+      struct pollfd descriptor {
+        STDIN_FILENO, POLLIN, 0
+      };
       const int ready = ::poll(&descriptor, 1, 100);
       if (ready < 0) {
         if (errno == EINTR)
@@ -420,7 +422,7 @@ public:
       if (ch == bindings_["backspace"] || ch == KEY_BACKSPACE || ch == 8) {
         if (!input_.empty()) {
           do {
-            const unsigned char b = input_.back();
+            const auto b = static_cast<unsigned char>(input_.back());
             input_.pop_back();
             if ((b & 0xc0) != 0x80)
               break;
@@ -536,7 +538,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     return 0;
   }
   if (o.version) {
-    std::cout << "codet " CODET_VERSION "\n";
+    std::cout << "codet " << CODET_VERSION << "\n";
     return 0;
   }
   if (!o.images.empty() && !o.command.empty() && o.command != "exec" && o.command != "resume" &&

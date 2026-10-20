@@ -307,6 +307,9 @@ Json CredentialStore::codex(HttpTransport &http, const Cancellation &cancel) {
     throw Error("Cannot open credential refresh lock");
   struct Lock {
     int fd;
+    explicit Lock(int descriptor) : fd(descriptor) {}
+    Lock(const Lock &) = delete;
+    Lock &operator=(const Lock &) = delete;
     ~Lock() {
       (void)::flock(fd, LOCK_UN);
       ::close(fd);
