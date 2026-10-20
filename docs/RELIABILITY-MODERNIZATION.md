@@ -162,3 +162,30 @@ insertion skips committed paths and publishes optional cache knowledge only afte
 [PR #20 follow-up validation](validation/pr20-correctness-repair.json) records the fault regressions,
 portable checkpoint lifecycle, cleanup and insertion tests, offline checks, benchmarks and Tiger
 cross-build/static verification against source hashes. Tiger hardware execution remains untested.
+
+
+## PR #21 checkpoint persistence follow-up
+
+Legacy checkpoint projections carry nonserialized source-row provenance. Missing message IDs are
+assigned from the filesystem-independent message view before checkpoint paths are normalized.
+Once validated, a mapping stays stable for reconciliation even if its archive disappears or becomes
+unsafe. It never grants access to that file: recovery decoding still validates current private
+ownership, containment and identity, and reports unavailable history without repeating effects.
+
+Loads and exports remain read-only. The next successful append or revision also rewrites pending
+legacy checkpoint rows and registers their portable references in the same transaction. Only those
+rows are compared and rewritten; ordinary appends retain suffix-only work. Conflicting source edits
+fail without overwriting history. Pending knowledge is acknowledged only after an owning commit;
+rollback and externally controlled nested transactions are checked against actual rows on retry.
+
+StateStore accepts a shared filesystem dependency, retaining its native compatibility constructor.
+Checkpoint preparation, private repair backups, fork index copying and response receipts use that
+dependency. Artifact anchors are acquired on demand; unavailable roots do not block database-only
+commands. A successfully acquired anchor remains pinned. Validation is deduplicated during each
+preparation, and pending metadata rewrites do not reopen previously observed archives under the
+writer lock. New archives and subsequent reads retain strict validation.
+
+[PR #21 follow-up validation](validation/pr21-portable-checkpoints.json) records source-hashed
+regressions, the offline matrix and benchmarks. Tiger evidence is cross-build/static verification;
+no Tiger hardware or live-provider execution is claimed. Schema 7, provider wire formats, tool
+schemas, private archive restoration requirements and the two-attempt repair policy are unchanged.

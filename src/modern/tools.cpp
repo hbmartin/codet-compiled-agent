@@ -666,9 +666,6 @@ bool Tools::reference_current(const ReferenceObservation &observation) const {
   }
   return current == observation.identity;
 }
-void Tools::write_repair_backup(const fs::path &path, const std::string &bytes) {
-  files_.atomic_write(path, bytes, true);
-}
 void Tools::retain_recovery_result(Message &message, std::vector<RecoveryCandidate> &candidates) {
   if (message.message_id.empty())
     message.message_id = unique_id();

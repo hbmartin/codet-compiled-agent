@@ -1,4 +1,5 @@
 // A separate executable confines allocator/SQLite interception to deterministic fault tests.
+#include "codet/artifacts.hpp"
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/prompt.hpp"
@@ -15,6 +16,7 @@ bool after_commit = false, after_token = false, fired = false;
 bool provider_read_error = false, rollback_read = false, token_error = false;
 bool infrastructure_error = false;
 bool read_failed = false;
+sqlite3 *observed_connection = nullptr;
 size_t steps_after_failure = 0;
 int countdown = -1, skip = 0;
 std::function<void()> provider_read_done;
@@ -32,6 +34,8 @@ void disable() noexcept {
   provider_read_done = {};
   failed_query = nullptr;
   failed_allocation = failed_rollback = false;
+  failed_status = SQLITE_IOERR;
+  skip = 0;
 }
 } // namespace fault
 void *operator new(std::size_t n) {
@@ -75,6 +79,7 @@ extern "C" int sqlite3_exec(sqlite3 *db, const char *sql,
   return result;
 }
 extern "C" int sqlite3_step(sqlite3_stmt *statement) {
+  fault::observed_connection = sqlite3_db_handle(statement);
   using Step = int (*)(sqlite3_stmt *);
   static const auto step = reinterpret_cast<Step>(dlsym(RTLD_NEXT, "sqlite3_step"));
   if (fault::read_failed)
@@ -158,7 +163,18 @@ struct Received : Provider {
   }
 };
 } // namespace
-TEST(PublicationFault, OwningWritesRemainSuccessfulAndTheNextSaveWorksWithoutReload) {
+struct PublicationFault : testing::Test {
+  void SetUp() override {
+    fault::disable();
+    fault::fired = false;
+    fault::steps_after_failure = 0;
+    fault::observed_connection = nullptr;
+  }
+  void TearDown() override {
+    fault::disable();
+  }
+};
+TEST_F(PublicationFault, OwningWritesRemainSuccessfulAndTheNextSaveWorksWithoutReload) {
   for (const auto *mode : {"provider", "append", "replace"})
     for (const int skip : {0, 2, 6, 12, 20}) {
       SCOPED_TRACE(std::string(mode) + ":" + std::to_string(skip));
@@ -204,7 +220,7 @@ TEST(PublicationFault, OwningWritesRemainSuccessfulAndTheNextSaveWorksWithoutRel
       EXPECT_EQ(store.load_id(s.id, false).provider_state, s.provider_state);
     }
 }
-TEST(PublicationFault, LoadCacheFailureDoesNotFailAValidLoad) {
+TEST_F(PublicationFault, LoadCacheFailureDoesNotFailAValidLoad) {
   TempDirectory temp;
   StateStore store(temp.root / "state");
   auto s = store.create();
@@ -228,7 +244,7 @@ TEST(PublicationFault, LoadCacheFailureDoesNotFailAValidLoad) {
   EXPECT_EQ(store.provider_cache_bytes(), 0u);
   EXPECT_NO_THROW(store.save(loaded));
 }
-TEST(PublicationFault, AgentKeepsCommittedResponseAndProviderAdapterWithoutAReceipt) {
+TEST_F(PublicationFault, AgentKeepsCommittedResponseAndProviderAdapterWithoutAReceipt) {
   TempDirectory temp;
   Config config;
   config.home = temp.root / "home";
@@ -269,7 +285,7 @@ TEST(PublicationFault, AgentKeepsCommittedResponseAndProviderAdapterWithoutARece
   EXPECT_NO_THROW(store.reconcile(s));
 }
 
-TEST(PublicationFault, ActualLoadKeepsOldProviderRowsUnderTheOldRevisionToken) {
+TEST_F(PublicationFault, ActualLoadKeepsOldProviderRowsUnderTheOldRevisionToken) {
   TempDirectory temp;
   StateStore store(temp.root / "state");
   auto s = store.create();
@@ -301,7 +317,7 @@ TEST(PublicationFault, ActualLoadKeepsOldProviderRowsUnderTheOldRevisionToken) {
   EXPECT_EQ(store.load_id(s.id, false).provider_state, loaded.provider_state);
 }
 
-TEST(PublicationFault, TokenAllocationAndQueryFailuresLeaveValidLoadsSuccessful) {
+TEST_F(PublicationFault, TokenAllocationAndQueryFailuresLeaveValidLoadsSuccessful) {
   TempDirectory temp;
   StateStore store(temp.root / "state");
   auto s = store.create();
@@ -338,7 +354,7 @@ TEST(PublicationFault, TokenAllocationAndQueryFailuresLeaveValidLoadsSuccessful)
     EXPECT_NO_THROW(store.save(loaded));
   }
 }
-TEST(PublicationFault, RepairStopsImmediatelyOnOperationalReadFailureWithOrWithoutRollback) {
+TEST_F(PublicationFault, RepairStopsImmediatelyOnOperationalReadFailureWithOrWithoutRollback) {
   TempDirectory temp;
   Config config;
   config.home = temp.root / "home";
@@ -375,7 +391,7 @@ TEST(PublicationFault, RepairStopsImmediatelyOnOperationalReadFailureWithOrWitho
     EXPECT_NO_THROW(store.save(s));
   }
 }
-TEST(PublicationFault, InvalidRevisionTokensRemainMandatoryLoadErrors) {
+TEST_F(PublicationFault, InvalidRevisionTokensRemainMandatoryLoadErrors) {
   TempDirectory temp;
   StateStore store(temp.root / "state");
   auto s = store.create();
@@ -391,7 +407,7 @@ TEST(PublicationFault, InvalidRevisionTokensRemainMandatoryLoadErrors) {
   EXPECT_EQ(store.provider_cache_bytes(), 0u);
 }
 
-TEST(PublicationFault, SessionLoadAndRepairPreserveOperationalAndAllocationFailures) {
+TEST_F(PublicationFault, SessionLoadAndRepairPreserveOperationalAndAllocationFailures) {
   TempDirectory temp;
   Config config;
   config.home = temp.root / "home";
@@ -453,7 +469,7 @@ TEST(PublicationFault, SessionLoadAndRepairPreserveOperationalAndAllocationFailu
   fault::disable();
   EXPECT_NO_THROW(store.save(s));
 }
-TEST(PublicationFault, MigrationInspectionReportsSqlFailuresWithoutClaimingInvalidSchema) {
+TEST_F(PublicationFault, MigrationInspectionReportsSqlFailuresWithoutClaimingInvalidSchema) {
   for (const int status : {SQLITE_IOERR, SQLITE_BUSY, SQLITE_CORRUPT}) {
     SCOPED_TRACE(status);
     TempDirectory temp;
@@ -487,7 +503,7 @@ TEST(PublicationFault, MigrationInspectionReportsSqlFailuresWithoutClaimingInval
   }
 }
 
-TEST(PublicationFault, OptionalReferenceKnowledgeCannotFailCommittedRows) {
+TEST_F(PublicationFault, OptionalReferenceKnowledgeCannotFailCommittedRows) {
   TempDirectory temp;
   StateStore store(temp.root / "state");
   auto s = store.create();
@@ -505,4 +521,135 @@ TEST(PublicationFault, OptionalReferenceKnowledgeCannotFailCommittedRows) {
   EXPECT_NO_THROW(store.remember_references(s.id, {first, second}));
   EXPECT_EQ(store.references(s.id).size(), 2u);
   EXPECT_NO_THROW(store.save(s));
+}
+
+TEST_F(PublicationFault, CheckpointProvenanceSurvivesNestedCommitAndRollbackBeforeReload) {
+  for (const bool rollback : {true, false}) {
+    SCOPED_TRACE(rollback);
+    TempDirectory temp;
+    NativeFileSystem files;
+    const auto root = temp.root / "artifacts";
+    const auto path = root / "results/owner/archive.json";
+    fs::create_directories(path.parent_path());
+    files.atomic_write(path, "{}", true);
+    StateStore store(files, temp.root / "state", root);
+    auto s = store.create();
+    Message cp;
+    cp.role = "system";
+    cp.message_id = "checkpoint";
+    cp.text = "summary";
+    cp.checkpoint_state = {{"recovery_record", path.string()}};
+    s.messages = {cp};
+    store.save(s);
+    auto *db = fault::observed_connection;
+    sqlite3_stmt *replace = nullptr;
+    ASSERT_EQ(
+        sqlite3_prepare_v2(db, "UPDATE session_messages SET payload=?", -1, &replace, nullptr),
+        SQLITE_OK);
+    const auto original = Json(cp).dump();
+    sqlite3_bind_text(replace, 1, original.c_str(), -1, SQLITE_TRANSIENT);
+    ASSERT_EQ(sqlite3_step(replace), SQLITE_DONE);
+    sqlite3_finalize(replace);
+    auto loaded = store.load_id(s.id, false);
+    auto copied = loaded;
+    db = fault::observed_connection;
+    fs::remove(path);
+    ASSERT_EQ(sqlite3_exec(db, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr), SQLITE_OK);
+    loaded.messages.push_back(Message{"user", "first"});
+    ASSERT_NO_THROW(store.append_messages(loaded, 1));
+    ASSERT_EQ(sqlite3_exec(db, rollback ? "ROLLBACK" : "COMMIT", nullptr, nullptr, nullptr),
+              SQLITE_OK);
+    if (rollback)
+      ASSERT_NO_THROW(store.append_messages(loaded, 1));
+    // An externally committed nested transaction has no owning acknowledgement either.
+    loaded.messages.push_back(Message{"user", "second"});
+    ASSERT_NO_THROW(store.append_messages(loaded, 2));
+    ASSERT_NO_THROW(store.revise_messages(copied, {}));
+    ASSERT_NO_THROW(store.reconcile(loaded));
+    EXPECT_FALSE(absolute_checkpoint_reference(store.load_id(s.id, false).messages[0]));
+  }
+}
+
+TEST_F(PublicationFault, NestedFullReplacementSupersedesPendingRowsAfterExternalCommit) {
+  for (bool drop : {false, true}) {
+    TempDirectory temp;
+    NativeFileSystem files;
+    const auto root = temp.root / "artifacts";
+    const auto path = root / "results/owner/archive.json";
+    fs::create_directories(path.parent_path());
+    files.atomic_write(path, "{}", true);
+    StateStore store(files, temp.root / "state", root);
+    auto s = store.create();
+    Message cp;
+    cp.role = "system";
+    cp.message_id = "checkpoint";
+    cp.text = "summary";
+    cp.checkpoint_state = {{"recovery_record", path.string()}};
+    s.messages = {cp};
+    store.save(s);
+    auto *db = fault::observed_connection;
+    sqlite3_stmt *row = nullptr;
+    ASSERT_EQ(sqlite3_prepare_v2(db, "UPDATE session_messages SET payload=?", -1, &row, nullptr),
+              SQLITE_OK);
+    const auto original = Json(cp).dump();
+    sqlite3_bind_text(row, 1, original.c_str(), -1, SQLITE_TRANSIENT);
+    ASSERT_EQ(sqlite3_step(row), SQLITE_DONE);
+    sqlite3_finalize(row);
+    auto loaded = store.load_id(s.id, false);
+    db = fault::observed_connection;
+    if (drop)
+      loaded.messages.clear();
+    else
+      loaded.messages[0].text = "new summary";
+    ASSERT_EQ(sqlite3_exec(db, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr), SQLITE_OK);
+    ASSERT_NO_THROW(store.replace_history(loaded));
+    ASSERT_EQ(sqlite3_exec(db, "COMMIT", nullptr, nullptr, nullptr), SQLITE_OK);
+    const auto first = loaded.messages.size();
+    loaded.messages.push_back(Message{"user", "next"});
+    ASSERT_NO_THROW(store.append_messages(loaded, first));
+    ASSERT_NO_THROW(store.reconcile(loaded));
+  }
+}
+
+TEST_F(PublicationFault, OwningCheckpointAcknowledgementDoesNotAllocateAfterCommit) {
+  TempDirectory temp;
+  NativeFileSystem files;
+  const auto root = temp.root / "artifacts";
+  const auto path = root / "results/owner/archive.json";
+  fs::create_directories(path.parent_path());
+  files.atomic_write(path, "{}", true);
+  StateStore store(files, temp.root / "state", root);
+  auto s = store.create();
+  Message cp;
+  cp.role = "system";
+  cp.text = "summary";
+  cp.message_id = "checkpoint";
+  cp.checkpoint_state = {{"recovery_record", path.string()}};
+  s.messages = {cp};
+  store.save(s);
+  // Owning full replacement must keep its acknowledgement allocation-free too.
+  fault::after_commit = true;
+  fault::skip = 0;
+  bool failed = false;
+  try {
+    store.replace_history(s);
+  } catch (...) {
+    failed = true;
+  }
+  // Optional provider-cache population may consume the failure, without failing the commit.
+  fault::disable();
+  EXPECT_FALSE(failed);
+  s.messages.push_back(Message{"user", "next"});
+  fault::after_commit = true;
+  fault::fired = false;
+  try {
+    store.append_messages(s, 1);
+  } catch (...) {
+    failed = true;
+  }
+  const bool allocated = fault::fired;
+  fault::disable();
+  EXPECT_FALSE(failed);
+  EXPECT_FALSE(allocated);
+  EXPECT_NO_THROW(store.reconcile(s));
 }

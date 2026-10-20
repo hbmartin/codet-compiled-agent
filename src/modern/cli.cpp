@@ -742,7 +742,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   };
   if (will_run && o.command != "resume" && o.command != "fork")
     provider_preflight();
-  StateStore state(state_home, artifact_directory(config), config.durability);
+  StateStore state(files, state_home, artifact_directory(config), config.durability);
   if (o.command == "sessions") {
     std::cout << state.list().dump(2) << '\n';
     return 0;

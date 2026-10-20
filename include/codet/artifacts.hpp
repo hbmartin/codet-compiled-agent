@@ -34,6 +34,7 @@ struct RecoveryCandidate {
 std::string checked_artifact_identity(const FileSystem &, const fs::path &root, const fs::path &,
                                       ArtifactPolicy);
 fs::path remap_artifact_alias(const fs::path &, const fs::path &root, const fs::path &anchor);
+const std::string *absolute_checkpoint_reference(const Message &);
 bool normalize_checkpoint_reference(Message &, const FileSystem &, const fs::path &root,
                                     const fs::path &anchor);
 void cleanup_recovery_candidates(StateStore &, Tools &, const std::vector<RecoveryCandidate> &,

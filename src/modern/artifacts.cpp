@@ -129,16 +129,21 @@ fs::path remap_artifact_alias(const fs::path &value, const fs::path &root, const
              ? root / value.lexically_relative(anchor)
              : value;
 }
+const std::string *absolute_checkpoint_reference(const Message &message) {
+  if (!message.checkpoint_state.is_object())
+    return nullptr;
+  const auto ref = message.checkpoint_state.find("recovery_record");
+  if (ref == message.checkpoint_state.end() || !ref->is_string())
+    return nullptr;
+  const auto &value = ref->get_ref<const std::string &>();
+  return fs::path(value).is_absolute() ? &value : nullptr;
+}
 bool normalize_checkpoint_reference(Message &message, const FileSystem &files, const fs::path &root,
                                     const fs::path &anchor) {
-  if (!message.checkpoint_state.is_object())
+  const auto *reference = absolute_checkpoint_reference(message);
+  if (!reference)
     return false;
-  auto ref = message.checkpoint_state.find("recovery_record");
-  if (ref == message.checkpoint_state.end() || !ref->is_string())
-    return false;
-  const fs::path original(ref->get_ref<const std::string &>());
-  if (!original.is_absolute())
-    return false;
+  const fs::path original(*reference);
   try {
     const auto base = fs::absolute(root).lexically_normal();
     if (files.canonical(base) != anchor)
@@ -154,7 +159,7 @@ bool normalize_checkpoint_reference(Message &message, const FileSystem &files, c
         identity !=
             checked_artifact_identity(files, base, path, ArtifactPolicy::private_owned_regular))
       return false;
-    *ref = relative.string();
+    message.checkpoint_state["recovery_record"] = relative.string();
     return true;
   } catch (const std::bad_alloc &) {
     throw;
