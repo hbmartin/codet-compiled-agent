@@ -417,9 +417,26 @@ struct StateStore::Impl {
     if (!sqlite3_get_autocommit(db))
       throw Error("Transcript writes require their own transaction");
   }
+  struct DatabaseVersion {
+    sqlite3_int64 data = 0;
+    int changes = 0, schema = 0;
+    bool operator==(const DatabaseVersion &other) const {
+      return data == other.data && changes == other.changes && schema == other.schema;
+    }
+  };
+  DatabaseVersion database_version() const {
+    Statement data(db, "PRAGMA data_version");
+    if (sqlite3_step(data.p) != SQLITE_ROW)
+      throw Error("Cannot inspect reconciliation snapshot version");
+    const auto version = sqlite3_column_int64(data.p, 0);
+    Statement schema(db, "PRAGMA schema_version");
+    if (sqlite3_step(schema.p) != SQLITE_ROW)
+      throw Error("Cannot inspect reconciliation schema version");
+    return {version, sqlite3_total_changes(db), sqlite3_column_int(schema.p, 0)};
+  }
   enum class WriteKind : std::uint8_t { append, revise, replace };
   struct PreparedRow {
-    std::optional<Message> message;
+    Message message;
     std::shared_ptr<const std::string> payload;
     std::set<std::string> references;
   };
@@ -428,6 +445,7 @@ struct StateStore::Impl {
     size_t first = 0;
     bool blob = false;
     std::string blob_fingerprint;
+    std::optional<DatabaseVersion> legacy_version;
     std::map<size_t, PreparedRow> rows;
     std::map<size_t, std::set<std::string>> expected;
     std::shared_ptr<const SessionProjection> committed;
@@ -457,7 +475,14 @@ struct StateStore::Impl {
     PreparedTranscript plan;
     plan.kind = kind;
     plan.first = first;
+    const bool legacy_snapshot = s.checkpoint_projection &&
+                                 s.checkpoint_projection->session == s.id &&
+                                 !s.checkpoint_projection->blob_fingerprint.empty();
+    const auto version = legacy_snapshot && kind != WriteKind::replace
+                             ? std::optional<DatabaseVersion>(database_version())
+                             : std::nullopt;
     Transaction snapshot(db, false);
+    bool legacy_rows = false;
     std::vector<Message> materialized;
     {
       Statement format(db, "SELECT message_format,messages FROM sessions WHERE id=?");
@@ -466,13 +491,29 @@ struct StateStore::Impl {
       if (status != SQLITE_ROW && status != SQLITE_DONE)
         sql_read_error(db, "Cannot inspect transcript storage", status);
       plan.blob = status == SQLITE_ROW && sqlite3_column_int(format.p, 0) == 0;
+      legacy_rows = legacy_snapshot && !plan.blob;
+      std::vector<Message> stored;
       if (plan.blob) {
         const auto bytes = column(format.p, 1);
         plan.blob_fingerprint = digest(bytes);
-        if (s.checkpoint_projection && !s.checkpoint_projection->blob_fingerprint.empty() &&
-            s.checkpoint_projection->blob_fingerprint != plan.blob_fingerprint)
+        if (legacy_snapshot && s.checkpoint_projection->blob_fingerprint != plan.blob_fingerprint)
           throw Error("Session modified by another process: legacy transcript changed");
-        auto stored = session_json<std::vector<Message>>(bytes);
+        stored = session_json<std::vector<Message>>(bytes);
+      } else if (legacy_rows && kind != WriteKind::replace) {
+        plan.legacy_version = version;
+        Statement rows(
+            db, "SELECT position,payload FROM session_messages WHERE session=? ORDER BY position");
+        rows.text(1, s.id);
+        int status;
+        while ((status = sqlite3_step(rows.p)) == SQLITE_ROW) {
+          if (sqlite3_column_int64(rows.p, 0) != static_cast<sqlite3_int64>(stored.size()))
+            throw StoredDataCorruption("Corrupt session messages: noncontiguous positions");
+          stored.push_back(session_json<Message>(column(rows.p, 1)));
+        }
+        if (status != SQLITE_DONE)
+          sql_read_error(db, "Cannot inspect converted legacy transcript", status);
+      }
+      if (plan.blob || plan.legacy_version) {
         portable_messages(stored, s.id);
         ensure_message_ids(stored);
         materialized = s.messages;
@@ -491,14 +532,16 @@ struct StateStore::Impl {
             if ((kind == WriteKind::append || !requested.count(i)) &&
                 (i >= materialized.size() || Json(stored[i]) != Json(materialized[i])))
               throw Error("Unrequested legacy transcript message changed");
-        positions.clear();
-        for (size_t i = 0; i < materialized.size(); ++i)
-          positions.push_back(i);
+        if (plan.blob) {
+          positions.clear();
+          for (size_t i = 0; i < materialized.size(); ++i)
+            positions.push_back(i);
+        }
       }
     }
     const auto previous = s.checkpoint_projection;
-    bool provenance_changed =
-        kind == WriteKind::replace || plan.blob || (previous && !previous->pending.empty());
+    bool provenance_changed = kind == WriteKind::replace || plan.blob || legacy_rows ||
+                              (previous && !previous->pending.empty());
     for (const auto position : positions)
       provenance_changed = provenance_changed ||
                            absolute_checkpoint_reference(s.messages.at(position)) ||
@@ -525,7 +568,7 @@ struct StateStore::Impl {
         }
     }
     std::map<std::string, std::string> names, references;
-    if (!plan.blob && !canonical) {
+    if (!plan.blob && !plan.legacy_version && !canonical) {
       std::set<std::string> needed;
       for (const auto position : positions) {
         const auto &message = s.messages.at(position);
@@ -554,7 +597,7 @@ struct StateStore::Impl {
         expect_source(position);
       const auto &input = s.messages.at(position);
       auto message =
-          plan.blob ? std::move(materialized.at(position))
+          (plan.blob || plan.legacy_version) ? std::move(materialized.at(position))
           : canonical
               ? input
               : lexical(input, s.id, position,
@@ -571,13 +614,13 @@ struct StateStore::Impl {
       }
       auto payload = std::make_shared<const std::string>(safe_json(Json(message)).dump());
       auto paths = message_references(message);
-      plan.rows[position] = {std::move(message), std::move(payload), std::move(paths)};
+      plan.rows.insert_or_assign(
+          position, PreparedRow{std::move(message), std::move(payload), std::move(paths)});
     }
     for (auto row = compact->mappings.begin(); row != compact->mappings.end();) {
       const auto position = row->first;
       const auto prepared = plan.rows.find(position);
-      const Message *message = prepared != plan.rows.end() && prepared->second.message
-                                   ? &*prepared->second.message
+      const Message *message = prepared != plan.rows.end()    ? &prepared->second.message
                                : position < s.messages.size() ? &s.messages[position]
                                                               : nullptr;
       if (!message || !message->checkpoint_state.is_object() ||
@@ -595,10 +638,14 @@ struct StateStore::Impl {
         entry.second.insert(digest(*target->second.payload));
     }
     for (const auto &entry : plan.rows)
-      plan.retirement.prepare(publish_memory ? s.messages.at(entry.first) : *entry.second.message);
+      plan.retirement.prepare(publish_memory ? s.messages.at(entry.first) : entry.second.message);
     plan.committed = provenance_changed ? std::move(compact) : previous;
     snapshot.commit();
     return plan;
+  }
+  void verify_prepared_version(const PreparedTranscript &plan) const {
+    if (plan.legacy_version && !(database_version() == *plan.legacy_version))
+      throw Error("Session changed before legacy transcript handoff");
   }
   void apply_prepared_transcript(const Session &s, const PreparedTranscript &plan) {
     if (plan.blob) {
@@ -655,16 +702,15 @@ struct StateStore::Impl {
   static void publish_transcript(Session &s, PreparedTranscript &plan) noexcept {
     static_assert(std::is_nothrow_swappable<Message>::value, "Message publication must not throw");
     for (auto &row : plan.rows)
-      if (row.second.message && row.first < s.messages.size()) {
-        std::swap(s.messages[row.first], *row.second.message);
-        plan.retirement.retire(*row.second.message);
+      if (row.first < s.messages.size()) {
+        std::swap(s.messages[row.first], row.second.message);
+        plan.retirement.retire(row.second.message);
       }
     s.checkpoint_projection = std::move(plan.committed);
   }
   static void discard_prepared(PreparedTranscript &plan) noexcept {
     for (auto &row : plan.rows)
-      if (row.second.message)
-        plan.retirement.retire(*row.second.message);
+      plan.retirement.retire(row.second.message);
   }
   struct JournalEntry {
     std::string result, status, name, args;
@@ -807,23 +853,6 @@ struct StateStore::Impl {
       if (Json(left[a++]) != Json(right[b++]))
         return false;
     }
-  }
-  struct DatabaseVersion {
-    sqlite3_int64 data = 0;
-    int changes = 0, schema = 0;
-    bool operator==(const DatabaseVersion &other) const {
-      return data == other.data && changes == other.changes && schema == other.schema;
-    }
-  };
-  DatabaseVersion database_version() const {
-    Statement data(db, "PRAGMA data_version");
-    if (sqlite3_step(data.p) != SQLITE_ROW)
-      throw Error("Cannot inspect reconciliation snapshot version");
-    const auto version = sqlite3_column_int64(data.p, 0);
-    Statement schema(db, "PRAGMA schema_version");
-    if (sqlite3_step(schema.p) != SQLITE_ROW)
-      throw Error("Cannot inspect reconciliation schema version");
-    return {version, sqlite3_total_changes(db), sqlite3_column_int(schema.p, 0)};
   }
   void apply_tool_result(const std::string &id, const ToolCall &call,
                          const std::string &payload) const {
@@ -1492,6 +1521,7 @@ void StateStore::reconcile(Session &destination, bool persist) {
       Transaction publication(impl_->db);
       stale = !(impl_->database_version() == version);
       if (!stale) {
+        impl_->verify_prepared_version(prepared);
         Statement write(
             impl_->db,
             "INSERT INTO tools(session,call_id,name,args,result,status) VALUES(?,?,?,?,?,?) "
@@ -1722,6 +1752,7 @@ void StateStore::append_transcript(const Session &source, Session *destination, 
   auto prepared = impl_->prepare(source, std::move(positions), Impl::WriteKind::append, first, "",
                                  destination != nullptr);
   Transaction tx(impl_->db);
+  impl_->verify_prepared_version(prepared);
   update_metadata(source);
   impl_->apply_prepared_transcript(source, prepared);
   if (provider_state)
@@ -1749,6 +1780,7 @@ void StateStore::revise_transcript(const Session &source, Session *destination,
   auto prepared =
       impl_->prepare(source, positions, Impl::WriteKind::revise, 0, "", destination != nullptr);
   Transaction tx(impl_->db);
+  impl_->verify_prepared_version(prepared);
   impl_->apply_prepared_transcript(source, prepared);
   tx.commit();
   if (destination)
@@ -1771,6 +1803,7 @@ void StateStore::replace_transcript(const Session &source, Session *destination)
   auto prepared = impl_->prepare(source, std::move(positions), Impl::WriteKind::replace, 0, "",
                                  destination != nullptr);
   Transaction tx(impl_->db);
+  impl_->verify_prepared_version(prepared);
   update_metadata(source);
   impl_->apply_prepared_transcript(source, prepared);
   save_provider_state(source);
@@ -1803,6 +1836,7 @@ void StateStore::complete_tool(Session &s, const ToolCall &call, Message result)
     auto prepared = impl_->prepare(s, {first}, Impl::WriteKind::append, first, call.name);
     const auto &row = prepared.rows.at(first);
     Transaction tx(impl_->db);
+    impl_->verify_prepared_version(prepared);
     impl_->apply_tool_result(s.id, call, *row.payload);
     update_metadata(s);
     impl_->apply_prepared_transcript(s, prepared);

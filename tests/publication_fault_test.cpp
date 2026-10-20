@@ -19,9 +19,9 @@ bool read_failed = false;
 sqlite3 *observed_connection = nullptr;
 size_t steps_after_failure = 0, checkpoint_reads = 0;
 int countdown = -1, skip = 0;
-std::function<void()> provider_read_done, journal_read_done;
+std::function<void()> provider_read_done, journal_read_done, before_write;
 bool measure_allocations = false;
-size_t largest_allocation = 0, journal_reads = 0;
+size_t largest_allocation = 0, journal_reads = 0, transcript_rows_read = 0;
 const char *failed_query = nullptr;
 int failed_status = SQLITE_IOERR;
 bool failed_allocation = false, failed_rollback = false;
@@ -35,6 +35,7 @@ void disable() noexcept {
   infrastructure_error = false;
   provider_read_done = {};
   journal_read_done = {};
+  before_write = {};
   measure_allocations = false;
   failed_query = nullptr;
   failed_allocation = failed_rollback = false;
@@ -77,6 +78,11 @@ extern "C" int sqlite3_exec(sqlite3 *db, const char *sql,
   using Execute =
       int (*)(sqlite3 *, const char *, int (*)(void *, int, char **, char **), void *, char **);
   static const auto execute = reinterpret_cast<Execute>(dlsym(RTLD_NEXT, "sqlite3_exec"));
+  if (std::strcmp(sql, "BEGIN IMMEDIATE") == 0 && fault::before_write) {
+    auto callback = std::move(fault::before_write);
+    fault::before_write = {};
+    callback();
+  }
   const bool write_commit =
       std::strcmp(sql, "COMMIT") == 0 && sqlite3_txn_state(db, "main") == SQLITE_TXN_WRITE;
   const int result = execute(db, sql, callback, context, error);
@@ -88,6 +94,10 @@ extern "C" int sqlite3_exec(sqlite3 *db, const char *sql,
 }
 extern "C" int sqlite3_step(sqlite3_stmt *statement) {
   fault::observed_connection = sqlite3_db_handle(statement);
+  if (std::strcmp(
+          sqlite3_sql(statement),
+          "SELECT position,payload FROM session_messages WHERE session=? ORDER BY position") == 0)
+    ++fault::transcript_rows_read;
   if (std::strcmp(sqlite3_sql(statement),
                   "SELECT payload FROM session_messages WHERE session=? AND position=?") == 0)
     ++fault::checkpoint_reads;
@@ -190,7 +200,7 @@ struct PublicationFault : testing::Test {
     fault::fired = false;
     fault::steps_after_failure = fault::checkpoint_reads = 0;
     fault::observed_connection = nullptr;
-    fault::journal_reads = fault::largest_allocation = 0;
+    fault::journal_reads = fault::largest_allocation = fault::transcript_rows_read = 0;
   }
   void TearDown() override {
     fault::disable();
@@ -913,4 +923,30 @@ TEST_F(PublicationFault, OptionalTokenSnapshotLossUsesAlreadyCapturedLoadInputs)
   EXPECT_NE(loaded.messages.back().text.find("not_started"), std::string::npos);
   EXPECT_EQ(f.store.provider_cache_bytes(), 0u);
   EXPECT_NO_THROW(f.store.reconcile(loaded));
+}
+
+TEST_F(PublicationFault, LegacySnapshotHandoffChecksItsVersionThenRestoresSuffixOnlyWrites) {
+  ProjectionFixture f(true);
+  auto copied = f.session;
+  f.store.revise_messages(f.session, {});
+  copied.messages.push_back(Message{"user", "first suffix"});
+  const auto incoming = Json(copied.messages);
+  const auto provenance = copied.checkpoint_projection;
+  bool fired = false;
+  fault::before_write = [&] {
+    fired = true;
+    f.exec("UPDATE sessions SET status='concurrent metadata'");
+  };
+  EXPECT_THROW(f.store.append_messages(copied, 1), Error);
+  EXPECT_TRUE(fired);
+  EXPECT_FALSE(fault::before_write);
+  EXPECT_EQ(Json(copied.messages), incoming);
+  EXPECT_EQ(copied.checkpoint_projection, provenance);
+  EXPECT_EQ(f.value("SELECT count(*) FROM session_messages"), "1");
+  EXPECT_NO_THROW(f.store.append_messages(copied, 1)); // Same snapshot, after the stale attempt.
+  fault::transcript_rows_read = fault::checkpoint_reads = 0;
+  copied.messages.push_back(Message{"user", "ordinary suffix"});
+  EXPECT_NO_THROW(f.store.append_messages(copied, 2));
+  EXPECT_EQ(fault::transcript_rows_read, 0u);
+  EXPECT_EQ(fault::checkpoint_reads, 0u);
 }

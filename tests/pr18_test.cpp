@@ -1988,3 +1988,30 @@ TEST_F(Pr23, CopiedBlobProjectionRejectsADifferentCommittedCheckpointAfterConver
   EXPECT_EQ(raw.value("SELECT count(*) FROM session_messages WHERE session='" + first.id + "'"),
             "1");
 }
+TEST_F(Pr23, ConvertedBlobSnapshotsValidateUntouchedOrdinaryRowsBeforeWriting) {
+  StateStore state(files, config.state_root);
+  Db raw(config.state_root / "state.sqlite3");
+  auto first = blob(state, raw);
+  auto stale = first;
+  first.messages[0].text = "committed ordinary prefix";
+  state.revise_messages(first, {0});
+  stale.messages.push_back(codet::Message{"user", "stale suffix"});
+  EXPECT_THROW(state.append_messages(stale, 2), Error);
+  stale.messages.pop_back();
+  stale.messages[1].text = "requested reply revision";
+  EXPECT_THROW(state.revise_messages(stale, {1}), Error);
+  EXPECT_THAT(row(raw, first), HasSubstr("committed ordinary prefix"));
+  EXPECT_EQ(raw.value("SELECT count(*) FROM session_messages WHERE session='" + first.id + "'"),
+            "2");
+  stale.messages[0] = first.messages[0];
+  EXPECT_NO_THROW(state.revise_messages(stale, {1}));
+  EXPECT_EQ(Json(state.load_id(stale.id, false).messages), Json(stale.messages));
+
+  auto constant = blob(state, raw);
+  const Session &view = constant;
+  constant.messages.push_back(codet::Message{"user", "first suffix"});
+  EXPECT_NO_THROW(state.append_messages(view, 2));
+  constant.messages.push_back(codet::Message{"user", "second suffix"});
+  EXPECT_NO_THROW(state.append_messages(view, 3));
+  EXPECT_EQ(state.load_id(constant.id, false).messages.size(), 4u);
+}

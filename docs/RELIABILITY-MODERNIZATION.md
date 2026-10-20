@@ -240,7 +240,9 @@ append or revision to restore removed rows.
 A legacy blob is converted from verified stored history. Append requires the stored count to equal
 the append boundary and an unchanged prefix; revision requires matching length and unchanged
 unrequested positions. A mismatch fails before conversion. Explicit replacement intentionally
-replaces the full history. Canonical IDs retain their position-sensitive formula and provider source
+replaces the full history. A legacy snapshot whose storage was converted by another write verifies
+untouched row content and a preparation version before publication. An owning success retires that
+legacy check; an unchanged const snapshot keeps verifying it until refreshed. Canonical IDs retain their position-sensitive formula and provider source
 associations; owning commits publish the same canonical messages to memory and storage.
 
 Loads capture transcript, provider rows/revision and required journal records in one read snapshot,
