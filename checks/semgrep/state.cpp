@@ -198,3 +198,39 @@ void StateStore::reconcile(Session &destination, bool persist) {
   // ok: codet-recovery-prepared-result
   const auto canonical = prepared.rows.at(position).payload;
 }
+Json StateStore::repair(...) {
+  // ruleid: codet-session-scoped-preparation-version
+  Statement version(db, "PRAGMA data_version");
+  // ruleid: codet-session-scoped-preparation-version
+  auto changes = sqlite3_total_changes(db);
+  // ok: codet-session-scoped-preparation-version
+  stale = !impl_->session_current(id, version, true);
+}
+void StateStore::append_transcript(...) {
+  impl_->require_owned_write();
+  {
+    // ruleid: codet-transcript-selected-revision-guard
+    Transaction tx(db);
+    impl_->apply_prepared_transcript(s, prepared);
+    tx.commit();
+  }
+}
+void StateStore::revise_transcript(...) {
+  impl_->require_owned_write();
+  {
+    // ok: codet-transcript-selected-revision-guard
+    Transaction tx(db);
+    if (!impl_->prepared_current(s.id, prepared))
+      continue;
+    impl_->apply_prepared_transcript(s, prepared);
+    tx.commit();
+  }
+}
+struct RecoveryPreparationFixture {
+  PreparedTranscript prepare_recovered(...) {
+    // ruleid: codet-recovery-prepared-result
+    auto unsafe = safe_json(Json(result)).dump();
+    // ok: codet-recovery-prepared-result
+    auto canonical = plan.rows.at(position).payload;
+  }
+};

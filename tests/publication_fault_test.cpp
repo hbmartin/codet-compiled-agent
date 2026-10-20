@@ -377,6 +377,12 @@ TEST_F(PublicationFault, TokenAllocationAndQueryFailuresLeaveValidLoadsSuccessfu
       failed = true;
     }
     fault::disable();
+    if (mode == 2) {
+      EXPECT_TRUE(failed);
+      EXPECT_NO_THROW(loaded = store.load_id(s.id, false));
+      EXPECT_EQ(loaded.provider_state, s.provider_state);
+      continue;
+    }
     EXPECT_FALSE(failed);
     if (mode == 0)
       EXPECT_TRUE(fault::fired);
@@ -937,16 +943,179 @@ TEST_F(PublicationFault, LegacySnapshotHandoffChecksItsVersionThenRestoresSuffix
     fired = true;
     f.exec("UPDATE sessions SET status='concurrent metadata'");
   };
-  EXPECT_THROW(f.store.append_messages(copied, 1), Error);
+  EXPECT_NO_THROW(f.store.append_messages(copied, 1));
   EXPECT_TRUE(fired);
   EXPECT_FALSE(fault::before_write);
-  EXPECT_EQ(Json(copied.messages), incoming);
-  EXPECT_EQ(copied.checkpoint_projection, provenance);
-  EXPECT_EQ(f.value("SELECT count(*) FROM session_messages"), "1");
-  EXPECT_NO_THROW(f.store.append_messages(copied, 1)); // Same snapshot, after the stale attempt.
+  EXPECT_EQ(copied.messages[0].message_id, incoming[0]["message_id"]);
+  EXPECT_NE(copied.checkpoint_projection, provenance);
+  EXPECT_EQ(f.value("SELECT count(*) FROM session_messages"), "2");
   fault::transcript_rows_read = fault::checkpoint_reads = 0;
   copied.messages.push_back(Message{"user", "ordinary suffix"});
   EXPECT_NO_THROW(f.store.append_messages(copied, 2));
+  EXPECT_EQ(fault::transcript_rows_read, 0u);
+  EXPECT_EQ(fault::checkpoint_reads, 0u);
+}
+
+TEST_F(PublicationFault, SessionRevisionRetriesOnlySelectedChangesAndKeepsToolOutput) {
+  for (bool unrelated : {false, true})
+    for (int invalidations : {1, 2}) {
+      SCOPED_TRACE(std::to_string(unrelated) + ":" + std::to_string(invalidations));
+      ProjectionFixture f(true);
+      auto copied = f.session;
+      f.store.revise_messages(f.session, {});
+      auto other = f.store.create();
+      Message assistant;
+      assistant.role = "assistant";
+      ToolCall call{"completed-once", "exec_command", Json::object()};
+      assistant.calls = {call};
+      copied.messages.push_back(assistant);
+      f.store.append_messages(copied, 1);
+      f.store.tool_started(copied.id, call);
+      int executed = 0, commits = 0;
+      Message result;
+      result.role = "tool";
+      result.tool_call_id = call.id;
+      result.text = "returned output " + std::to_string(++executed);
+      std::function<void()> commit;
+      commit = [&] {
+        ++commits;
+        f.exec(("UPDATE sessions SET status='changed-" + std::to_string(commits) + "' WHERE id='" +
+                (unrelated ? other.id : copied.id) + "'")
+                   .c_str());
+        if (commits < invalidations)
+          fault::before_write = commit;
+      };
+      fault::before_write = commit;
+      std::string failure;
+      try {
+        f.store.complete_tool(copied, call, result);
+      } catch (const Error &error) {
+        failure = error.what();
+      }
+      fault::before_write = {};
+      EXPECT_EQ(executed, 1);
+      if (unrelated || invalidations == 1) {
+        EXPECT_TRUE(failure.empty()) << failure;
+        EXPECT_EQ(copied.messages.back().text, result.text);
+        EXPECT_EQ(f.value("SELECT result FROM tools WHERE call_id='completed-once'"),
+                  Json(copied.messages.back()).dump());
+        EXPECT_EQ(commits, unrelated ? 1 : invalidations);
+      } else {
+        EXPECT_NE(failure.find("changed twice"), std::string::npos) << failure;
+        EXPECT_NE(failure.find("tool result preserved at"), std::string::npos) << failure;
+        EXPECT_EQ(f.value("SELECT status FROM tools WHERE call_id='completed-once'"), "running");
+        EXPECT_EQ(copied.messages.size(), 2u);
+      }
+    }
+}
+TEST_F(PublicationFault, RepairSelectedSameConnectionChangesRetryAndUnrelatedChangesDoNot) {
+  for (bool unrelated : {false, true})
+    for (int invalidations : {1, 2}) {
+      ProjectionFixture f;
+      Config config;
+      config.home = f.temp.root / "home";
+      config.cwd = f.temp.root;
+      config.state_root = f.temp.root / "state";
+      config.artifact_root = f.root;
+      config.roots = {f.temp.root};
+      NativeProcesses processes;
+      NoHttp http;
+      SystemClock clock;
+      Tools tools(config, f.files, processes, http, clock);
+      auto other = f.store.create();
+      int commits = 0;
+      std::function<void()> commit;
+      commit = [&] {
+        ++commits;
+        f.exec(("UPDATE sessions SET name='changed-" + std::to_string(commits) + "' WHERE id='" +
+                (unrelated ? other.id : f.session.id) + "'")
+                   .c_str());
+        if (commits < invalidations)
+          fault::before_write = commit;
+      };
+      fault::before_write = commit;
+      std::string failure;
+      Json report;
+      try {
+        report = f.store.repair(f.session.id, false, true, false, tools);
+      } catch (const Error &error) {
+        failure = error.what();
+      }
+      fault::before_write = {};
+      if (unrelated || invalidations == 1) {
+        EXPECT_TRUE(failure.empty()) << failure;
+        EXPECT_EQ(commits, unrelated ? 1 : invalidations);
+        EXPECT_EQ(report.contains("backups"), !unrelated && invalidations == 1);
+      } else {
+        EXPECT_NE(failure.find("changed twice"), std::string::npos) << failure;
+        EXPECT_NE(failure.find("; backup:"), std::string::npos);
+      }
+    }
+}
+TEST_F(PublicationFault, RequiredSessionRevisionFailuresAbortWithoutMutationOrFurtherReads) {
+  for (bool rollback : {false, true})
+    for (int status : {SQLITE_IOERR, SQLITE_BUSY, SQLITE_CORRUPT, SQLITE_NOMEM}) {
+      ProjectionFixture f;
+      const auto stored = f.value("SELECT payload FROM session_messages WHERE position=0");
+      fault::failed_query = "SELECT revision FROM session_revisions WHERE session=?";
+      fault::failed_status = status;
+      fault::failed_allocation = status == SQLITE_NOMEM;
+      fault::failed_rollback = rollback;
+      fault::steps_after_failure = 0;
+      std::string failure;
+      try {
+        (void)f.store.load_id(f.session.id);
+        FAIL();
+      } catch (const std::bad_alloc &) {
+        failure = "allocation";
+      } catch (const Error &error) {
+        failure = error.what();
+      }
+      const auto consumed = fault::failed_query == nullptr;
+      const auto steps = fault::steps_after_failure;
+      fault::disable();
+      EXPECT_TRUE(consumed);
+      EXPECT_EQ(steps, 0u);
+      EXPECT_NE(
+          failure.find(status == SQLITE_NOMEM ? "allocation" : "Cannot inspect session revision"),
+          std::string::npos)
+          << failure;
+      EXPECT_EQ(f.value("SELECT payload FROM session_messages WHERE position=0"), stored);
+      EXPECT_NO_THROW(f.store.save(f.session));
+    }
+}
+TEST_F(PublicationFault, ConstLegacyValidationSerializesOnlySuffixAndMutableHandoffPublishesIds) {
+  ProjectionFixture f(true);
+  std::vector<Message> history = f.session.messages;
+  for (int i = 0; i < 128; ++i)
+    history.push_back(Message{"user", std::string(1024, 'a')});
+  const auto blob = Json(history).dump();
+  sqlite3_stmt *update = nullptr;
+  ASSERT_EQ(sqlite3_prepare_v2(f.db, "UPDATE sessions SET messages=?", -1, &update, nullptr),
+            SQLITE_OK);
+  sqlite3_bind_text(update, 1, blob.c_str(), -1, SQLITE_TRANSIENT);
+  ASSERT_EQ(sqlite3_step(update), SQLITE_DONE);
+  sqlite3_finalize(update);
+  f.session = f.store.load_id(f.session.id, false);
+  const Session &view = f.session;
+  f.store.revise_messages(view, {});
+  for (bool mutable_write : {false, true}) {
+    auto first = f.session.messages.size();
+    f.session.messages.push_back(Message{"user", "new suffix"});
+    fault::transcript_rows_read = fault::checkpoint_reads = 0;
+    const auto bytes = f.store.serialized_bytes();
+    if (mutable_write)
+      f.store.append_messages(f.session, first);
+    else
+      f.store.append_messages(view, first);
+    EXPECT_GT(fault::transcript_rows_read, 128u);
+    EXPECT_LT(f.store.serialized_bytes() - bytes, 1024u);
+  }
+  EXPECT_EQ(Json(f.store.load_id(f.session.id, false).messages), Json(f.session.messages));
+  fault::transcript_rows_read = fault::checkpoint_reads = 0;
+  auto first = f.session.messages.size();
+  f.session.messages.push_back(Message{"user", "ordinary append"});
+  f.store.append_messages(f.session, first);
   EXPECT_EQ(fault::transcript_rows_read, 0u);
   EXPECT_EQ(fault::checkpoint_reads, 0u);
 }
