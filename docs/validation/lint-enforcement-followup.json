@@ -1,0 +1,412 @@
+{
+  "recorded_utc": "2026-10-20T23:47:26.902055+00:00",
+  "implementation_commit": "0cc77e1c2130d153611f29dff77df708cb2a1f79",
+  "baseline": "f440a26d191d94c82154572e23a7248db489bbec",
+  "branch": "codex/lint-enforcement-followup",
+  "pushed": false,
+  "pull_request_opened": false,
+  "boundaries": {
+    "schema_version": 8,
+    "revision_schema_and_triggers_unchanged": true,
+    "existing_session_and_constructor_overloads_preserved": true,
+    "native_analyzer_policy_and_suppressions_unchanged": true,
+    "new_api": "StateStore::StartupOptions and additive filesystem-backed constructor",
+    "tiger_runtime_executed": false,
+    "base_note": "Fresh main already includes merged recovery PR #27; this diff contains only the enforcement/startup follow-up."
+  },
+  "runtime_checks": {
+    "macos": {
+      "passed": true,
+      "ctest_groups": 9,
+      "fault_tests": 41,
+      "unit_tests_passed": 473,
+      "unit_tests_total": 475,
+      "unit_tests_skipped": 2,
+      "cli_tests": 56,
+      "log": "build/enforcement-macos-ctest.log"
+    },
+    "linux_amd64": {
+      "passed": true,
+      "ctest_groups": 9,
+      "fault_tests": 41,
+      "unit_tests_passed": 470,
+      "unit_tests_total": 475,
+      "unit_tests_skipped": 5,
+      "cli_tests": 56,
+      "log": "build/enforcement-linux-ctest.log"
+    },
+    "asan_ubsan": {
+      "passed": true,
+      "ctest_groups": 9,
+      "fault_tests": 41,
+      "unit_tests_passed": 470,
+      "unit_tests_total": 475,
+      "unit_tests_skipped": 5,
+      "cli_tests": 56,
+      "log": "build/enforcement-sanitize-ctest.log"
+    }
+  },
+  "foundation": {
+    "passed": true,
+    "ctest_groups": 1
+  },
+  "delayed_signal_checks": {
+    "passed": true,
+    "startup_delay_seconds": 1,
+    "tests_per_run": 2,
+    "sanitizer_repetitions": 3,
+    "logs": [
+      "build/enforcement-macos-delayed.log",
+      "build/enforcement-linux-delayed.log",
+      "build/enforcement-sanitize-delayed-1.log",
+      "build/enforcement-sanitize-delayed-2.log",
+      "build/enforcement-sanitize-delayed-3.log"
+    ]
+  },
+  "analyzers": {
+    "passed": true,
+    "sources_per_tool": 25,
+    "tools": [
+      {
+        "tool": "clang-tidy",
+        "passed": true,
+        "findings": 0
+      },
+      {
+        "tool": "cppcheck",
+        "passed": true,
+        "findings": 0
+      },
+      {
+        "tool": "clang-analyzer",
+        "passed": true,
+        "findings": 0
+      }
+    ],
+    "real_header_canaries": 15,
+    "selftests": {
+      "clang-tidy": true,
+      "cppcheck": true,
+      "clang-analyzer": true
+    },
+    "runner_tests": 37,
+    "manifest_sha256": "7a891762aad0dbfa82a9bde8d2edce37b6851c795650f2e959a15f306e6e7e7c",
+    "canary_expectations": [
+      {
+        "source": "/project/build/recovery-repair/analysis/cppcheck/actual-headers.c",
+        "expectation": "defective",
+        "expected_diagnostic": "arrayIndexOutOfBounds",
+        "library_model": null,
+        "passed": true
+      },
+      {
+        "source": "/project/build/recovery-repair/analysis/cppcheck/actual-headers.cpp",
+        "expectation": "defective",
+        "expected_diagnostic": "arrayIndexOutOfBounds",
+        "library_model": null,
+        "passed": true
+      },
+      {
+        "source": "/project/build/recovery-repair/analysis/cppcheck/library-posix-defective.cpp",
+        "expectation": "defective",
+        "expected_diagnostic": "leakReturnValNotUsed",
+        "library_model": "posix",
+        "passed": true
+      },
+      {
+        "source": "/project/build/recovery-repair/analysis/cppcheck/library-posix-safe.cpp",
+        "expectation": "clean",
+        "expected_diagnostic": null,
+        "library_model": "posix",
+        "passed": true
+      },
+      {
+        "source": "/project/build/recovery-repair/analysis/cppcheck/library-bsd-defective.cpp",
+        "expectation": "defective",
+        "expected_diagnostic": "nullPointer",
+        "library_model": "bsd",
+        "passed": true
+      },
+      {
+        "source": "/project/build/recovery-repair/analysis/cppcheck/library-bsd-safe.cpp",
+        "expectation": "clean",
+        "expected_diagnostic": null,
+        "library_model": "bsd",
+        "passed": true
+      },
+      {
+        "source": "/project/build/recovery-repair/analysis/cppcheck/library-libcurl-defective.cpp",
+        "expectation": "defective",
+        "expected_diagnostic": "leakReturnValNotUsed",
+        "library_model": "libcurl",
+        "passed": true
+      },
+      {
+        "source": "/project/build/recovery-repair/analysis/cppcheck/library-libcurl-safe.cpp",
+        "expectation": "clean",
+        "expected_diagnostic": null,
+        "library_model": "libcurl",
+        "passed": true
+      },
+      {
+        "source": "/project/build/recovery-repair/analysis/cppcheck/library-openssl-defective.cpp",
+        "expectation": "defective",
+        "expected_diagnostic": "leakReturnValNotUsed",
+        "library_model": "openssl",
+        "passed": true
+      },
+      {
+        "source": "/project/build/recovery-repair/analysis/cppcheck/library-openssl-safe.cpp",
+        "expectation": "clean",
+        "expected_diagnostic": null,
+        "library_model": "openssl",
+        "passed": true
+      },
+      {
+        "source": "/project/build/recovery-repair/analysis/cppcheck/library-sqlite3-defective.cpp",
+        "expectation": "defective",
+        "expected_diagnostic": "leakReturnValNotUsed",
+        "library_model": "sqlite3",
+        "passed": true
+      },
+      {
+        "source": "/project/build/recovery-repair/analysis/cppcheck/library-sqlite3-safe.cpp",
+        "expectation": "clean",
+        "expected_diagnostic": null,
+        "library_model": "sqlite3",
+        "passed": true
+      },
+      {
+        "source": "/project/build/recovery-repair/analysis/cppcheck/library-zlib-defective.cpp",
+        "expectation": "defective",
+        "expected_diagnostic": "leakReturnValNotUsed",
+        "library_model": "zlib",
+        "passed": true
+      },
+      {
+        "source": "/project/build/recovery-repair/analysis/cppcheck/library-zlib-safe.cpp",
+        "expectation": "clean",
+        "expected_diagnostic": null,
+        "library_model": "zlib",
+        "passed": true
+      },
+      {
+        "source": "/project/build/recovery-repair/analysis/cppcheck/suppressed-fatal.cpp",
+        "expectation": "fatal",
+        "expected_diagnostic": null,
+        "library_model": null,
+        "passed": true
+      }
+    ]
+  },
+  "canary_preprocessing": {
+    "before_runs": 76,
+    "after_runs": 52,
+    "library_runs_before": 24,
+    "library_runs_after": 0,
+    "token_equivalence_verified": true
+  },
+  "lint": {
+    "passed": true,
+    "runner_tests": 9,
+    "report_utility_tests": 6,
+    "groups": {
+      "format": {
+        "passed": true,
+        "tools": [
+          {
+            "tool": "clang-format",
+            "version": "clang-format version 18.1.8\n",
+            "parsed_version": "18.1.8",
+            "passed": true
+          }
+        ]
+      },
+      "python": {
+        "passed": true,
+        "tools": [
+          {
+            "tool": "ruff",
+            "version": "ruff 0.17.1\n",
+            "parsed_version": "0.17.1",
+            "passed": true
+          }
+        ]
+      },
+      "shell": {
+        "passed": true,
+        "tools": [
+          {
+            "tool": "shellcheck",
+            "version": "ShellCheck - shell script analysis tool\nversion: 0.11.0\nlicense: GNU General Public License, version 3\nwebsite: https://www.shellcheck.net\n",
+            "parsed_version": "0.11.0",
+            "passed": true
+          },
+          {
+            "tool": "shfmt",
+            "version": "v3.14.1\n",
+            "parsed_version": "3.14.1",
+            "passed": true
+          }
+        ]
+      },
+      "workflows": {
+        "passed": true,
+        "tools": [
+          {
+            "tool": "actionlint",
+            "version": "v1.7.12\ninstalled by building from source\nbuilt with go1.27.2 compiler for darwin/arm64\n",
+            "parsed_version": "1.7.12",
+            "passed": true
+          },
+          {
+            "tool": "zizmor",
+            "version": "zizmor 1.30.1\n",
+            "parsed_version": "1.30.1",
+            "passed": true
+          }
+        ]
+      }
+    },
+    "go_version": "go version go1.27.2 darwin/arm64",
+    "python_compatibility": {
+      "interpreter": "/usr/bin/python3",
+      "version": "Python 3.9.6",
+      "provisioning": [
+        {
+          "target": "fetch-semgrep",
+          "exit_code": 2,
+          "diagnostic": "Provisioning requires Python 3.12+; set SEMGREP_PYTHON to a compatible interpreter.\nmake: *** [fetch-semgrep] Error 1\n"
+        },
+        {
+          "target": "fetch-lint-tools",
+          "exit_code": 2,
+          "diagnostic": "Provisioning requires Python 3.12+; set LINT_PYTHON to a compatible interpreter.\nmake: *** [fetch-lint-tools] Error 1\n"
+        }
+      ]
+    }
+  },
+  "semgrep": {
+    "passed": true,
+    "version": "1.177.0",
+    "findings": 0,
+    "reported_scanned_files": 38,
+    "scan_sha256": "f4da66b4e3e3795a02111cedc64be84715e5891b784c1a2a96559c632a13df6c",
+    "rule_fixtures_removed": true,
+    "custom_wrapper_removed": true,
+    "custom_target_or_rule_coverage_proof": false,
+    "interpretation": "Direct production CLI scan only; no claim that every rule selected a production target."
+  },
+  "tiger": {
+    "passed": true,
+    "verification": "GCC 14.2 PPC32/G3 Mach-O, target dependency paths, no LC_RPATH",
+    "runtime_executed": false
+  },
+  "implementation_files_sha256": {
+    ".github/workflows/modern-checks.yml": "f9c18e3ab61bc450eadc410cae0c44dfabd46352dfe49330a8f0aa3f7fe9bbb8",
+    ".go-version": "6c075150045fda9bac31bb93cf5a0a0bc91622a75c1f10fb2971e6f994c6d4d6",
+    "CMakeLists.txt": "e6948c462aaff16abf0b4ff7bbe1156c4420518c8fa4dfa968ab9723893263dd",
+    "Makefile": "f1ac7050c61fce30948b69cdbe5acf1243f3dd0adeefa4c58c0e1ce1ef56d6f9",
+    "README.md": "3639fa3ba658294251f9ea19211bb096dd33d95dc41a3079f37676db875b7f39",
+    "checks/semgrep/native.yaml": "9e38d41f1a8e6f0f7ac357e169af482554f200bef2d0cc51410263ff9c73e5ec",
+    "docs/MODERN-ANALYSIS.md": "6a80ab8aaeb3c1573101699e8391770fa617daf452e3a79c533f6f38fb12739f",
+    "include/codet/core.hpp": "c1c713f65d6c35a33135e736d9a8572efba77be0fcf5ca4568b32ed75a787d73",
+    "requirements/README.md": "f5458b1e8b48fd69b429c121515105e404e57f70c2815c06478e3bccef76c459",
+    "scripts/analyze-modern.py": "08fb52300defe9b132c0a804b586bfb21a4900d978644988370b55829dc3bdd6",
+    "scripts/lint.py": "b7f5d0678d91ed5b6727287052141dc1ebaac81cb57a12614518e627e4f5c884",
+    "src/modern/capture_catalog.cpp": "2d34912ab50f692309883726bb9cb1bc1b31c5ce5e92aca8d564511b0bb3db1c",
+    "src/modern/cli.cpp": "7bca13ab72a91a6c46562d488e15a5497c25c4878077488a2db30eccb2b78e5c",
+    "src/modern/output.cpp": "8b9b0b68e8923a0045dd07d5004ca2b43a3e0c7608d5276a444ccb1f19079b75",
+    "src/modern/state.cpp": "d6cd934efca0da35cb24c93e94fa1a9b957b57a665ef2a36dacce78f68411420",
+    "tests/cli_integration.py": "e2326c36e3ee34fffb4088cf504bdc44985278a8caf67a4eaf21c3f3d3ab8b22",
+    "tests/pr18_test.cpp": "ec2d0379d0f5367be11da705aa2b57be23d64f7e93a8b7db51b0169aeab257f3",
+    "tests/test_analyze_modern.py": "fcf256ca7083dac5a281edb27f02299f44f8b39bdb382904e20c7db3b48b60cd",
+    "tests/test_lint.py": "30eac8f43981a295df1bedc20095e43ce5324eeef9c39fb083cb6e95d6a467e2",
+    "tests/test_semgrep_report.py": "077261b69bf1d5a54cdc8ffbaee2bc67cfc8e997082b57d8233a6ee5948f3d93"
+  },
+  "deleted_files": [
+    "checks/semgrep/agent.cpp",
+    "checks/semgrep/capture_catalog.cpp",
+    "checks/semgrep/hooks.cpp",
+    "checks/semgrep/instructions.cpp",
+    "checks/semgrep/native.c",
+    "checks/semgrep/native.cpp",
+    "checks/semgrep/provider.cpp",
+    "checks/semgrep/state.cpp",
+    "checks/semgrep/tools.cpp",
+    "scripts/check_semgrep.py",
+    "tests/test_check_semgrep.py"
+  ],
+  "analysis_sources_sha256": {
+    "src/modern/agent.cpp": "a01c5c0de5684f19bd0d755deb7cceff238e242f26ae113c43541a4778b5df36",
+    "src/modern/artifacts.cpp": "6bd6b5576aa7167b2fba7a085efe17ab381a689c3a9f8fdfd00a4cf9a2fe145c",
+    "src/modern/capture_catalog.cpp": "2d34912ab50f692309883726bb9cb1bc1b31c5ce5e92aca8d564511b0bb3db1c",
+    "src/modern/cli.cpp": "7bca13ab72a91a6c46562d488e15a5497c25c4878077488a2db30eccb2b78e5c",
+    "src/modern/computer.cpp": "280112859a870db9deaa3d51cc1311f5fcdefa3eaec4ee7f3daac68145172ff9",
+    "src/modern/config.cpp": "6ef1d1b7829a83339e773843cbeff09db275db4a3dd8499e7c0fa0dad0d802ca",
+    "src/modern/context.cpp": "30ef96299db52a88a0904e30461f945da4e13b20ff7d5e15969534ed2de10825",
+    "src/modern/failure.cpp": "aabbc34d0e235141e79fee2c370d4ed7f3450eb89787ed467fb1b1bacf383a2a",
+    "src/modern/hooks.cpp": "21afab2dbdfae97ed2406bc5d28e30bc55e63598cac07e418c9f41b9971e2c06",
+    "src/modern/images.cpp": "16b071f39cec995e25b25e1b266f89bf9b4a771fd24ccc87ae3e6c50d305cfe0",
+    "src/modern/inspection.cpp": "431da4f3b207ec6c4821ccf6af3de22e949b4e3875927d3d9aa2cb9899a1794c",
+    "src/modern/instructions.cpp": "04e7f17b7ccbdd3e223cacf5e75971a4ea4ec3dfaa240508806aef48739119f6",
+    "src/modern/interaction.cpp": "1e18bf1c1f8cb1a221fc458661687f148c0479365c2912bdeb58265d0a2f82ed",
+    "src/modern/main.cpp": "67bb002f35e6fab656016cccd493ea985199858b106598fa8337185925583e1c",
+    "src/modern/output.cpp": "8b9b0b68e8923a0045dd07d5004ca2b43a3e0c7608d5276a444ccb1f19079b75",
+    "src/modern/patch.cpp": "8c99791527f8a6b09b35674802db3c29cafe2adde4700a67ca7adda60562f770",
+    "src/modern/platform.cpp": "4c81e93afbb2790268aa6ca33bbda7093bc07b7fc720c809fab3429324f5ac1b",
+    "src/modern/prompts.cpp": "57082e86bf22ccad9d788b2bcff866788507bec072a7531797237a6fcfa0d367",
+    "src/modern/provider.cpp": "77a129be4087bf028481ecb8ba22dd9c6d723c3623f67d9230ce55e81b8cb2a7",
+    "src/modern/reliability.cpp": "d924d9c1e8875c7b7e053509e2ab2fe3e24e5aee814c706dbdc9c4e608461356",
+    "src/modern/state.cpp": "d6cd934efca0da35cb24c93e94fa1a9b957b57a665ef2a36dacce78f68411420",
+    "src/modern/support.cpp": "40dfad2759619972f3b0eba053a24b00877b05ce2defb648b727ebd608dd594a",
+    "src/modern/tool_registry.cpp": "bbec68092f2561c5d4596e5976c7766e5715eb4ccddf03ef61b99a8ed7b00a93",
+    "src/modern/tools.cpp": "7cce428421e53452797feda0d5bfaa2eac9cb75a470f3c9da7dd39a43067b5fc",
+    "src/text_compat.c": "b41e7c65ca2060ec538d4469722fd357293fcf3c603c93288edab02b34dbe431"
+  },
+  "analysis_inputs_sha256": {
+    "include/app-functions.h": "8e363fc9efb6f09bed6e406c8cda95f46e18f7ca0412ee16654c9a40f26d9340",
+    "include/app-globals.h": "58b79e8bc8e47df7317aa276e7b63cd06b88f72a304e9d1ed9b7f1161b694d6c",
+    "include/app.h": "7b4aff9d8012d627b4ce9220436240b64d9a16bf9bc0b81653bf63ed753170a3",
+    "include/callback-contracts.h": "c9bd4045bd5fbb7ba1e43cbfe582281349dc1e54c7dddfcabf41b29734c3c3e8",
+    "include/codet/artifacts.hpp": "bb6e85fa55389308906389ed202fa134673ad40d8a2acffa176a208e0a7359cf",
+    "include/codet/computer.hpp": "aa4e4ef2a400b761ed98f8dfe3b596d140eb06fa58ca7689ed927276c860eeb7",
+    "include/codet/context.hpp": "69642ff7cbe971372e0a5e0eec3060ee7dd3cae548adb1e8eb7ca9ae6801c1b5",
+    "include/codet/core.hpp": "c1c713f65d6c35a33135e736d9a8572efba77be0fcf5ca4568b32ed75a787d73",
+    "include/codet/diagnostics.hpp": "31ead6755d8a6ce63d365b1a3507b20d06b868bbc3ecbc2893a26f34db750da9",
+    "include/codet/interaction.hpp": "ac2bae0c6d600d8866c06090444b842acbcb5baa31475825a20d34e36b512f03",
+    "include/codet/output.hpp": "d67f248b095142d77f43701d400529ede8006835558b1c2044ea758d72327225",
+    "include/codet/patch.hpp": "5852178d6a37ef71b560421c84543fe789e0fb5c87d45e337088f48008ec2915",
+    "include/codet/process_control.hpp": "144592cd14597dc1d52750f4eaff9b48be7b3c517991109e93d502300db1f8e6",
+    "include/codet/prompt.hpp": "cedf0270b29cc6731329907bae32be3b3870c9d803e8d354601a731d863752d1",
+    "include/codet/support.hpp": "e28f6ef49aa795f66db598cd5814686f2614b8f36669f476792d74acc61d4547",
+    "include/codet/tool_registry.hpp": "6024b8a00ec83280267cc9a874eff3d9d70b60a87dc5e2394e9f9aafa51e0771",
+    "include/embedded-strings.h": "6ffac0e9967e511dd10556aed94a2ef0201c926bd01d699208e4e26834ec2e86",
+    "include/imported-interfaces.h": "f28bc5576423cc04e2138d46b5accbdc64c3e294dcce7a080fcb4da6e16f2c8b",
+    "include/observed-abi.h": "a6526dee44e4e156cdc8f2cd8a9f5ea28cd1a25c8ea3a1deb31d0e28055f2d64",
+    "include/recovered-declarations.h": "328a2d82bcdb6bab00b171749643475b7e55f40ae7508fb305782a606ffa02a9",
+    "include/recovered-layouts.h": "68c1c0b0313d38632390b8919ddc297d6240bed0c2d1de307fce3f0cb431f195",
+    "include/recovered-storage.h": "a655bf2e2172d9293a2920b3f5ffb6ed6e7164e03b16d1c3400547d00648ce09",
+    "include/recovered-types.h": "22d85c337901a5b84de45b08c20409256586c6cc9e5ca4a13ec783788ca76caa",
+    "include/text_compat.h": "6ff5d6fe7251e3b156983ec5d1e4c2dea5bf08cdf40ac68734e1546850dd0da7"
+  },
+  "logs_sha256": {
+    "build/enforcement-macos-ctest.log": "a04ceb3558923b18629a5b1888169809a2ea551e3b4ba91973151b94e91f8aa7",
+    "build/enforcement-linux-ctest.log": "1c539f95fbdb0495a27aa7c0598227269b0c26b0283d2fff8438c512ab4db238",
+    "build/enforcement-sanitize-ctest.log": "4ce0e8b0a6fa4437c6cb6608522c020a600aea1a47b9bf6a4c20a6524dbb67a9",
+    "build/enforcement-foundation.log": "929fab2ba5187d06debf8c9cd1eae7c5ad2f7eb34404342e6aa5cc72f8fc94b0",
+    "build/enforcement-analysis.log": "2df0735c9d9b8fed7f0b242b95e9e77ba33454e5ea1fc84cb773580280889c1b",
+    "build/enforcement-analysis-selftest.log": "740d555865ff458e6ea3a80a11ab83ce36bd761be27466ba58af1b8f395df79b",
+    "build/enforcement-lint-and-runners.log": "03268e2d73f9228acfdcedf6941ca6d4ba2637a4e30c2bd2bca2a66d1f924935",
+    "build/enforcement-semgrep.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "build/enforcement-tiger.log": "4758f4843a4d2f62b93f1d4326f0abd5208e474f6a30f5f1efc7dddc4edfd239",
+    "build/enforcement-provision.log": "7d218ba9744d0d9e450bbb37077f599038be8e77288867550deb8f33c611cd60",
+    "build/enforcement-python-checks.log": "c522cf2a032b005bfa30d37a83af03a3040b89b45dfa6e21400e7a8df81e633b",
+    "build/enforcement-python-compatibility.json": "4d7e0808a807b837c0f87f2da6090848e8e840f1d5a58684dd8240eed12a19f0",
+    "build/enforcement-macos-delayed.log": "888959be2a976ab71d7a4c978fea61454aa411a5cedfcd38d389e8ed05b796a9",
+    "build/enforcement-linux-delayed.log": "ff03a4f79d4b44b8f0cb33fcd53923accfd08fe524264efb92496bac39900138",
+    "build/enforcement-sanitize-delayed-1.log": "69ebcf46e7a37efaf98aefe9ec640cb848c362737b053a7249eb1ba8a6f211da",
+    "build/enforcement-sanitize-delayed-2.log": "93e82764adb7c76aeba503ba5b647cd8dcb62ec11f377397e55973a021f950ba",
+    "build/enforcement-sanitize-delayed-3.log": "e576f31f862f177275f46f98109b5f85ebdd26d596e11fe7913c38963f8a462e"
+  }
+}

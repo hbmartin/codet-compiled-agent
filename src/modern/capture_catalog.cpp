@@ -148,8 +148,8 @@ void reconcile_active(sqlite3 *db, const fs::path &directory,
           continue;
         throw Error("Cannot inspect active output ownership");
       }
-      struct stat opened {
-      }, current{};
+      struct stat opened {};
+      struct stat current {};
       if (::fstat(file.fd, &opened) || ::lstat(path.c_str(), &current) ||
           opened.st_dev != static_cast<dev_t>(row.device) ||
           opened.st_ino != static_cast<ino_t>(row.inode) || opened.st_dev != current.st_dev ||
@@ -390,8 +390,8 @@ size_t CaptureStore::account_reservation(OutputSpool &spool, size_t requested) {
         File file(path);
         if (::flock(file.fd, LOCK_EX | LOCK_NB))
           continue;
-        struct stat st {
-        }, link{};
+        struct stat st {};
+        struct stat link {};
         if (::fstat(file.fd, &st) || ::lstat(path.c_str(), &link) ||
             st.st_dev != static_cast<dev_t>(candidate.device) ||
             st.st_ino != static_cast<ino_t>(candidate.inode) || st.st_dev != link.st_dev ||

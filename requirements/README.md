@@ -7,7 +7,8 @@ The Semgrep environment additionally runs `pip check` and records its resolved e
 
 `semgrep.in` pins the existing engine; `semgrep.lock` pins its full dependency closure.
 `lint.in` and `lint.lock` pin Ruff, clang-format, zizmor and the PyYAML used by analyzer tests.
-The Makefile separately pins actionlint and shfmt Go modules; ShellCheck is a host prerequisite
+The Makefile separately pins actionlint and shfmt Go modules and selects Go 1.27.2 from `.go-version`;
+ShellCheck is a host prerequisite
 whose installed version is retained in lint evidence.
 
 To deliberately refresh a lock with uv:
@@ -20,5 +21,5 @@ uv pip compile --universal --python-version 3.12 --generate-hashes --no-header -
 ```
 
 Review the resulting dependency changes and validate provisioning on both supported host
-platforms. Run `make test-semgrep check-semgrep`, the enforcement-runner tests, and
+platforms. Run `make check-semgrep`, the enforcement-runner tests, and
 `make check-lint` after relevant tool changes. Checks never resolve packages or fetch rules.

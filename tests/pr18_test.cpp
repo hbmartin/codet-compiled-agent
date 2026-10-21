@@ -5,9 +5,12 @@
 #include "codet/output.hpp"
 #include "codet/support.hpp"
 #include "temp.hpp"
+#include <fcntl.h>
+#include <future>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <sqlite3.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 using namespace codet;
@@ -2556,3 +2559,98 @@ TEST_F(Pr24, TokenOnlyDeferredCommitFailureRollsBackAndRetainsTheBackup) {
   EXPECT_EQ(token(raw, s.id), "broken");
   EXPECT_THAT(diagnostics, HasSubstr("Session repair backup: "));
 }
+
+namespace {
+class StartupWait : public Test {
+protected:
+  TempDirectory temp;
+  NativeFileSystem files;
+  fs::path home = temp.root / "home";
+  int lease = -1;
+  void SetUp() override {
+    fs::create_directories(home);
+    lease = ::open((home / ".migration.lock").c_str(), O_CREAT | O_RDWR, 0600);
+    ASSERT_GE(lease, 0);
+    ASSERT_EQ(::flock(lease, LOCK_EX), 0);
+  }
+  void TearDown() override {
+    if (lease >= 0)
+      ::close(lease);
+  }
+  void expect_interrupted(const Cancellation &cancel, DiagnosticSink sink) {
+    try {
+      StateStore state(files, home, {}, "durable", {&cancel, std::move(sink)});
+      FAIL() << "migration wait was not cancelled";
+    } catch (const Error &error) {
+      EXPECT_EQ(error.code, 130);
+      EXPECT_STREQ(error.what(), "Interrupted waiting for database migration");
+    }
+    ASSERT_EQ(::flock(lease, LOCK_UN), 0);
+    EXPECT_NO_THROW(StateStore state(files, home));
+  }
+};
+TEST_F(StartupWait, CancellationBeforeWaitingDoesNotNotifyAndReleasesDescriptors) {
+  Cancellation cancel;
+  cancel.requested = true;
+  expect_interrupted(cancel, [](const auto &) { ADD_FAILURE() << "unexpected wait notification"; });
+}
+TEST_F(StartupWait, CancellationFromNotificationSurvivesDiagnosticFailure) {
+  Cancellation cancel;
+  size_t notifications = 0;
+  expect_interrupted(cancel, [&](const auto &message) {
+    EXPECT_EQ(message, "Waiting for database migration");
+    ++notifications;
+    cancel.requested = true;
+    throw std::bad_alloc();
+  });
+  EXPECT_EQ(notifications, 1u);
+}
+TEST_F(StartupWait, CancellationDuringContentionIsObservedWithoutAnotherSignal) {
+  Cancellation cancel;
+  std::promise<void> waiting;
+  auto notified = waiting.get_future();
+  auto result = std::async(std::launch::async, [&] {
+    try {
+      StateStore state(files, home, {}, "durable",
+                       {&cancel, [&](const auto &) { waiting.set_value(); }});
+      return 0;
+    } catch (const Error &error) {
+      return error.code;
+    }
+  });
+  const bool was_waiting = notified.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
+  const bool remained_waiting =
+      result.wait_for(std::chrono::milliseconds(40)) == std::future_status::timeout;
+  cancel.requested = true;
+  const bool stopped = result.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+  EXPECT_EQ(::flock(lease, LOCK_UN), 0);
+  EXPECT_TRUE(was_waiting);
+  EXPECT_TRUE(remained_waiting);
+  EXPECT_TRUE(stopped);
+  EXPECT_EQ(result.get(), 130);
+  EXPECT_NO_THROW(StateStore state(files, home));
+}
+TEST_F(StartupWait, ReleasedLockAllowsStartupAfterOneNotification) {
+  size_t notifications = 0;
+  Cancellation cancel;
+  EXPECT_NO_THROW(StateStore state(files, home, {}, "durable", {&cancel, [&](const auto &) {
+                                                                  ++notifications;
+                                                                  EXPECT_EQ(::flock(lease, LOCK_UN),
+                                                                            0);
+                                                                }}));
+  EXPECT_EQ(notifications, 1u);
+  EXPECT_NO_THROW(StateStore state(files, home));
+}
+TEST_F(StartupWait, UntrustedLockStillFailsBeforeWaiting) {
+  fs::remove(home / ".migration.lock");
+  files.atomic_write(home / "substitute", "", true);
+  fs::create_symlink(home / "substitute", home / ".migration.lock");
+  Cancellation cancel;
+  EXPECT_THROW(StateStore(files, home, {}, "durable",
+                          {&cancel,
+                           [](const auto &) {
+                             ADD_FAILURE() << "untrusted lock was treated as contention";
+                           }}),
+               Error);
+}
+} // namespace

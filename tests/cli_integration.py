@@ -39,6 +39,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         self.server.requests.append({'path':self.path,'body':body})
+        if 'fixture-signal-wait' in json.dumps(body):
+            ready,release=self.server.signal_gate
+            ready.set()
+            if not release.wait(30):raise TimeoutError('signal fixture was not released')
         callback=self.server.before_reply
         self.server.before_reply=None
         if callback:callback()
@@ -1182,7 +1186,15 @@ class CliTests(unittest.TestCase):
             fcntl.flock(lease,fcntl.LOCK_EX)
             p=subprocess.Popen([BIN,'-C',str(self.workspace),'sessions'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=self.env)
             try:
-                time.sleep(.3);self.assertIsNone(p.poll());p.send_signal(signal.SIGINT)
+                import select
+                deadline=time.monotonic()+15;waiting=b''
+                while b'Waiting for database migration' not in waiting and time.monotonic()<deadline:
+                    if select.select([p.stderr],[],[],.05)[0]:
+                        chunk=os.read(p.stderr.fileno(),4096)
+                        if not chunk:break
+                        waiting+=chunk
+                self.assertIn(b'Waiting for database migration',waiting)
+                self.assertIsNone(p.poll());p.send_signal(signal.SIGINT)
                 out,err=p.communicate(timeout=5)
                 self.assertEqual(p.returncode,130,err)
                 self.assertIn('Interrupted waiting for database migration',err)
@@ -1201,9 +1213,18 @@ class CliTests(unittest.TestCase):
     def test_interrupt_has_exit_130_and_terminal_event(self):
         for sig in (signal.SIGINT, signal.SIGTERM):
             with self.subTest(signal=sig):
-                p=subprocess.Popen([BIN,'-C',str(self.workspace),'exec','--json','fixture-wait'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=self.env)
-                time.sleep(.3);p.send_signal(sig);out,err=p.communicate(timeout=8)
-                self.assertEqual(p.returncode,130,err);self.assertEqual(json.loads(out.splitlines()[-1])['type'],'turn.failed')
+                ready,release=threading.Event(),threading.Event()
+                self.server.signal_gate=(ready,release)
+                p=subprocess.Popen([BIN,'-C',str(self.workspace),'exec','--json','fixture-signal-wait'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=self.env)
+                try:
+                    self.assertTrue(ready.wait(15),'provider request did not become ready')
+                    self.assertIsNone(p.poll());p.send_signal(sig)
+                    out,err=p.communicate(timeout=15)
+                    self.assertEqual(p.returncode,130,err)
+                    self.assertEqual(json.loads(out.splitlines()[-1])['type'],'turn.failed')
+                finally:
+                    release.set()
+                    if p.poll() is None:p.kill();p.communicate(timeout=5)
     def test_terminal_modes_restore_terminal(self):
         import fcntl
         import pty

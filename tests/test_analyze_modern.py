@@ -83,6 +83,65 @@ class AnalysisTests(unittest.TestCase):
         run = analysis.capture([str(self.root / "no-such-tool")], self.root, 1)
         self.assertIsNotNone(run["failure"])
 
+    def test_defective_canary_requires_its_own_diagnostic_location(self):
+        probe = dict(self.entries[0], expectation="defective", expected_diagnostic="nullPointer")
+        run = dict(failure=None, exit_code=1, all_diagnostics=[])
+        for locations in ([], [{}], [dict(file="include/codet/core.hpp")]):
+            run["all_diagnostics"] = [dict(id="nullPointer", locations=locations)]
+            self.assertFalse(analysis.canary_passed(probe, run))
+        for location in (probe["file"], "src/modern/main.cpp"):
+            run["all_diagnostics"] = [dict(id="nullPointer", locations=[dict(file=location)])]
+            self.assertTrue(analysis.canary_passed(probe, run))
+        run["failure"] = "incomplete"
+        self.assertFalse(analysis.canary_passed(probe, run))
+
+    def test_clean_canary_and_fatal_canary_expectations(self):
+        probe = dict(self.entries[0], expectation="clean", expected_diagnostic=None)
+        run = dict(failure=None, exit_code=0, all_diagnostics=[])
+        self.assertTrue(analysis.canary_passed(probe, run))
+        run["all_diagnostics"] = [dict(severity="error", locations=[dict(file=probe["file"])])]
+        self.assertFalse(analysis.canary_passed(probe, run))
+        run["all_diagnostics"][0]["severity"] = "information"
+        self.assertTrue(analysis.canary_passed(probe, run))
+        probe["expectation"] = "fatal"
+        self.assertFalse(analysis.canary_passed(probe, run))
+        run.update(failure="Parser or analysis failure", exit_code=1,
+                   completion_proof=dict(critical_error=True))
+        self.assertTrue(analysis.canary_passed(probe, run))
+        for key, value in (("failure", None), ("exit_code", 0), ("exit_code", None),
+                           ("completion_proof", dict(critical_error=False))):
+            invalid = dict(run, **{key: value})
+            self.assertFalse(analysis.canary_passed(probe, invalid))
+
+    def test_contradictory_canary_metadata_is_rejected(self):
+        run = dict(failure=None, exit_code=0)
+        for metadata in ({}, dict(expectation="unknown"),
+                         dict(expectation="clean", expected_clean=True),
+                         dict(expectation="fatal", expected_failure=True),
+                         dict(expectation="fatal", expected_diagnostic="nullPointer"),
+                         dict(expectation="defective", expected_diagnostic=None)):
+            with self.subTest(metadata=metadata), self.assertRaises(ValueError):
+                analysis.canary_passed(dict(self.entries[0], **metadata), run)
+
+    def test_library_canaries_omit_application_headers_and_compatibility_paths(self):
+        header = self.root / "include/codet/core.hpp"
+        header.parent.mkdir(parents=True)
+        header.write_text("")
+        toml = self.root / ".deps/tomlplusplus/include"
+        entries = [dict(e, arguments=e["arguments"] + ["-I", str(toml), "-I", str(self.root / "include")])
+                   for e in self.entries]
+        probes = analysis.actual_header_canaries(entries, self.folder, self.root)
+        self.assertEqual(len(probes), 15)
+        libraries = [p for p in probes if p.get("library_model")]
+        self.assertEqual(len(libraries), 12)
+        for probe in libraries:
+            self.assertNotIn('codet/core.hpp', Path(probe["file"]).read_text())
+            self.assertNotIn(str(toml), probe["arguments"])
+            self.assertEqual(analysis.include_arguments(probe), [])
+        self.assertEqual(probes[-1]["expectation"], "fatal")
+        self.assertNotIn("library_model", probes[-1])
+        self.assertIsNone(probes[-1]["expected_diagnostic"])
+
     def analyzer_run(self, payload, exit_code=0):
         def capture(command, cwd, timeout):
             report = Path(command[command.index("-o") + 1])
