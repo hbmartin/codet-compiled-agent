@@ -5,13 +5,20 @@
 #include "codet/output.hpp"
 #include "codet/support.hpp"
 #include "temp.hpp"
+#include <algorithm>
+#include <cerrno>
+#include <csignal>
 #include <fcntl.h>
 #include <future>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <limits>
 #include <sqlite3.h>
 #include <sys/file.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <thread>
 #include <unistd.h>
 using namespace codet;
 using namespace testing;
@@ -2560,6 +2567,142 @@ TEST_F(Pr24, TokenOnlyDeferredCommitFailureRollsBackAndRetainsTheBackup) {
   EXPECT_THAT(diagnostics, HasSubstr("Session repair backup: "));
 }
 
+TEST_F(Pr24, CachedProvisionalRevisionsUpdateTheJournalInBothStorageFormats) {
+  StateStore state(files, config.state_root);
+  Db raw(config.state_root / "state.sqlite3");
+  Tools tools(config, files, processes, http, clock);
+  for (bool blob : {false, true})
+    for (bool cached : {false, true})
+      for (bool constant : {false, true}) {
+        auto s = state.create();
+        ToolCall call{"pending", "exec_command", Json::object()};
+        codet::Message assistant;
+        assistant.role = "assistant";
+        assistant.calls = {call};
+        s.messages = {codet::Message{"user", "hello"}, assistant};
+        state.save(s);
+        state.tool_started(s.id, call);
+        if (blob)
+          raw.exec("UPDATE sessions SET message_format=0,messages='" + Json(s.messages).dump() +
+                   "' WHERE id='" + s.id + "';DELETE FROM session_messages WHERE session='" + s.id +
+                   "'");
+        s = state.load_id(s.id);
+        s.messages.push_back(codet::Message{"user", "suffix"});
+        state.append_messages(static_cast<const Session &>(s), 3);
+        if (!cached)
+          state.update_metadata(s);
+        auto envelope = Json::parse(s.messages[2].text);
+        envelope["content"] = "revised uncertain outcome";
+        s.messages[2].text = envelope.dump();
+        if (constant)
+          state.revise_messages(static_cast<const Session &>(s), {2});
+        else
+          state.revise_messages(s, {2});
+        EXPECT_EQ(raw.value("SELECT result FROM tools WHERE session='" + s.id + "'"),
+                  raw.value("SELECT payload FROM session_messages WHERE session='" + s.id +
+                            "' AND position=2"));
+        EXPECT_EQ(state.load_id(s.id, false).messages[2].text, envelope.dump());
+        EXPECT_EQ(state.load_id(s.id).messages[2].text, envelope.dump());
+        EXPECT_NO_THROW(state.reconcile(s));
+        EXPECT_EQ(state.fork(s).messages[2].text, envelope.dump());
+      }
+}
+TEST_F(Pr24, EquivalentRecoveryFormattingUsesStrictValidationOnCacheMismatch) {
+  StateStore state(files, config.state_root);
+  Db raw(config.state_root / "state.sqlite3");
+  for (bool blob : {false, true})
+    for (bool cached : {false, true})
+      for (bool constant : {false, true})
+        for (bool append : {false, true}) {
+          auto s = state.create();
+          codet::Message assistant;
+          assistant.role = "assistant";
+          assistant.calls = {{"pending", "exec_command", Json::object()}};
+          s.messages = {assistant};
+          state.save(s);
+          if (blob)
+            raw.exec("UPDATE sessions SET message_format=0,messages='" + Json(s.messages).dump() +
+                     "' WHERE id='" + s.id + "';DELETE FROM session_messages WHERE session='" +
+                     s.id + "'");
+          s = state.load_id(s.id);
+          state.revise_messages(static_cast<const Session &>(s), {});
+          if (!cached)
+            state.update_metadata(s);
+          const auto expected = s.messages[1].text;
+          s.messages[1].text = Json::parse(expected).dump(2);
+          if (append) {
+            s.messages.push_back(codet::Message{"user", "suffix"});
+            if (constant)
+              ASSERT_NO_THROW(state.append_messages(static_cast<const Session &>(s), 2));
+            else
+              ASSERT_NO_THROW(state.append_messages(s, 2));
+          } else if (constant)
+            ASSERT_NO_THROW(state.revise_messages(static_cast<const Session &>(s), {}));
+          else
+            ASSERT_NO_THROW(state.revise_messages(s, {}));
+          EXPECT_EQ(state.load_id(s.id).messages[1].text, expected);
+          if (!constant)
+            EXPECT_EQ(s.messages[1].text, expected);
+        }
+}
+TEST_F(Pr24, JournalComparisonsUseTheSanitizedArgumentsAtEveryBoundary) {
+  StateStore state(files, config.state_root);
+  state.set_diagnostics([](const auto &) {});
+  for (const auto &value : {Json(std::numeric_limits<double>::infinity()),
+                            Json(std::numeric_limits<double>::quiet_NaN()),
+                            Json(std::string(1, static_cast<char>(0xff)))}) {
+    auto s = state.create();
+    ToolCall call{"sanitized", "exec_command", {{"value", value}}};
+    codet::Message assistant;
+    assistant.role = "assistant";
+    assistant.calls = {call};
+    s.messages = {assistant};
+    state.save(s);
+    state.tool_started(s.id, call);
+    ASSERT_NO_THROW(state.reconcile(s, false));
+    codet::Message result;
+    result.role = "tool";
+    result.tool_call_id = call.id;
+    result.text = "actual result";
+    auto changed = call;
+    changed.arguments["value"] = "different";
+    EXPECT_THROW(state.complete_tool(s, changed, result), Error);
+    ASSERT_NO_THROW(state.complete_tool(s, call, result));
+    EXPECT_NO_THROW(state.complete_tool(s, call, result));
+    const auto loaded = state.load_id(s.id);
+    EXPECT_EQ(loaded.messages[0].calls[0].arguments, safe_json(call.arguments));
+    EXPECT_EQ(loaded.messages[1].text, result.text);
+  }
+}
+TEST_F(Pr24, PreservedFilePathsSurviveDiagnosticAllocationFailures) {
+  StateStore state(files, config.state_root);
+  auto s = state.create();
+  ToolCall call{"call", "exec_command", Json::object()};
+  state.tool_started(s.id, call);
+  state.set_diagnostics([](const auto &) { throw std::bad_alloc(); });
+  codet::Message result;
+  result.role = "tool";
+  result.tool_call_id = call.id;
+  auto changed = call;
+  changed.name = "wrong";
+  testing::internal::CaptureStderr();
+  EXPECT_THROW(state.complete_tool(s, changed, result), Error);
+  const auto receipt_diagnostic = testing::internal::GetCapturedStderr();
+  EXPECT_THAT(receipt_diagnostic, HasSubstr("Uncommitted tool result preserved at "));
+  for (const auto &entry : fs::directory_iterator(config.state_root / "repairs"))
+    EXPECT_THAT(receipt_diagnostic, HasSubstr(entry.path().string()));
+  Db raw(config.state_root / "state.sqlite3");
+  raw.exec("UPDATE session_revisions SET revision='broken'");
+  files.on_backup = [] { throw std::logic_error("backup publication failure"); };
+  testing::internal::CaptureStderr();
+  EXPECT_THROW(state.repair_session_token(s.id, false), std::logic_error);
+  const auto backup_diagnostic = testing::internal::GetCapturedStderr();
+  EXPECT_THAT(backup_diagnostic, HasSubstr("Session repair backup: "));
+  for (const auto &entry : fs::directory_iterator(config.state_root / "repairs"))
+    if (entry.path().filename().string().find("-backup-") != std::string::npos)
+      EXPECT_THAT(backup_diagnostic, HasSubstr(entry.path().string()));
+}
+
 namespace {
 class StartupWait : public Test {
 protected:
@@ -2577,14 +2720,57 @@ protected:
     if (lease >= 0)
       ::close(lease);
   }
-  void expect_interrupted(const Cancellation &cancel, DiagnosticSink sink) {
-    try {
-      StateStore state(files, home, {}, "durable", {&cancel, std::move(sink)});
-      FAIL() << "migration wait was not cancelled";
-    } catch (const Error &error) {
-      EXPECT_EQ(error.code, 130);
-      EXPECT_STREQ(error.what(), "Interrupted waiting for database migration");
+  void expect_interrupted(const Cancellation &cancel, DiagnosticSink sink,
+                          const std::function<void()> &verify = {}) {
+    const auto child = ::fork();
+    ASSERT_GE(child, 0);
+    if (!child) {
+      struct rlimit limit {};
+      if (::getrlimit(RLIMIT_NOFILE, &limit))
+        _exit(2);
+      limit.rlim_cur = std::min(limit.rlim_cur, rlim_t{512});
+      if (::setrlimit(RLIMIT_NOFILE, &limit))
+        _exit(3);
+      { StateStore warm(files, temp.root / "warm"); }
+      const auto descriptors = [&] {
+        size_t count = 0;
+        for (int fd = 0; fd < static_cast<int>(limit.rlim_cur); ++fd)
+          if (::fcntl(fd, F_GETFD) >= 0)
+            ++count;
+        return count;
+      };
+      const auto before = descriptors();
+      for (int attempt = 0; attempt < 20; ++attempt) {
+        try {
+          StateStore state(files, home, {}, "durable", {&cancel, sink});
+          ADD_FAILURE() << "migration wait was not cancelled";
+        } catch (const Error &error) {
+          EXPECT_EQ(error.code, 130);
+          EXPECT_STREQ(error.what(), "Interrupted waiting for database migration");
+        }
+        EXPECT_EQ(descriptors(), before);
+      }
+      if (verify)
+        verify();
+      _exit(HasFailure() ? 1 : 0);
     }
+    int status = 0;
+    pid_t stopped = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    do {
+      stopped = ::waitpid(child, &status, WNOHANG);
+      if (stopped == child)
+        break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    } while (std::chrono::steady_clock::now() < deadline);
+    if (stopped != child) {
+      ::kill(child, SIGKILL);
+      while (::waitpid(child, &status, 0) < 0 && errno == EINTR) {
+      }
+      FAIL() << "cancelled constructor did not finish within five seconds";
+    }
+    ASSERT_TRUE(WIFEXITED(status));
+    EXPECT_EQ(WEXITSTATUS(status), 0);
     ASSERT_EQ(::flock(lease, LOCK_UN), 0);
     EXPECT_NO_THROW(StateStore state(files, home));
   }
@@ -2597,13 +2783,15 @@ TEST_F(StartupWait, CancellationBeforeWaitingDoesNotNotifyAndReleasesDescriptors
 TEST_F(StartupWait, CancellationFromNotificationSurvivesDiagnosticFailure) {
   Cancellation cancel;
   size_t notifications = 0;
-  expect_interrupted(cancel, [&](const auto &message) {
-    EXPECT_EQ(message, "Waiting for database migration");
-    ++notifications;
-    cancel.requested = true;
-    throw std::bad_alloc();
-  });
-  EXPECT_EQ(notifications, 1u);
+  expect_interrupted(
+      cancel,
+      [&](const auto &message) {
+        EXPECT_EQ(message, "Waiting for database migration");
+        ++notifications;
+        cancel.requested = true;
+        throw std::bad_alloc();
+      },
+      [&] { EXPECT_EQ(notifications, 1u); });
 }
 TEST_F(StartupWait, CancellationDuringContentionIsObservedWithoutAnotherSignal) {
   Cancellation cancel;

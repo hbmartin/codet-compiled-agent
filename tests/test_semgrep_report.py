@@ -3,6 +3,9 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -73,6 +76,54 @@ class SemgrepReports(unittest.TestCase):
             report.main()
         self.assertIn("Report is missing or invalid", errors.getvalue())
         self.assertEqual(path.read_text(), "{invalid")
+
+    def run_make(self, payload, status):
+        for name in ("Makefile", "toolchain.mk"):
+            shutil.copy(ROOT / name, self.root / name)
+        scripts = self.root / "scripts"
+        scripts.mkdir(exist_ok=True)
+        shutil.copy(ROOT / "scripts/semgrep-report.py", scripts)
+        tool = self.root / "semgrep"
+        tool.write_text(f"#!{sys.executable}\n" + r'''
+import os, sys
+if '--version' in sys.argv:
+    print('1.177.0')
+else:
+    print(os.environ['FAKE_REPORT'], end='')
+    print('scan stderr detail', file=sys.stderr)
+    raise SystemExit(int(os.environ['FAKE_STATUS']))
+''')
+        tool.chmod(0o700)
+        return subprocess.run(["make", "check-semgrep", "SEMGREP=" + str(tool),
+                               "SEMGREP_PYTHON=" + sys.executable], cwd=self.root,
+                              env=dict(os.environ, FAKE_REPORT=payload, FAKE_STATUS=str(status)),
+                              text=True, capture_output=True, timeout=10)
+
+    def test_make_preserves_scan_evidence_and_original_failure_status(self):
+        for payload, status in (('{"errors":[{"message":"scan failure detail"}]}', 7),
+                                ("{invalid", 9)):
+            with self.subTest(status=status):
+                run = self.run_make(payload, status)
+                self.assertNotEqual(run.returncode, 0)
+                self.assertIn("Error " + str(status), run.stderr)
+                self.assertIn("scan stderr detail", run.stderr)
+                self.assertIn("Semgrep check failed", run.stderr)
+                self.assertIn("scan failure detail" if status == 7 else "Report is missing or invalid",
+                              run.stderr)
+                self.assertEqual((self.root / "build/semgrep/scan.json").read_text(), payload)
+                self.assertEqual((self.root / "build/semgrep/scan.stderr.log").read_text(),
+                                 "scan stderr detail\n")
+
+    def test_make_success_retains_report_and_removes_obsolete_evidence(self):
+        folder = self.root / "build/semgrep"
+        folder.mkdir(parents=True)
+        for name in ("tests.json", "test.stderr.log", "test.manifest.json", "scan.manifest.json"):
+            (folder / name).write_text("obsolete")
+        run = self.run_make('{"results":[]}', 0)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertNotIn("Semgrep check failed", run.stderr)
+        self.assertEqual(sorted(p.name for p in folder.iterdir()), ["scan.json", "scan.stderr.log"])
+        self.assertFalse((self.root / "build/semgrep-venv").exists())
 
 
 if __name__ == "__main__":

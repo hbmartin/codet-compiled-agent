@@ -16,7 +16,7 @@ make test-foundation  # GoogleTest 1.17.0 + GoogleMock, existing text-helper tes
 make test             # Host unit, integration, CLI and terminal tests
 make test-sanitize    # ASan + UBSan
 make analyze-modern  # Separate Clang configuration; GCC host cache is preserved
-make fetch-lint-tools # Explicit network step; Python 3.12, Go and ShellCheck required
+make fetch-lint-tools # Explicit network step; Python 3.12.x, Go and ShellCheck required
 make check-lint      # Offline C/C++ formatting, Ruff, shell and workflow checks
 make fetch-semgrep    # Explicit network step; development-only Semgrep 1.177.0
 make check-semgrep    # Every maintained production source/header; no downloads
@@ -30,7 +30,7 @@ application and shared C text helpers in a separate Clang build. Ubuntu GitHub A
 same checks and host tests. See [analysis setup, reports and enforcement](docs/MODERN-ANALYSIS.md).
 
 Semgrep uses an ignored `build/semgrep-venv` environment; provisioning requires Python with
-`venv`/pip support (`python3-venv` on Ubuntu). Interpreter commands default to `python3`; provisioning checks that it is Python 3.12+. Select a compatible interpreter with
+`venv`/pip support (`python3-venv` on Ubuntu). Interpreter commands default to `python3.12`; locked tool environments require Python 3.12.x. Select a compatible interpreter with
 `SEMGREP_PYTHON=/path/to/python3`, or an existing pinned tool with `SEMGREP=/path/to/semgrep`.
 Checks require version 1.177.0, use only checked-in rules, disable metrics/version checks,
 and fail on findings or analysis errors. They guard discovery, checkpoint inspection,
@@ -53,12 +53,12 @@ Tiger binaries have no Semgrep dependency.
 
 `make check-lint` uses pinned clang-format 18.1.8, Ruff 0.17.1, actionlint 1.7.12,
 zizmor 1.30.1 and shfmt 3.14.1, plus an installed ShellCheck. Install ShellCheck with
-`apt install shellcheck` or `brew install shellcheck`; Go 1.27.2 is selected from `.go-version` during explicit provisioning, without automatic upgrades beyond that version. The selected version is recorded in `build/lint/go-version.txt`.
+`apt install shellcheck` or `brew install shellcheck`; Go 1.27.2 is selected from `.go-version` during explicit provisioning, without automatic upgrades beyond that version. The selected version is checked before tool installation and recorded in `build/lint/go-version.txt`.
 Individual offline targets are `check-format`, `check-python`, `check-shell`, and `check-workflows`.
 Formatting covers maintained production code, headers, tests and benchmarks; recovered C
 and dependencies retain their separate policies.
 Ruff covers scripts and Python tests with undefined-name/import, selected correctness, and
-Python 3.12 modernization checks. `LINT_PYTHON` defaults to `python3` and can select another interpreter.
+Python 3.12 modernization checks. `LINT_PYTHON` defaults to `python3.12`; locked lint provisioning also requires Python 3.12.x.
 Lint versions are parsed and compared exactly; ShellCheck remains an installed, unpinned prerequisite.
 Requested reports are invalidated before discovery and atomically published, so interruptions cannot
 leave previous passing evidence for unfinished groups. Detailed versions, commands and results live under `build/lint/`.

@@ -22,14 +22,17 @@ VERSION_PATTERNS = {
 
 
 def tool_version(name, output):
+    pattern = VERSION_PATTERNS.get(name)
+    if pattern is None:
+        raise ValueError("Unknown lint tool: " + name)
     lines = [line.strip() for line in output.splitlines() if line.strip()]
     if name == "shellcheck":
         if not lines or lines[0] != "ShellCheck - shell script analysis tool":
             raise ValueError("Unrecognized ShellCheck banner")
         matches = [match for line in lines
-                   if (match := re.fullmatch(VERSION_PATTERNS[name], line))]
+                   if (match := re.fullmatch(pattern, line))]
     else:
-        match = re.fullmatch(VERSION_PATTERNS[name], lines[0]) if lines else None
+        match = re.fullmatch(pattern, lines[0]) if lines else None
         # actionlint appends build provenance. Other tools have one version line.
         matches = [match] if match and (name == "actionlint" or len(lines) == 1) else []
         if name == "actionlint" and any(re.match(r"v?\d+\.", line) for line in lines[1:]):
@@ -90,8 +93,7 @@ def commands(group):
     }[group]
 
 
-def run(group):
-    invalidate((group,))
+def _run(group):
     try:
         requested = commands(group)
     except (OSError, ValueError) as error:
@@ -131,10 +133,15 @@ def run(group):
     return passed
 
 
+def run(group):
+    invalidate((group,))
+    return _run(group)
+
+
 def run_groups(groups):
     # Invalidate later groups before the first inventory or tool can interrupt us.
     invalidate(groups)
-    return all([run(group) for group in groups])
+    return all([_run(group) for group in groups])
 
 
 def main():

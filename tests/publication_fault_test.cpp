@@ -1482,6 +1482,55 @@ TEST_F(PublicationFault, CompletionKeepsExceptionTypesAndDiagnosticFailuresCanno
     EXPECT_STREQ(error.what(), "original cancellation");
   }
 }
+TEST_F(PublicationFault, ReceiptPathIsReportedWhenDiagnosticConstructionCannotAllocate) {
+  struct ReceiptFiles : FileSystem {
+    NativeFileSystem native;
+    bool arm = false;
+    std::string read(const fs::path &path, size_t limit) const override {
+      return native.read(path, limit);
+    }
+    fs::path canonical(const fs::path &path) const override {
+      return native.canonical(path);
+    }
+    void remove(const fs::path &path) override {
+      native.remove(path);
+    }
+    void atomic_write(const fs::path &path, const std::string &bytes, bool secret) override {
+      native.atomic_write(path, bytes, secret);
+      if (arm) {
+        arm = false;
+        fault::countdown = 0;
+      }
+    }
+  } files;
+  TempDirectory temp;
+  StateStore store(files, temp.root / "state");
+  auto session = store.create();
+  ToolCall call{"call", "exec_command", Json::object()};
+  store.tool_started(session.id, call);
+  call.name = "different";
+  files.arm = true;
+  fault::fired = false;
+  testing::internal::CaptureStderr();
+  std::string failure;
+  try {
+    store.complete_tool(session, call, returned_result(call.id));
+  } catch (const Error &error) {
+    failure = error.what();
+  }
+  const bool allocated = fault::fired;
+  fault::disable();
+  const auto diagnostic = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(allocated);
+  EXPECT_EQ(failure, "Ambiguous journaled tool call id");
+  EXPECT_NE(diagnostic.find("Uncommitted tool result preserved at "), std::string::npos);
+  size_t receipts = 0;
+  for (const auto &entry : fs::directory_iterator(temp.root / "state/repairs")) {
+    EXPECT_NE(diagnostic.find(entry.path().string()), std::string::npos);
+    ++receipts;
+  }
+  EXPECT_EQ(receipts, 1u);
+}
 TEST_F(PublicationFault, RevisionSchemaOperationalFailuresRetainSqliteResultCodes) {
   for (const auto *query : {"PRAGMA schema_version", "SELECT sql FROM sqlite_master WHERE name=?"})
     for (int status : {SQLITE_BUSY, SQLITE_IOERR}) {

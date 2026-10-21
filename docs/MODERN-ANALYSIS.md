@@ -136,7 +136,7 @@ establish authorization dominance, transaction ordering or race freedom.
 
 Lint setup and commands are documented in [README.md](../README.md). `make test-lint-runners`
 checks exact tool identity, missing tools, timeout and interruption handling, atomic publication
-and stale success evidence, plus report/environment utilities. Analyzer-runner unit tests run in
+and stale success evidence, plus report/environment utilities and fake-tool Make failure handling. Analyzer-runner unit tests run in
 the independent lint job; real analyzer detection remains in the native job.
 
 CLI startup accepts construction-time cancellation and diagnostics through an additive

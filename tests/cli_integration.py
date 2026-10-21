@@ -37,25 +37,38 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def handle(self):
         with contextlib.suppress(ConnectionResetError,BrokenPipeError):super().handle()
     def do_POST(self):
+        with self.server.handlers:
+            self.server.active_handlers += 1
+        try:
+            self.reply()
+        finally:
+            with self.server.handlers:
+                self.server.active_handlers -= 1
+                self.server.handlers.notify_all()
+    def reply(self):
         body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-        self.server.requests.append({'path':self.path,'body':body})
+        with self.server.handlers:
+            self.server.requests.append({'path':self.path,'body':body})
+            callback=self.server.before_reply
+            self.server.before_reply=None
+            gate=self.server.signal_gate
+            malformed_summary=self.server.malformed_summary
         if 'fixture-signal-wait' in json.dumps(body):
-            ready,release=self.server.signal_gate
+            ready,release=gate
             ready.set()
             if not release.wait(30):raise TimeoutError('signal fixture was not released')
-        callback=self.server.before_reply
-        self.server.before_reply=None
         if callback:callback()
         if 'fixture-tool-invalid-' in json.dumps(body.get('messages',[])):
-            mode=next(k for k in ('arguments','name','id') if 'fixture-tool-invalid-'+k in json.dumps(body['messages']))
+            mode=next(k for k in ('arguments','overflow','name','id') if 'fixture-tool-invalid-'+k in json.dumps(body['messages']))
             name='' if mode=='name' else 'read_file'
             identity='' if mode=='id' else 'invalid-call'
+            invalid_arguments='{"value":1e999}' if mode=='overflow' else '{broken-arguments'
             if self.path=='/v1/messages':
                 frames=[{'type':'content_block_start','index':0,'content_block':{'type':'tool_use','id':identity,'name':name,'input':{}}}]
-                if mode=='arguments':frames.append({'type':'content_block_delta','index':0,'delta':{'type':'input_json_delta','partial_json':'{broken-arguments'}})
+                if mode in ('arguments','overflow'):frames.append({'type':'content_block_delta','index':0,'delta':{'type':'input_json_delta','partial_json':invalid_arguments}})
                 frames.append({'type':'message_stop'})
             else:
-                frames=[{'choices':[{'delta':{'tool_calls':[{'index':0,'id':identity,'function':{'name':name,'arguments':'{broken-arguments' if mode=='arguments' else '{}'}}]},'finish_reason':'tool_calls'}]}]
+                frames=[{'choices':[{'delta':{'tool_calls':[{'index':0,'id':identity,'function':{'name':name,'arguments':invalid_arguments if mode in ('arguments','overflow') else '{}'}}]},'finish_reason':'tool_calls'}]}]
             wire=''.join('data: '+json.dumps(f)+'\n\n' for f in frames)
             if self.path!='/v1/messages':wire+='data: [DONE]\n\n'
             data=wire.encode();self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers()
@@ -66,7 +79,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
         if self.path in ('/codex','/v1/responses'):
             prompt=next((m.get('content','') for m in reversed(body['input']) if m.get('role')=='user'),'')
-            if prompt.startswith('fixture-malformed-') or (self.server.malformed_summary and not body.get('tools')):
+            if prompt.startswith('fixture-malformed-') or (malformed_summary and not body.get('tools')):
                 mode=prompt[len('fixture-malformed-'):]
                 payload='{broken' if mode=='syntax' else json.dumps({'type':'response.output_text.delta','delta':42})
                 data=('data: '+payload+'\n\n').encode()
@@ -187,6 +200,10 @@ class CliTests(unittest.TestCase):
         cls.server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler)
         cls.server.requests=[]
         cls.server.before_reply=None
+        cls.server.signal_gate=None
+        cls.server.handlers=threading.Condition()
+        cls.server.active_handlers=0
+        cls.server.releases=[]
         threading.Thread(target=cls.server.serve_forever,daemon=True).start()
     @classmethod
     def tearDownClass(cls):cls.server.shutdown();cls.server.server_close()
@@ -196,10 +213,52 @@ class CliTests(unittest.TestCase):
         self.env=dict(__import__("hermetic").environment(self.root/"user-home"),CODET_HOME=str(self.home));self.env.pop('SEARXNG_URL',None)
         self.server.requests=[]
         self.server.before_reply=None
+        self.server.signal_gate=None
+        self.server.releases=[]
         self.server.malformed_summary=False
-    def tearDown(self):self.tmp.cleanup()
+    def tearDown(self):
+        try:
+            for release in self.server.releases:release.set()
+            with self.server.handlers:
+                self.assertTrue(self.server.handlers.wait_for(
+                    lambda:self.server.active_handlers==0,timeout=5), 'fixture handler did not finish')
+        finally:
+            self.tmp.cleanup()
     def run_cli(self,*args,input=''):
         return subprocess.run([BIN,'-C',str(self.workspace),*args],input=input,text=True,capture_output=True,env=self.env,timeout=15)
+    def test_delayed_handler_cannot_consume_the_next_callback(self):
+        import http.client
+        ready,release=threading.Event(),threading.Event()
+        self.server.signal_gate=(ready,release)
+        self.server.releases.append(release)
+        failures=[]
+        def request(prompt):
+            connection=http.client.HTTPConnection('127.0.0.1',self.server.server_port,timeout=5)
+            try:
+                connection.request('POST','/api/chat',json.dumps({'messages':[{'role':'user','content':prompt}]}),
+                                   {'Content-Type':'application/json'})
+                self.assertEqual(connection.getresponse().status,200)
+            except Exception as error:
+                failures.append(error)
+            finally:
+                connection.close()
+        worker=threading.Thread(target=request,args=('fixture-signal-wait',))
+        worker.start()
+        calls=[]
+        try:
+            self.assertTrue(ready.wait(5))
+            with self.server.handlers:
+                self.server.before_reply=lambda:calls.append('next request')
+            release.set()
+            worker.join(5)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(calls,[])
+            request('next request')
+            self.assertEqual(calls,['next request'])
+            self.assertEqual(failures,[])
+        finally:
+            release.set()
+            worker.join(5)
     def test_prompt_subcommand_words_and_literal_flags(self):
         cases=[('exec','doctor'),('exec','memory'),('exec','login'),('exec','sessions'),
                ('exec','export'),('exec','fix','resume','handling'),('fix','doctor','handling'),
@@ -345,6 +404,7 @@ class CliTests(unittest.TestCase):
         marker=self.configure_hooks()
         ready = threading.Event()
         release = threading.Event()
+        self.server.releases.append(release)
         def waiting_reply():
             ready.set()
             release.wait(8)
@@ -1043,7 +1103,7 @@ class CliTests(unittest.TestCase):
 
     def test_curl_tool_assembly_errors_keep_payload_and_never_retry(self):
         for provider in ('openai','anthropic'):
-            for mode in ('arguments','name','id'):
+            for mode in ('arguments','overflow','name','id'):
                 with self.subTest(provider=provider,mode=mode):
                     self.server.requests=[]
                     flags=['--provider',provider,'-c',f'providers.{provider}.api_key="fixture"','-c',f'providers.{provider}.base_url="http://127.0.0.1:{self.server.server_port}'+('/v1' if provider=='openai' else '')+'"']
@@ -1215,6 +1275,7 @@ class CliTests(unittest.TestCase):
             with self.subTest(signal=sig):
                 ready,release=threading.Event(),threading.Event()
                 self.server.signal_gate=(ready,release)
+                self.server.releases.append(release)
                 p=subprocess.Popen([BIN,'-C',str(self.workspace),'exec','--json','fixture-signal-wait'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=self.env)
                 try:
                     self.assertTrue(ready.wait(15),'provider request did not become ready')
@@ -1225,6 +1286,9 @@ class CliTests(unittest.TestCase):
                 finally:
                     release.set()
                     if p.poll() is None:p.kill();p.communicate(timeout=5)
+                    with self.server.handlers:
+                        self.assertTrue(self.server.handlers.wait_for(
+                            lambda:self.server.active_handlers==0,timeout=5))
     def test_terminal_modes_restore_terminal(self):
         import fcntl
         import pty
