@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <fcntl.h>
 #include <limits>
 #include <set>
@@ -404,14 +405,6 @@ fs::path repair_directory(const fs::path &home) {
   return dir;
 }
 } // namespace
-struct SessionVersion {
-  std::string token;
-  int schema = 0;
-  bool present = false;
-  bool operator==(const SessionVersion &other) const {
-    return token == other.token && schema == other.schema && present == other.present;
-  }
-};
 // Immutable snapshot provenance. Pending payloads are shared, never copied on acknowledgement.
 struct SessionProjection {
   struct Mapping {
@@ -424,7 +417,6 @@ struct SessionProjection {
     };
     std::string source, journal;
     std::vector<std::string> baseline;
-    SessionVersion version;
     std::set<std::string> calls;
     std::map<std::string, Provisional> provisional;
   };
@@ -444,18 +436,37 @@ struct StateStore::Impl {
   Impl() = default;
   Impl(const Impl &) = delete;
   Impl &operator=(const Impl &) = delete;
+  struct SessionVersion {
+    std::string token;
+    int schema = 0;
+    bool present = false;
+    bool operator==(const SessionVersion &other) const {
+      return token == other.token && schema == other.schema && present == other.present;
+    }
+  };
   sqlite3 *db = nullptr;
   fs::path home, artifact_root;
   mutable fs::path artifact_anchor;
   NativeFileSystem native_files;
   FileSystem *files = &native_files;
   DiagnosticSink diagnostics;
-  void diagnostic(const std::string &message) const noexcept {
+  void report_file(const char *label, const char *path) const noexcept {
     try {
-      report_diagnostic(diagnostics, message);
+      report_diagnostic(diagnostics, std::string(label) + path);
     } catch (...) {
-      // Diagnostics must never replace the exception or fail an owning commit.
-      return;
+      // The file already exists. Report its held path even when allocation fails.
+      for (const auto *part : {label, path, "\n"}) {
+        auto remaining = std::strlen(part);
+        while (remaining) {
+          const auto written = ::write(STDERR_FILENO, part, remaining);
+          if (written < 0 && errno == EINTR)
+            continue;
+          if (written <= 0)
+            return;
+          part += written;
+          remaining -= static_cast<size_t>(written);
+        }
+      }
     }
   }
   bool publication_confirmed(const fs::path &path, const std::string &bytes) const noexcept {
@@ -514,14 +525,9 @@ struct StateStore::Impl {
   }
   void report_backups(const std::vector<Backup> &backups) const noexcept {
     for (const auto &backup : backups)
-      try {
-        diagnostic((backup.confirmed
-                        ? "Session repair backup: "
-                        : "Session repair backup candidate (publication unconfirmed): ") +
-                   backup.path);
-      } catch (...) {
-        continue;
-      }
+      report_file(backup.confirmed ? "Session repair backup: "
+                                   : "Session repair backup candidate (publication unconfirmed): ",
+                  backup.path.c_str());
   }
   bool anchor() const {
     if (!artifact_anchor.empty())
@@ -595,6 +601,8 @@ struct StateStore::Impl {
   static Message lexical(Message message, const std::string &id, size_t position,
                          const std::string &tool) {
     portable_message(message, id, tool);
+    for (auto &call : message.calls)
+      call.arguments = safe_json(call.arguments);
     ensure_message_id(message, position);
     return message;
   }
@@ -602,7 +610,6 @@ struct StateStore::Impl {
     if (!sqlite3_get_autocommit(db))
       throw Error("Transcript writes require their own transaction");
   }
-  using SessionVersion = codet::SessionVersion;
   bool session_exists(const std::string &id) const {
     Statement exists(db, "SELECT 1 FROM sessions WHERE id=?");
     exists.text(1, id);
@@ -619,15 +626,8 @@ struct StateStore::Impl {
     if (status != SQLITE_ROW && status != SQLITE_DONE)
       sql_read_error(db, "Cannot inspect session revision", status);
     const auto token = status == SQLITE_ROW ? column(q.p, 0) : std::string{};
-    if (status == SQLITE_DONE && !allow_invalid) {
-      Statement exists(db, "SELECT 1 FROM sessions WHERE id=?");
-      exists.text(1, id);
-      const auto found = sqlite3_step(exists.p);
-      if (found != SQLITE_DONE && found != SQLITE_ROW)
-        sql_read_error(db, "Cannot inspect session existence", found);
-      if (found == SQLITE_DONE)
-        return {token, verified_schema, status == SQLITE_ROW};
-    }
+    if (status == SQLITE_DONE && !allow_invalid && !session_exists(id))
+      return {token, verified_schema, false};
     if (!allow_invalid && (status != SQLITE_ROW || !valid_revision_token(token)))
       throw InvalidSessionToken("Invalid session revision token; explicit session repair required");
     return {token, verified_schema, status == SQLITE_ROW};
@@ -679,25 +679,33 @@ struct StateStore::Impl {
     std::shared_ptr<const SessionProjection> committed;
     JsonRetirement retirement;
     std::shared_ptr<CommitReceipt> receipt;
+    std::vector<std::string> validated_input;
   };
   bool receipt_matches(const Session &s, const SessionVersion &version) const {
     return receipt && receipt->session == s.id &&
            receipt->projection.lock() == s.checkpoint_projection && receipt->version == version;
   }
-  void prepare_receipt(const Session &s, PreparedTranscript &plan) const {
+  static bool receipt_fits(const Session &s) {
     constexpr size_t receipt_limit = size_t{8} * 1024 * 1024;
     const auto overhead = sizeof(CommitReceipt) + s.id.size() + 32 + 2 * sizeof(void *);
-    if (!s.checkpoint_projection || !s.checkpoint_projection->recovery ||
-        overhead > receipt_limit ||
-        s.messages.size() >
-            (receipt_limit - overhead) / (size_t{2} * 64 + size_t{2} * sizeof(std::string)))
+    return s.checkpoint_projection && s.checkpoint_projection->recovery &&
+           overhead <= receipt_limit &&
+           s.messages.size() <=
+               (receipt_limit - overhead) / (size_t{2} * 64 + size_t{2} * sizeof(std::string));
+  }
+  void prepare_receipt(const Session &s, PreparedTranscript &plan) const {
+    if (!receipt_fits(s))
       return;
     try {
       auto next = std::make_shared<CommitReceipt>();
       next->session = s.id;
       next->projection = s.checkpoint_projection;
-      next->input = message_fingerprints(s.messages);
+      next->input = std::move(plan.validated_input);
+      next->input.reserve(s.messages.size());
+      for (size_t i = next->input.size(); i < s.messages.size(); ++i)
+        next->input.push_back(message_fingerprint(s.messages[i]));
       next->canonical.reserve(s.messages.size());
+      const bool reuse = receipt_matches(s, plan.version);
       std::map<std::string, std::string> names;
       for (size_t i = 0; i < s.messages.size(); ++i) {
         for (const auto &call : s.messages[i].calls)
@@ -705,7 +713,7 @@ struct StateStore::Impl {
         const auto row = plan.rows.find(i);
         if (row != plan.rows.end())
           next->canonical.push_back(digest(*row->second.payload));
-        else if (receipt_matches(s, plan.version) && i < receipt->canonical.size())
+        else if (reuse && i < receipt->canonical.size())
           next->canonical.push_back(receipt->canonical[i]);
         else {
           auto message = lexical(s.messages[i], s.id, i, names[s.messages[i].tool_call_id]);
@@ -1058,6 +1066,26 @@ struct StateStore::Impl {
   struct JournalEntry {
     std::string result, status, name, args;
   };
+  static std::optional<JournalEntry> read_journal_entry(Statement &row, const std::string &id,
+                                                        const std::string &call_id) {
+    sqlite3_reset(row.p);
+    row.text(1, id);
+    row.text(2, call_id);
+    const auto status = sqlite3_step(row.p);
+    if (status == SQLITE_ROW)
+      return JournalEntry{column(row.p, 0), column(row.p, 1), column(row.p, 2), column(row.p, 3)};
+    if (status != SQLITE_DONE)
+      sql_read_error(sqlite3_db_handle(row.p), "Cannot read tool journal", status);
+    return std::nullopt;
+  }
+  static void validate_journal_call(const JournalEntry &entry, const ToolCall &call) {
+    try {
+      if (entry.name != call.name || stored_json(entry.args) != safe_json(call.arguments))
+        throw Error("Ambiguous journaled tool call id");
+    } catch (const Json::exception &) {
+      throw Error("Corrupt journaled tool arguments");
+    }
+  }
   using Journal = std::map<std::string, JournalEntry>;
   Journal read_journal(const std::string &id, const std::vector<Message> &messages,
                        const std::vector<Message> *extra = nullptr) const {
@@ -1071,15 +1099,9 @@ struct StateStore::Impl {
         for (const auto &call : message.calls) {
           if (!queried.insert(call.id).second)
             continue;
-          sqlite3_reset(row.p);
-          row.text(1, id);
-          row.text(2, call.id);
-          const auto status = sqlite3_step(row.p);
-          if (status == SQLITE_ROW)
-            journal.emplace(call.id, JournalEntry{column(row.p, 0), column(row.p, 1),
-                                                  column(row.p, 2), column(row.p, 3)});
-          else if (status != SQLITE_DONE)
-            sql_read_error(db, "Cannot read tool journal", status);
+          auto entry = read_journal_entry(row, id, call.id);
+          if (entry)
+            journal.emplace(call.id, std::move(*entry));
         }
     }
     return journal;
@@ -1130,15 +1152,8 @@ struct StateStore::Impl {
         const auto record = journal.find(call.id);
         const bool recorded = record != journal.end();
         const auto status = recorded ? record->second.status : "not_started";
-        if (recorded) {
-          try {
-            if (record->second.name != call.name ||
-                stored_json(record->second.args) != call.arguments)
-              throw Error("Ambiguous journaled tool call id");
-          } catch (const Json::exception &) {
-            throw Error("Corrupt journaled tool arguments");
-          }
-        }
+        if (recorded)
+          validate_journal_call(record->second, call);
         Message result;
         std::string outcome;
         if (recorded &&
@@ -1272,10 +1287,21 @@ struct StateStore::Impl {
                                   entry->second.second, plan.rows.at(entry->second.first).payload});
       }
   }
+  static void
+  prepare_recovery_journal(PreparedTranscript &plan, const Session &s,
+                           std::map<std::string, std::pair<size_t, std::string>> writes = {}) {
+    const auto &provisional = s.checkpoint_projection->recovery->provisional;
+    for (const auto &row : plan.rows) {
+      const auto entry = provisional.find(row.second.message.tool_call_id);
+      if (entry != provisional.end() && entry->second.message_id == row.second.message.message_id)
+        writes.emplace(entry->first, std::make_pair(row.first, entry->second.status));
+    }
+    prepare_journal(plan, s.messages, writes);
+  }
   static std::shared_ptr<const SessionProjection> recovered_projection(
       const std::string &id, const std::shared_ptr<const SessionProjection> &previous,
       const std::vector<Message> &before, const Recovered &recovered, std::string source,
-      const Journal &journal, const SessionVersion &version, const Recovered *persisted = nullptr) {
+      const Journal &journal, const Recovered *persisted = nullptr) {
     if (same_messages(before, recovered.messages))
       return previous;
     auto projection = std::make_shared<SessionProjection>();
@@ -1296,7 +1322,6 @@ struct StateStore::Impl {
     recovery->source = std::move(source);
     recovery->journal = journal_signature(journal);
     recovery->baseline = message_fingerprints(persisted ? persisted->messages : recovered.messages);
-    recovery->version = version;
     for (const auto &message : recovered.messages)
       for (const auto &call : message.calls)
         recovery->calls.insert(call.id);
@@ -1318,20 +1343,38 @@ struct StateStore::Impl {
       if ((options.kind == WriteKind::append && options.first != acknowledged.canonical.size()) ||
           (options.kind == WriteKind::revise && s.messages.size() != acknowledged.canonical.size()))
         throw Error("Session changed before recovered transcript write");
+      auto verified_positions = positions;
+      std::vector<std::string> fingerprints;
+      bool retain = options.memory == MemoryPublication::discard && receipt_fits(s);
+      if (retain)
+        try {
+          fingerprints.reserve(s.messages.size());
+        } catch (const std::bad_alloc &) {
+          retain = false;
+        }
+      bool matches = true;
       for (size_t i = 0; i < acknowledged.canonical.size(); ++i) {
-        const auto fingerprint = message_fingerprint(s.messages.at(i));
+        auto fingerprint = message_fingerprint(s.messages.at(i));
         if ((options.kind == WriteKind::append || !requested.count(i)) &&
-            fingerprint != acknowledged.input[i] && fingerprint != acknowledged.canonical[i])
-          throw Error("Unrequested recovered transcript message changed");
+            fingerprint != acknowledged.input[i] && fingerprint != acknowledged.canonical[i]) {
+          matches = false;
+          break; // Normalization may still establish equivalence on the strict path.
+        }
         if (options.memory == MemoryPublication::publish && !requested.count(i) &&
             fingerprint != acknowledged.canonical[i])
-          positions.push_back(i);
+          verified_positions.push_back(i);
+        if (retain)
+          fingerprints.push_back(std::move(fingerprint));
       }
-      auto verified = options;
-      verified.recovery = RecoveryInput::verified;
-      auto plan = prepare(s, std::move(positions), verified);
-      snapshot.commit();
-      return plan;
+      if (matches) {
+        auto verified = options;
+        verified.recovery = RecoveryInput::verified;
+        auto plan = prepare(s, std::move(verified_positions), verified);
+        prepare_recovery_journal(plan, s);
+        plan.validated_input = std::move(fingerprints);
+        snapshot.commit();
+        return plan;
+      }
     }
     std::vector<Message> stored;
     bool blob = false;
@@ -1432,14 +1475,7 @@ struct StateStore::Impl {
       plan = prepare(working, std::move(all), publication);
     }
     plan.version = version;
-    auto writes = recovered.writes;
-    for (const auto &row : plan.rows) {
-      const auto provisional = baseline.provisional.find(row.second.message.tool_call_id);
-      if (provisional != baseline.provisional.end() &&
-          provisional->second.message_id == row.second.message.message_id)
-        writes.emplace(provisional->first, std::make_pair(row.first, provisional->second.status));
-    }
-    prepare_journal(plan, s.messages, writes);
+    prepare_recovery_journal(plan, s, std::move(recovered.writes));
     snapshot.commit();
     return plan;
   }
@@ -2072,8 +2108,8 @@ Session StateStore::read_session(const std::string &id, const ReadOptions &optio
       s.provider_state["messages"] = Json::array();
   }
   const auto journal = repair ? impl_->read_journal(s.id, s.messages) : Impl::Journal{};
-  const auto version =
-      validate_revision ? impl_->session_version(s.id, true) : Impl::SessionVersion{};
+  if (validate_revision)
+    (void)impl_->session_version(s.id, true);
   // Capture every required input before optional population, which may lose the read transaction.
   if (provider_state && snapshot.owner)
     provider_token = impl_->load_provider_token(s.id);
@@ -2120,7 +2156,7 @@ Session StateStore::read_session(const std::string &id, const ReadOptions &optio
     if (project)
       s.checkpoint_projection =
           Impl::recovered_projection(s.id, s.checkpoint_projection, s.messages, recovered,
-                                     std::move(source_signature), journal, version);
+                                     std::move(source_signature), journal);
     s.messages = std::move(recovered.messages);
   }
   return s;
@@ -2158,7 +2194,6 @@ void StateStore::reconcile(Session &destination, bool persist) {
         source_signature = "rows:" + digest("");
       impl_->known_projections(stored, session.checkpoint_projection);
       if (persist) {
-        impl_->known_projections(stored, session.checkpoint_projection);
         const auto comparison = Impl::compare_messages(stored.messages, session.messages);
         if (!comparison.non_tools)
           throw Error("Session modified by another process: reload before recovery");
@@ -2174,9 +2209,9 @@ void StateStore::reconcile(Session &destination, bool persist) {
     const bool unchanged = impl_->same_messages(recovered.messages, session.messages) &&
                            recovered.writes.empty() && stored_equal;
     if (!persist) {
-      auto projection = Impl::recovered_projection(
-          session.id, session.checkpoint_projection, session.messages, recovered,
-          std::move(source_signature), journal, version, &persisted);
+      auto projection =
+          Impl::recovered_projection(session.id, session.checkpoint_projection, session.messages,
+                                     recovered, std::move(source_signature), journal, &persisted);
       destination.messages.swap(recovered.messages);
       destination.checkpoint_projection = std::move(projection);
       return;
@@ -2593,18 +2628,11 @@ void StateStore::complete_tool(Session &s, const ToolCall &call, Message result)
             Statement entry(
                 impl_->db,
                 "SELECT result,status,name,args FROM tools WHERE session=? AND call_id=?");
-            entry.text(1, s.id);
-            entry.text(2, call.id);
-            const auto status = sqlite3_step(entry.p);
-            if (status != SQLITE_ROW && status != SQLITE_DONE)
-              sql_read_error(impl_->db, "Cannot inspect tool completion", status);
-            if (status != SQLITE_ROW ||
-                (column(entry.p, 1) != "running" && column(entry.p, 1) != "complete"))
+            const auto record = Impl::read_journal_entry(entry, s.id, call.id);
+            if (!record || (record->status != "running" && record->status != "complete"))
               throw Error("Session modified by another process: tool outcome is no longer pending");
-            if (column(entry.p, 2) != call.name ||
-                stored_json(column(entry.p, 3)) != call.arguments)
-              throw Error("Ambiguous journaled tool call id");
-            already_complete = column(entry.p, 1) == "complete";
+            Impl::validate_journal_call(*record, call);
+            already_complete = record->status == "complete";
             if (has_result && !already_complete) {
               const auto projection = s.checkpoint_projection;
               if (!projection || !projection->recovery ||
@@ -2627,7 +2655,7 @@ void StateStore::complete_tool(Session &s, const ToolCall &call, Message result)
                             "SELECT payload FROM session_messages WHERE session=? AND position=?");
               const auto payload = impl_->stored_payload(s.id, position, row);
               if (!payload || *payload != *prepared.rows.at(position).payload ||
-                  column(entry.p, 0) != *payload)
+                  record->result != *payload)
                 throw Error("Session modified by another process: completed tool result differs");
             }
             snapshot.commit();
@@ -2680,9 +2708,9 @@ void StateStore::complete_tool(Session &s, const ToolCall &call, Message result)
       } catch (...) {
         confirmed = impl_->publication_confirmed(path, bytes);
       }
-      impl_->diagnostic((confirmed ? "Uncommitted tool result preserved at "
-                                   : "Tool result receipt candidate (publication unconfirmed): ") +
-                        path.string());
+      impl_->report_file(confirmed ? "Uncommitted tool result preserved at "
+                                   : "Tool result receipt candidate (publication unconfirmed): ",
+                         path.c_str());
     } catch (...) {
       // Preserve the original failure, including allocation and non-standard exceptions.
       std::rethrow_exception(failure);

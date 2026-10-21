@@ -417,7 +417,7 @@ def actual_header_canaries(entries, folder, root):
         result.append(dict(source_entry, file=str(source), arguments=arguments,
                            expectation="defective", expected_diagnostic="arrayIndexOutOfBounds"))
     # Exercise each loaded model with both defective and safe calls. These are
-    # parsed through actual application/dependency headers, never executed.
+    # parsed through library headers only; application-header bounds probes stay separate.
     contracts = {
         "posix": ('<fcntl.h>\n#include <unistd.h>',
                   'open("/unexecuted", O_RDONLY);',

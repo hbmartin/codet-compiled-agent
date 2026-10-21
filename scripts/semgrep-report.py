@@ -33,8 +33,7 @@ def main():
     except (OSError, ValueError) as error:
         print(f"Report is missing or invalid: {error}", file=sys.stderr)
         return
-    # Test-result and production schemas differ. Print the complete structured result so
-    # parser failures, unmatched fixture annotations and scan errors stay visible too.
+    # Print the complete structured scan result, including parser and analysis errors.
     print(json.dumps(data, indent=2, ensure_ascii=False), file=sys.stderr)
 
 

@@ -132,6 +132,11 @@ class AnalysisTests(unittest.TestCase):
                    for e in self.entries]
         probes = analysis.actual_header_canaries(entries, self.folder, self.root)
         self.assertEqual(len(probes), 15)
+        bounds = [p for p in probes if p.get("expected_diagnostic") == "arrayIndexOutOfBounds"]
+        self.assertEqual(len(bounds), 2)
+        cpp = next(p for p in bounds if Path(p["file"]).suffix == ".cpp")
+        self.assertIn('codet/core.hpp', Path(cpp["file"]).read_text())
+        self.assertIn(str(toml), cpp["arguments"])
         libraries = [p for p in probes if p.get("library_model")]
         self.assertEqual(len(libraries), 12)
         for probe in libraries:

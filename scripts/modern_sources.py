@@ -20,9 +20,3 @@ def maintained_native_files(root=ROOT):
         p for p in (root / "tests").rglob("*") if p.suffix in SOURCE_SUFFIXES | HEADER_SUFFIXES
     }
     return sorted(set(application_sources(root)) | headers | tests)
-
-
-def policy_inputs(root=ROOT):
-    # Every maintained production source/header is parsed, even when no narrow
-    # regression rule applies. Fixtures and historical recovered C stay separate.
-    return [p for p in maintained_native_files(root) if not p.is_relative_to(root / "tests")]

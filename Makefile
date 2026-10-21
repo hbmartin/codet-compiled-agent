@@ -68,14 +68,14 @@ build-analysis-tools:
 test-modern-analysis-runner:
 	$(ANALYSIS_PYTHON) -m unittest discover -s tests -p test_analyze_modern.py -v
 SEMGREP_VERSION := 1.177.0
-SEMGREP_PYTHON ?= python3
+SEMGREP_PYTHON ?= python3.12
 SEMGREP ?= $(CURDIR)/build/semgrep-venv/bin/semgrep
 SEMGREP_RUN = SEMGREP_ENABLE_VERSION_CHECK=0 SEMGREP_SEND_METRICS=off $(SEMGREP)
 SEMGREP_FLAGS = --metrics=off --disable-version-check --strict --error --no-rewrite-rule-ids
 .PHONY: fetch-semgrep semgrep-environment semgrep-ready check-semgrep
 # Provisioning is explicit; neither check target downloads tools or rules.
 fetch-semgrep:
-	$(SEMGREP_PYTHON) -c 'import sys; sys.exit("Provisioning requires Python 3.12+; set SEMGREP_PYTHON to a compatible interpreter.") if sys.version_info < (3, 12) else None'
+	$(SEMGREP_PYTHON) -c 'import sys; sys.exit("Provisioning requires Python 3.12; set SEMGREP_PYTHON to a compatible interpreter.") if sys.version_info[:2] != (3, 12) else None'
 	$(SEMGREP_PYTHON) -m venv build/semgrep-venv
 	build/semgrep-venv/bin/python -m pip install --disable-pip-version-check --only-binary=:all: \
 	  --require-hashes -r requirements/semgrep.lock
@@ -90,7 +90,7 @@ semgrep-ready:
 	@codet_semgrep_version=$$($(SEMGREP_RUN) --version) && test "$$codet_semgrep_version" = '$(SEMGREP_VERSION)' || { echo 'Semgrep $(SEMGREP_VERSION) is required.'; exit 1; }
 	@mkdir -p build/semgrep
 check-semgrep: semgrep-ready
-	@rm -f build/semgrep/tests.json build/semgrep/test.manifest.json build/semgrep/scan.manifest.json
+	@rm -f build/semgrep/tests.json build/semgrep/test.stderr.log build/semgrep/test.manifest.json build/semgrep/scan.manifest.json
 	@$(SEMGREP_RUN) scan $(SEMGREP_FLAGS) --config checks/semgrep --json \
 	  --include '*.c' --include '*.cc' --include '*.cpp' --include '*.cxx' \
 	  --include '*.h' --include '*.hh' --include '*.hpp' --include '*.hxx' \
@@ -99,17 +99,20 @@ check-semgrep: semgrep-ready
 	  { codet_status=$$?; $(SEMGREP_PYTHON) scripts/semgrep-report.py failure build/semgrep/scan.json || :; \
 	    cat build/semgrep/scan.stderr.log >&2; exit $$codet_status; }
 
-LINT_PYTHON ?= python3
+LINT_PYTHON ?= python3.12
 LINT_GO_VERSION := $(shell cat .go-version)
 LINT_GO = GOTOOLCHAIN=go$(LINT_GO_VERSION) go
 .PHONY: fetch-lint-tools check-lint check-format check-python check-shell check-workflows test-lint-runners
 fetch-lint-tools:
-	$(LINT_PYTHON) -c 'import sys; sys.exit("Provisioning requires Python 3.12+; set LINT_PYTHON to a compatible interpreter.") if sys.version_info < (3, 12) else None'
+	$(LINT_PYTHON) -c 'import sys; sys.exit("Provisioning requires Python 3.12; set LINT_PYTHON to a compatible interpreter.") if sys.version_info[:2] != (3, 12) else None'
+	@mkdir -p build/lint-tools/bin build/lint
+	$(LINT_GO) version > build/lint/go-version.txt
+	@read codet_banner codet_command codet_version codet_platform < build/lint/go-version.txt; \
+	  test "$$codet_banner $$codet_command $$codet_version" = 'go version go$(LINT_GO_VERSION)' && test -n "$$codet_platform" || \
+	  { echo 'Go $(LINT_GO_VERSION) is required; install Go 1.21+ with toolchain selection support.' >&2; exit 1; }
 	$(LINT_PYTHON) -m venv build/lint-venv
 	build/lint-venv/bin/python -m pip install --disable-pip-version-check --only-binary=:all: \
 	  --require-hashes -r requirements/lint.lock
-	@mkdir -p build/lint-tools/bin build/lint
-	$(LINT_GO) version > build/lint/go-version.txt
 	GOCACHE='$(CURDIR)/build/lint-tools/go-cache' GOBIN='$(CURDIR)/build/lint-tools/bin' $(LINT_GO) install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 	GOCACHE='$(CURDIR)/build/lint-tools/go-cache' GOBIN='$(CURDIR)/build/lint-tools/bin' $(LINT_GO) install mvdan.cc/sh/v3/cmd/shfmt@v3.14.1
 	@command -v shellcheck >/dev/null || { echo 'Install ShellCheck (apt install shellcheck or brew install shellcheck).'; exit 1; }

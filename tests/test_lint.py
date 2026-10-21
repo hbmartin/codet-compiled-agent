@@ -1,5 +1,8 @@
 """Check lint evidence, failure propagation and exact tool identity."""
 import json
+import os
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -84,7 +87,7 @@ class LintEnforcement(unittest.TestCase):
             if group == "python":raise KeyboardInterrupt
             lint.write_report(group, dict(passed=True))
             return True
-        with patch.object(lint, "run", side_effect=run), self.assertRaises(KeyboardInterrupt):
+        with patch.object(lint, "_run", side_effect=run), self.assertRaises(KeyboardInterrupt):
             lint.run_groups(lint.GROUPS)
         self.assertTrue(self.report("format")["passed"])
         self.assertTrue(all(not self.report(group)["passed"] for group in lint.GROUPS[1:]))
@@ -97,9 +100,32 @@ class LintEnforcement(unittest.TestCase):
         self.assertFalse(self.report("python")["passed"])
 
     def test_all_groups_run_after_a_failure(self):
-        with patch.object(lint, "run", side_effect=[False, True, True, True]) as run:
+        with patch.object(lint, "_run", side_effect=[False, True, True, True]) as run:
             self.assertFalse(lint.run_groups(lint.GROUPS))
         self.assertEqual(run.call_count, 4)
+
+    def test_unknown_tool_does_not_stop_later_tools_or_groups(self):
+        def commands(group):
+            name = "unknown-tool" if group == "format" else "ruff"
+            return [(name, "--version", None, [[]])]
+        with patch.object(lint, "commands", side_effect=commands), \
+                patch.object(lint.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "ruff 0.17.1", "")):
+            self.assertFalse(lint.run_groups(lint.GROUPS))
+        self.assertIn("Unknown lint tool", self.report("format")["results"][0]["failure"])
+        self.assertTrue(all(self.report(group)["passed"] for group in lint.GROUPS[1:]))
+
+    def test_groups_invalidate_once_and_publish_private_reports(self):
+        requested = [("ruff", "--version", "0.17.1", [[]])]
+        with patch.object(lint, "commands", return_value=requested), \
+                patch.object(lint.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "ruff 0.17.1", "")), \
+                patch.object(lint, "write_report", wraps=lint.write_report) as write:
+            self.assertTrue(lint.run_groups(lint.GROUPS))
+        for group in lint.GROUPS:
+            calls = [call for call in write.call_args_list if call.args[0] == group]
+            self.assertEqual(len(calls), 2)
+            self.assertFalse(calls[0].args[1]["passed"])
+            self.assertTrue(calls[1].args[1]["passed"])
+            self.assertEqual(stat.S_IMODE((self.root / "build/lint" / (group + ".json")).stat().st_mode), 0o600)
 
     def test_failed_atomic_publish_retains_initial_failure_and_cleans_temporary(self):
         lint.invalidate(("python",))
@@ -107,6 +133,86 @@ class LintEnforcement(unittest.TestCase):
             lint.write_report("python", dict(passed=True))
         self.assertFalse(self.report("python")["passed"])
         self.assertEqual([p.name for p in (self.root / "build/lint").iterdir()], ["python.json"])
+
+
+class Provisioning(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        source = Path(__file__).resolve().parents[1]
+        for name in ("Makefile", "toolchain.mk", ".go-version"):
+            shutil.copy(source / name, self.root / name)
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        self.log = self.root / "commands.log"
+        self.python = self.bin / "python"
+        self.python.write_text(f"#!{sys.executable}\n" + r'''
+import os, pathlib, shutil, subprocess, sys
+args = sys.argv[1:]
+if args[0] == '-c':
+    version = tuple(map(int, os.environ['FAKE_PYTHON_VERSION'].split('.')))
+    raise SystemExit(subprocess.run([sys.executable, '-c', 'import sys;sys.version_info=' + repr(version) + ';' + args[1]]).returncode)
+if args[:2] == ['-m', 'venv']:
+    folder = pathlib.Path(args[2]) / 'bin'
+    folder.mkdir(parents=True)
+    shutil.copy(__file__, folder / 'python')
+with open(os.environ['COMMAND_LOG'], 'a') as log:
+    log.write('python ' + ' '.join(args) + '\n')
+''')
+        self.python.chmod(0o700)
+        go = self.bin / "go"
+        go.write_text(f"#!{sys.executable}\n" + r'''
+import os, sys
+with open(os.environ['COMMAND_LOG'], 'a') as log:
+    log.write(os.environ.get('GOTOOLCHAIN', '') + ' go ' + ' '.join(sys.argv[1:]) + '\n')
+if sys.argv[1] == 'version': print(os.environ['FAKE_GO_BANNER'])
+''')
+        go.chmod(0o700)
+        shellcheck = self.bin / "shellcheck"
+        shellcheck.write_text("#!/bin/sh\nexit 0\n")
+        shellcheck.chmod(0o700)
+        self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
+                        FAKE_PYTHON_VERSION="3.12.0", FAKE_GO_BANNER="go version go1.27.2 linux/amd64",
+                        COMMAND_LOG=str(self.log), GOTOOLCHAIN="local")
+
+    def run_target(self, target):
+        return subprocess.run(["make", target, "LINT_PYTHON=" + str(self.python),
+                               "SEMGREP_PYTHON=" + str(self.python)], cwd=self.root,
+                              env=self.env, text=True, capture_output=True, timeout=10)
+
+    def test_exact_go_version_is_required_before_environment_or_installation(self):
+        for banner in ("go version go1.20.9 linux/amd64", "go version go1.27.3 linux/amd64", "malformed"):
+            with self.subTest(banner=banner):
+                self.env["FAKE_GO_BANNER"] = banner
+                result = self.run_target("fetch-lint-tools")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Go 1.27.2 is required", result.stderr)
+                self.assertNotIn("install", self.log.read_text())
+                self.assertFalse((self.root / "build/lint-venv").exists())
+
+    def test_matching_go_overrides_inherited_local_and_installs_pinned_tools(self):
+        result = self.run_target("fetch-lint-tools")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        commands = self.log.read_text()
+        self.assertIn("go1.27.2 go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12", commands)
+        self.assertIn("go1.27.2 go install mvdan.cc/sh/v3/cmd/shfmt@v3.14.1", commands)
+        self.assertEqual((self.root / "build/lint/go-version.txt").read_text(), self.env["FAKE_GO_BANNER"] + "\n")
+
+    def test_other_python_minors_fail_before_provisioning(self):
+        for version in ("3.9.0", "3.13.0", "3.14.0"):
+            for target in ("fetch-lint-tools", "fetch-semgrep"):
+                with self.subTest(version=version, target=target):
+                    self.env["FAKE_PYTHON_VERSION"] = version
+                    result = self.run_target(target)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Provisioning requires Python 3.12", result.stderr)
+                    self.assertFalse((self.root / "build").exists())
+
+    def test_python_312_patch_versions_can_provision(self):
+        self.env["FAKE_PYTHON_VERSION"] = "3.12.99"
+        self.assertEqual(self.run_target("fetch-lint-tools").returncode, 0)
+        self.assertEqual(self.run_target("fetch-semgrep").returncode, 0)
 
 
 if __name__ == "__main__":

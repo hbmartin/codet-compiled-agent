@@ -26,8 +26,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends python3-venv python3-yaml shellcheck
       - name: Test enforcement runners without building C++
-        run: make test-lint-runners test-modern-analysis-runner LINT_PYTHON=python3
+        run: make test-lint-runners test-modern-analysis-runner LINT_PYTHON=python3.12
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: ${{ !cancelled() }}
         with:
           go-version-file: .go-version
           check-latest: false
@@ -35,10 +36,10 @@ jobs:
       - name: Provision pinned lint tools
         id: tools
         if: ${{ !cancelled() }}
-        run: make fetch-lint-tools LINT_PYTHON=python3
+        run: make fetch-lint-tools LINT_PYTHON=python3.12
       - name: Check formatting, Python, shell and workflows
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
-        run: make check-lint LINT_PYTHON=python3
+        run: make check-lint LINT_PYTHON=python3.12
       - name: Upload lint evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -58,10 +59,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends python3-venv
       - name: Provision hash-locked Semgrep environment
-        run: make fetch-semgrep SEMGREP_PYTHON=python3
-      - name: Check every maintained production source and header
+        run: make fetch-semgrep SEMGREP_PYTHON=python3.12
+      - name: Check production sources and headers
         if: ${{ !cancelled() }}
-        run: make check-semgrep SEMGREP_PYTHON=python3
+        run: make check-semgrep SEMGREP_PYTHON=python3.12
       - name: Upload policy evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
