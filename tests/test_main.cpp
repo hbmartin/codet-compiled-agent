@@ -16,7 +16,7 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
-    if (argc == 3 && std::string(argv[1]) == "--codet-file-notice-terminal-helper") {
+    if ((argc == 3 || argc == 4) && std::string(argv[1]) == "--codet-file-notice-terminal-helper") {
       char terminal_type[] = "xterm";
       SCREEN *screen = ::newterm(terminal_type, stderr, stdin);
       if (!screen)
@@ -27,9 +27,18 @@ int main(int argc, char **argv) {
           std::make_unique<codet::FileNotice>(argv[2], codet::FileNoticeKind::tool_result);
       notice->confirmed = true;
       queue.submit(std::move(notice));
-      queue.deliver([](const auto &) { throw std::bad_alloc(); });
+      codet::DiagnosticBuffer live(256);
+      live.add(std::string(256, 'x'));
+      if (argc == 4)
+        queue.preview([&](const auto &text) {
+          (void)::addnstr(text.c_str(), 10);
+          (void)::refresh();
+          live.add(text);
+        });
+      else
+        queue.preview([](const auto &) { throw std::bad_alloc(); });
       (void)::endwin();
-      queue.flush();
+      queue.finish([](const auto &text) { std::cerr << text << '\n'; });
       ::delscreen(screen);
       return 0;
     }

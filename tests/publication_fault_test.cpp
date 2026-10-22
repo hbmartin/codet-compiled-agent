@@ -4,6 +4,8 @@
 #include "codet/core.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/prompt.hpp"
+#include "journal_fixture.hpp"
+#include "journal_metrics.hpp"
 #include "temp.hpp"
 #include <cstdlib>
 #include <cstring>
@@ -17,6 +19,8 @@ namespace fault {
 bool after_commit = false, after_token = false, fired = false;
 bool provider_read_error = false, rollback_read = false, token_error = false;
 bool infrastructure_error = false;
+bool candidate_read_error = false;
+size_t candidate_read_skip = 0;
 bool read_failed = false;
 sqlite3 *observed_connection = nullptr;
 sqlite3 *before_write_connection = nullptr;
@@ -32,10 +36,12 @@ void arm() noexcept {
   countdown = skip;
 }
 void disable() noexcept {
+  codet::test::journal_metrics = {};
   after_commit = after_token = false;
   countdown = -1;
   provider_read_error = rollback_read = token_error = read_failed = false;
-  infrastructure_error = false;
+  infrastructure_error = candidate_read_error = false;
+  candidate_read_skip = 0;
   provider_read_done = {};
   journal_read_done = {};
   before_write = {};
@@ -114,6 +120,7 @@ extern "C" int sqlite3_exec(sqlite3 *db, const char *sql,
   return result;
 }
 extern "C" int sqlite3_step(sqlite3_stmt *statement) {
+  codet::test::journal_metrics.before(statement);
   fault::observed_connection = sqlite3_db_handle(statement);
   if (std::strcmp(
           sqlite3_sql(statement),
@@ -126,6 +133,16 @@ extern "C" int sqlite3_step(sqlite3_stmt *statement) {
   static const auto step = reinterpret_cast<Step>(dlsym(RTLD_NEXT, "sqlite3_step"));
   if (fault::read_failed)
     ++fault::steps_after_failure;
+  if (fault::candidate_read_error && codet::test::JournalMetrics::candidate(statement) &&
+      !sqlite3_stmt_busy(statement)) {
+    if (fault::candidate_read_skip)
+      --fault::candidate_read_skip;
+    else {
+      fault::candidate_read_error = false;
+      fault::read_failed = true;
+      return SQLITE_IOERR;
+    }
+  }
   if (fault::failed_query && std::strcmp(sqlite3_sql(statement), fault::failed_query) == 0) {
     fault::failed_query = nullptr;
     if (fault::failed_allocation)
@@ -157,6 +174,7 @@ extern "C" int sqlite3_step(sqlite3_stmt *statement) {
     return SQLITE_IOERR;
   }
   const int result = step(statement);
+  codet::test::journal_metrics.after(statement, result);
   if (result == SQLITE_DONE && fault::provider_read_done &&
       std::strcmp(
           sqlite3_sql(statement),
@@ -198,6 +216,42 @@ TEST(FileDiagnosticsFault, OwnershipTransferAndEmergencyFlushDoNotAllocate) {
   const auto output = testing::internal::GetCapturedStderr();
   EXPECT_FALSE(allocated);
   EXPECT_EQ(output, "Uncommitted tool result preserved at " + std::string(4096, 'p') + "\n");
+}
+TEST(FileDiagnosticsFault, PreviewAllocationFailureRetainsTheOwnedPathUntilFinish) {
+  FileDiagnosticQueue queue;
+  auto notice = std::make_unique<FileNotice>(std::string(4096, 'p'), FileNoticeKind::repair_backup);
+  DiagnosticSink sink = [](const auto &) { ADD_FAILURE() << "text allocation should fail first"; };
+  queue.submit(std::move(notice));
+  testing::internal::CaptureStderr();
+  fault::fired = false;
+  fault::countdown = 0;
+  queue.preview(sink);
+  const bool failed_text = fault::fired;
+  fault::fired = false;
+  fault::countdown = 0;
+  queue.finish(sink);
+  const bool allocated_during_fallback = fault::fired;
+  fault::disable();
+  const auto output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(failed_text);
+  EXPECT_FALSE(allocated_during_fallback);
+  EXPECT_EQ(output, "Session repair backup candidate (publication unconfirmed): " +
+                        std::string(4096, 'p') + "\n");
+}
+TEST(FileDiagnosticsFault, SuccessfulPreviewRetentionAndEmergencyFlushDoNotAllocate) {
+  FileDiagnosticQueue queue;
+  queue.submit(std::make_unique<FileNotice>(std::string(4096, 'p'), FileNoticeKind::tool_result));
+  DiagnosticSink sink = [](const auto &) { fault::countdown = 0; };
+  testing::internal::CaptureStderr();
+  fault::fired = false;
+  queue.preview(sink);
+  queue.flush();
+  const bool allocated = fault::fired;
+  fault::disable();
+  const auto output = testing::internal::GetCapturedStderr();
+  EXPECT_FALSE(allocated);
+  EXPECT_EQ(output, "Tool result receipt candidate (publication unconfirmed): " +
+                        std::string(4096, 'p') + "\n");
 }
 TEST(FaultAllocator, NothrowAllocationsUseTheSameReplacementAndFailureInjection) {
   fault::disable();
@@ -1746,4 +1800,123 @@ TEST_F(PublicationFault, CompletionPreservesPrivateRevisionExceptionIdentity) {
     EXPECT_EQ(observed, expected);
     EXPECT_NE(observed, typeid(Error).name());
   }
+}
+
+TEST_F(PublicationFault, ProvisionalCandidatesUseBoundedIndexedBatches) {
+  for (const size_t count : {1u, 2u, 63u, 64u, 65u, 128u, 129u}) {
+    ProjectionFixture f;
+    codet::test::journal_history(f.store, f.session, f.db, count, "provisional");
+    f.exec("INSERT INTO tools(session,call_id,name,args,result,status) "
+           "SELECT id,'unrelated','different','{broken','do not read','uncertain' FROM sessions");
+    for (auto &message : f.session.messages)
+      if (message.role == "tool")
+        message.text = "new-" + message.tool_call_id;
+    codet::test::journal_metrics = {true};
+    ASSERT_NO_THROW(f.store.save(f.session));
+    const auto metrics = codet::test::journal_metrics;
+    fault::disable();
+    EXPECT_EQ(metrics.queries, (count + 63) / 64);
+    EXPECT_EQ(metrics.rows, count);
+    EXPECT_EQ(metrics.fullscan_steps, 0u);
+    EXPECT_LE(metrics.max_bindings, 65u);
+    const auto loaded = f.store.load_id(f.session.id);
+    for (size_t i = 0; i < count; ++i) {
+      const auto position = 2 * i + 2;
+      EXPECT_EQ(loaded.messages[position].text, f.session.messages[position].text);
+      const auto query = "SELECT result FROM tools WHERE call_id='call-" + std::to_string(i) + "'";
+      EXPECT_EQ(f.value(query.c_str()), Json(f.session.messages[position]).dump());
+    }
+    EXPECT_EQ(f.value("SELECT args FROM tools WHERE call_id='unrelated'"), "{broken");
+  }
+}
+TEST_F(PublicationFault, ProvisionalBatchesRespectTheConnectionsVariableLimit) {
+  ProjectionFixture f;
+  codet::test::journal_history(f.store, f.session, f.db, 15, "provisional");
+  const auto previous = sqlite3_limit(f.db, SQLITE_LIMIT_VARIABLE_NUMBER, 8);
+  codet::test::journal_metrics = {true};
+  EXPECT_NO_THROW(f.store.save(f.session));
+  const auto metrics = codet::test::journal_metrics;
+  sqlite3_limit(f.db, SQLITE_LIMIT_VARIABLE_NUMBER, previous);
+  fault::disable();
+  EXPECT_EQ(metrics.queries, 3u);
+  EXPECT_EQ(metrics.rows, 15u);
+  EXPECT_LE(metrics.max_bindings, 8u);
+}
+TEST_F(PublicationFault, ProvisionalDuplicatesWithinAndAcrossBatchesRollBack) {
+  for (const size_t count : {2u, 64u}) {
+    ProjectionFixture f;
+    codet::test::journal_history(f.store, f.session, f.db, count, "provisional");
+    auto duplicate = f.session.messages[2];
+    duplicate.message_id.clear();
+    duplicate.text = "duplicate";
+    f.session.messages.push_back(std::move(duplicate));
+    EXPECT_THROW(f.store.save(f.session), Error);
+    EXPECT_EQ(f.value("SELECT count(*) FROM session_messages"), std::to_string(count * 2 + 1));
+    EXPECT_EQ(f.store.load_id(f.session.id).messages[2].text, "old-0");
+  }
+}
+TEST_F(PublicationFault, ProvisionalBatchReadFailureLeavesBothTablesUnchanged) {
+  for (size_t skip : {0u, 1u}) {
+    ProjectionFixture f;
+    codet::test::journal_history(f.store, f.session, f.db, 65, "provisional");
+    f.session.messages[2].text = "new";
+    fault::candidate_read_error = true;
+    fault::candidate_read_skip = skip;
+    EXPECT_THROW(f.store.save(f.session), Error);
+    const auto failed = fault::read_failed;
+    fault::disable();
+    EXPECT_TRUE(failed);
+    EXPECT_EQ(f.store.load_id(f.session.id).messages[2].text, "old-0");
+    EXPECT_EQ(f.value("SELECT result FROM tools WHERE call_id='call-0'"),
+              Json(f.store.load_id(f.session.id).messages[2]).dump());
+  }
+}
+TEST_F(PublicationFault, ProvisionalCandidateQueriesDoNotMaterializeResultPayloads) {
+  for (const size_t count : {1u, 65u}) {
+    ProjectionFixture f;
+    codet::test::journal_history(f.store, f.session, f.db, count, "provisional");
+    f.exec("UPDATE tools SET result=printf('%.*c',8388608,'x') WHERE call_id='call-0'");
+    fault::largest_allocation = 0;
+    fault::measure_allocations = true;
+    EXPECT_NO_THROW(f.store.save(f.session));
+    const auto largest = fault::largest_allocation;
+    fault::disable();
+    EXPECT_LT(largest, 131072u);
+    EXPECT_EQ(f.store.load_id(f.session.id).messages[2].text, "old-0");
+  }
+}
+TEST_F(PublicationFault, ProvisionalBatchPublicationRejectsStatusAndIdentityConflicts) {
+  for (const auto *change : {"status='running'", "name='different'"}) {
+    ProjectionFixture f;
+    codet::test::journal_history(f.store, f.session, f.db, 65, "provisional");
+    f.session.messages[2].text = "new";
+    const auto trigger =
+        std::string("CREATE TRIGGER change_later_candidate BEFORE UPDATE OF result ON tools ") +
+        "WHEN OLD.call_id='call-0' BEGIN UPDATE tools SET " + change +
+        " WHERE call_id='call-64'; END";
+    f.exec(trigger.c_str());
+    EXPECT_THROW(f.store.save(f.session), Error);
+    fault::disable();
+    const auto stored = f.value("SELECT payload FROM session_messages WHERE position=2");
+    EXPECT_EQ(Json::parse(stored).at("text"), "old-0");
+    EXPECT_EQ(f.value("SELECT result FROM tools WHERE call_id='call-0'"), stored);
+  }
+}
+TEST_F(PublicationFault, ProvisionalBatchAcknowledgementDoesNotAllocateAfterCommit) {
+  ProjectionFixture f;
+  codet::test::journal_history(f.store, f.session, f.db, 65, "provisional");
+  f.session.messages[2].text = "new";
+  fault::after_commit = true;
+  fault::fired = false;
+  bool failed = false;
+  try {
+    f.store.save(f.session);
+  } catch (...) {
+    failed = true;
+  }
+  const auto allocated = fault::fired;
+  fault::disable();
+  EXPECT_FALSE(failed);
+  EXPECT_FALSE(allocated);
+  EXPECT_EQ(f.store.load_id(f.session.id).messages[2].text, "new");
 }

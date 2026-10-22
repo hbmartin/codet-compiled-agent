@@ -464,7 +464,7 @@ public:
              const StartupOptions &);
   ~StateStore();
   void set_diagnostics(DiagnosticSink);
-  void set_file_diagnostics(std::shared_ptr<FileDiagnosticReceiver>);
+  void set_file_diagnostics(std::shared_ptr<FileDiagnosticReceiver>) noexcept;
   Session create(const std::string &name = "");
   // Default loads are repaired snapshots, never persistent recovery writes.
   Session load(const std::string &id_or_name, bool repair = true);

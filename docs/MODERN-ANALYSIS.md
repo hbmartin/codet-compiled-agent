@@ -171,3 +171,8 @@ Journal call identity intentionally compares the sanitized stored JSON represent
 including repaired UTF-8 and `null` for non-finite numbers. File notices retain their complete
 paths before publication; the CLI defers failed rendering until terminal restoration and
 uses reversible byte escapes for emergency output.
+
+Fullscreen replay, immediate headless file notices, and candidate-only journal batching are
+covered by the [PR #30 follow-up validation](validation/pr30-notice-journal-followup.json).
+It records regressions reproduced against `33fc5d7`, final sanitizer runs, and five-run Release
+comparisons, including timing regressions alongside the allocation and SQLite work reductions.

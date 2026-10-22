@@ -2,9 +2,12 @@
 #include "codet/core.hpp"
 #include "codet/output.hpp"
 #include "codet/prompt.hpp"
+#include "journal_fixture.hpp"
+#include "journal_metrics.hpp"
 #include "temp.hpp"
 #include <atomic>
 #include <cstdlib>
+#include <dlfcn.h>
 #include <iostream>
 #include <new>
 namespace {
@@ -36,7 +39,111 @@ void operator delete(void *p, size_t) noexcept {
 void operator delete[](void *p, size_t) noexcept {
   std::free(p);
 }
+extern "C" int sqlite3_step(sqlite3_stmt *statement) {
+  using Step = int (*)(sqlite3_stmt *);
+  static const auto step = reinterpret_cast<Step>(dlsym(RTLD_NEXT, "sqlite3_step"));
+  codet::test::journal_metrics.before(statement);
+  const auto status = step(statement);
+  codet::test::journal_metrics.after(statement, status);
+  return status;
+}
 namespace {
+template <class Work> void measure_journal(codet::Json description, Work work) {
+  codet::test::journal_metrics = {true};
+  allocations = allocated_bytes = 0;
+  const auto start = std::chrono::steady_clock::now();
+  for (int i = 0; i < 4; ++i)
+    work(i);
+  const auto elapsed =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+  const auto count = allocations.load(), bytes = allocated_bytes.load();
+  const auto sql = codet::test::journal_metrics;
+  codet::test::journal_metrics = {};
+  description.update({{"iterations", 4},
+                      {"milliseconds", elapsed},
+                      {"allocations", count},
+                      {"allocated_bytes", bytes},
+                      {"candidate_queries", sql.queries},
+                      {"candidate_rows", sql.rows},
+                      {"candidate_vm_steps", sql.vm_steps},
+                      {"candidate_fullscan_steps", sql.fullscan_steps},
+                      {"candidate_max_bindings", sql.max_bindings}});
+  std::cout << description.dump() << '\n';
+}
+void journal_bench() {
+  using namespace codet;
+  for (const size_t bytes : {65536u, 1048576u})
+    for (const size_t calls : {1u, 8u}) {
+      TempDirectory temp;
+      StateStore store(temp.root / "state");
+      auto session = store.create();
+      sqlite3 *raw = nullptr;
+      if (sqlite3_open((temp.root / "state/state.sqlite3").c_str(), &raw) != SQLITE_OK)
+        throw Error("Cannot open benchmark journal");
+      std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(raw, sqlite3_close);
+      test::journal_history(store, session, raw, calls, "complete", bytes);
+      measure_journal({{"case", "journal_load"}, {"argument_bytes", bytes}, {"calls", calls}},
+                      [&](int) {
+                        const auto loaded = store.load_id(session.id);
+                        if (loaded.messages.size() != calls * 2)
+                          throw Error("Benchmark load changed completed history");
+                      });
+    }
+  for (const size_t bytes : {65536u, 1048576u})
+    for (bool fallback : {false, true}) {
+      TempDirectory temp;
+      StateStore store(temp.root / "state");
+      auto session = store.create();
+      sqlite3 *raw = nullptr;
+      if (sqlite3_open((temp.root / "state/state.sqlite3").c_str(), &raw) != SQLITE_OK)
+        throw Error("Cannot open benchmark journal");
+      std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(raw, sqlite3_close);
+      test::journal_history(store, session, raw, 1, "provisional", bytes, fallback);
+      if (fallback)
+        session.messages[0].calls[0].arguments["invalid"] = std::string(1, static_cast<char>(0xff));
+      measure_journal({{"case", "journal_revision"},
+                       {"argument_bytes", bytes},
+                       {"sanitization_fallback", fallback}},
+                      [&](int i) {
+                        session.messages[1].text = "revision-" + std::to_string(i);
+                        store.revise_messages(session, {1});
+                      });
+    }
+  for (const size_t calls : {64u, 512u, 4096u})
+    for (const auto *mode : {"none", "complete", "mixed"}) {
+      TempDirectory temp;
+      StateStore store(temp.root / "state");
+      auto session = store.create();
+      sqlite3 *raw = nullptr;
+      if (sqlite3_open((temp.root / "state/state.sqlite3").c_str(), &raw) != SQLITE_OK)
+        throw Error("Cannot open benchmark journal");
+      std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(raw, sqlite3_close);
+      test::journal_history(store, session, raw, calls, mode);
+      measure_journal({{"case", "journal_replace"}, {"calls", calls}, {"journal", mode}},
+                      [&](int) { store.save(session); });
+      measure_journal({{"case", "journal_single_revision"}, {"calls", calls}, {"journal", mode}},
+                      [&](int i) {
+                        session.messages.back().text = "revision-" + std::to_string(i);
+                        store.revise_messages(session, {session.messages.size() - 1});
+                      });
+      session.messages.reserve(session.messages.size() + 8);
+      measure_journal({{"case", "journal_single_append"}, {"calls", calls}, {"journal", mode}},
+                      [&](int i) {
+                        const auto first = session.messages.size();
+                        const auto id = "append-" + std::to_string(i);
+                        Message assistant;
+                        assistant.role = "assistant";
+                        assistant.calls = {{id, "exec_command", Json::object()}};
+                        Message tool;
+                        tool.role = "tool";
+                        tool.tool_call_id = id;
+                        tool.text = "appended-" + std::to_string(i);
+                        session.messages.push_back(std::move(assistant));
+                        session.messages.push_back(std::move(tool));
+                        store.append_messages(session, first);
+                      });
+    }
+}
 void review_bench() {
   using namespace codet;
   for (const size_t bytes : {size_t{65536}, size_t{1048576}}) {
@@ -110,6 +217,10 @@ void review_bench() {
 } // namespace
 int main(int argc, char **argv) {
   using namespace codet;
+  if (argc > 1 && std::string(argv[1]) == "journal") {
+    journal_bench();
+    return 0;
+  }
   if (argc > 1 && std::string(argv[1]) == "review") {
     review_bench();
     return 0;

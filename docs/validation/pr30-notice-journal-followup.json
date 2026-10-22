@@ -1,0 +1,1238 @@
+{
+  "recorded_utc": "2026-10-22T13:45:05.182235+00:00",
+  "pull_request": "https://github.com/hbmartin/codet-compiled-agent/pull/31",
+  "baseline_commit": "33fc5d760e07ff4cf654a56add97e6a08f724e2d",
+  "implementation_commit": "77a3ce05603e99d742652fc76e95fa4c442e8670",
+  "implementation_commits": [
+    "22ea56050a8c94d7d7c82c062559d8329d5cace6 Retain fullscreen file notices through restoration and report headless failures immediately",
+    "f7604789073b1fed7a4232ffd970d7fd3f7b9aaf Use the checking interpreter for Semgrep summaries in CI",
+    "8b40ef2d57972d8c49c46ec16fa6da3f19d2b2b3 Avoid re-sanitizing journal arguments that already match stored JSON",
+    "77a3ce05603e99d742652fc76e95fa4c442e8670 Batch provisional journal lookups while retaining the single-candidate path"
+  ],
+  "boundaries": {
+    "database_migration": false,
+    "wire_format_changed": false,
+    "canonical_argument_identity_preserved": true,
+    "completed_journal_authority_preserved": true,
+    "read_only_loads_preserved": true,
+    "post_commit_acknowledgement_allocation_free": true,
+    "emergency_delivery": "One best-effort attempt per notice; short writes and EINTR handled; no EAGAIN retry policy."
+  },
+  "notice_delivery": {
+    "source_compatible_apis": [
+      "FileNotice::text()",
+      "FileDiagnosticQueue::preview(sink)",
+      "FileDiagnosticQueue::finish(sink)"
+    ],
+    "fullscreen": "A dedicated unbounded file-notice sink previews notices once and retains ownership for replay after terminal restoration.",
+    "headless_and_repair": "An immediate receiver reports before recovery or cleanup; normal rendering failures use allocation-free emergency output.",
+    "failed_renderers": "A failed preview is not retried normally. Partial final rendering may be followed by one complete emergency attempt.",
+    "backup_ownership": "The preallocated FileNotice alone owns path and confirmation status."
+  },
+  "runtime_checks": {
+    "debug": {
+      "passed": true,
+      "ctest_groups": 9,
+      "unit_total": 489,
+      "unit_passed": 487,
+      "expected_skips": [
+        "NetworkOptIn.TlsHandshake",
+        "Contracts.NativeTigerDesktopAcceptance"
+      ],
+      "publication_fault_tests": 52,
+      "cli_integration_tests": 61,
+      "elapsed_seconds": 103.06,
+      "log": "build/host/pr30-followup-ctest.log"
+    },
+    "asan_ubsan": {
+      "passed": true,
+      "ctest_groups": 9,
+      "unit_total": 489,
+      "unit_passed": 487,
+      "expected_skips": [
+        "NetworkOptIn.TlsHandshake",
+        "Contracts.NativeTigerDesktopAcceptance"
+      ],
+      "publication_fault_tests": 52,
+      "cli_integration_tests": 61,
+      "elapsed_seconds": 149.01,
+      "log": "build/sanitize/pr30-followup-ctest.log"
+    },
+    "repeated_sanitizer": {
+      "iterations": 20,
+      "tests_per_iteration": 22,
+      "passed": true,
+      "asan_options": "detect_leaks=0 for the repeated subset only",
+      "log": "build/sanitize/pr30-followup-repeated.log"
+    },
+    "intermediate_failure": {
+      "test": "OutputReview.InternalPollingNeitherFormatsNorFlushesUnchangedOutput",
+      "message": "Child process setup failed",
+      "context": "One sanitizer run concurrent with analysis failed in this unchanged test; no ASan/UBSan diagnostic was emitted. The exact cause was not established.",
+      "isolated_repetitions_passed": 30,
+      "subsequent_full_suite_passed": true,
+      "failure_log": "build/sanitize/pr30-followup-lasttest-with-startup-failure.log",
+      "repeat_log": "build/sanitize/pr30-followup-output-startup-repeat.log"
+    }
+  },
+  "baseline_regressions": {
+    "failed_on_baseline": 3,
+    "passed_on_changed": 3,
+    "tests": [
+      "CliTests.test_headless_receipt_reports_while_recovery_is_blocked",
+      "CliTests.test_fullscreen_file_notice_bypasses_saturated_replay_budget",
+      "CliTests.test_failed_repair_reports_unicode_backup_normally"
+    ],
+    "log": "build/pr30-followup/baseline-regressions.log"
+  },
+  "coverage": [
+    "Successful previews survive saturated ordinary diagnostic buffers and replay once after real curses restoration.",
+    "Unicode normal rendering, escaped unsafe/invalid bytes, long paths, confirmed/unconfirmed labels, pending and failed notices, partial output and repeated drains.",
+    "Allocation-fault coverage for ownership transfer, successful preview retention and emergency flushing; original operation exceptions preserved.",
+    "Batch boundaries at 1/2/63/64/65/128/129 candidates and a connection variable limit of eight.",
+    "Within/across-batch duplicate rejection, unrelated corrupt journal metadata, 8 MiB result columns not materialized, first/later batch read failures, transactional status/identity conflicts, post-commit allocation faults."
+  ],
+  "tooling": {
+    "versions": {
+      "native_sqlite": "3.54.0",
+      "host_python": "3.15.0",
+      "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin",
+      "cppcheck": "Cppcheck 2.22.0",
+      "clang_tidy": "LLVM (http://llvm.org/):\n  LLVM version 18.1.8\n  Optimized build.",
+      "semgrep_frontend": "1.177.0",
+      "semgrep_native": "1.180.0",
+      "semgrep_results": 0,
+      "semgrep_errors": 0
+    },
+    "lint": {
+      "passed": true,
+      "log": "build/lint/pr30-followup-checks-final.log"
+    },
+    "runner_tests": {
+      "lint": 17,
+      "semgrep_report": 9,
+      "analysis": 37,
+      "passed": true,
+      "logs": [
+        "build/lint/pr30-followup-checks.log",
+        "build/host/pr30-followup-runner-tests.log"
+      ]
+    },
+    "semgrep": {
+      "passed": true,
+      "override": "SEMGREP=build/semgrep-venv/bin/pysemgrep",
+      "caveat": "The locked Python frontend reports 1.177.0; the bundled native CLI reports 1.180.0 and still fails the default exact-version readiness check.",
+      "results": 0,
+      "errors": 0,
+      "log": "build/host/pr30-followup-semgrep.log"
+    },
+    "analysis": {
+      "clang-tidy18": {
+        "passed": false,
+        "findings": 6,
+        "expected_sources": 25,
+        "completed_sources": 24,
+        "manifest": "build/tidy18/analysis/manifest.json",
+        "source_and_input_hashes_match": true,
+        "versions": [
+          "LLVM (http://llvm.org/):\n  LLVM version 18.1.8\n  Optimized build."
+        ],
+        "canaries_passed": null,
+        "baseline_comparison": {
+          "same_baseline_findings": true,
+          "baseline_count": 6,
+          "current_count": 6,
+          "changed_sources": [],
+          "changed_inputs": [],
+          "current_findings": [
+            {
+              "check": "bugprone-narrowing-conversions",
+              "file": "images.cpp",
+              "message": "narrowing conversion from 'unsigned long' to 'double'"
+            },
+            {
+              "check": "bugprone-narrowing-conversions",
+              "file": "images.cpp",
+              "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+            },
+            {
+              "check": "bugprone-narrowing-conversions",
+              "file": "images.cpp",
+              "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+            },
+            {
+              "check": "bugprone-exception-escape",
+              "file": "main.cpp",
+              "message": "an exception may be thrown in function 'main' which should not throw exceptions"
+            },
+            {
+              "check": "clang-diagnostic-error",
+              "file": "platform.cpp",
+              "message": "implicit instantiation of undefined template 'std::basic_istringstream<char>'"
+            },
+            {
+              "check": "bugprone-exception-escape",
+              "file": "state.cpp",
+              "message": "an exception may be thrown in function 'operator()' which should not throw exceptions"
+            }
+          ]
+        },
+        "compatibility": "Clang-Tidy 18.1.8 uses the installed macOS 13.1 SDK wrapper because it cannot parse the current SDK libc++ headers. The retained baseline parse failure in platform.cpp remains an incomplete translation unit; this gate is not claimed clean.",
+        "canary_count": 0
+      },
+      "cppcheck": {
+        "passed": true,
+        "findings": 0,
+        "expected_sources": 25,
+        "completed_sources": 25,
+        "manifest": "build/pr30-followup/cppcheck-analysis/analysis/manifest.json",
+        "source_and_input_hashes_match": true,
+        "versions": [
+          "Cppcheck 2.22.0"
+        ],
+        "canaries_passed": true,
+        "canary_count": 15
+      },
+      "clang-analyzer": {
+        "passed": false,
+        "findings": 1,
+        "expected_sources": 25,
+        "completed_sources": 25,
+        "manifest": "build/pr30-followup/native-analysis/analysis/manifest.json",
+        "source_and_input_hashes_match": true,
+        "versions": [
+          "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin",
+          "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+        ],
+        "canaries_passed": null,
+        "baseline_finding": {
+          "check": "core.DivideZero",
+          "file": "src/modern/context.cpp",
+          "line": 263,
+          "source_identical_to_baseline": true
+        },
+        "canary_count": 0
+      },
+      "selftest": {
+        "clang-tidy": true,
+        "cppcheck": true,
+        "clang-analyzer": true
+      }
+    }
+  },
+  "performance": {
+    "build_type": "Release",
+    "compiler_flags": [
+      "-Wno-error=implicit-int-float-conversion",
+      "-Wno-error=unused-result"
+    ],
+    "flags_note": "These existing local downgrades keep warnings visible in unchanged images.cpp and runtime_test.cpp; tracked warning and analysis policies were not relaxed.",
+    "warmups_per_build": 1,
+    "measured_runs_per_build": 5,
+    "order": "Alternating baseline/changed order per measured run; no agent builds, tests or analyzers run concurrently with measurement.",
+    "harness_identical": true,
+    "runner": "build/pr30-followup/run-benchmarks.py",
+    "counter_scope": "C++ operator-new allocations/bytes, plus test-only SQLite interception for candidate query executions, returned metadata rows, VM steps and fullscan steps. SQLite internal malloc is not counted as C++ allocation.",
+    "acceptance": {
+      "canonical_argument_validation_allocates_less": true,
+      "sanitization_fallback_allocated_bytes_unchanged": true,
+      "single_candidate_append_allocations_and_queries_unchanged": true,
+      "candidate_queries_batched_at_most_64": true,
+      "candidate_sqlite_vm_work_reduced": true,
+      "candidate_fullscan_steps": 0,
+      "timing_ci_threshold": false
+    },
+    "tradeoffs": "Bulk SQL construction adds a fixed 560 allocated bytes per replacement in the no-provisional cases; single-candidate paths add none. Timing is not a universal improvement: final five-run medians include slower cases, including roughly 8-11% for large no-provisional replacements. Allocation and SQL-work claims are separate from latency.",
+    "raw_runs": [
+      "build/pr30-followup/base-0.jsonl",
+      "build/pr30-followup/changed-0.jsonl",
+      "build/pr30-followup/base-1.jsonl",
+      "build/pr30-followup/changed-1.jsonl",
+      "build/pr30-followup/base-2.jsonl",
+      "build/pr30-followup/changed-2.jsonl",
+      "build/pr30-followup/base-3.jsonl",
+      "build/pr30-followup/changed-3.jsonl",
+      "build/pr30-followup/base-4.jsonl",
+      "build/pr30-followup/changed-4.jsonl"
+    ],
+    "medians": [
+      {
+        "case": "journal_load",
+        "argument_bytes": 65536,
+        "calls": 1,
+        "base": {
+          "milliseconds": 2.827875,
+          "allocations": 1024,
+          "allocated_bytes": 5552384,
+          "candidate_queries": 0,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 0,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 0
+        },
+        "changed": {
+          "milliseconds": 2.622084,
+          "allocations": 1000,
+          "allocated_bytes": 5289312,
+          "candidate_queries": 0,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 0,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 0
+        },
+        "allocated_bytes_reduction_percent": 4.73800082991378,
+        "time_change_percent": -7.277231136454054
+      },
+      {
+        "case": "journal_load",
+        "argument_bytes": 65536,
+        "calls": 8,
+        "base": {
+          "milliseconds": 20.845416,
+          "allocations": 7792,
+          "allocated_bytes": 44423328,
+          "candidate_queries": 0,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 0,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 0
+        },
+        "changed": {
+          "milliseconds": 19.274417,
+          "allocations": 7600,
+          "allocated_bytes": 42318752,
+          "candidate_queries": 0,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 0,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 0
+        },
+        "allocated_bytes_reduction_percent": 4.737546903284684,
+        "time_change_percent": -7.53642431506284
+      },
+      {
+        "case": "journal_load",
+        "argument_bytes": 1048576,
+        "calls": 1,
+        "base": {
+          "milliseconds": 40.680958,
+          "allocations": 1088,
+          "allocated_bytes": 88127744,
+          "candidate_queries": 0,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 0,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 0
+        },
+        "changed": {
+          "milliseconds": 40.460042,
+          "allocations": 1064,
+          "allocated_bytes": 83932512,
+          "candidate_queries": 0,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 0,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 0
+        },
+        "allocated_bytes_reduction_percent": 4.760398723017357,
+        "time_change_percent": -0.5430452252378037
+      },
+      {
+        "case": "journal_load",
+        "argument_bytes": 1048576,
+        "calls": 8,
+        "base": {
+          "milliseconds": 329.395667,
+          "allocations": 8304,
+          "allocated_bytes": 705026208,
+          "candidate_queries": 0,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 0,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 0
+        },
+        "changed": {
+          "milliseconds": 360.522291,
+          "allocations": 8112,
+          "allocated_bytes": 671464352,
+          "candidate_queries": 0,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 0,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 0
+        },
+        "allocated_bytes_reduction_percent": 4.760369986132485,
+        "time_change_percent": 9.449615498433372
+      },
+      {
+        "case": "journal_revision",
+        "argument_bytes": 65536,
+        "sanitization_fallback": false,
+        "base": {
+          "milliseconds": 2.501792,
+          "allocations": 608,
+          "allocated_bytes": 2913324,
+          "candidate_queries": 4,
+          "candidate_rows": 4,
+          "candidate_vm_steps": 88,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 2.31075,
+          "allocations": 584,
+          "allocated_bytes": 2650252,
+          "candidate_queries": 4,
+          "candidate_rows": 4,
+          "candidate_vm_steps": 88,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 9.029960279048954,
+        "time_change_percent": -7.636206367275933
+      },
+      {
+        "case": "journal_revision",
+        "argument_bytes": 65536,
+        "sanitization_fallback": true,
+        "base": {
+          "milliseconds": 2.463041,
+          "allocations": 624,
+          "allocated_bytes": 2914348,
+          "candidate_queries": 4,
+          "candidate_rows": 4,
+          "candidate_vm_steps": 88,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 2.75675,
+          "allocations": 624,
+          "allocated_bytes": 2914348,
+          "candidate_queries": 4,
+          "candidate_rows": 4,
+          "candidate_vm_steps": 88,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 0.0,
+        "time_change_percent": 11.924649244572038
+      },
+      {
+        "case": "journal_revision",
+        "argument_bytes": 1048576,
+        "sanitization_fallback": false,
+        "base": {
+          "milliseconds": 24.767667,
+          "allocations": 640,
+          "allocated_bytes": 46167084,
+          "candidate_queries": 4,
+          "candidate_rows": 4,
+          "candidate_vm_steps": 88,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 26.764375,
+          "allocations": 616,
+          "allocated_bytes": 41971852,
+          "candidate_queries": 4,
+          "candidate_rows": 4,
+          "candidate_vm_steps": 88,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 9.087062981928861,
+        "time_change_percent": 8.06175244523435
+      },
+      {
+        "case": "journal_revision",
+        "argument_bytes": 1048576,
+        "sanitization_fallback": true,
+        "base": {
+          "milliseconds": 24.28025,
+          "allocations": 656,
+          "allocated_bytes": 46168108,
+          "candidate_queries": 4,
+          "candidate_rows": 4,
+          "candidate_vm_steps": 88,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 25.177834,
+          "allocations": 656,
+          "allocated_bytes": 46168108,
+          "candidate_queries": 4,
+          "candidate_rows": 4,
+          "candidate_vm_steps": 88,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 0.0,
+        "time_change_percent": 3.69676588997232
+      },
+      {
+        "case": "journal_replace",
+        "calls": 64,
+        "journal": "none",
+        "base": {
+          "milliseconds": 5.6815,
+          "allocations": 43900,
+          "allocated_bytes": 2578816,
+          "candidate_queries": 256,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 3840,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 5.858708,
+          "allocations": 43912,
+          "allocated_bytes": 2581056,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 860,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 65
+        },
+        "allocated_bytes_reduction_percent": -0.08686156747903517,
+        "time_change_percent": 3.1190354659861086
+      },
+      {
+        "case": "journal_single_revision",
+        "calls": 64,
+        "journal": "none",
+        "base": {
+          "milliseconds": 0.744625,
+          "allocations": 412,
+          "allocated_bytes": 26128,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 0.770166,
+          "allocations": 412,
+          "allocated_bytes": 26128,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 0.0,
+        "time_change_percent": 3.4300486822226084
+      },
+      {
+        "case": "journal_single_append",
+        "calls": 64,
+        "journal": "none",
+        "base": {
+          "milliseconds": 1.021209,
+          "allocations": 1184,
+          "allocated_bytes": 65520,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 0.958625,
+          "allocations": 1184,
+          "allocated_bytes": 65520,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 0.0,
+        "time_change_percent": -6.128422291617097
+      },
+      {
+        "case": "journal_replace",
+        "calls": 64,
+        "journal": "complete",
+        "base": {
+          "milliseconds": 5.749708,
+          "allocations": 43900,
+          "allocated_bytes": 2578816,
+          "candidate_queries": 256,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 4864,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 5.639208,
+          "allocations": 43912,
+          "allocated_bytes": 2581056,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 3908,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 65
+        },
+        "allocated_bytes_reduction_percent": -0.08686156747903517,
+        "time_change_percent": -1.9218367263172276
+      },
+      {
+        "case": "journal_single_revision",
+        "calls": 64,
+        "journal": "complete",
+        "base": {
+          "milliseconds": 0.854125,
+          "allocations": 412,
+          "allocated_bytes": 26128,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 76,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 0.689916,
+          "allocations": 412,
+          "allocated_bytes": 26128,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 76,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 0.0,
+        "time_change_percent": -19.22540611737158
+      },
+      {
+        "case": "journal_single_append",
+        "calls": 64,
+        "journal": "complete",
+        "base": {
+          "milliseconds": 0.980666,
+          "allocations": 1184,
+          "allocated_bytes": 65520,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 1.016875,
+          "allocations": 1184,
+          "allocated_bytes": 65520,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 0.0,
+        "time_change_percent": 3.6922866704871993
+      },
+      {
+        "case": "journal_replace",
+        "calls": 64,
+        "journal": "mixed",
+        "base": {
+          "milliseconds": 6.951584,
+          "allocations": 48188,
+          "allocated_bytes": 2768576,
+          "candidate_queries": 256,
+          "candidate_rows": 192,
+          "candidate_vm_steps": 5312,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 6.54675,
+          "allocations": 47240,
+          "allocated_bytes": 2727808,
+          "candidate_queries": 4,
+          "candidate_rows": 192,
+          "candidate_vm_steps": 4740,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 65
+        },
+        "allocated_bytes_reduction_percent": 1.4725259483575726,
+        "time_change_percent": -5.823622357149105
+      },
+      {
+        "case": "journal_single_revision",
+        "calls": 64,
+        "journal": "mixed",
+        "base": {
+          "milliseconds": 1.131584,
+          "allocations": 500,
+          "allocated_bytes": 29996,
+          "candidate_queries": 4,
+          "candidate_rows": 4,
+          "candidate_vm_steps": 84,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 0.984459,
+          "allocations": 480,
+          "allocated_bytes": 29100,
+          "candidate_queries": 4,
+          "candidate_rows": 4,
+          "candidate_vm_steps": 84,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 2.987064941992268,
+        "time_change_percent": -13.001686132006107
+      },
+      {
+        "case": "journal_single_append",
+        "calls": 64,
+        "journal": "mixed",
+        "base": {
+          "milliseconds": 1.208291,
+          "allocations": 1184,
+          "allocated_bytes": 65520,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 1.008167,
+          "allocations": 1184,
+          "allocated_bytes": 65520,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 0.0,
+        "time_change_percent": -16.562566467845908
+      },
+      {
+        "case": "journal_replace",
+        "calls": 512,
+        "journal": "none",
+        "base": {
+          "milliseconds": 110.483666,
+          "allocations": 350344,
+          "allocated_bytes": 20577664,
+          "candidate_queries": 2048,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 30720,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 135.3945,
+          "allocations": 350356,
+          "allocated_bytes": 20579904,
+          "candidate_queries": 32,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 6880,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 65
+        },
+        "allocated_bytes_reduction_percent": -0.01088558934581041,
+        "time_change_percent": 22.54707406251346
+      },
+      {
+        "case": "journal_single_revision",
+        "calls": 512,
+        "journal": "none",
+        "base": {
+          "milliseconds": 0.911917,
+          "allocations": 412,
+          "allocated_bytes": 26128,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 0.943084,
+          "allocations": 412,
+          "allocated_bytes": 26128,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 0.0,
+        "time_change_percent": 3.417745255324789
+      },
+      {
+        "case": "journal_single_append",
+        "calls": 512,
+        "journal": "none",
+        "base": {
+          "milliseconds": 1.198583,
+          "allocations": 1184,
+          "allocated_bytes": 65520,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 1.202917,
+          "allocations": 1184,
+          "allocated_bytes": 65520,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 0.0,
+        "time_change_percent": 0.36159364849994713
+      },
+      {
+        "case": "journal_replace",
+        "calls": 512,
+        "journal": "complete",
+        "base": {
+          "milliseconds": 108.450084,
+          "allocations": 350344,
+          "allocated_bytes": 20577664,
+          "candidate_queries": 2048,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 38912,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 118.636583,
+          "allocations": 350356,
+          "allocated_bytes": 20579904,
+          "candidate_queries": 32,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 31264,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 65
+        },
+        "allocated_bytes_reduction_percent": -0.01088558934581041,
+        "time_change_percent": 9.392799548223497
+      },
+      {
+        "case": "journal_single_revision",
+        "calls": 512,
+        "journal": "complete",
+        "base": {
+          "milliseconds": 0.971375,
+          "allocations": 412,
+          "allocated_bytes": 26128,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 76,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 0.998292,
+          "allocations": 412,
+          "allocated_bytes": 26128,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 76,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 0.0,
+        "time_change_percent": 2.771020460687157
+      },
+      {
+        "case": "journal_single_append",
+        "calls": 512,
+        "journal": "complete",
+        "base": {
+          "milliseconds": 1.164167,
+          "allocations": 1184,
+          "allocated_bytes": 65520,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 1.315,
+          "allocations": 1184,
+          "allocated_bytes": 65520,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 0.0,
+        "time_change_percent": 12.956302661044328
+      },
+      {
+        "case": "journal_replace",
+        "calls": 512,
+        "journal": "mixed",
+        "base": {
+          "milliseconds": 123.151375,
+          "allocations": 384648,
+          "allocated_bytes": 22095744,
+          "candidate_queries": 2048,
+          "candidate_rows": 1536,
+          "candidate_vm_steps": 42496,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 129.92575,
+          "allocations": 376980,
+          "allocated_bytes": 21753920,
+          "candidate_queries": 32,
+          "candidate_rows": 1536,
+          "candidate_vm_steps": 37920,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 65
+        },
+        "allocated_bytes_reduction_percent": 1.5470128546022255,
+        "time_change_percent": 5.500852101732523
+      },
+      {
+        "case": "journal_single_revision",
+        "calls": 512,
+        "journal": "mixed",
+        "base": {
+          "milliseconds": 1.209666,
+          "allocations": 500,
+          "allocated_bytes": 29996,
+          "candidate_queries": 4,
+          "candidate_rows": 4,
+          "candidate_vm_steps": 84,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 1.403666,
+          "allocations": 480,
+          "allocated_bytes": 29100,
+          "candidate_queries": 4,
+          "candidate_rows": 4,
+          "candidate_vm_steps": 84,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 2.987064941992268,
+        "time_change_percent": 16.037484727189177
+      },
+      {
+        "case": "journal_single_append",
+        "calls": 512,
+        "journal": "mixed",
+        "base": {
+          "milliseconds": 1.15475,
+          "allocations": 1184,
+          "allocated_bytes": 65520,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 1.194833,
+          "allocations": 1184,
+          "allocated_bytes": 65520,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 0.0,
+        "time_change_percent": 3.471140939597328
+      },
+      {
+        "case": "journal_replace",
+        "calls": 4096,
+        "journal": "none",
+        "base": {
+          "milliseconds": 859.549917,
+          "allocations": 2801812,
+          "allocated_bytes": 164568448,
+          "candidate_queries": 16384,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 245760,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 951.001583,
+          "allocations": 2801824,
+          "allocated_bytes": 164570688,
+          "candidate_queries": 256,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 55040,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 65
+        },
+        "allocated_bytes_reduction_percent": -0.0013611357627896226,
+        "time_change_percent": 10.639482849254932
+      },
+      {
+        "case": "journal_single_revision",
+        "calls": 4096,
+        "journal": "none",
+        "base": {
+          "milliseconds": 0.830083,
+          "allocations": 412,
+          "allocated_bytes": 26128,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 0.973667,
+          "allocations": 412,
+          "allocated_bytes": 26128,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 0.0,
+        "time_change_percent": 17.29754735369835
+      },
+      {
+        "case": "journal_single_append",
+        "calls": 4096,
+        "journal": "none",
+        "base": {
+          "milliseconds": 1.781334,
+          "allocations": 1184,
+          "allocated_bytes": 65520,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 1.825,
+          "allocations": 1184,
+          "allocated_bytes": 65520,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 0.0,
+        "time_change_percent": 2.451308962833476
+      },
+      {
+        "case": "journal_replace",
+        "calls": 4096,
+        "journal": "complete",
+        "base": {
+          "milliseconds": 875.539458,
+          "allocations": 2801812,
+          "allocated_bytes": 164568448,
+          "candidate_queries": 16384,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 311296,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 946.184375,
+          "allocations": 2801824,
+          "allocated_bytes": 164570688,
+          "candidate_queries": 256,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 250112,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 65
+        },
+        "allocated_bytes_reduction_percent": -0.0013611357627896226,
+        "time_change_percent": 8.068730238768996
+      },
+      {
+        "case": "journal_single_revision",
+        "calls": 4096,
+        "journal": "complete",
+        "base": {
+          "milliseconds": 1.809542,
+          "allocations": 412,
+          "allocated_bytes": 26128,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 76,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 2.221125,
+          "allocations": 412,
+          "allocated_bytes": 26128,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 76,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 0.0,
+        "time_change_percent": 22.74514766719975
+      },
+      {
+        "case": "journal_single_append",
+        "calls": 4096,
+        "journal": "complete",
+        "base": {
+          "milliseconds": 1.924833,
+          "allocations": 1184,
+          "allocated_bytes": 65520,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 1.94525,
+          "allocations": 1184,
+          "allocated_bytes": 65520,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 0.0,
+        "time_change_percent": 1.0607153971279537
+      },
+      {
+        "case": "journal_replace",
+        "calls": 4096,
+        "journal": "mixed",
+        "base": {
+          "milliseconds": 960.550791,
+          "allocations": 3076244,
+          "allocated_bytes": 176713088,
+          "candidate_queries": 16384,
+          "candidate_rows": 12288,
+          "candidate_vm_steps": 339968,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 916.904583,
+          "allocations": 3014816,
+          "allocated_bytes": 173962816,
+          "candidate_queries": 256,
+          "candidate_rows": 12288,
+          "candidate_vm_steps": 303360,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 65
+        },
+        "allocated_bytes_reduction_percent": 1.5563487861182113,
+        "time_change_percent": -4.543872995467657
+      },
+      {
+        "case": "journal_single_revision",
+        "calls": 4096,
+        "journal": "mixed",
+        "base": {
+          "milliseconds": 2.275375,
+          "allocations": 500,
+          "allocated_bytes": 29996,
+          "candidate_queries": 4,
+          "candidate_rows": 4,
+          "candidate_vm_steps": 84,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 2.39825,
+          "allocations": 480,
+          "allocated_bytes": 29100,
+          "candidate_queries": 4,
+          "candidate_rows": 4,
+          "candidate_vm_steps": 84,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 2.987064941992268,
+        "time_change_percent": 5.4002087567983414
+      },
+      {
+        "case": "journal_single_append",
+        "calls": 4096,
+        "journal": "mixed",
+        "base": {
+          "milliseconds": 1.985,
+          "allocations": 1184,
+          "allocated_bytes": 65520,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "changed": {
+          "milliseconds": 1.832375,
+          "allocations": 1184,
+          "allocated_bytes": 65520,
+          "candidate_queries": 4,
+          "candidate_rows": 0,
+          "candidate_vm_steps": 60,
+          "candidate_fullscan_steps": 0,
+          "candidate_max_bindings": 2
+        },
+        "allocated_bytes_reduction_percent": 0.0,
+        "time_change_percent": -7.688916876574304
+      }
+    ],
+    "base_binary_sha256": "4e8ee6aa4099c46867872a84b4d96fb137c1670c0c21a900e51aa31e7eaa9a69",
+    "changed_binary_sha256": "4dd22dcf268aa41c79b0bb7e48f1ab018728649cf13ee0e6938dc0f49993ed1d",
+    "harness_sha256": {
+      "sanitization_bench.cpp": "bb590ba9520bb95f9106b194759275cc16dd2fcbaeda0c548dde634a0074df19",
+      "journal_fixture.hpp": "dc3d91005262c9ae0b895d028d49a46dffe0a092740086370137d8995db83f06",
+      "journal_metrics.hpp": "321aa56e542190c7eee629f3a6e767b3278372b98c6a7225d9788758ed3d244f"
+    }
+  },
+  "platform_limits": {
+    "linux_runtime_executed": false,
+    "tiger_runtime_executed": false
+  },
+  "source_sha256": {
+    ".github/workflows/modern-checks.yml": "0b9d959e86a2df73a33f0d3759da9e7bb85f8989f7ce599b1d4e60cf51437292",
+    "CMakeLists.txt": "adc89966e06b1cd261c15dc0a682e1944bc73e557e27268c062ab36d306bde86",
+    "include/codet/core.hpp": "4d20aa75c820cb4b26d2033b4e0e594fce912184b8ca3a63fd79af449d21a0ab",
+    "include/codet/diagnostics.hpp": "c5403c7c8b0ba26558562e75fb0b1065a035a93a0aa69c42e21fa9970b2209fb",
+    "src/modern/cli.cpp": "12347009a4b2627493885700f2fb335c0679038755d52cc7b411f39dc5a12469",
+    "src/modern/platform.cpp": "7ab259f2cb535113fa3c16573aabf6a23a2b3fbfd7584d76f5d8d81af08d655c",
+    "src/modern/state.cpp": "86d7237e42b5e8390a12d9b4ab67ef5bd3a8ba81f607504250a8348cecf76187",
+    "tests/cli_integration.py": "4df99580b598f8064d3331c9b4f99be989ec25f6953555b4b7dccc559ab299c3",
+    "tests/final_review_test.cpp": "b1c295eb9c2edb5b0fbc98e64fa352d0b57fd95c687bff8f11079bdf2de17036",
+    "tests/journal_fixture.hpp": "dc3d91005262c9ae0b895d028d49a46dffe0a092740086370137d8995db83f06",
+    "tests/journal_metrics.hpp": "321aa56e542190c7eee629f3a6e767b3278372b98c6a7225d9788758ed3d244f",
+    "tests/pr18_test.cpp": "528ed34e3c4eb479d4d08806bd110bef1768eb6a32ea95326d1464c7f5eefcf5",
+    "tests/publication_fault_test.cpp": "3f8fb79e151c6cccb2267cf9125ce7fed33898547ee696ad34bdcca7e2224c48",
+    "tests/sanitization_bench.cpp": "bb590ba9520bb95f9106b194759275cc16dd2fcbaeda0c548dde634a0074df19",
+    "tests/test_main.cpp": "9b8b23d9216a8e315bdd9f86ce1b98fa9bb2d13934f031ae01114346ef6be13d"
+  },
+  "reviewed_pull_request": "https://github.com/hbmartin/codet-compiled-agent/pull/30",
+  "delivery_base_commit": "ecadf69d60eade8c56d927955426c2c98650c0d7",
+  "delivery_base_tree_matches_benchmark_baseline": true,
+  "delivery_note": "PR #30 was already merged at publication; the validated follow-up is delivered as ready PR #31 against fetched main."
+}

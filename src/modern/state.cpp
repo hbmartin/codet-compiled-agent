@@ -5,6 +5,7 @@
 #include "codet/diagnostics.hpp"
 #include "codet/support.hpp"
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cerrno>
 #include <chrono>
@@ -460,7 +461,7 @@ struct StateStore::Impl {
       return;
     }
     try {
-      const auto text = safe_text(std::string(notice->label()) + notice->path);
+      const auto text = notice->text();
       if (diagnostics)
         diagnostics(text);
       else
@@ -481,11 +482,7 @@ struct StateStore::Impl {
   void require_session_token(const std::string &id) {
     (void)session_version(id);
   }
-  struct Backup {
-    std::string path;
-    bool confirmed = false;
-    std::unique_ptr<FileNotice> notice;
-  };
+  using Backup = std::unique_ptr<FileNotice>;
   Json raw_backup(const std::string &id) const {
     Json backup = {{"session", id}, {"kind", "session_repair_backup"}};
     for (const auto *table : {"sessions", "session_messages", "provider_parts", "tools",
@@ -515,10 +512,10 @@ struct StateStore::Impl {
   }
   void write_backup(std::vector<Backup> &backups, const std::string &id, const Json &backup) {
     const auto bytes = backup.dump();
-    auto path = (repair_directory(home) / (id + "-backup-" + unique_id() + ".json")).string();
-    auto notice = std::make_unique<FileNotice>(path, FileNoticeKind::repair_backup);
-    backups.push_back({std::move(path), false, std::move(notice)});
-    auto &record = backups.back();
+    backups.push_back(std::make_unique<FileNotice>(
+        (repair_directory(home) / (id + "-backup-" + unique_id() + ".json")).string(),
+        FileNoticeKind::repair_backup));
+    auto &record = *backups.back();
     try {
       files->atomic_write(record.path, bytes, true);
       record.confirmed = true;
@@ -529,10 +526,7 @@ struct StateStore::Impl {
   }
   void report_backups(std::vector<Backup> &backups) const noexcept {
     for (auto &backup : backups)
-      if (backup.notice) {
-        backup.notice->confirmed = backup.confirmed;
-        report_file(std::move(backup.notice));
-      }
+      report_file(std::move(backup));
   }
   bool anchor() const {
     if (!artifact_anchor.empty())
@@ -1093,7 +1087,10 @@ struct StateStore::Impl {
   }
   static void validate_journal_call(const JournalEntry &entry, const ToolCall &call) {
     try {
-      if (entry.name != call.name || stored_json(entry.args) != safe_json(call.arguments))
+      if (entry.name != call.name)
+        throw Error("Ambiguous journaled tool call id");
+      const auto arguments = stored_json(entry.args);
+      if (arguments != call.arguments && arguments != safe_json(call.arguments))
         throw Error("Ambiguous journaled tool call id");
     } catch (const Json::exception &) {
       throw Error("Corrupt journaled tool arguments");
@@ -1101,26 +1098,72 @@ struct StateStore::Impl {
   }
   void prepare_provisional_journal(PreparedTranscript &plan, const Session &s,
                                    const std::map<std::string, const ToolCall *> &known) {
-    if (std::none_of(plan.rows.begin(), plan.rows.end(),
-                     [](const auto &row) { return row.second.message.role == "tool"; }))
+    const auto is_tool = [](const auto &row) { return row.second.message.role == "tool"; };
+    const auto first = std::find_if(plan.rows.begin(), plan.rows.end(), is_tool);
+    if (first == plan.rows.end())
       return;
     std::map<std::string, JournalEntry> pending;
-    Statement row(db, "SELECT status,name,args FROM tools WHERE session=? AND call_id=? "
-                      "AND status IN ('uncertain','not_started')");
-    for (const auto &entry : plan.rows) {
-      const auto &message = entry.second.message;
-      if (message.role != "tool")
-        continue;
-      sqlite3_reset(row.p);
+    const auto remember = [&](const std::string &id, JournalEntry record) {
+      if (!pending.emplace(id, std::move(record)).second)
+        throw Error("Ambiguous duplicate tool results in session");
+    };
+    if (std::find_if(std::next(first), plan.rows.end(), is_tool) == plan.rows.end()) {
+      Statement row(db, "SELECT status,name,args FROM tools WHERE session=? AND call_id=? "
+                        "AND status IN ('uncertain','not_started')");
       row.text(1, s.id);
-      row.text(2, message.tool_call_id);
+      row.text(2, first->second.message.tool_call_id);
       const auto status = sqlite3_step(row.p);
-      if (status == SQLITE_ROW) {
-        JournalEntry record{{}, column(row.p, 0), column(row.p, 1), column(row.p, 2)};
-        if (!pending.emplace(message.tool_call_id, std::move(record)).second)
-          throw Error("Ambiguous duplicate tool results in session");
-      } else if (status != SQLITE_DONE)
+      if (status == SQLITE_ROW)
+        remember(first->second.message.tool_call_id,
+                 {{}, column(row.p, 0), column(row.p, 1), column(row.p, 2)});
+      else if (status != SQLITE_DONE)
         sql_read_error(db, "Cannot inspect provisional tool journal", status);
+    } else {
+      const auto variables = sqlite3_limit(db, SQLITE_LIMIT_VARIABLE_NUMBER, -1);
+      if (variables < 2)
+        throw Error("SQLite variable limit prevents provisional journal lookup");
+      const auto width = std::min(size_t{64}, static_cast<size_t>(variables - 1));
+      std::array<const Message *, 64> batch{};
+      std::optional<Statement> full, remainder;
+      auto source = first;
+      while (source != plan.rows.end()) {
+        size_t count = 0;
+        while (source != plan.rows.end() && count < width) {
+          if (is_tool(*source))
+            batch[count++] = &source->second.message;
+          ++source;
+        }
+        if (!count)
+          break;
+        auto &statement = count == width ? full : remainder;
+        if (!statement) {
+          std::string query =
+              "SELECT call_id,status,name,args FROM tools WHERE session=? AND call_id IN (";
+          for (size_t i = 0; i < count; ++i)
+            query += i ? ",?" : "?";
+          query += ") AND status IN ('uncertain','not_started')";
+          statement.emplace(db, query.c_str());
+        }
+        auto &row = *statement;
+        sqlite3_reset(row.p);
+        row.text(1, s.id);
+        for (size_t i = 0; i < count; ++i)
+          row.text(static_cast<int>(i + 2), batch[i]->tool_call_id);
+        int status;
+        while ((status = sqlite3_step(row.p)) == SQLITE_ROW) {
+          const auto id = column(row.p, 0);
+          // IN collapses repeated IDs; retain the existing duplicate-result rejection.
+          size_t occurrences = 0;
+          for (size_t i = 0; i < count; ++i)
+            if (batch[i]->tool_call_id == id)
+              ++occurrences;
+          if (occurrences != 1)
+            throw Error("Ambiguous duplicate tool results in session");
+          remember(id, {{}, column(row.p, 1), column(row.p, 2), column(row.p, 3)});
+        }
+        if (status != SQLITE_DONE)
+          sql_read_error(db, "Cannot inspect provisional tool journal", status);
+      }
     }
     if (pending.empty())
       return;
@@ -2030,7 +2073,7 @@ StateStore::~StateStore() {
 void StateStore::set_diagnostics(DiagnosticSink sink) {
   impl_->diagnostics = std::move(sink);
 }
-void StateStore::set_file_diagnostics(std::shared_ptr<FileDiagnosticReceiver> receiver) {
+void StateStore::set_file_diagnostics(std::shared_ptr<FileDiagnosticReceiver> receiver) noexcept {
   impl_->file_diagnostics = std::move(receiver);
 }
 uint64_t StateStore::serialized_bytes() const {
@@ -2883,7 +2926,7 @@ Json StateStore::repair_session_token(const std::string &selector, bool last) {
           if (!backups.empty()) {
             report["backups"] = Json::array();
             for (const auto &record : backups)
-              report["backups"].push_back(record.path);
+              report["backups"].push_back(record->path);
           }
           return report;
         }
@@ -2896,11 +2939,11 @@ Json StateStore::repair_session_token(const std::string &selector, bool last) {
                      {"changed", true},
                      {"session_token_regenerated", true},
                      {"provider_cache_reset", false},
-                     {"backup", backups.back().path}};
+                     {"backup", backups.back()->path}};
       if (backups.size() > 1) {
         report["backups"] = Json::array();
         for (const auto &record : backups)
-          report["backups"].push_back(record.path);
+          report["backups"].push_back(record->path);
       }
       {
         Transaction publication(impl_->db);
@@ -3018,11 +3061,11 @@ Json StateStore::repair(const std::string &selector, bool last, bool provider_ca
         return report;
       impl_->write_backup(backups, id, backup);
       backup = nullptr;
-      report["backup"] = backups.back().path;
+      report["backup"] = backups.back()->path;
       if (backups.size() > 1) {
         report["backups"] = Json::array();
         for (const auto &backup : backups)
-          report["backups"].push_back(backup.path);
+          report["backups"].push_back(backup->path);
       }
       std::vector<std::string> payloads;
       std::set<std::string> retained;

@@ -536,6 +536,21 @@ public:
     }
   }
 };
+void write_file_notice(const std::string &text) {
+  std::cerr << text << '\n';
+  if (!std::cerr)
+    throw Error("Cannot render preserved-file notice");
+}
+class ImmediateFileDiagnostics final : public FileDiagnosticReceiver {
+public:
+  void submit(std::unique_ptr<FileNotice> notice) noexcept override {
+    try {
+      write_file_notice(notice->text());
+    } catch (...) {
+      emergency_file_diagnostic(*notice);
+    }
+  }
+};
 } // namespace
 int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   const auto o = parse(args);
@@ -561,7 +576,15 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     std::weak_ptr<Terminal> screen;
     bool buffering = false;
     DiagnosticBuffer live{65536}, cleanup{65536};
+    std::shared_ptr<FileDiagnosticReceiver> immediate =
+        std::make_shared<ImmediateFileDiagnostics>();
     std::shared_ptr<FileDiagnosticQueue> files = std::make_shared<FileDiagnosticQueue>();
+    DiagnosticSink file_sink = [this](const std::string &text) {
+      if (auto terminal = screen.lock())
+        terminal->diagnostic(text);
+      else
+        write_file_notice(text);
+    };
     void emit(const std::string &text) {
       if (buffering)
         cleanup.add(text);
@@ -572,10 +595,24 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       } else
         std::cerr << text << '\n';
     }
-    void flush() {
-      files->flush();
-      live.flush(std::cerr);
-      cleanup.flush(std::cerr);
+    void deliver_files() noexcept {
+      if (auto terminal = screen.lock(); terminal && terminal->fullscreen())
+        files->preview(file_sink);
+      else
+        files->deliver(file_sink);
+    }
+    void restored(StateStore &state) noexcept {
+      state.set_file_diagnostics(immediate);
+      buffering = false;
+      files->finish(file_sink);
+      try {
+        live.flush(std::cerr);
+        cleanup.flush(std::cerr);
+      } catch (...) {
+        // A failed ordinary diagnostic stream must not replace the operation's exception.
+        live = DiagnosticBuffer(0);
+        cleanup = DiagnosticBuffer(0);
+      }
     }
   };
   auto diagnostics = std::make_shared<Diagnostics>();
@@ -755,7 +792,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   StateStore state(files, state_home, artifact_directory(config), config.durability,
                    {&cancel, diagnostic});
   state.set_diagnostics(diagnostic);
-  state.set_file_diagnostics(diagnostics->files);
+  state.set_file_diagnostics(diagnostics->immediate);
   if (o.command == "sessions") {
     std::cout << state.list().dump(2) << '\n';
     return 0;
@@ -834,18 +871,19 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   struct RestoreDiagnostics {
     std::shared_ptr<Terminal> &terminal;
     std::shared_ptr<Diagnostics> diagnostics;
-    RestoreDiagnostics(std::shared_ptr<Terminal> &t, std::shared_ptr<Diagnostics> d)
-        : terminal(t), diagnostics(std::move(d)) {}
+    StateStore &state;
+    RestoreDiagnostics(std::shared_ptr<Terminal> &t, std::shared_ptr<Diagnostics> d, StateStore &s)
+        : terminal(t), diagnostics(std::move(d)), state(s) {}
     ~RestoreDiagnostics() {
       terminal.reset();
-      diagnostics->buffering = false;
-      diagnostics->flush();
+      diagnostics->restored(state);
     }
-  } restore_diagnostics{terminal, diagnostics};
+  } restore_diagnostics{terminal, diagnostics, state};
   if (interactive) {
     terminal = std::make_shared<Terminal>(config, o.color);
     terminal->set_mode(config.permission_mode);
     diagnostics->screen = terminal;
+    state.set_file_diagnostics(diagnostics->files);
   }
   interaction = terminal ? std::make_shared<Interaction>() : std::shared_ptr<Interaction>{};
   Approver approver;
@@ -895,14 +933,14 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     struct RestoreTerminal {
       std::shared_ptr<Terminal> &terminal;
       Diagnostics &diagnostics;
-      RestoreTerminal(std::shared_ptr<Terminal> &screen, Diagnostics &sink)
-          : terminal(screen), diagnostics(sink) {}
+      StateStore &state;
+      RestoreTerminal(std::shared_ptr<Terminal> &screen, Diagnostics &sink, StateStore &s)
+          : terminal(screen), diagnostics(sink), state(s) {}
       ~RestoreTerminal() {
         terminal.reset();
-        diagnostics.buffering = false;
-        diagnostics.flush();
+        diagnostics.restored(state);
       }
-    } restore{terminal, *diagnostics};
+    } restore{terminal, *diagnostics, state};
     try {
       Cancellation cleanup_cancel;
       tools.run_hooks("SessionEnd", {{"hook_event_name", "SessionEnd"}, {"session_id", started_id}},
@@ -941,7 +979,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     std::future<RunResult> work;
     std::optional<Json> pending;
     const auto deliver = [&](bool recovering = false) {
-      diagnostics->files->deliver(diagnostic);
+      diagnostics->deliver_files();
       interaction->deliver(
           [&](const Json &event) {
             const auto type = event.value("type", "");
@@ -1064,12 +1102,11 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   };
   auto run = [&](const std::string &text, bool steering = false) {
     struct DeliverFiles {
-      FileDiagnosticQueue &files;
-      const DiagnosticSink &sink;
+      Diagnostics &diagnostics;
       ~DeliverFiles() {
-        files.deliver(sink);
+        diagnostics.deliver_files();
       }
-    } deliver_files{*diagnostics->files, diagnostic};
+    } deliver_files{*diagnostics};
     struct ClearImages {
       std::vector<ImageArtifact> &images;
       bool clear;

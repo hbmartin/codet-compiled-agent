@@ -10,10 +10,12 @@ struct FileNotice {
   bool confirmed = false;
   FileNotice(std::string p, FileNoticeKind k) : path(std::move(p)), kind(k) {}
   const char *label() const noexcept;
+  std::string text() const;
 
 private:
   friend class FileDiagnosticQueue;
   FileNotice *next = nullptr;
+  bool rendering_failed = false;
 };
 void emergency_file_diagnostic(const FileNotice &) noexcept;
 class FileDiagnosticReceiver {
@@ -26,11 +28,18 @@ class FileDiagnosticQueue final : public FileDiagnosticReceiver {
   std::atomic<FileNotice *> pending_{nullptr};
   FileNotice *deferred_ = nullptr, *deferred_tail_ = nullptr;
   FileNotice *take() noexcept;
+  FileNotice *take_all() noexcept;
+  void retain(std::unique_ptr<FileNotice>) noexcept;
+  void render(const DiagnosticSink &, bool) noexcept;
 
 public:
   ~FileDiagnosticQueue() override;
   void submit(std::unique_ptr<FileNotice>) noexcept override;
   void deliver(const DiagnosticSink &) noexcept;
+  // Preview once, retaining the complete notice for replay after terminal restoration.
+  void preview(const DiagnosticSink &) noexcept;
+  // After restoration, render unfailed notices normally and use emergency output on failure.
+  void finish(const DiagnosticSink &) noexcept;
   // Call after restoring the terminal. Emits full reversible paths without allocating.
   void flush() noexcept;
 };
