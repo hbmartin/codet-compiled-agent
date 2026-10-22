@@ -542,13 +542,11 @@ void write_file_notice(const std::string &text) {
     throw Error("Cannot render preserved-file notice");
 }
 class ImmediateFileDiagnostics final : public FileDiagnosticReceiver {
+  DiagnosticSink sink_ = write_file_notice;
+
 public:
   void submit(std::unique_ptr<FileNotice> notice) noexcept override {
-    try {
-      write_file_notice(notice->text());
-    } catch (...) {
-      emergency_file_diagnostic(*notice);
-    }
+    deliver_file_diagnostic(*notice, sink_);
   }
 };
 } // namespace
@@ -580,7 +578,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
         std::make_shared<ImmediateFileDiagnostics>();
     std::shared_ptr<FileDiagnosticQueue> files = std::make_shared<FileDiagnosticQueue>();
     DiagnosticSink file_sink = [this](const std::string &text) {
-      if (auto terminal = screen.lock())
+      if (auto terminal = screen.lock(); terminal && terminal->fullscreen())
         terminal->diagnostic(text);
       else
         write_file_notice(text);
@@ -604,15 +602,18 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     void restored(StateStore &state) noexcept {
       state.set_file_diagnostics(immediate);
       buffering = false;
+      const auto flush = [](DiagnosticBuffer &buffer) noexcept {
+        try {
+          std::cerr.clear();
+          buffer.flush(std::cerr);
+        } catch (...) {
+          // Ordinary replay must not skip another drain or replace the operation's exception.
+          buffer.clear();
+        }
+      };
+      flush(live);
+      flush(cleanup);
       files->finish(file_sink);
-      try {
-        live.flush(std::cerr);
-        cleanup.flush(std::cerr);
-      } catch (...) {
-        // A failed ordinary diagnostic stream must not replace the operation's exception.
-        live = DiagnosticBuffer(0);
-        cleanup = DiagnosticBuffer(0);
-      }
     }
   };
   auto diagnostics = std::make_shared<Diagnostics>();

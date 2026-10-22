@@ -18,6 +18,8 @@ private:
   bool rendering_failed = false;
 };
 void emergency_file_diagnostic(const FileNotice &) noexcept;
+// Attempt normal rendering once; preserve the full path through emergency output on failure.
+void deliver_file_diagnostic(const FileNotice &, const DiagnosticSink &) noexcept;
 class FileDiagnosticReceiver {
 public:
   virtual ~FileDiagnosticReceiver() = default;
@@ -91,14 +93,17 @@ public:
   const std::vector<std::string> &messages() const {
     return messages_;
   }
+  void clear() noexcept {
+    messages_.clear();
+    used_ = 0;
+    omitted_ = false;
+  }
   void flush(std::ostream &stream) {
     for (const auto &message : messages_)
       stream << message << '\n';
     if (omitted_ && limit_)
       stream << bounded_text(notice(), limit_ ? limit_ - 1 : 0) << '\n';
-    messages_.clear();
-    used_ = 0;
-    omitted_ = false;
+    clear();
   }
 };
 } // namespace codet

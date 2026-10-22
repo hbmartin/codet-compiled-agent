@@ -224,6 +224,35 @@ const char *FileNotice::label() const noexcept {
                    : "Tool result receipt candidate (publication unconfirmed): ";
 }
 namespace {
+bool printable_file_path(const std::string &path) noexcept {
+  for (size_t i = 0; i < path.size();) {
+    const auto lead = static_cast<unsigned char>(path[i]);
+    const size_t width = lead < 0x80                    ? 1
+                         : lead >= 0xc2 && lead <= 0xdf ? 2
+                         : lead >= 0xe0 && lead <= 0xef ? 3
+                         : lead >= 0xf0 && lead <= 0xf4 ? 4
+                                                        : 0;
+    if (!width || width > path.size() - i)
+      return false;
+    uint32_t point = width == 1 ? lead : lead & (0x7fu >> width);
+    for (size_t j = 1; j < width; ++j) {
+      const auto byte = static_cast<unsigned char>(path[i + j]);
+      if ((byte & 0xc0u) != 0x80u)
+        return false;
+      point = (point << 6u) | (byte & 0x3fu);
+    }
+    const uint32_t minimum = width == 1 ? 0 : width == 2 ? 0x80 : width == 3 ? 0x800 : 0x10000;
+    if (point < minimum || point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff))
+      return false;
+    // C0/C1, Bidi_Control, and Unicode line/paragraph separators are unsafe in paths.
+    if (point < 0x20 || (point >= 0x7f && point <= 0x9f) || point == '\\' || point == 0x61c ||
+        point == 0x200e || point == 0x200f || (point >= 0x2028 && point <= 0x202e) ||
+        (point >= 0x2066 && point <= 0x2069))
+      return false;
+    i += width;
+  }
+  return true;
+}
 template <class Write> bool escaped_file_path(const std::string &path, Write write) {
   constexpr char hex[] = "0123456789ABCDEF";
   char buffer[512];
@@ -248,13 +277,8 @@ template <class Write> bool escaped_file_path(const std::string &path, Write wri
 }
 } // namespace
 std::string FileNotice::text() const {
-  std::string repaired;
-  const bool escape =
-      repair_text(path, repaired) || std::any_of(path.begin(), path.end(), [](unsigned char byte) {
-        return byte < 0x20 || byte == 0x7f || byte == '\\';
-      });
   std::string result(label());
-  if (escape)
+  if (!printable_file_path(path))
     (void)escaped_file_path(path, [&](const char *bytes, size_t size) {
       result.append(bytes, size);
       return true;
@@ -281,6 +305,18 @@ void emergency_file_diagnostic(const FileNotice &notice) noexcept {
     return;
   if (escaped_file_path(notice.path, write_all))
     (void)write_all("\n", 1);
+}
+void deliver_file_diagnostic(const FileNotice &notice, const DiagnosticSink &sink) noexcept {
+  if (sink)
+    try {
+      sink(notice.text());
+      return;
+    } catch (...) {
+      // A renderer may have partially emitted the notice; preserve its complete path anyway.
+      emergency_file_diagnostic(notice);
+      return;
+    }
+  emergency_file_diagnostic(notice);
 }
 void FileDiagnosticQueue::submit(std::unique_ptr<FileNotice> notice) noexcept {
   auto *node = notice.release();
@@ -348,24 +384,14 @@ void FileDiagnosticQueue::finish(const DiagnosticSink &sink) noexcept {
   while (pending) {
     std::unique_ptr<FileNotice> notice(pending);
     pending = notice->next;
-    if (!notice->rendering_failed && sink)
-      try {
-        sink(notice->text());
-        continue;
-      } catch (...) {
-        // Preserve the held bytes even if the final renderer partially emitted them.
-        notice->rendering_failed = true;
-      }
-    emergency_file_diagnostic(*notice);
+    if (notice->rendering_failed)
+      emergency_file_diagnostic(*notice);
+    else
+      deliver_file_diagnostic(*notice, sink);
   }
 }
 void FileDiagnosticQueue::flush() noexcept {
-  auto *pending = take_all();
-  while (pending) {
-    std::unique_ptr<FileNotice> notice(pending);
-    pending = notice->next;
-    emergency_file_diagnostic(*notice);
-  }
+  finish({});
 }
 FileDiagnosticQueue::~FileDiagnosticQueue() {
   flush();

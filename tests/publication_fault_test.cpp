@@ -217,6 +217,17 @@ TEST(FileDiagnosticsFault, OwnershipTransferAndEmergencyFlushDoNotAllocate) {
   EXPECT_FALSE(allocated);
   EXPECT_EQ(output, "Uncommitted tool result preserved at " + std::string(4096, 'p') + "\n");
 }
+TEST(FileDiagnosticsFault, ClearingOrdinaryDiagnosticsDoesNotAllocateOrLoseTheBudget) {
+  DiagnosticBuffer buffer(256);
+  buffer.add(std::string(1024, 'x'));
+  fault::fired = false;
+  fault::countdown = 0;
+  buffer.clear();
+  const bool allocated = fault::fired;
+  fault::disable();
+  EXPECT_FALSE(allocated);
+  EXPECT_EQ(buffer.add("after clear"), "after clear");
+}
 TEST(FileDiagnosticsFault, PreviewAllocationFailureRetainsTheOwnedPathUntilFinish) {
   FileDiagnosticQueue queue;
   auto notice = std::make_unique<FileNotice>(std::string(4096, 'p'), FileNoticeKind::repair_backup);
