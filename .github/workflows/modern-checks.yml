@@ -62,7 +62,7 @@ jobs:
         run: make fetch-semgrep SEMGREP_PYTHON=python3.12
       - name: Check production sources and headers
         if: ${{ !cancelled() }}
-        run: make check-semgrep SEMGREP_PYTHON=python3.12
+        run: make check-semgrep CHECK_PYTHON=python3
       - name: Upload policy evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
