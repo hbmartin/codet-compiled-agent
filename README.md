@@ -30,7 +30,7 @@ application and shared C text helpers in a separate Clang build. Ubuntu GitHub A
 same checks and host tests. See [analysis setup, reports and enforcement](docs/MODERN-ANALYSIS.md).
 
 Semgrep uses an ignored `build/semgrep-venv` environment; provisioning requires Python with
-`venv`/pip support (`python3-venv` on Ubuntu). Interpreter commands default to `python3.12`; locked tool environments require Python 3.12.x. Select a compatible interpreter with
+`venv`/pip support (`python3-venv` on Ubuntu). Provisioning defaults to `python3.12`; locked tool environments require Python 3.12.x. Select a compatible interpreter with
 `SEMGREP_PYTHON=/path/to/python3`, or an existing pinned tool with `SEMGREP=/path/to/semgrep`.
 Checks require version 1.177.0, use only checked-in rules, disable metrics/version checks,
 and fail on findings or analysis errors. They guard discovery, checkpoint inspection,
@@ -58,7 +58,9 @@ Individual offline targets are `check-format`, `check-python`, `check-shell`, an
 Formatting covers maintained production code, headers, tests and benchmarks; recovered C
 and dependencies retain their separate policies.
 Ruff covers scripts and Python tests with undefined-name/import, selected correctness, and
-Python 3.12 modernization checks. `LINT_PYTHON` defaults to `python3.12`; locked lint provisioning also requires Python 3.12.x.
+Python 3.12 modernization checks. `LINT_PYTHON` defaults to `python3.12` for locked lint provisioning.
+Checks, runner tests, and Semgrep failure summaries use `CHECK_PYTHON` (default `python3`)
+and do not require the provisioning interpreter. Override it with `CHECK_PYTHON=/path/to/python3`.
 Lint versions are parsed and compared exactly; ShellCheck remains an installed, unpinned prerequisite.
 Requested reports are invalidated before discovery and atomically published, so interruptions cannot
 leave previous passing evidence for unfinished groups. Detailed versions, commands and results live under `build/lint/`.

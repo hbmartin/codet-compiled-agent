@@ -39,6 +39,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         with self.server.handlers:
             self.server.active_handlers += 1
+            self.stop = self.server.stop
         try:
             self.reply()
         finally:
@@ -53,6 +54,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.server.before_reply=None
             gate=self.server.signal_gate
             malformed_summary=self.server.malformed_summary
+            self.server.handlers.notify_all()
         if 'fixture-signal-wait' in json.dumps(body):
             ready,release=gate
             ready.set()
@@ -123,7 +125,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if 'fixture-error' in prompt:
             data=b'{"error":{"message":"do-not-leak-fake-credential"}}'
             self.send_response(401);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
-        if 'fixture-wait' in prompt:time.sleep(2)
+        if 'fixture-wait' in prompt and self.stop.wait(2):return
         last_user=max((i for i,m in enumerate(messages) if m['role']=='user'),default=0)
         completed=[m for m in messages[last_user:] if m['role']=='tool']
         if 'fixture-capture' in prompt:
@@ -188,7 +190,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with contextlib.suppress(BrokenPipeError,ConnectionResetError):
                 for chunk in frames:
                     self.wfile.write(chunk);self.wfile.flush()
-                    time.sleep(2 if 'fixture-idle-stream' in prompt else .3)
+                    if self.stop.wait(2 if 'fixture-idle-stream' in prompt else .3):return
             return
         self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Content-Length',str(len(data)));self.end_headers()
         with contextlib.suppress(BrokenPipeError,ConnectionResetError):
@@ -204,10 +206,15 @@ class CliTests(unittest.TestCase):
         cls.server.handlers=threading.Condition()
         cls.server.active_handlers=0
         cls.server.releases=[]
+        cls.server.stop=threading.Event()
         threading.Thread(target=cls.server.serve_forever,daemon=True).start()
     @classmethod
     def tearDownClass(cls):cls.server.shutdown();cls.server.server_close()
     def setUp(self):
+        with self.server.handlers:
+            self.assertEqual(self.server.active_handlers,0,'previous fixture handler is still active')
+            self.handler_stop=threading.Event()
+            self.server.stop=self.handler_stop
         self.tmp=tempfile.TemporaryDirectory(prefix='codet-cli-');self.root=pathlib.Path(self.tmp.name);self.home=self.root/'home';self.home.mkdir();self.workspace=self.root/'workspace';self.workspace.mkdir()
         (self.home/'config.toml').write_text(f"provider='openai'\nmodel='fixture'\n[providers.openai]\napi_key='fake-key'\nbase_url='http://127.0.0.1:{self.server.server_port}/v1'\n")
         self.env=dict(__import__("hermetic").environment(self.root/"user-home"),CODET_HOME=str(self.home));self.env.pop('SEARXNG_URL',None)
@@ -218,6 +225,7 @@ class CliTests(unittest.TestCase):
         self.server.malformed_summary=False
     def tearDown(self):
         try:
+            self.handler_stop.set()
             for release in self.server.releases:release.set()
             with self.server.handlers:
                 self.assertTrue(self.server.handlers.wait_for(
@@ -226,6 +234,25 @@ class CliTests(unittest.TestCase):
             self.tmp.cleanup()
     def run_cli(self,*args,input=''):
         return subprocess.run([BIN,'-C',str(self.workspace),*args],input=input,text=True,capture_output=True,env=self.env,timeout=15)
+    def test_teardown_stop_interrupts_fixture_delays(self):
+        import http.client
+        for prompt in ('fixture-wait','fixture-idle-stream'):
+            with self.subTest(prompt=prompt):
+                self.handler_stop=threading.Event()
+                with self.server.handlers:
+                    self.server.stop=self.handler_stop
+                    self.server.requests=[]
+                connection=http.client.HTTPConnection('127.0.0.1',self.server.server_port,timeout=5)
+                try:
+                    connection.request('POST','/v1/chat/completions',json.dumps({'messages':[{'role':'user','content':prompt}]}),
+                                       {'Content-Type':'application/json'})
+                    with self.server.handlers:
+                        self.assertTrue(self.server.handlers.wait_for(lambda:bool(self.server.requests),timeout=5))
+                    self.handler_stop.set()
+                    with self.server.handlers:
+                        self.assertTrue(self.server.handlers.wait_for(lambda:self.server.active_handlers==0,timeout=5))
+                finally:
+                    connection.close()
     def test_delayed_handler_cannot_consume_the_next_callback(self):
         import http.client
         ready,release=threading.Event(),threading.Event()
@@ -1113,7 +1140,7 @@ class CliTests(unittest.TestCase):
                     self.assertEqual(r.returncode,1,r.stderr)
                     error=json.loads(r.stdout)['provider_error']
                     self.assertIn('Malformed',error['message'])
-                    self.assertIn('{broken-arguments' if mode=='arguments' else 'invalid-call' if mode=='name' else 'read_file',error['body'])
+                    self.assertIn('{broken-arguments' if mode=='arguments' else '1e999' if mode=='overflow' else 'invalid-call' if mode=='name' else 'read_file',error['body'])
                     self.assertIn('message_stop' if provider=='anthropic' else '[DONE]',error['body'])
                     self.assertEqual(len(self.server.requests),1)
 

@@ -5,6 +5,7 @@
 #include "codet/diagnostics.hpp"
 #include "codet/output.hpp"
 #include "codet/support.hpp"
+#include "process_helper.hpp"
 #include "temp.hpp"
 #include <algorithm>
 #include <cerrno>
@@ -2814,6 +2815,22 @@ TEST_F(Pr24, PreservedFileReceiverDefersReportingAndKeepsTheOriginalFailure) {
   for (const auto &entry : fs::directory_iterator(config.state_root / "repairs"))
     EXPECT_THAT(diagnostic, HasSubstr(entry.path().string()));
 }
+TEST(FileDiagnostics, EmergencyPathFollowsCursesRestoration) {
+  testing::internal::CaptureStderr();
+  const auto child =
+      codet::test::start_helper({"--codet-file-notice-terminal-helper", "held-path"});
+  int status = 0;
+  const bool stopped = child > 0 && codet::test::wait_helper(child, status);
+  const auto output = testing::internal::GetCapturedStderr();
+  ASSERT_TRUE(stopped);
+  ASSERT_TRUE(WIFEXITED(status));
+  ASSERT_EQ(WEXITSTATUS(status), 0) << output;
+  const auto restored = output.find("\x1b[?1049l");
+  const auto notice = output.find("Uncommitted tool result preserved at held-path");
+  ASSERT_NE(restored, std::string::npos) << output;
+  ASSERT_NE(notice, std::string::npos) << output;
+  EXPECT_GT(notice, restored);
+}
 
 namespace {
 class StartupWait : public Test {
@@ -2832,55 +2849,13 @@ protected:
     if (lease >= 0)
       ::close(lease);
   }
-  void expect_interrupted(const Cancellation &cancel, DiagnosticSink sink,
-                          const std::function<void()> &verify = {}) {
-    const auto child = ::fork();
+  void expect_interrupted(const std::string &mode) {
+    const auto child = codet::test::start_helper(
+        {"--codet-startup-wait-helper", home.string(), (temp.root / "warm").string(), mode},
+        {lease});
     ASSERT_GE(child, 0);
-    if (!child) {
-      struct rlimit limit {};
-      if (::getrlimit(RLIMIT_NOFILE, &limit))
-        _exit(2);
-      limit.rlim_cur = std::min(limit.rlim_cur, rlim_t{512});
-      if (::setrlimit(RLIMIT_NOFILE, &limit))
-        _exit(3);
-      { StateStore warm(files, temp.root / "warm"); }
-      const auto descriptors = [&] {
-        size_t count = 0;
-        for (int fd = 0; fd < static_cast<int>(limit.rlim_cur); ++fd)
-          if (::fcntl(fd, F_GETFD) >= 0)
-            ++count;
-        return count;
-      };
-      const auto before = descriptors();
-      for (int attempt = 0; attempt < 20; ++attempt) {
-        try {
-          StateStore state(files, home, {}, "durable", {&cancel, sink});
-          ADD_FAILURE() << "migration wait was not cancelled";
-        } catch (const Error &error) {
-          EXPECT_EQ(error.code, 130);
-          EXPECT_STREQ(error.what(), "Interrupted waiting for database migration");
-        }
-        EXPECT_EQ(descriptors(), before);
-      }
-      if (verify)
-        verify();
-      _exit(HasFailure() ? 1 : 0);
-    }
     int status = 0;
-    pid_t stopped = 0;
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    do {
-      stopped = ::waitpid(child, &status, WNOHANG);
-      if (stopped == child)
-        break;
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    } while (std::chrono::steady_clock::now() < deadline);
-    if (stopped != child) {
-      ::kill(child, SIGKILL);
-      while (::waitpid(child, &status, 0) < 0 && errno == EINTR) {
-      }
-      FAIL() << "cancelled constructor did not finish within five seconds";
-    }
+    ASSERT_TRUE(codet::test::wait_helper(child, status));
     ASSERT_TRUE(WIFEXITED(status));
     EXPECT_EQ(WEXITSTATUS(status), 0);
     ASSERT_EQ(::flock(lease, LOCK_UN), 0);
@@ -2888,22 +2863,10 @@ protected:
   }
 };
 TEST_F(StartupWait, CancellationBeforeWaitingDoesNotNotifyAndReleasesDescriptors) {
-  Cancellation cancel;
-  cancel.requested = true;
-  expect_interrupted(cancel, [](const auto &) { ADD_FAILURE() << "unexpected wait notification"; });
+  expect_interrupted("before");
 }
 TEST_F(StartupWait, CancellationFromNotificationSurvivesDiagnosticFailure) {
-  Cancellation cancel;
-  size_t notifications = 0;
-  expect_interrupted(
-      cancel,
-      [&](const auto &message) {
-        EXPECT_EQ(message, "Waiting for database migration");
-        ++notifications;
-        cancel.requested = true;
-        throw std::bad_alloc();
-      },
-      [&] { EXPECT_EQ(notifications, 1u); });
+  expect_interrupted("notification");
 }
 TEST_F(StartupWait, CancellationDuringContentionIsObservedWithoutAnotherSignal) {
   Cancellation cancel;

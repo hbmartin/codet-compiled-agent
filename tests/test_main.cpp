@@ -1,18 +1,89 @@
+#include "codet/diagnostics.hpp"
 #include "codet/output.hpp"
 #include "process_helper.hpp"
 #include "temp.hpp"
 #include <csignal>
 #include <cstdlib>
+#include <curses.h>
 #include <fcntl.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <iostream>
+#include <sys/resource.h>
 
 std::string codet::test::executable;
 int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc == 3 && std::string(argv[1]) == "--codet-file-notice-terminal-helper") {
+      char terminal_type[] = "xterm";
+      SCREEN *screen = ::newterm(terminal_type, stderr, stdin);
+      if (!screen)
+        return 2;
+      (void)::refresh();
+      codet::FileDiagnosticQueue queue;
+      auto notice =
+          std::make_unique<codet::FileNotice>(argv[2], codet::FileNoticeKind::tool_result);
+      notice->confirmed = true;
+      queue.submit(std::move(notice));
+      queue.deliver([](const auto &) { throw std::bad_alloc(); });
+      (void)::endwin();
+      queue.flush();
+      ::delscreen(screen);
+      return 0;
+    }
+    if (argc == 5 && std::string(argv[1]) == "--codet-startup-wait-helper") {
+      struct rlimit limit {};
+      if (::getrlimit(RLIMIT_NOFILE, &limit))
+        return 2;
+      limit.rlim_cur = std::min(limit.rlim_cur, rlim_t{512});
+      if (::setrlimit(RLIMIT_NOFILE, &limit))
+        return 3;
+      codet::NativeFileSystem files;
+      { codet::StateStore warm(files, argv[3]); }
+      const auto descriptors = [&] {
+        size_t count = 0;
+        for (int fd = 0; fd < static_cast<int>(limit.rlim_cur); ++fd)
+          if (::fcntl(fd, F_GETFD) >= 0)
+            ++count;
+        return count;
+      };
+      const bool from_notification = std::string(argv[4]) == "notification";
+      codet::Cancellation cancel;
+      cancel.requested = !from_notification;
+      size_t notifications = 0;
+      const auto before = descriptors();
+      for (int attempt = 0; attempt < 20; ++attempt) {
+        try {
+          codet::StateStore store(files, argv[2], {}, "durable",
+                                  {&cancel, [&](const auto &message) {
+                                     if (message != "Waiting for database migration")
+                                       throw codet::Error("unexpected startup diagnostic");
+                                     ++notifications;
+                                     cancel.requested = true;
+                                     throw std::bad_alloc();
+                                   }});
+          std::cerr << "migration wait was not cancelled\n";
+          return 4;
+        } catch (const codet::Error &error) {
+          if (error.code != 130 ||
+              std::string(error.what()) != "Interrupted waiting for database migration") {
+            std::cerr << error.what() << '\n';
+            return 5;
+          }
+        }
+        if (descriptors() != before) {
+          std::cerr << "cancelled constructor leaked descriptors\n";
+          return 6;
+        }
+      }
+      if (notifications != (from_notification ? 1u : 0u)) {
+        std::cerr << "unexpected startup notification count\n";
+        return 7;
+      }
+      return 0;
+    }
     if (argc == 3 && std::string(argv[1]) == "--codet-catalog-lock-probe") {
       const int fd = ::open(argv[2], O_RDWR);
       if (fd < 0)
