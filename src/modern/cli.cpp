@@ -1,3 +1,4 @@
+#include "cli_diagnostics.hpp"
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/diagnostics.hpp"
@@ -235,7 +236,7 @@ Options parse(const std::vector<std::string> &args) {
                 2);
   return o;
 }
-class Terminal {
+class Terminal final : public detail::CliDiagnosticSurface {
   bool curses_ = false;
   EditLine *edit_ = nullptr;
   History *history_ = nullptr;
@@ -346,7 +347,7 @@ public:
       std::cerr << status_ << '\n';
     }
   }
-  ~Terminal() {
+  ~Terminal() override {
     if (curses_)
       endwin();
     if (edit_)
@@ -356,10 +357,10 @@ public:
     if (restore_)
       (void)tcsetattr(STDIN_FILENO, TCSANOW, &original_);
   }
-  bool fullscreen() const {
+  bool fullscreen() const override {
     return curses_;
   }
-  void diagnostic(const std::string &text) {
+  void diagnostic(const std::string &text) override {
     if (curses_)
       say(text);
     else
@@ -536,19 +537,6 @@ public:
     }
   }
 };
-void write_file_notice(const std::string &text) {
-  std::cerr << text << '\n';
-  if (!std::cerr)
-    throw Error("Cannot render preserved-file notice");
-}
-class ImmediateFileDiagnostics final : public FileDiagnosticReceiver {
-  DiagnosticSink sink_ = write_file_notice;
-
-public:
-  void submit(std::unique_ptr<FileNotice> notice) noexcept override {
-    deliver_file_diagnostic(*notice, sink_);
-  }
-};
 } // namespace
 int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   const auto o = parse(args);
@@ -570,53 +558,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   const auto terminal_thread = std::this_thread::get_id();
   // Keep session ownership until background-process destruction has finished.
   std::shared_ptr<void> lifecycle_owner, current_owner;
-  struct Diagnostics {
-    std::weak_ptr<Terminal> screen;
-    bool buffering = false;
-    DiagnosticBuffer live{65536}, cleanup{65536};
-    std::shared_ptr<FileDiagnosticReceiver> immediate =
-        std::make_shared<ImmediateFileDiagnostics>();
-    std::shared_ptr<FileDiagnosticQueue> files = std::make_shared<FileDiagnosticQueue>();
-    DiagnosticSink file_sink = [this](const std::string &text) {
-      if (auto terminal = screen.lock(); terminal && terminal->fullscreen())
-        terminal->diagnostic(text);
-      else
-        write_file_notice(text);
-    };
-    void emit(const std::string &text) {
-      if (buffering)
-        cleanup.add(text);
-      else if (auto terminal = screen.lock()) {
-        terminal->diagnostic(text);
-        if (terminal->fullscreen())
-          live.add(text);
-      } else
-        std::cerr << text << '\n';
-    }
-    void deliver_files() noexcept {
-      if (auto terminal = screen.lock(); terminal && terminal->fullscreen())
-        files->preview(file_sink);
-      else
-        files->deliver(file_sink);
-    }
-    void restored(StateStore &state) noexcept {
-      state.set_file_diagnostics(immediate);
-      buffering = false;
-      const auto flush = [](DiagnosticBuffer &buffer) noexcept {
-        try {
-          std::cerr.clear();
-          buffer.flush(std::cerr);
-        } catch (...) {
-          // Ordinary replay must not skip another drain or replace the operation's exception.
-          buffer.clear();
-        }
-      };
-      flush(live);
-      flush(cleanup);
-      files->finish(file_sink);
-    }
-  };
-  auto diagnostics = std::make_shared<Diagnostics>();
+  auto diagnostics = std::make_shared<detail::CliDiagnostics>();
   DiagnosticSink diagnostic = [&, diagnostics](const std::string &text) {
     if (interaction && std::this_thread::get_id() != terminal_thread)
       interaction->post({{"type", "codet.diagnostic"}, {"text", text}});
@@ -793,7 +735,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   StateStore state(files, state_home, artifact_directory(config), config.durability,
                    {&cancel, diagnostic});
   state.set_diagnostics(diagnostic);
-  state.set_file_diagnostics(diagnostics->immediate);
+  diagnostics->install(state);
   if (o.command == "sessions") {
     std::cout << state.list().dump(2) << '\n';
     return 0;
@@ -869,22 +811,10 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   std::shared_ptr<Terminal> terminal;
   diagnostics->live = DiagnosticBuffer(config.tool_output_limit);
   diagnostics->cleanup = DiagnosticBuffer(config.tool_output_limit);
-  struct RestoreDiagnostics {
-    std::shared_ptr<Terminal> &terminal;
-    std::shared_ptr<Diagnostics> diagnostics;
-    StateStore &state;
-    RestoreDiagnostics(std::shared_ptr<Terminal> &t, std::shared_ptr<Diagnostics> d, StateStore &s)
-        : terminal(t), diagnostics(std::move(d)), state(s) {}
-    ~RestoreDiagnostics() {
-      terminal.reset();
-      diagnostics->restored(state);
-    }
-  } restore_diagnostics{terminal, diagnostics, state};
+  detail::TerminalDiagnosticsScope<Terminal> restore_diagnostics{terminal, diagnostics, state};
   if (interactive) {
-    terminal = std::make_shared<Terminal>(config, o.color);
+    restore_diagnostics.activate(std::make_shared<Terminal>(config, o.color));
     terminal->set_mode(config.permission_mode);
-    diagnostics->screen = terminal;
-    state.set_file_diagnostics(diagnostics->files);
   }
   interaction = terminal ? std::make_shared<Interaction>() : std::shared_ptr<Interaction>{};
   Approver approver;
@@ -931,17 +861,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     }
   } session_end{[&, started_id = session.id] {
     diagnostics->buffering = true;
-    struct RestoreTerminal {
-      std::shared_ptr<Terminal> &terminal;
-      Diagnostics &diagnostics;
-      StateStore &state;
-      RestoreTerminal(std::shared_ptr<Terminal> &screen, Diagnostics &sink, StateStore &s)
-          : terminal(screen), diagnostics(sink), state(s) {}
-      ~RestoreTerminal() {
-        terminal.reset();
-        diagnostics.restored(state);
-      }
-    } restore{terminal, *diagnostics, state};
+    detail::TerminalDiagnosticsScope<Terminal> restore{terminal, diagnostics, state};
     try {
       Cancellation cleanup_cancel;
       tools.run_hooks("SessionEnd", {{"hook_event_name", "SessionEnd"}, {"session_id", started_id}},
@@ -1103,7 +1023,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   };
   auto run = [&](const std::string &text, bool steering = false) {
     struct DeliverFiles {
-      Diagnostics &diagnostics;
+      detail::CliDiagnostics &diagnostics;
       ~DeliverFiles() {
         diagnostics.deliver_files();
       }

@@ -1,4 +1,5 @@
 // A separate executable confines allocator/SQLite interception to deterministic fault tests.
+#include "../src/modern/cli_diagnostics.hpp"
 #include "codet/artifacts.hpp"
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
@@ -227,6 +228,41 @@ TEST(FileDiagnosticsFault, ClearingOrdinaryDiagnosticsDoesNotAllocateOrLoseTheBu
   fault::disable();
   EXPECT_FALSE(allocated);
   EXPECT_EQ(buffer.add("after clear"), "after clear");
+}
+TEST(FileDiagnosticsFault, LiveReplayAllocationFailureDoesNotDiscardCleanupOrNotices) {
+  struct FixedStream : std::streambuf {
+    char bytes[4096]{};
+    size_t used = 0;
+    std::streamsize xsputn(const char *source, std::streamsize count) override {
+      const auto size = std::min(static_cast<size_t>(count), sizeof(bytes) - used);
+      std::memcpy(bytes + used, source, size);
+      used += size;
+      return static_cast<std::streamsize>(size);
+    }
+    int overflow(int character) override {
+      if (character == traits_type::eof())
+        return traits_type::not_eof(character);
+      const auto byte = static_cast<char>(character);
+      return xsputn(&byte, 1) == 1 ? character : traits_type::eof();
+    }
+  } buffer;
+  std::ostream output(&buffer);
+  TempDirectory temp;
+  StateStore state(temp.root / "state");
+  detail::CliDiagnostics diagnostics(output);
+  diagnostics.live = DiagnosticBuffer(256);
+  diagnostics.live.add(std::string(1024, 'x'));
+  diagnostics.cleanup.add("SessionEnd survives allocation failure");
+  diagnostics.files->submit(std::make_unique<FileNotice>("held-path", FileNoticeKind::tool_result));
+  fault::fired = false;
+  fault::countdown = 0;
+  diagnostics.restored(state);
+  const bool injected = fault::fired;
+  fault::disable();
+  EXPECT_TRUE(injected);
+  const std::string text(buffer.bytes, buffer.used);
+  EXPECT_NE(text.find("SessionEnd survives allocation failure\n"), std::string::npos);
+  EXPECT_NE(text.find("held-path\n"), std::string::npos);
 }
 TEST(FileDiagnosticsFault, PreviewAllocationFailureRetainsTheOwnedPathUntilFinish) {
   FileDiagnosticQueue queue;
