@@ -9,6 +9,8 @@ namespace codet::test {
 struct JournalMetrics {
   bool enabled = false;
   size_t queries = 0, rows = 0, vm_steps = 0, fullscan_steps = 0, max_bindings = 0;
+  size_t preparations = 0, statement_bytes_peak = 0;
+  sqlite3 *connection = nullptr;
   static bool candidate(sqlite3_stmt *statement) {
     const auto *sql = sqlite3_sql(statement);
     constexpr char single[] = "SELECT status,name,args FROM tools WHERE session=? AND call_id=?";
@@ -19,10 +21,18 @@ struct JournalMetrics {
   }
   void before(sqlite3_stmt *statement) {
     if (enabled && candidate(statement) && !sqlite3_stmt_busy(statement)) {
+      connection = sqlite3_db_handle(statement);
       ++queries;
       max_bindings =
           std::max(max_bindings, static_cast<size_t>(sqlite3_bind_parameter_count(statement)));
+      statement_bytes_peak = std::max(
+          statement_bytes_peak,
+          static_cast<size_t>(sqlite3_stmt_status(statement, SQLITE_STMTSTATUS_MEMUSED, 0)));
     }
+  }
+  void prepared(sqlite3_stmt *statement) {
+    if (enabled && statement && candidate(statement))
+      ++preparations;
   }
   void after(sqlite3_stmt *statement, int result) {
     if (!enabled || !candidate(statement))
