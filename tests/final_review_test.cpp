@@ -266,6 +266,12 @@ TEST(Sanitization, PreservesJsonRepresentationAndInvalidKeyCollisionBehavior) {
   const auto reference = Json::parse(value.dump(-1, ' ', false, Json::error_handler_t::replace));
   EXPECT_EQ(safe_json(value), reference);
   EXPECT_EQ(safe_json(value).dump(), reference.dump());
+  auto owned = value;
+  EXPECT_EQ(safe_json(std::move(owned)), reference);
+  owned = value;
+  EXPECT_EQ(safe_json(std::move(owned)).dump(), reference.dump());
+  EXPECT_EQ(value["nan"].is_number_float(), true);
+  EXPECT_EQ(value["binary"].is_binary(), true);
 }
 TEST(FileDiagnostics, FailedNoticesAreHeldUntilRestorationAndEscapedWithoutTruncation) {
   FileDiagnosticQueue queue;

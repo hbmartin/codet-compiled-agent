@@ -39,6 +39,7 @@ struct ProcessTimeout : Error {
   ProcessTimeout() : Error("Command timed out during startup") {}
 };
 Json safe_json(const Json &);
+Json safe_json(Json &&);
 using DiagnosticSink = std::function<void(const std::string &)>;
 void report_diagnostic(const DiagnosticSink &, const std::string &);
 std::string bounded_text(const std::string &, size_t);

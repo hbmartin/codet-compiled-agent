@@ -607,7 +607,7 @@ struct StateStore::Impl {
                          const std::string &tool) {
     portable_message(message, id, tool);
     for (auto &call : message.calls)
-      call.arguments = safe_json(call.arguments);
+      call.arguments = safe_json(std::move(call.arguments));
     ensure_message_id(message, position);
     return message;
   }
@@ -686,6 +686,7 @@ struct StateStore::Impl {
     JsonRetirement retirement;
     std::shared_ptr<CommitReceipt> receipt;
     std::vector<std::string> validated_input;
+    std::vector<std::string> validated_canonical;
   };
   bool receipt_matches(const Session &s, const SessionVersion &version) const {
     return receipt && receipt->session == s.id &&
@@ -719,6 +720,8 @@ struct StateStore::Impl {
         const auto row = plan.rows.find(i);
         if (row != plan.rows.end())
           next->canonical.push_back(digest(*row->second.payload));
+        else if (i < plan.validated_canonical.size())
+          next->canonical.push_back(plan.validated_canonical[i]);
         else if (reuse && i < receipt->canonical.size())
           next->canonical.push_back(receipt->canonical[i]);
         else {
@@ -1387,6 +1390,7 @@ struct StateStore::Impl {
                                        const PrepareOptions &options) {
     Transaction snapshot(db, false);
     const auto version = session_version(s.id);
+    std::vector<std::string> input_fingerprints;
     if (receipt_matches(s, version)) {
       const auto &acknowledged = *receipt;
       const std::set<size_t> requested(positions.begin(), positions.end());
@@ -1394,33 +1398,34 @@ struct StateStore::Impl {
           (options.kind == WriteKind::revise && s.messages.size() != acknowledged.canonical.size()))
         throw Error("Session changed before recovered transcript write");
       auto verified_positions = positions;
-      std::vector<std::string> fingerprints;
       bool retain = options.memory == MemoryPublication::discard && receipt_fits(s);
       if (retain)
         try {
-          fingerprints.reserve(s.messages.size());
+          input_fingerprints.reserve(s.messages.size());
         } catch (const std::bad_alloc &) {
           retain = false;
         }
       bool matches = true;
       for (size_t i = 0; i < acknowledged.canonical.size(); ++i) {
         auto fingerprint = message_fingerprint(s.messages.at(i));
-        if ((options.kind == WriteKind::append || !requested.count(i)) &&
-            fingerprint != acknowledged.input[i] && fingerprint != acknowledged.canonical[i]) {
-          matches = false;
-          break; // Normalization may still establish equivalence on the strict path.
-        }
+        const bool mismatch = (options.kind == WriteKind::append || !requested.count(i)) &&
+                              fingerprint != acknowledged.input[i] &&
+                              fingerprint != acknowledged.canonical[i];
         if (options.memory == MemoryPublication::publish && !requested.count(i) &&
             fingerprint != acknowledged.canonical[i])
           verified_positions.push_back(i);
         if (retain)
-          fingerprints.push_back(std::move(fingerprint));
+          input_fingerprints.push_back(std::move(fingerprint));
+        if (mismatch) {
+          matches = false;
+          break; // Normalization may still establish equivalence on the strict path.
+        }
       }
       if (matches) {
         auto verified = options;
         verified.recovery = RecoveryInput::verified;
         auto plan = prepare(s, std::move(verified_positions), verified);
-        plan.validated_input = std::move(fingerprints);
+        plan.validated_input = std::move(input_fingerprints);
         snapshot.commit();
         return plan;
       }
@@ -1474,7 +1479,7 @@ struct StateStore::Impl {
       known_projection(message, position, s.checkpoint_projection, s.id);
       return normalized.emplace(position, std::move(message)).first->second;
     };
-    const auto fingerprints = message_fingerprints(view.messages);
+    auto fingerprints = message_fingerprints(view.messages);
     std::string canonical_rows;
     for (const auto &fingerprint : fingerprints)
       canonical_rows += fingerprint;
@@ -1525,6 +1530,9 @@ struct StateStore::Impl {
     }
     plan.version = version;
     prepare_journal(plan, s.messages, recovered.writes);
+    plan.validated_input = std::move(input_fingerprints);
+    if (options.memory == MemoryPublication::discard && receipt_fits(s))
+      plan.validated_canonical = std::move(fingerprints);
     snapshot.commit();
     return plan;
   }

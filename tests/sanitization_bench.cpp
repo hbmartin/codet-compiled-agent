@@ -36,8 +36,84 @@ void operator delete(void *p, size_t) noexcept {
 void operator delete[](void *p, size_t) noexcept {
   std::free(p);
 }
-int main() {
+namespace {
+void review_bench() {
   using namespace codet;
+  for (const size_t bytes : {size_t{65536}, size_t{1048576}}) {
+    TempDirectory temp;
+    StateStore store(temp.root / "state");
+    auto session = store.create();
+    Message assistant;
+    assistant.role = "assistant";
+    assistant.calls = {
+        {"large", "exec_command", {{"payload", std::string(bytes, 'x')}, {"iteration", 0}}}};
+    session.messages = {assistant};
+    store.save(session);
+    allocations = allocated_bytes = 0;
+    const auto start = std::chrono::steady_clock::now();
+    for (int i = 0; i < 8; ++i) {
+      session.messages[0].calls[0].arguments["iteration"] = i;
+      store.revise_messages(session, {0});
+    }
+    const auto ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    const auto count = allocations.load(), allocated = allocated_bytes.load();
+    std::cout << Json({{"case", "large_arguments"},
+                       {"argument_bytes", bytes},
+                       {"iterations", 8},
+                       {"milliseconds", ms},
+                       {"allocations", count},
+                       {"allocated_bytes", allocated}})
+                     .dump()
+              << '\n';
+  }
+  for (const size_t messages : {size_t{128}, size_t{1024}, size_t{8192}})
+    for (const auto *position : {"early", "middle", "late"}) {
+      TempDirectory temp;
+      StateStore store(temp.root / "state");
+      auto original = store.create();
+      original.messages.resize(messages, Message{"user", "ordinary prefix"});
+      const auto index = std::string(position) == "early"    ? size_t{0}
+                         : std::string(position) == "middle" ? messages / 2
+                                                             : messages - 1;
+      original.messages[index].role = "assistant";
+      original.messages[index].calls = {{"historical", "exec_command", Json::object()}};
+      store.save(original);
+      auto session = store.load_id(original.id);
+      const Session &view = session;
+      store.revise_messages(view, {});
+      const auto value = Json::parse(session.messages[index + 1].text);
+      const auto pretty2 = value.dump(2), pretty4 = value.dump(4);
+      const auto reads = store.transcript_rows_read();
+      allocations = allocated_bytes = 0;
+      const auto start = std::chrono::steady_clock::now();
+      for (int i = 0; i < 4; ++i) {
+        session.messages[index + 1].text = i % 2 ? pretty2 : pretty4;
+        store.revise_messages(view, {});
+      }
+      const auto ms =
+          std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+              .count();
+      const auto count = allocations.load(), allocated = allocated_bytes.load();
+      std::cout << Json({{"case", "receipt_mismatch"},
+                         {"messages", messages},
+                         {"position", position},
+                         {"iterations", 4},
+                         {"milliseconds", ms},
+                         {"allocations", count},
+                         {"allocated_bytes", allocated},
+                         {"transcript_rows_read", store.transcript_rows_read() - reads}})
+                       .dump()
+                << '\n';
+    }
+}
+} // namespace
+int main(int argc, char **argv) {
+  using namespace codet;
+  if (argc > 1 && std::string(argv[1]) == "review") {
+    review_bench();
+    return 0;
+  }
   Json transcript = Json::array();
   for (int i = 0; i < 100; ++i)
     transcript.push_back(

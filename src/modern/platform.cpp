@@ -97,8 +97,8 @@ int curl_progress(void *data, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
   return 0;
 }
 } // namespace
-std::string safe_text(const std::string &text) {
-  std::string result;
+namespace {
+bool repair_text(const std::string &text, std::string &result) {
   size_t copied = 0;
   bool repaired = false;
   for (size_t i = 0; i < text.size();) {
@@ -134,9 +134,15 @@ std::string safe_text(const std::string &text) {
     i += accepted;
     copied = i;
   }
-  if (!repaired)
+  if (repaired)
+    result.append(text, copied, text.size() - copied);
+  return repaired;
+}
+} // namespace
+std::string safe_text(const std::string &text) {
+  std::string result;
+  if (!repair_text(text, result))
     return text;
-  result.append(text, copied, text.size() - copied);
   return result;
 }
 Json safe_json(const Json &value) {
@@ -161,6 +167,39 @@ Json safe_json(const Json &value) {
   if (value.is_binary() || value.is_discarded())
     return Json::parse(value.dump(-1, ' ', false, Json::error_handler_t::replace));
   return value;
+}
+Json safe_json(Json &&value) {
+  if (value.is_string()) {
+    auto &text = value.get_ref<std::string &>();
+    std::string repaired;
+    if (repair_text(text, repaired))
+      text.swap(repaired);
+  } else if (value.is_array()) {
+    for (auto &item : value)
+      item = safe_json(std::move(item));
+  } else if (value.is_object()) {
+    bool rebuild = false;
+    for (auto it = value.begin(); it != value.end(); ++it) {
+      std::string repaired;
+      if (repair_text(it.key(), repaired)) {
+        rebuild = true;
+        break;
+      }
+    }
+    if (rebuild) {
+      Json result = Json::object();
+      // Original key order determines which value survives a repaired-key collision.
+      for (auto it = value.begin(); it != value.end(); ++it)
+        result[safe_text(it.key())] = safe_json(std::move(it.value()));
+      return result;
+    }
+    for (auto &item : value)
+      item = safe_json(std::move(item));
+  } else if (value.is_number_float() && !std::isfinite(value.get<double>()))
+    return nullptr;
+  else if (value.is_binary() || value.is_discarded())
+    return safe_json(static_cast<const Json &>(value));
+  return std::move(value);
 }
 void report_diagnostic(const DiagnosticSink &sink, const std::string &message) {
   const auto text = bounded_text(message, size_t{1024} * 1024);
