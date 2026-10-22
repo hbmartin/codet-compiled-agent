@@ -107,11 +107,13 @@ class LintEnforcement(unittest.TestCase):
     def test_unknown_tool_does_not_stop_later_tools_or_groups(self):
         def commands(group):
             name = "unknown-tool" if group == "format" else "ruff"
-            return [(name, "--version", None, [[]])]
+            return [(name, "--version", None, [[]]), ("ruff", "--version", "0.17.1", [["check"]])]
         with patch.object(lint, "commands", side_effect=commands), \
                 patch.object(lint.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "ruff 0.17.1", "")):
             self.assertFalse(lint.run_groups(lint.GROUPS))
         self.assertIn("Unknown lint tool", self.report("format")["results"][0]["failure"])
+        self.assertTrue(self.report("format")["results"][1]["passed"])
+        self.assertEqual(self.report("format")["results"][1]["runs"][0]["exit_code"], 0)
         self.assertTrue(all(self.report(group)["passed"] for group in lint.GROUPS[1:]))
 
     def test_groups_invalidate_once_and_publish_private_reports(self):
@@ -143,6 +145,7 @@ class Provisioning(unittest.TestCase):
         source = Path(__file__).resolve().parents[1]
         for name in ("Makefile", "toolchain.mk", ".go-version"):
             shutil.copy(source / name, self.root / name)
+        self.go_version = (self.root / ".go-version").read_text().strip()
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.log = self.root / "commands.log"
@@ -173,7 +176,7 @@ if sys.argv[1] == 'version': print(os.environ['FAKE_GO_BANNER'])
         shellcheck.write_text("#!/bin/sh\nexit 0\n")
         shellcheck.chmod(0o700)
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
-                        FAKE_PYTHON_VERSION="3.12.0", FAKE_GO_BANNER="go version go1.27.2 linux/amd64",
+                        FAKE_PYTHON_VERSION="3.12.0", FAKE_GO_BANNER=f"go version go{self.go_version} linux/amd64",
                         COMMAND_LOG=str(self.log), GOTOOLCHAIN="local")
 
     def run_target(self, target):
@@ -182,12 +185,15 @@ if sys.argv[1] == 'version': print(os.environ['FAKE_GO_BANNER'])
                               env=self.env, text=True, capture_output=True, timeout=10)
 
     def test_exact_go_version_is_required_before_environment_or_installation(self):
-        for banner in ("go version go1.20.9 linux/amd64", "go version go1.27.3 linux/amd64", "malformed"):
+        parts = self.go_version.split(".")
+        adjacent = ".".join([*parts[:-1], str(int(parts[-1]) + 1)])
+        for banner in ("go version go1.20.9 linux/amd64", f"go version go{adjacent} linux/amd64", "malformed"):
             with self.subTest(banner=banner):
                 self.env["FAKE_GO_BANNER"] = banner
                 result = self.run_target("fetch-lint-tools")
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("Go 1.27.2 is required", result.stderr)
+                self.assertIn(f"Go {self.go_version} is required", result.stderr)
+                self.assertEqual((self.root / "build/lint/go-version.txt").read_text().strip(), banner)
                 self.assertNotIn("install", self.log.read_text())
                 self.assertFalse((self.root / "build/lint-venv").exists())
 
@@ -195,9 +201,28 @@ if sys.argv[1] == 'version': print(os.environ['FAKE_GO_BANNER'])
         result = self.run_target("fetch-lint-tools")
         self.assertEqual(result.returncode, 0, result.stderr)
         commands = self.log.read_text()
-        self.assertIn("go1.27.2 go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12", commands)
-        self.assertIn("go1.27.2 go install mvdan.cc/sh/v3/cmd/shfmt@v3.14.1", commands)
+        self.assertIn(f"go{self.go_version} go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12", commands)
+        self.assertIn(f"go{self.go_version} go install mvdan.cc/sh/v3/cmd/shfmt@v3.14.1", commands)
         self.assertEqual((self.root / "build/lint/go-version.txt").read_text(), self.env["FAKE_GO_BANNER"] + "\n")
+
+    def test_missing_go_prints_install_guidance_before_provisioning(self):
+        (self.bin / "go").unlink()
+        for name in ("make", "mkdir", "cat"):
+            os.symlink(shutil.which(name), self.bin / name)
+        self.env["PATH"] = str(self.bin)
+        result = self.run_target("fetch-lint-tools")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"Go {self.go_version} is required", result.stderr)
+        self.assertFalse((self.root / "build/lint-venv").exists())
+
+    def test_checks_use_generic_interpreter_without_provisioning_python(self):
+        result = subprocess.run(["make", "-n", "check-lint", "test-lint-runners",
+                                 "CHECK_PYTHON=" + sys.executable,
+                                 "LINT_PYTHON=missing-provisioning-python"], cwd=self.root,
+                                text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("missing-provisioning-python", result.stdout)
+        self.assertIn(sys.executable + " scripts/lint.py all", result.stdout)
 
     def test_other_python_minors_fail_before_provisioning(self):
         for version in ("3.9.0", "3.13.0", "3.14.0"):

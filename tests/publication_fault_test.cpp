@@ -2,6 +2,7 @@
 #include "codet/artifacts.hpp"
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
+#include "codet/diagnostics.hpp"
 #include "codet/prompt.hpp"
 #include "temp.hpp"
 #include <cstdlib>
@@ -183,6 +184,21 @@ extern "C" int sqlite3_step(sqlite3_stmt *statement) {
   return result;
 }
 namespace {
+TEST(FileDiagnosticsFault, OwnershipTransferAndEmergencyFlushDoNotAllocate) {
+  FileDiagnosticQueue queue;
+  auto notice = std::make_unique<FileNotice>(std::string(4096, 'p'), FileNoticeKind::tool_result);
+  notice->confirmed = true;
+  testing::internal::CaptureStderr();
+  fault::fired = false;
+  fault::countdown = 0;
+  queue.submit(std::move(notice));
+  queue.flush();
+  const bool allocated = fault::fired;
+  fault::disable();
+  const auto output = testing::internal::GetCapturedStderr();
+  EXPECT_FALSE(allocated);
+  EXPECT_EQ(output, "Uncommitted tool result preserved at " + std::string(4096, 'p') + "\n");
+}
 TEST(FaultAllocator, NothrowAllocationsUseTheSameReplacementAndFailureInjection) {
   fault::disable();
   void *scalar = ::operator new(16, std::nothrow);

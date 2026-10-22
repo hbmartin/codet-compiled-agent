@@ -1,4 +1,5 @@
 #include "codet/core.hpp"
+#include "codet/diagnostics.hpp"
 #include "codet/output.hpp"
 #include "codet/process_control.hpp"
 #include <algorithm>
@@ -96,8 +97,8 @@ int curl_progress(void *data, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
   return 0;
 }
 } // namespace
-std::string safe_text(const std::string &text) {
-  std::string result;
+namespace {
+bool repair_text(const std::string &text, std::string &result) {
   size_t copied = 0;
   bool repaired = false;
   for (size_t i = 0; i < text.size();) {
@@ -133,9 +134,15 @@ std::string safe_text(const std::string &text) {
     i += accepted;
     copied = i;
   }
-  if (!repaired)
+  if (repaired)
+    result.append(text, copied, text.size() - copied);
+  return repaired;
+}
+} // namespace
+std::string safe_text(const std::string &text) {
+  std::string result;
+  if (!repair_text(text, result))
     return text;
-  result.append(text, copied, text.size() - copied);
   return result;
 }
 Json safe_json(const Json &value) {
@@ -161,6 +168,39 @@ Json safe_json(const Json &value) {
     return Json::parse(value.dump(-1, ' ', false, Json::error_handler_t::replace));
   return value;
 }
+Json safe_json(Json &&value) {
+  if (value.is_string()) {
+    auto &text = value.get_ref<std::string &>();
+    std::string repaired;
+    if (repair_text(text, repaired))
+      text.swap(repaired);
+  } else if (value.is_array()) {
+    for (auto &item : value)
+      item = safe_json(std::move(item));
+  } else if (value.is_object()) {
+    bool rebuild = false;
+    for (auto it = value.begin(); it != value.end(); ++it) {
+      std::string repaired;
+      if (repair_text(it.key(), repaired)) {
+        rebuild = true;
+        break;
+      }
+    }
+    if (rebuild) {
+      Json result = Json::object();
+      // Original key order determines which value survives a repaired-key collision.
+      for (auto it = value.begin(); it != value.end(); ++it)
+        result[safe_text(it.key())] = safe_json(std::move(it.value()));
+      return result;
+    }
+    for (auto &item : value)
+      item = safe_json(std::move(item));
+  } else if (value.is_number_float() && !std::isfinite(value.get<double>()))
+    return nullptr;
+  else if (value.is_binary() || value.is_discarded())
+    return safe_json(static_cast<const Json &>(value));
+  return std::move(value);
+}
 void report_diagnostic(const DiagnosticSink &sink, const std::string &message) {
   const auto text = bounded_text(message, size_t{1024} * 1024);
   if (sink) {
@@ -175,6 +215,110 @@ void report_diagnostic(const DiagnosticSink &sink, const std::string &message) {
     }
   }
   std::cerr << text << '\n';
+}
+const char *FileNotice::label() const noexcept {
+  if (kind == FileNoticeKind::repair_backup)
+    return confirmed ? "Session repair backup: "
+                     : "Session repair backup candidate (publication unconfirmed): ";
+  return confirmed ? "Uncommitted tool result preserved at "
+                   : "Tool result receipt candidate (publication unconfirmed): ";
+}
+void emergency_file_diagnostic(const FileNotice &notice) noexcept {
+  const auto write_all = [](const char *bytes, size_t size) noexcept {
+    while (size) {
+      const auto written = ::write(STDERR_FILENO, bytes, size);
+      if (written < 0 && errno == EINTR)
+        continue;
+      if (written <= 0)
+        return false;
+      bytes += written;
+      size -= static_cast<size_t>(written);
+    }
+    return true;
+  };
+  const auto *label = notice.label();
+  if (!write_all(label, std::strlen(label)))
+    return;
+  constexpr char hex[] = "0123456789ABCDEF";
+  char buffer[512];
+  size_t used = 0;
+  for (const auto character : notice.path) {
+    const auto byte = static_cast<unsigned int>(static_cast<unsigned char>(character));
+    if (used + 4 > sizeof(buffer)) {
+      if (!write_all(buffer, used))
+        return;
+      used = 0;
+    }
+    if (byte >= 0x20 && byte <= 0x7e && byte != '\\')
+      buffer[used++] = character;
+    else {
+      buffer[used++] = '\\';
+      buffer[used++] = 'x';
+      buffer[used++] = hex[byte >> 4u];
+      buffer[used++] = hex[byte & 15u];
+    }
+  }
+  if (write_all(buffer, used))
+    (void)write_all("\n", 1);
+}
+void FileDiagnosticQueue::submit(std::unique_ptr<FileNotice> notice) noexcept {
+  auto *node = notice.release();
+  node->next = pending_.load(std::memory_order_relaxed);
+  while (!pending_.compare_exchange_weak(node->next, node, std::memory_order_release,
+                                         std::memory_order_relaxed)) {
+  }
+}
+FileNotice *FileDiagnosticQueue::take() noexcept {
+  auto *pending = pending_.exchange(nullptr, std::memory_order_acquire);
+  FileNotice *ordered = nullptr;
+  while (pending) {
+    auto *next = pending->next;
+    pending->next = ordered;
+    ordered = pending;
+    pending = next;
+  }
+  return ordered;
+}
+void FileDiagnosticQueue::deliver(const DiagnosticSink &sink) noexcept {
+  auto *pending = take();
+  while (pending) {
+    std::unique_ptr<FileNotice> notice(pending);
+    pending = pending->next;
+    notice->next = nullptr;
+    const auto defer = [&]() noexcept {
+      if (deferred_tail_)
+        deferred_tail_->next = notice.get();
+      else
+        deferred_ = notice.get();
+      deferred_tail_ = notice.release();
+    };
+    if (!sink) {
+      defer();
+      continue;
+    }
+    try {
+      sink(safe_text(std::string(notice->label()) + notice->path));
+    } catch (...) {
+      // Keep the original bytes for the emergency renderer after terminal restoration.
+      defer();
+    }
+  }
+}
+void FileDiagnosticQueue::flush() noexcept {
+  auto *pending = take();
+  if (deferred_tail_)
+    deferred_tail_->next = pending;
+  else
+    deferred_ = pending;
+  while (deferred_) {
+    std::unique_ptr<FileNotice> notice(deferred_);
+    deferred_ = notice->next;
+    emergency_file_diagnostic(*notice);
+  }
+  deferred_tail_ = nullptr;
+}
+FileDiagnosticQueue::~FileDiagnosticQueue() {
+  flush();
 }
 std::string bounded_text(const std::string &text, size_t limit) {
   auto clean = safe_text(text);

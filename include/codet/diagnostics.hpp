@@ -2,6 +2,38 @@
 #include "codet/core.hpp"
 #include <ostream>
 namespace codet {
+enum class FileNoticeKind : uint8_t { repair_backup, tool_result };
+// Allocate before publishing a file; delivery transfers its held path without allocation.
+struct FileNotice {
+  std::string path;
+  FileNoticeKind kind;
+  bool confirmed = false;
+  FileNotice(std::string p, FileNoticeKind k) : path(std::move(p)), kind(k) {}
+  const char *label() const noexcept;
+
+private:
+  friend class FileDiagnosticQueue;
+  FileNotice *next = nullptr;
+};
+void emergency_file_diagnostic(const FileNotice &) noexcept;
+class FileDiagnosticReceiver {
+public:
+  virtual ~FileDiagnosticReceiver() = default;
+  virtual void submit(std::unique_ptr<FileNotice>) noexcept = 0;
+};
+// Producers only transfer ownership. The terminal thread renders or defers each notice once.
+class FileDiagnosticQueue final : public FileDiagnosticReceiver {
+  std::atomic<FileNotice *> pending_{nullptr};
+  FileNotice *deferred_ = nullptr, *deferred_tail_ = nullptr;
+  FileNotice *take() noexcept;
+
+public:
+  ~FileDiagnosticQueue() override;
+  void submit(std::unique_ptr<FileNotice>) noexcept override;
+  void deliver(const DiagnosticSink &) noexcept;
+  // Call after restoring the terminal. Emits full reversible paths without allocating.
+  void flush() noexcept;
+};
 enum class DiagnosticLevel : uint8_t { info, warning, error };
 inline std::string hook_diagnostic(const std::string &event, DiagnosticLevel level,
                                    const std::string &text) {

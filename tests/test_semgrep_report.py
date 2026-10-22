@@ -77,7 +77,7 @@ class SemgrepReports(unittest.TestCase):
         self.assertIn("Report is missing or invalid", errors.getvalue())
         self.assertEqual(path.read_text(), "{invalid")
 
-    def run_make(self, payload, status):
+    def run_make(self, payload, status, interpreter=None):
         for name in ("Makefile", "toolchain.mk"):
             shutil.copy(ROOT / name, self.root / name)
         scripts = self.root / "scripts"
@@ -95,7 +95,8 @@ else:
 ''')
         tool.chmod(0o700)
         return subprocess.run(["make", "check-semgrep", "SEMGREP=" + str(tool),
-                               "SEMGREP_PYTHON=" + sys.executable], cwd=self.root,
+                               "CHECK_PYTHON=" + (interpreter or sys.executable),
+                               "SEMGREP_PYTHON=missing-provisioning-python"], cwd=self.root,
                               env=dict(os.environ, FAKE_REPORT=payload, FAKE_STATUS=str(status)),
                               text=True, capture_output=True, timeout=10)
 
@@ -124,6 +125,15 @@ else:
         self.assertNotIn("Semgrep check failed", run.stderr)
         self.assertEqual(sorted(p.name for p in folder.iterdir()), ["scan.json", "scan.stderr.log"])
         self.assertFalse((self.root / "build/semgrep-venv").exists())
+
+    def test_missing_summary_interpreter_keeps_findings_and_scan_failure(self):
+        payload = '{"results":[{"check_id":"retained-finding"}]}'
+        run = self.run_make(payload, 7, "missing-check-python")
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn("Error 7", run.stderr)
+        self.assertIn("Cannot render Semgrep summary", run.stderr)
+        self.assertIn("build/semgrep/scan.json", run.stderr)
+        self.assertEqual((self.root / "build/semgrep/scan.json").read_text(), payload)
 
 
 if __name__ == "__main__":

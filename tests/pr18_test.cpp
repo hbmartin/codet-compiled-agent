@@ -2,8 +2,10 @@
 #include "codet/computer.hpp"
 #include "codet/context.hpp"
 #include "codet/core.hpp"
+#include "codet/diagnostics.hpp"
 #include "codet/output.hpp"
 #include "codet/support.hpp"
+#include "process_helper.hpp"
 #include "temp.hpp"
 #include <algorithm>
 #include <cerrno>
@@ -2567,45 +2569,125 @@ TEST_F(Pr24, TokenOnlyDeferredCommitFailureRollsBackAndRetainsTheBackup) {
   EXPECT_THAT(diagnostics, HasSubstr("Session repair backup: "));
 }
 
-TEST_F(Pr24, CachedProvisionalRevisionsUpdateTheJournalInBothStorageFormats) {
+TEST_F(Pr24, ProvisionalRevisionsSurviveMutablePublicationReloadAndReopen) {
   StateStore state(files, config.state_root);
   Db raw(config.state_root / "state.sqlite3");
-  Tools tools(config, files, processes, http, clock);
   for (bool blob : {false, true})
     for (bool cached : {false, true})
-      for (bool constant : {false, true}) {
-        auto s = state.create();
-        ToolCall call{"pending", "exec_command", Json::object()};
-        codet::Message assistant;
-        assistant.role = "assistant";
-        assistant.calls = {call};
-        s.messages = {codet::Message{"user", "hello"}, assistant};
-        state.save(s);
-        state.tool_started(s.id, call);
-        if (blob)
-          raw.exec("UPDATE sessions SET message_format=0,messages='" + Json(s.messages).dump() +
-                   "' WHERE id='" + s.id + "';DELETE FROM session_messages WHERE session='" + s.id +
-                   "'");
-        s = state.load_id(s.id);
-        s.messages.push_back(codet::Message{"user", "suffix"});
-        state.append_messages(static_cast<const Session &>(s), 3);
-        if (!cached)
-          state.update_metadata(s);
-        auto envelope = Json::parse(s.messages[2].text);
-        envelope["content"] = "revised uncertain outcome";
-        s.messages[2].text = envelope.dump();
-        if (constant)
-          state.revise_messages(static_cast<const Session &>(s), {2});
-        else
-          state.revise_messages(s, {2});
-        EXPECT_EQ(raw.value("SELECT result FROM tools WHERE session='" + s.id + "'"),
-                  raw.value("SELECT payload FROM session_messages WHERE session='" + s.id +
-                            "' AND position=2"));
-        EXPECT_EQ(state.load_id(s.id, false).messages[2].text, envelope.dump());
-        EXPECT_EQ(state.load_id(s.id).messages[2].text, envelope.dump());
-        EXPECT_NO_THROW(state.reconcile(s));
-        EXPECT_EQ(state.fork(s).messages[2].text, envelope.dump());
-      }
+      for (bool constant : {false, true})
+        for (bool started : {false, true}) {
+          auto s = state.create();
+          ToolCall call{"pending", "exec_command", Json::object()};
+          codet::Message assistant;
+          assistant.role = "assistant";
+          assistant.calls = {call};
+          s.messages = {codet::Message{"user", "hello"}, assistant};
+          state.save(s);
+          if (started)
+            state.tool_started(s.id, call);
+          if (blob)
+            raw.exec("UPDATE sessions SET message_format=0,messages='" + Json(s.messages).dump() +
+                     "' WHERE id='" + s.id + "';DELETE FROM session_messages WHERE session='" +
+                     s.id + "'");
+          s = state.load_id(s.id);
+          s.messages.push_back(codet::Message{"user", "suffix"});
+          state.append_messages(static_cast<const Session &>(s), 3);
+          if (!cached)
+            state.update_metadata(s);
+          const auto revise = [&](StateStore &store, const std::string &text) {
+            auto envelope = Json::parse(s.messages[2].text);
+            envelope["content"] = text;
+            s.messages[2].text = envelope.dump();
+            if (constant)
+              store.revise_messages(static_cast<const Session &>(s), {2});
+            else
+              store.revise_messages(s, {2});
+            EXPECT_EQ(raw.value("SELECT result FROM tools WHERE session='" + s.id + "'"),
+                      raw.value("SELECT payload FROM session_messages WHERE session='" + s.id +
+                                "' AND position=2"));
+            EXPECT_EQ(raw.value("SELECT status FROM tools WHERE session='" + s.id + "'"),
+                      started ? "uncertain" : "not_started");
+            EXPECT_EQ(store.load_id(s.id, false).messages[2].text, envelope.dump());
+            EXPECT_EQ(store.load_id(s.id).messages[2].text, envelope.dump());
+          };
+          revise(state, "A");
+          const auto first = s.messages.size();
+          s.messages.push_back(codet::Message{"user", "mutable suffix"});
+          state.append_messages(s, first);
+          revise(state, "B");
+          s.messages[2].text = "replacement outcome";
+          if (constant)
+            state.save(static_cast<const Session &>(s));
+          else
+            state.save(s);
+          EXPECT_EQ(state.load_id(s.id).messages[2].text, s.messages[2].text);
+          s = state.load_id(s.id);
+          // A revised result need not retain the synthetic recovery envelope.
+          s.messages[2].text = Json({{"content", "reload"}}).dump();
+          revise(state, "C");
+          StateStore reopened(files, config.state_root);
+          s = reopened.load_id(s.id);
+          revise(reopened, "D");
+          EXPECT_NO_THROW(reopened.reconcile(s));
+          EXPECT_EQ(reopened.fork(s).messages[2].text, s.messages[2].text);
+        }
+}
+TEST_F(Pr24, ProvisionalJournalRefreshRollsBackAndValidatesCallIdentity) {
+  StateStore state(files, config.state_root);
+  Db raw(config.state_root / "state.sqlite3");
+  auto s = state.create();
+  codet::Message assistant;
+  assistant.role = "assistant";
+  assistant.calls = {{"pending", "exec_command", {{"cmd", "original"}}}};
+  s.messages = {assistant};
+  state.save(s);
+  s = state.load_id(s.id);
+  state.revise_messages(s, {1});
+  const auto previous = raw.value("SELECT result FROM tools WHERE session='" + s.id + "'");
+  s.messages[1].text = "new outcome";
+  raw.exec("CREATE TRIGGER refuse_revision BEFORE UPDATE ON session_messages "
+           "BEGIN SELECT RAISE(ABORT,'injected transcript failure'); END");
+  EXPECT_THROW(state.revise_messages(s, {1}), Error);
+  EXPECT_EQ(raw.value("SELECT result FROM tools WHERE session='" + s.id + "'"), previous);
+  EXPECT_EQ(
+      raw.value("SELECT payload FROM session_messages WHERE session='" + s.id + "' AND position=1"),
+      previous);
+  raw.exec("DROP TRIGGER refuse_revision");
+  s.messages[0].calls[0].arguments["cmd"] = "different";
+  EXPECT_THROW(state.revise_messages(s, {1}), Error);
+  EXPECT_EQ(raw.value("SELECT result FROM tools WHERE session='" + s.id + "'"), previous);
+}
+TEST_F(Pr24, OrdinaryResultWritesPreserveRunningAndCompletedJournalRecords) {
+  StateStore state(files, config.state_root);
+  Db raw(config.state_root / "state.sqlite3");
+  for (bool complete : {false, true}) {
+    auto s = state.create();
+    codet::Message assistant;
+    assistant.role = "assistant";
+    assistant.calls = {{"call", "exec_command", Json::object()}};
+    s.messages = {assistant};
+    state.save(s);
+    const auto call = s.messages[0].calls[0];
+    state.tool_started(s.id, call);
+    codet::Message result;
+    result.role = "tool";
+    result.tool_call_id = call.id;
+    result.text = "completed result";
+    if (complete)
+      state.complete_tool(s, call, result);
+    else {
+      s.messages.push_back(result);
+      state.append_messages(s, 1);
+    }
+    const auto journal = raw.value("SELECT result FROM tools WHERE session='" + s.id + "'");
+    s.messages[1].text = "ordinary revision";
+    state.revise_messages(s, {1});
+    EXPECT_EQ(raw.value("SELECT result FROM tools WHERE session='" + s.id + "'"), journal);
+    EXPECT_EQ(raw.value("SELECT status FROM tools WHERE session='" + s.id + "'"),
+              complete ? "complete" : "running");
+    if (complete)
+      EXPECT_EQ(state.load_id(s.id).messages[1].text, result.text);
+  }
 }
 TEST_F(Pr24, EquivalentRecoveryFormattingUsesStrictValidationOnCacheMismatch) {
   StateStore state(files, config.state_root);
@@ -2669,6 +2751,9 @@ TEST_F(Pr24, JournalComparisonsUseTheSanitizedArgumentsAtEveryBoundary) {
     EXPECT_THROW(state.complete_tool(s, changed, result), Error);
     ASSERT_NO_THROW(state.complete_tool(s, call, result));
     EXPECT_NO_THROW(state.complete_tool(s, call, result));
+    auto canonical = call;
+    canonical.arguments = safe_json(call.arguments);
+    EXPECT_NO_THROW(state.complete_tool(s, canonical, result));
     const auto loaded = state.load_id(s.id);
     EXPECT_EQ(loaded.messages[0].calls[0].arguments, safe_json(call.arguments));
     EXPECT_EQ(loaded.messages[1].text, result.text);
@@ -2702,6 +2787,50 @@ TEST_F(Pr24, PreservedFilePathsSurviveDiagnosticAllocationFailures) {
     if (entry.path().filename().string().find("-backup-") != std::string::npos)
       EXPECT_THAT(backup_diagnostic, HasSubstr(entry.path().string()));
 }
+TEST_F(Pr24, PreservedFileReceiverDefersReportingAndKeepsTheOriginalFailure) {
+  StateStore state(files, config.state_root);
+  auto queue = std::make_shared<FileDiagnosticQueue>();
+  state.set_file_diagnostics(queue);
+  state.set_diagnostics([](const auto &) { FAIL() << "file notices must use their receiver"; });
+  auto s = state.create();
+  ToolCall call{"pending", "exec_command", Json::object()};
+  state.tool_started(s.id, call);
+  call.name = "wrong";
+  codet::Message result;
+  result.role = "tool";
+  result.tool_call_id = call.id;
+  testing::internal::CaptureStderr();
+  try {
+    state.complete_tool(s, call, result);
+    FAIL();
+  } catch (const Error &error) {
+    EXPECT_STREQ(error.what(), "Ambiguous journaled tool call id");
+  }
+  queue->deliver([](const auto &) { throw std::bad_alloc(); });
+  EXPECT_EQ(testing::internal::GetCapturedStderr(), "");
+  testing::internal::CaptureStderr();
+  queue->flush();
+  const auto diagnostic = testing::internal::GetCapturedStderr();
+  EXPECT_THAT(diagnostic, HasSubstr("Uncommitted tool result preserved at "));
+  for (const auto &entry : fs::directory_iterator(config.state_root / "repairs"))
+    EXPECT_THAT(diagnostic, HasSubstr(entry.path().string()));
+}
+TEST(FileDiagnostics, EmergencyPathFollowsCursesRestoration) {
+  testing::internal::CaptureStderr();
+  const auto child =
+      codet::test::start_helper({"--codet-file-notice-terminal-helper", "held-path"});
+  int status = 0;
+  const bool stopped = child > 0 && codet::test::wait_helper(child, status);
+  const auto output = testing::internal::GetCapturedStderr();
+  ASSERT_TRUE(stopped);
+  ASSERT_TRUE(WIFEXITED(status));
+  ASSERT_EQ(WEXITSTATUS(status), 0) << output;
+  const auto restored = output.find("\x1b[?1049l");
+  const auto notice = output.find("Uncommitted tool result preserved at held-path");
+  ASSERT_NE(restored, std::string::npos) << output;
+  ASSERT_NE(notice, std::string::npos) << output;
+  EXPECT_GT(notice, restored);
+}
 
 namespace {
 class StartupWait : public Test {
@@ -2720,55 +2849,13 @@ protected:
     if (lease >= 0)
       ::close(lease);
   }
-  void expect_interrupted(const Cancellation &cancel, DiagnosticSink sink,
-                          const std::function<void()> &verify = {}) {
-    const auto child = ::fork();
+  void expect_interrupted(const std::string &mode) {
+    const auto child = codet::test::start_helper(
+        {"--codet-startup-wait-helper", home.string(), (temp.root / "warm").string(), mode},
+        {lease});
     ASSERT_GE(child, 0);
-    if (!child) {
-      struct rlimit limit {};
-      if (::getrlimit(RLIMIT_NOFILE, &limit))
-        _exit(2);
-      limit.rlim_cur = std::min(limit.rlim_cur, rlim_t{512});
-      if (::setrlimit(RLIMIT_NOFILE, &limit))
-        _exit(3);
-      { StateStore warm(files, temp.root / "warm"); }
-      const auto descriptors = [&] {
-        size_t count = 0;
-        for (int fd = 0; fd < static_cast<int>(limit.rlim_cur); ++fd)
-          if (::fcntl(fd, F_GETFD) >= 0)
-            ++count;
-        return count;
-      };
-      const auto before = descriptors();
-      for (int attempt = 0; attempt < 20; ++attempt) {
-        try {
-          StateStore state(files, home, {}, "durable", {&cancel, sink});
-          ADD_FAILURE() << "migration wait was not cancelled";
-        } catch (const Error &error) {
-          EXPECT_EQ(error.code, 130);
-          EXPECT_STREQ(error.what(), "Interrupted waiting for database migration");
-        }
-        EXPECT_EQ(descriptors(), before);
-      }
-      if (verify)
-        verify();
-      _exit(HasFailure() ? 1 : 0);
-    }
     int status = 0;
-    pid_t stopped = 0;
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    do {
-      stopped = ::waitpid(child, &status, WNOHANG);
-      if (stopped == child)
-        break;
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    } while (std::chrono::steady_clock::now() < deadline);
-    if (stopped != child) {
-      ::kill(child, SIGKILL);
-      while (::waitpid(child, &status, 0) < 0 && errno == EINTR) {
-      }
-      FAIL() << "cancelled constructor did not finish within five seconds";
-    }
+    ASSERT_TRUE(codet::test::wait_helper(child, status));
     ASSERT_TRUE(WIFEXITED(status));
     EXPECT_EQ(WEXITSTATUS(status), 0);
     ASSERT_EQ(::flock(lease, LOCK_UN), 0);
@@ -2776,22 +2863,10 @@ protected:
   }
 };
 TEST_F(StartupWait, CancellationBeforeWaitingDoesNotNotifyAndReleasesDescriptors) {
-  Cancellation cancel;
-  cancel.requested = true;
-  expect_interrupted(cancel, [](const auto &) { ADD_FAILURE() << "unexpected wait notification"; });
+  expect_interrupted("before");
 }
 TEST_F(StartupWait, CancellationFromNotificationSurvivesDiagnosticFailure) {
-  Cancellation cancel;
-  size_t notifications = 0;
-  expect_interrupted(
-      cancel,
-      [&](const auto &message) {
-        EXPECT_EQ(message, "Waiting for database migration");
-        ++notifications;
-        cancel.requested = true;
-        throw std::bad_alloc();
-      },
-      [&] { EXPECT_EQ(notifications, 1u); });
+  expect_interrupted("notification");
 }
 TEST_F(StartupWait, CancellationDuringContentionIsObservedWithoutAnotherSignal) {
   Cancellation cancel;
