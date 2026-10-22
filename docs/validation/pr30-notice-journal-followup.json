@@ -1,6 +1,6 @@
 {
   "recorded_utc": "2026-10-22T13:45:05.182235+00:00",
-  "pull_request": "https://github.com/hbmartin/codet-compiled-agent/pull/30",
+  "pull_request": "https://github.com/hbmartin/codet-compiled-agent/pull/31",
   "baseline_commit": "33fc5d760e07ff4cf654a56add97e6a08f724e2d",
   "implementation_commit": "77a3ce05603e99d742652fc76e95fa4c442e8670",
   "implementation_commits": [
@@ -1230,5 +1230,9 @@
     "tests/publication_fault_test.cpp": "3f8fb79e151c6cccb2267cf9125ce7fed33898547ee696ad34bdcca7e2224c48",
     "tests/sanitization_bench.cpp": "bb590ba9520bb95f9106b194759275cc16dd2fcbaeda0c548dde634a0074df19",
     "tests/test_main.cpp": "9b8b23d9216a8e315bdd9f86ce1b98fa9bb2d13934f031ae01114346ef6be13d"
-  }
+  },
+  "reviewed_pull_request": "https://github.com/hbmartin/codet-compiled-agent/pull/30",
+  "delivery_base_commit": "ecadf69d60eade8c56d927955426c2c98650c0d7",
+  "delivery_base_tree_matches_benchmark_baseline": true,
+  "delivery_note": "PR #30 was already merged at publication; the validated follow-up is delivered as ready PR #31 against fetched main."
 }
