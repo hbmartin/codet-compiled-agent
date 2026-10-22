@@ -1,6 +1,6 @@
-#include "cli_diagnostics.hpp"
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
+#include "codet/detail/cli_diagnostics.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/interaction.hpp"
 #include "codet/prompt.hpp"

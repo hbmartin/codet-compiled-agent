@@ -1,4 +1,4 @@
-#include "../src/modern/cli_diagnostics.hpp"
+#include "codet/detail/cli_diagnostics.hpp"
 #include "temp.hpp"
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>

@@ -1,8 +1,8 @@
 // A separate executable confines allocator/SQLite interception to deterministic fault tests.
-#include "../src/modern/cli_diagnostics.hpp"
 #include "codet/artifacts.hpp"
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
+#include "codet/detail/cli_diagnostics.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/prompt.hpp"
 #include "journal_fixture.hpp"
