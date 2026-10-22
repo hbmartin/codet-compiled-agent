@@ -5,6 +5,7 @@
 #include "codet/diagnostics.hpp"
 #include "codet/support.hpp"
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cerrno>
 #include <chrono>
@@ -1097,26 +1098,72 @@ struct StateStore::Impl {
   }
   void prepare_provisional_journal(PreparedTranscript &plan, const Session &s,
                                    const std::map<std::string, const ToolCall *> &known) {
-    if (std::none_of(plan.rows.begin(), plan.rows.end(),
-                     [](const auto &row) { return row.second.message.role == "tool"; }))
+    const auto is_tool = [](const auto &row) { return row.second.message.role == "tool"; };
+    const auto first = std::find_if(plan.rows.begin(), plan.rows.end(), is_tool);
+    if (first == plan.rows.end())
       return;
     std::map<std::string, JournalEntry> pending;
-    Statement row(db, "SELECT status,name,args FROM tools WHERE session=? AND call_id=? "
-                      "AND status IN ('uncertain','not_started')");
-    for (const auto &entry : plan.rows) {
-      const auto &message = entry.second.message;
-      if (message.role != "tool")
-        continue;
-      sqlite3_reset(row.p);
+    const auto remember = [&](const std::string &id, JournalEntry record) {
+      if (!pending.emplace(id, std::move(record)).second)
+        throw Error("Ambiguous duplicate tool results in session");
+    };
+    if (std::find_if(std::next(first), plan.rows.end(), is_tool) == plan.rows.end()) {
+      Statement row(db, "SELECT status,name,args FROM tools WHERE session=? AND call_id=? "
+                        "AND status IN ('uncertain','not_started')");
       row.text(1, s.id);
-      row.text(2, message.tool_call_id);
+      row.text(2, first->second.message.tool_call_id);
       const auto status = sqlite3_step(row.p);
-      if (status == SQLITE_ROW) {
-        JournalEntry record{{}, column(row.p, 0), column(row.p, 1), column(row.p, 2)};
-        if (!pending.emplace(message.tool_call_id, std::move(record)).second)
-          throw Error("Ambiguous duplicate tool results in session");
-      } else if (status != SQLITE_DONE)
+      if (status == SQLITE_ROW)
+        remember(first->second.message.tool_call_id,
+                 {{}, column(row.p, 0), column(row.p, 1), column(row.p, 2)});
+      else if (status != SQLITE_DONE)
         sql_read_error(db, "Cannot inspect provisional tool journal", status);
+    } else {
+      const auto variables = sqlite3_limit(db, SQLITE_LIMIT_VARIABLE_NUMBER, -1);
+      if (variables < 2)
+        throw Error("SQLite variable limit prevents provisional journal lookup");
+      const auto width = std::min(size_t{64}, static_cast<size_t>(variables - 1));
+      std::array<const Message *, 64> batch{};
+      std::optional<Statement> full, remainder;
+      auto source = first;
+      while (source != plan.rows.end()) {
+        size_t count = 0;
+        while (source != plan.rows.end() && count < width) {
+          if (is_tool(*source))
+            batch[count++] = &source->second.message;
+          ++source;
+        }
+        if (!count)
+          break;
+        auto &statement = count == width ? full : remainder;
+        if (!statement) {
+          std::string query =
+              "SELECT call_id,status,name,args FROM tools WHERE session=? AND call_id IN (";
+          for (size_t i = 0; i < count; ++i)
+            query += i ? ",?" : "?";
+          query += ") AND status IN ('uncertain','not_started')";
+          statement.emplace(db, query.c_str());
+        }
+        auto &row = *statement;
+        sqlite3_reset(row.p);
+        row.text(1, s.id);
+        for (size_t i = 0; i < count; ++i)
+          row.text(static_cast<int>(i + 2), batch[i]->tool_call_id);
+        int status;
+        while ((status = sqlite3_step(row.p)) == SQLITE_ROW) {
+          const auto id = column(row.p, 0);
+          // IN collapses repeated IDs; retain the existing duplicate-result rejection.
+          size_t occurrences = 0;
+          for (size_t i = 0; i < count; ++i)
+            if (batch[i]->tool_call_id == id)
+              ++occurrences;
+          if (occurrences != 1)
+            throw Error("Ambiguous duplicate tool results in session");
+          remember(id, {{}, column(row.p, 1), column(row.p, 2), column(row.p, 3)});
+        }
+        if (status != SQLITE_DONE)
+          sql_read_error(db, "Cannot inspect provisional tool journal", status);
+      }
     }
     if (pending.empty())
       return;
