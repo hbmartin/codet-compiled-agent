@@ -176,3 +176,11 @@ Fullscreen replay, immediate headless file notices, and candidate-only journal b
 covered by the [PR #30 follow-up validation](validation/pr30-notice-journal-followup.json).
 It records regressions reproduced against `33fc5d7`, final sanitizer runs, and five-run Release
 comparisons, including timing regressions alongside the allocation and SQLite work reductions.
+
+Checked line-mode notice writes, Unicode control escaping, independent replay drains, and shared
+terminal/receiver ownership are covered by the [notice-delivery follow-up validation](validation/notice-delivery-followup.json).
+It includes Debug and ASan/UBSan suites, twenty diagnostic repetitions, and the remaining native
+toolchain findings. Two alternating five-run Release comparisons rejected cross-write statement
+caching: mixed-journal replacements did not improve in either set. The record retains the
+experimental patch and links all [seventy measured medians](validation/notice-delivery-cache-medians.csv);
+production candidate statements remain scoped to each write operation.
