@@ -2567,45 +2567,125 @@ TEST_F(Pr24, TokenOnlyDeferredCommitFailureRollsBackAndRetainsTheBackup) {
   EXPECT_THAT(diagnostics, HasSubstr("Session repair backup: "));
 }
 
-TEST_F(Pr24, CachedProvisionalRevisionsUpdateTheJournalInBothStorageFormats) {
+TEST_F(Pr24, ProvisionalRevisionsSurviveMutablePublicationReloadAndReopen) {
   StateStore state(files, config.state_root);
   Db raw(config.state_root / "state.sqlite3");
-  Tools tools(config, files, processes, http, clock);
   for (bool blob : {false, true})
     for (bool cached : {false, true})
-      for (bool constant : {false, true}) {
-        auto s = state.create();
-        ToolCall call{"pending", "exec_command", Json::object()};
-        codet::Message assistant;
-        assistant.role = "assistant";
-        assistant.calls = {call};
-        s.messages = {codet::Message{"user", "hello"}, assistant};
-        state.save(s);
-        state.tool_started(s.id, call);
-        if (blob)
-          raw.exec("UPDATE sessions SET message_format=0,messages='" + Json(s.messages).dump() +
-                   "' WHERE id='" + s.id + "';DELETE FROM session_messages WHERE session='" + s.id +
-                   "'");
-        s = state.load_id(s.id);
-        s.messages.push_back(codet::Message{"user", "suffix"});
-        state.append_messages(static_cast<const Session &>(s), 3);
-        if (!cached)
-          state.update_metadata(s);
-        auto envelope = Json::parse(s.messages[2].text);
-        envelope["content"] = "revised uncertain outcome";
-        s.messages[2].text = envelope.dump();
-        if (constant)
-          state.revise_messages(static_cast<const Session &>(s), {2});
-        else
-          state.revise_messages(s, {2});
-        EXPECT_EQ(raw.value("SELECT result FROM tools WHERE session='" + s.id + "'"),
-                  raw.value("SELECT payload FROM session_messages WHERE session='" + s.id +
-                            "' AND position=2"));
-        EXPECT_EQ(state.load_id(s.id, false).messages[2].text, envelope.dump());
-        EXPECT_EQ(state.load_id(s.id).messages[2].text, envelope.dump());
-        EXPECT_NO_THROW(state.reconcile(s));
-        EXPECT_EQ(state.fork(s).messages[2].text, envelope.dump());
-      }
+      for (bool constant : {false, true})
+        for (bool started : {false, true}) {
+          auto s = state.create();
+          ToolCall call{"pending", "exec_command", Json::object()};
+          codet::Message assistant;
+          assistant.role = "assistant";
+          assistant.calls = {call};
+          s.messages = {codet::Message{"user", "hello"}, assistant};
+          state.save(s);
+          if (started)
+            state.tool_started(s.id, call);
+          if (blob)
+            raw.exec("UPDATE sessions SET message_format=0,messages='" + Json(s.messages).dump() +
+                     "' WHERE id='" + s.id + "';DELETE FROM session_messages WHERE session='" +
+                     s.id + "'");
+          s = state.load_id(s.id);
+          s.messages.push_back(codet::Message{"user", "suffix"});
+          state.append_messages(static_cast<const Session &>(s), 3);
+          if (!cached)
+            state.update_metadata(s);
+          const auto revise = [&](StateStore &store, const std::string &text) {
+            auto envelope = Json::parse(s.messages[2].text);
+            envelope["content"] = text;
+            s.messages[2].text = envelope.dump();
+            if (constant)
+              store.revise_messages(static_cast<const Session &>(s), {2});
+            else
+              store.revise_messages(s, {2});
+            EXPECT_EQ(raw.value("SELECT result FROM tools WHERE session='" + s.id + "'"),
+                      raw.value("SELECT payload FROM session_messages WHERE session='" + s.id +
+                                "' AND position=2"));
+            EXPECT_EQ(raw.value("SELECT status FROM tools WHERE session='" + s.id + "'"),
+                      started ? "uncertain" : "not_started");
+            EXPECT_EQ(store.load_id(s.id, false).messages[2].text, envelope.dump());
+            EXPECT_EQ(store.load_id(s.id).messages[2].text, envelope.dump());
+          };
+          revise(state, "A");
+          const auto first = s.messages.size();
+          s.messages.push_back(codet::Message{"user", "mutable suffix"});
+          state.append_messages(s, first);
+          revise(state, "B");
+          s.messages[2].text = "replacement outcome";
+          if (constant)
+            state.save(static_cast<const Session &>(s));
+          else
+            state.save(s);
+          EXPECT_EQ(state.load_id(s.id).messages[2].text, s.messages[2].text);
+          s = state.load_id(s.id);
+          // A revised result need not retain the synthetic recovery envelope.
+          s.messages[2].text = Json({{"content", "reload"}}).dump();
+          revise(state, "C");
+          StateStore reopened(files, config.state_root);
+          s = reopened.load_id(s.id);
+          revise(reopened, "D");
+          EXPECT_NO_THROW(reopened.reconcile(s));
+          EXPECT_EQ(reopened.fork(s).messages[2].text, s.messages[2].text);
+        }
+}
+TEST_F(Pr24, ProvisionalJournalRefreshRollsBackAndValidatesCallIdentity) {
+  StateStore state(files, config.state_root);
+  Db raw(config.state_root / "state.sqlite3");
+  auto s = state.create();
+  codet::Message assistant;
+  assistant.role = "assistant";
+  assistant.calls = {{"pending", "exec_command", {{"cmd", "original"}}}};
+  s.messages = {assistant};
+  state.save(s);
+  s = state.load_id(s.id);
+  state.revise_messages(s, {1});
+  const auto previous = raw.value("SELECT result FROM tools WHERE session='" + s.id + "'");
+  s.messages[1].text = "new outcome";
+  raw.exec("CREATE TRIGGER refuse_revision BEFORE UPDATE ON session_messages "
+           "BEGIN SELECT RAISE(ABORT,'injected transcript failure'); END");
+  EXPECT_THROW(state.revise_messages(s, {1}), Error);
+  EXPECT_EQ(raw.value("SELECT result FROM tools WHERE session='" + s.id + "'"), previous);
+  EXPECT_EQ(
+      raw.value("SELECT payload FROM session_messages WHERE session='" + s.id + "' AND position=1"),
+      previous);
+  raw.exec("DROP TRIGGER refuse_revision");
+  s.messages[0].calls[0].arguments["cmd"] = "different";
+  EXPECT_THROW(state.revise_messages(s, {1}), Error);
+  EXPECT_EQ(raw.value("SELECT result FROM tools WHERE session='" + s.id + "'"), previous);
+}
+TEST_F(Pr24, OrdinaryResultWritesPreserveRunningAndCompletedJournalRecords) {
+  StateStore state(files, config.state_root);
+  Db raw(config.state_root / "state.sqlite3");
+  for (bool complete : {false, true}) {
+    auto s = state.create();
+    codet::Message assistant;
+    assistant.role = "assistant";
+    assistant.calls = {{"call", "exec_command", Json::object()}};
+    s.messages = {assistant};
+    state.save(s);
+    const auto call = s.messages[0].calls[0];
+    state.tool_started(s.id, call);
+    codet::Message result;
+    result.role = "tool";
+    result.tool_call_id = call.id;
+    result.text = "completed result";
+    if (complete)
+      state.complete_tool(s, call, result);
+    else {
+      s.messages.push_back(result);
+      state.append_messages(s, 1);
+    }
+    const auto journal = raw.value("SELECT result FROM tools WHERE session='" + s.id + "'");
+    s.messages[1].text = "ordinary revision";
+    state.revise_messages(s, {1});
+    EXPECT_EQ(raw.value("SELECT result FROM tools WHERE session='" + s.id + "'"), journal);
+    EXPECT_EQ(raw.value("SELECT status FROM tools WHERE session='" + s.id + "'"),
+              complete ? "complete" : "running");
+    if (complete)
+      EXPECT_EQ(state.load_id(s.id).messages[1].text, result.text);
+  }
 }
 TEST_F(Pr24, EquivalentRecoveryFormattingUsesStrictValidationOnCacheMismatch) {
   StateStore state(files, config.state_root);
@@ -2669,6 +2749,9 @@ TEST_F(Pr24, JournalComparisonsUseTheSanitizedArgumentsAtEveryBoundary) {
     EXPECT_THROW(state.complete_tool(s, changed, result), Error);
     ASSERT_NO_THROW(state.complete_tool(s, call, result));
     EXPECT_NO_THROW(state.complete_tool(s, call, result));
+    auto canonical = call;
+    canonical.arguments = safe_json(call.arguments);
+    EXPECT_NO_THROW(state.complete_tool(s, canonical, result));
     const auto loaded = state.load_id(s.id);
     EXPECT_EQ(loaded.messages[0].calls[0].arguments, safe_json(call.arguments));
     EXPECT_EQ(loaded.messages[1].text, result.text);

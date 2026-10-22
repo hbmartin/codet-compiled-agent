@@ -657,6 +657,7 @@ struct StateStore::Impl {
   struct PreparedJournal {
     std::string id, name, args, status;
     std::shared_ptr<const std::string> payload;
+    std::string expected_status = {};
   };
   struct CommitReceipt {
     std::string session;
@@ -673,7 +674,7 @@ struct StateStore::Impl {
     std::string blob_fingerprint;
     SessionVersion version;
     bool legacy_rows = false;
-    std::vector<PreparedJournal> journal;
+    std::map<std::string, PreparedJournal> journal;
     std::map<size_t, PreparedRow> rows;
     std::map<size_t, std::set<std::string>> expected;
     std::shared_ptr<const SessionProjection> committed;
@@ -917,6 +918,7 @@ struct StateStore::Impl {
         }
     }
     std::map<std::string, std::string> names, references;
+    std::map<std::string, const ToolCall *> calls;
     if (!plan.blob && !plan.legacy_rows && !canonical) {
       std::set<std::string> needed;
       for (const auto position : positions) {
@@ -927,8 +929,10 @@ struct StateStore::Impl {
       for (auto message = s.messages.rbegin(); message != s.messages.rend() && !needed.empty();
            ++message) {
         for (const auto &call : message->calls)
-          if (needed.erase(call.id))
+          if (needed.erase(call.id)) {
             names.emplace(call.id, call.name);
+            calls.emplace(call.id, &call);
+          }
       }
     }
     Statement source(db, "SELECT payload FROM session_messages WHERE session=? AND position=?");
@@ -991,6 +995,7 @@ struct StateStore::Impl {
     for (auto &mapping : compact->mappings)
       mapping.second.source_position = mapping.first;
     plan.committed = provenance_changed ? std::move(compact) : previous;
+    prepare_provisional_journal(plan, s, calls);
     snapshot.commit();
     return plan;
   }
@@ -1084,6 +1089,55 @@ struct StateStore::Impl {
         throw Error("Ambiguous journaled tool call id");
     } catch (const Json::exception &) {
       throw Error("Corrupt journaled tool arguments");
+    }
+  }
+  void prepare_provisional_journal(PreparedTranscript &plan, const Session &s,
+                                   const std::map<std::string, const ToolCall *> &known) {
+    if (std::none_of(plan.rows.begin(), plan.rows.end(),
+                     [](const auto &row) { return row.second.message.role == "tool"; }))
+      return;
+    std::map<std::string, JournalEntry> pending;
+    Statement row(db, "SELECT status,name,args FROM tools WHERE session=? AND call_id=? "
+                      "AND status IN ('uncertain','not_started')");
+    for (const auto &entry : plan.rows) {
+      const auto &message = entry.second.message;
+      if (message.role != "tool")
+        continue;
+      sqlite3_reset(row.p);
+      row.text(1, s.id);
+      row.text(2, message.tool_call_id);
+      const auto status = sqlite3_step(row.p);
+      if (status == SQLITE_ROW) {
+        JournalEntry record{{}, column(row.p, 0), column(row.p, 1), column(row.p, 2)};
+        if (!pending.emplace(message.tool_call_id, std::move(record)).second)
+          throw Error("Ambiguous duplicate tool results in session");
+      } else if (status != SQLITE_DONE)
+        sql_read_error(db, "Cannot inspect provisional tool journal", status);
+    }
+    if (pending.empty())
+      return;
+    auto calls = known;
+    std::set<std::string> needed;
+    for (const auto &entry : pending)
+      if (!calls.count(entry.first))
+        needed.insert(entry.first);
+    for (auto message = s.messages.rbegin(); message != s.messages.rend() && !needed.empty();
+         ++message)
+      for (const auto &call : message->calls)
+        if (needed.erase(call.id))
+          calls.emplace(call.id, &call);
+    if (!needed.empty())
+      throw Error("Orphan provisional tool result in session");
+    for (const auto &entry : plan.rows) {
+      const auto &message = entry.second.message;
+      const auto record = pending.find(message.tool_call_id);
+      if (message.role != "tool" || record == pending.end())
+        continue;
+      validate_journal_call(record->second, *calls.at(record->first));
+      plan.journal.insert_or_assign(record->first,
+                                    PreparedJournal{record->first, record->second.name,
+                                                    record->second.args, record->second.status,
+                                                    entry.second.payload, record->second.status});
     }
   }
   using Journal = std::map<std::string, JournalEntry>;
@@ -1283,20 +1337,11 @@ struct StateStore::Impl {
       for (const auto &call : message.calls) {
         const auto entry = writes.find(call.id);
         if (entry != writes.end())
-          plan.journal.push_back({call.id, call.name, safe_json(call.arguments).dump(),
-                                  entry->second.second, plan.rows.at(entry->second.first).payload});
+          plan.journal.insert_or_assign(
+              call.id,
+              PreparedJournal{call.id, call.name, safe_json(call.arguments).dump(),
+                              entry->second.second, plan.rows.at(entry->second.first).payload});
       }
-  }
-  static void
-  prepare_recovery_journal(PreparedTranscript &plan, const Session &s,
-                           std::map<std::string, std::pair<size_t, std::string>> writes = {}) {
-    const auto &provisional = s.checkpoint_projection->recovery->provisional;
-    for (const auto &row : plan.rows) {
-      const auto entry = provisional.find(row.second.message.tool_call_id);
-      if (entry != provisional.end() && entry->second.message_id == row.second.message.message_id)
-        writes.emplace(entry->first, std::make_pair(row.first, entry->second.status));
-    }
-    prepare_journal(plan, s.messages, writes);
   }
   static std::shared_ptr<const SessionProjection> recovered_projection(
       const std::string &id, const std::shared_ptr<const SessionProjection> &previous,
@@ -1370,7 +1415,6 @@ struct StateStore::Impl {
         auto verified = options;
         verified.recovery = RecoveryInput::verified;
         auto plan = prepare(s, std::move(verified_positions), verified);
-        prepare_recovery_journal(plan, s);
         plan.validated_input = std::move(fingerprints);
         snapshot.commit();
         return plan;
@@ -1475,18 +1519,35 @@ struct StateStore::Impl {
       plan = prepare(working, std::move(all), publication);
     }
     plan.version = version;
-    prepare_recovery_journal(plan, s, std::move(recovered.writes));
+    prepare_journal(plan, s.messages, recovered.writes);
     snapshot.commit();
     return plan;
   }
-  void apply_prepared_journal(const std::string &id, const std::vector<PreparedJournal> &writes) {
+  void apply_prepared_journal(const std::string &id,
+                              const std::map<std::string, PreparedJournal> &writes) {
     if (writes.empty())
       return;
     Statement write(
         db, "INSERT INTO tools(session,call_id,name,args,result,status) VALUES(?,?,?,?,?,?) "
             "ON CONFLICT(session,call_id) DO UPDATE SET "
             "result=excluded.result,status=excluded.status WHERE tools.status!='complete'");
-    for (const auto &entry : writes) {
+    Statement refresh(db, "UPDATE tools SET result=? WHERE session=? AND call_id=? AND status=? "
+                          "AND name=? AND args=?");
+    for (const auto &item : writes) {
+      const auto &entry = item.second;
+      if (!entry.expected_status.empty()) {
+        sqlite3_reset(refresh.p);
+        refresh.text(1, *entry.payload);
+        refresh.text(2, id);
+        refresh.text(3, entry.id);
+        refresh.text(4, entry.expected_status);
+        refresh.text(5, entry.name);
+        refresh.text(6, entry.args);
+        refresh.run();
+        if (sqlite3_changes(db) != 1)
+          throw Error("Session modified by another process: provisional tool outcome changed");
+        continue;
+      }
       sqlite3_reset(write.p);
       write.text(1, id);
       write.text(2, entry.id);
