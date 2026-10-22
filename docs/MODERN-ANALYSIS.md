@@ -162,3 +162,12 @@ Earlier Cppcheck 2.13 passes are invalid as C++ coverage evidence. A dependency'
 
 Executed source hashes, suite results, tool versions and canary preprocessing evidence for this
 follow-up are recorded in [enforcement validation](validation/lint-enforcement-followup.json).
+
+Journal persistence, owned file diagnostics, fixture cleanup, interpreter separation, and
+copy/hash optimizations are recorded in [journal and diagnostic validation](validation/journal-diagnostics-tooling-fixes.json).
+That record includes five-run Release allocation/timing measurements, Debug and ASan/UBSan
+results, and the remaining native Clang findings reproduced against unchanged main.
+Journal call identity intentionally compares the sanitized stored JSON representation,
+including repaired UTF-8 and `null` for non-finite numbers. File notices retain their complete
+paths before publication; the CLI defers failed rendering until terminal restoration and
+uses reversible byte escapes for emergency output.

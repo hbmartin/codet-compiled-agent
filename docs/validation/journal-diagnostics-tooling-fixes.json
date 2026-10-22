@@ -1,0 +1,523 @@
+{
+  "recorded_utc": "2026-10-22T05:16:48.695048+00:00",
+  "implementation_commit": "5029a2db91e8b5cab97ced34c2b89e327a626d28",
+  "baseline": "75883916fd76ddcf30c3393a02840635ba1f0ed5",
+  "branch": "codex/journal-diagnostics-tooling-fixes",
+  "pushed": false,
+  "pull_request_opened": false,
+  "boundaries": {
+    "schema_version": 8,
+    "database_migration": false,
+    "canonical_argument_equality_preserved": true,
+    "read_only_loads_preserved": true,
+    "completed_journal_authority_preserved": true,
+    "post_commit_acknowledgement_allocation_free": true,
+    "new_api": [
+      "safe_json(Json&&)",
+      "FileNotice / FileDiagnosticReceiver / FileDiagnosticQueue",
+      "StateStore::set_file_diagnostics"
+    ],
+    "new_make_variable": "CHECK_PYTHON defaults to python3; LINT_PYTHON and SEMGREP_PYTHON remain provisioning interpreters"
+  },
+  "host": {
+    "system": "Darwin",
+    "architecture": "arm64",
+    "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+    "local_build_flags": [
+      "-Wno-error=implicit-int-float-conversion",
+      "-Wno-error=unused-result"
+    ],
+    "flags_note": "The current Apple compiler rejects narrowing conversions in unchanged images.cpp and an ignored future result in unchanged runtime_test.cpp. The warnings remain visible; tracked compiler policy is unchanged.",
+    "linux_runtime_executed": false,
+    "tiger_runtime_executed": false
+  },
+  "runtime_checks": {
+    "host": {
+      "passed": true,
+      "ctest_groups": 9,
+      "unit_tests_total": 485,
+      "unit_tests_passed": 483,
+      "unit_tests_skipped": [
+        "NetworkOptIn.TlsHandshake",
+        "Contracts.NativeTigerDesktopAcceptance"
+      ],
+      "fault_tests": 43,
+      "cli_integration_tests": 58,
+      "log": "build/host/final-ctest.log"
+    },
+    "sanitize": {
+      "passed": true,
+      "ctest_groups": 9,
+      "unit_tests_total": 485,
+      "unit_tests_passed": 483,
+      "unit_tests_skipped": [
+        "NetworkOptIn.TlsHandshake",
+        "Contracts.NativeTigerDesktopAcceptance"
+      ],
+      "fault_tests": 43,
+      "cli_integration_tests": 58,
+      "log": "build/sanitize/final-ctest.log"
+    }
+  },
+  "targeted_regressions": {
+    "baseline_reproducer": "On unchanged main, create a pending call, load recovery, write A, write B, then load_id: the result is A. The new state tests retain B and later revisions after mutable append, replacement, reload, and reopen.",
+    "statuses": [
+      "uncertain",
+      "not_started"
+    ],
+    "storage": [
+      "legacy_blob",
+      "message_rows"
+    ],
+    "writes": [
+      "const",
+      "mutable"
+    ],
+    "recovery_paths": [
+      "cached",
+      "strict"
+    ],
+    "atomic_failure_rolls_back_both_tables": true,
+    "running_and_complete_journal_records_unchanged": true,
+    "canonical_argument_equivalence_tested": true,
+    "emergency_path_after_real_curses_restoration": true,
+    "full_reversible_emergency_path_escaping": true,
+    "emergency_transfer_and_flush_allocation_fault_tested": true,
+    "fixture_delay_cancellation_tested": true,
+    "changed_go_pin_probe": "Provisioning test also passes with temporary .go-version and matching fixture banner changed to 1.27.3."
+  },
+  "repeated_sanitizer_checks": {
+    "passed": true,
+    "iterations": 20,
+    "tests_per_iteration": 10,
+    "filter": "StartupWait.*:FileDiagnostics.*:Pr24.Provisional*",
+    "log": "build/sanitize/repeated-recovery-tests.log",
+    "environment": {
+      "ASAN_OPTIONS": "detect_leaks=0"
+    }
+  },
+  "enforcement": {
+    "lint": {
+      "passed": true,
+      "log": "build/host/enforcement-tests.log"
+    },
+    "runner_tests": {
+      "passed": true,
+      "lint": 17,
+      "semgrep_report": 9,
+      "analyzer_runner": 37,
+      "analyzer_runner_interpreter": "build/lint-venv/bin/python (contains provisioned PyYAML)"
+    },
+    "semgrep": {
+      "passed_with_python_frontend": true,
+      "command": "make check-semgrep SEMGREP=build/semgrep-venv/bin/pysemgrep",
+      "python_package_version": "1.177.0",
+      "python_frontend_version": "1.177.0",
+      "native_cli_version": "1.180.0",
+      "default_make_readiness": "Fails exact CLI version check on this macOS wheel; no lock/version check was weakened.",
+      "findings": 0,
+      "errors": 0
+    }
+  },
+  "native_analysis": {
+    "all_gates_passed": false,
+    "policy_or_suppressions_changed": false,
+    "cppcheck": {
+      "passed": true,
+      "version": "2.22.0",
+      "sources": 25,
+      "findings": 0,
+      "manifest": "build/host/analysis/cppcheck/manifest.json"
+    },
+    "clang_tidy_18": {
+      "passed": false,
+      "version": "18.1.8",
+      "sdk": "MacOSX13.1.sdk",
+      "note": "Bundled Clang 18 cannot parse the current SDK 27 libc++ headers. An installed older SDK permits the comparison. Six first-party diagnostics exactly match a comparison against unchanged main, including the existing missing sstream declaration under that older SDK.",
+      "findings": [
+        {
+          "path": "src/modern/images.cpp",
+          "line": 81,
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'unsigned long' to 'double'"
+        },
+        {
+          "path": "src/modern/images.cpp",
+          "line": 82,
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+        },
+        {
+          "path": "src/modern/images.cpp",
+          "line": 83,
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+        },
+        {
+          "path": "src/modern/main.cpp",
+          "line": 12,
+          "check": "bugprone-exception-escape",
+          "message": "an exception may be thrown in function 'main' which should not throw exceptions"
+        },
+        {
+          "path": "src/modern/platform.cpp",
+          "line": 61,
+          "check": "clang-diagnostic-error",
+          "message": "implicit instantiation of undefined template 'std::basic_istringstream<char>'"
+        },
+        {
+          "path": "src/modern/state.cpp",
+          "line": 2754,
+          "check": "bugprone-exception-escape",
+          "message": "an exception may be thrown in function 'operator()' which should not throw exceptions"
+        }
+      ],
+      "baseline_comparison": [
+        {
+          "path": "src/modern/platform.cpp",
+          "line": 60,
+          "check": "clang-diagnostic-error",
+          "message": "implicit instantiation of undefined template 'std::basic_istringstream<char>'"
+        },
+        {
+          "path": "src/modern/state.cpp",
+          "line": 2677,
+          "check": "bugprone-exception-escape",
+          "message": "an exception may be thrown in function 'operator()' which should not throw exceptions"
+        },
+        {
+          "path": "src/modern/images.cpp",
+          "line": 81,
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'unsigned long' to 'double'"
+        },
+        {
+          "path": "src/modern/images.cpp",
+          "line": 82,
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+        },
+        {
+          "path": "src/modern/images.cpp",
+          "line": 83,
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+        },
+        {
+          "path": "src/modern/main.cpp",
+          "line": 12,
+          "check": "bugprone-exception-escape",
+          "message": "an exception may be thrown in function 'main' which should not throw exceptions"
+        }
+      ],
+      "manifest": "build/tidy18/analysis/clang-tidy/manifest.json"
+    },
+    "clang_tidy_23": {
+      "passed": false,
+      "version": "23.1.3",
+      "first_party_findings": 103,
+      "findings_on_added_lines": 0,
+      "manifest": "build/host/analysis/clang-tidy/manifest.json"
+    },
+    "clang_analyzer": {
+      "passed": false,
+      "sources": 25,
+      "finding": {
+        "path": "src/modern/context.cpp",
+        "line": 263,
+        "check": "core.DivideZero",
+        "description": "Division by zero"
+      },
+      "baseline_reproduced": [
+        {
+          "check": "core.DivideZero",
+          "description": "Division by zero",
+          "location": {
+            "line": 263,
+            "col": 36,
+            "file": 0
+          }
+        }
+      ],
+      "manifest": "build/host/analysis/clang-analyzer/manifest.json"
+    },
+    "canary_selfchecks": {
+      "passed": true,
+      "tools": {
+        "clang-tidy": true,
+        "cppcheck": true,
+        "clang-analyzer": true
+      },
+      "log": "build/tidy18/selftest-sdk13.log"
+    },
+    "source_and_header_changes_during_final_scans": {
+      "host": [],
+      "clang_tidy_18": []
+    }
+  },
+  "performance": {
+    "parent_commit": "bff1cb177c6e6685c42044afc3b52435171a2b02",
+    "parent_tree": "cdb9c85aa6d76e5221eb48d5a6aef2fd2db326b5",
+    "implementation_commit": "5029a2db91e8b5cab97ced34c2b89e327a626d28",
+    "build_type": "Release",
+    "comparison": "Same benchmark harness against the correctness-fixed parent and performance implementation; parent export tree verified identical after autosquash.",
+    "command": "codet_sanitization_bench review",
+    "warmups_per_binary": 1,
+    "measured_runs_per_binary": 5,
+    "ordering": "Alternating parent/changed order each round",
+    "aggregation": "Median of five runs; final measurements taken after other builds/tests/analyzers completed.",
+    "timing_note": "No timing CI gate. The 64 KiB argument case is about 4.6% slower in this sample while allocating about 32.4% fewer bytes. Other timings are recorded without a universal speedup claim.",
+    "all_cases_allocate_fewer_bytes": true,
+    "transcript_row_reads_unchanged": true,
+    "raw_results": "build/review-bench-parent/",
+    "earlier_measurements_with_analyzer_load_retained_at": "build/review-bench-parent/with-analyzers/",
+    "cases": [
+      {
+        "case": "large_arguments",
+        "argument_bytes": 65536,
+        "messages": null,
+        "position": null,
+        "parent": {
+          "milliseconds": 4.05125,
+          "allocations": 1176,
+          "allocated_bytes": 3277760
+        },
+        "changed": {
+          "milliseconds": 4.238916,
+          "allocations": 896,
+          "allocated_bytes": 2216256
+        },
+        "allocated_bytes_reduction_pct": 32.38504344430343,
+        "time_reduction_pct": -4.632298673248991
+      },
+      {
+        "case": "large_arguments",
+        "argument_bytes": 1048576,
+        "messages": null,
+        "position": null,
+        "parent": {
+          "milliseconds": 38.50675,
+          "allocations": 1208,
+          "allocated_bytes": 51692480
+        },
+        "changed": {
+          "milliseconds": 38.180166,
+          "allocations": 928,
+          "allocated_bytes": 34902336
+        },
+        "allocated_bytes_reduction_pct": 32.480825063916456,
+        "time_reduction_pct": 0.8481214332552001
+      },
+      {
+        "case": "receipt_mismatch",
+        "argument_bytes": null,
+        "messages": 128,
+        "position": "early",
+        "parent": {
+          "milliseconds": 6.334,
+          "allocations": 90429,
+          "allocated_bytes": 6235820,
+          "transcript_rows_read": 516
+        },
+        "changed": {
+          "milliseconds": 6.104917,
+          "allocations": 72089,
+          "allocated_bytes": 5271308,
+          "transcript_rows_read": 516
+        },
+        "allocated_bytes_reduction_pct": 15.467284174334727,
+        "time_reduction_pct": 3.6167192927060166
+      },
+      {
+        "case": "receipt_mismatch",
+        "argument_bytes": null,
+        "messages": 128,
+        "position": "middle",
+        "parent": {
+          "milliseconds": 7.177375,
+          "allocations": 107069,
+          "allocated_bytes": 7124652,
+          "transcript_rows_read": 516
+        },
+        "changed": {
+          "milliseconds": 5.871417,
+          "allocations": 72089,
+          "allocated_bytes": 5271308,
+          "transcript_rows_read": 516
+        },
+        "allocated_bytes_reduction_pct": 26.01311614939228,
+        "time_reduction_pct": 18.195482331632384
+      },
+      {
+        "case": "receipt_mismatch",
+        "argument_bytes": null,
+        "messages": 128,
+        "position": "late",
+        "parent": {
+          "milliseconds": 7.67125,
+          "allocations": 123449,
+          "allocated_bytes": 7999596,
+          "transcript_rows_read": 516
+        },
+        "changed": {
+          "milliseconds": 5.846959,
+          "allocations": 72089,
+          "allocated_bytes": 5271308,
+          "transcript_rows_read": 516
+        },
+        "allocated_bytes_reduction_pct": 34.1053223187771,
+        "time_reduction_pct": 23.780883167671497
+      },
+      {
+        "case": "receipt_mismatch",
+        "argument_bytes": null,
+        "messages": 1024,
+        "position": "early",
+        "parent": {
+          "milliseconds": 40.230417,
+          "allocations": 699769,
+          "allocated_bytes": 48552108,
+          "transcript_rows_read": 4100
+        },
+        "changed": {
+          "milliseconds": 37.6915,
+          "allocations": 559573,
+          "allocated_bytes": 41193740,
+          "transcript_rows_read": 4100
+        },
+        "allocated_bytes_reduction_pct": 15.155609721415185,
+        "time_reduction_pct": 6.310938810303668
+      },
+      {
+        "case": "receipt_mismatch",
+        "argument_bytes": null,
+        "messages": 1024,
+        "position": "middle",
+        "parent": {
+          "milliseconds": 47.637958,
+          "allocations": 832889,
+          "allocated_bytes": 55662764,
+          "transcript_rows_read": 4100
+        },
+        "changed": {
+          "milliseconds": 35.807458,
+          "allocations": 559573,
+          "allocated_bytes": 41193740,
+          "transcript_rows_read": 4100
+        },
+        "allocated_bytes_reduction_pct": 25.994081070066876,
+        "time_reduction_pct": 24.83418789697074
+      },
+      {
+        "case": "receipt_mismatch",
+        "argument_bytes": null,
+        "messages": 1024,
+        "position": "late",
+        "parent": {
+          "milliseconds": 55.258791,
+          "allocations": 965749,
+          "allocated_bytes": 62759532,
+          "transcript_rows_read": 4100
+        },
+        "changed": {
+          "milliseconds": 36.775333,
+          "allocations": 559573,
+          "allocated_bytes": 41193740,
+          "transcript_rows_read": 4100
+        },
+        "allocated_bytes_reduction_pct": 34.36257619002002,
+        "time_reduction_pct": 33.448900465448105
+      },
+      {
+        "case": "receipt_mismatch",
+        "argument_bytes": null,
+        "messages": 8192,
+        "position": "early",
+        "parent": {
+          "milliseconds": 321.852,
+          "allocations": 5574069,
+          "allocated_bytes": 387082412,
+          "transcript_rows_read": 32772
+        },
+        "changed": {
+          "milliseconds": 280.740458,
+          "allocations": 4459025,
+          "allocated_bytes": 328573196,
+          "transcript_rows_read": 32772
+        },
+        "allocated_bytes_reduction_pct": 15.115441618153403,
+        "time_reduction_pct": 12.773430645141238
+      },
+      {
+        "case": "receipt_mismatch",
+        "argument_bytes": null,
+        "messages": 8192,
+        "position": "middle",
+        "parent": {
+          "milliseconds": 365.013792,
+          "allocations": 6639029,
+          "allocated_bytes": 443967660,
+          "transcript_rows_read": 32772
+        },
+        "changed": {
+          "milliseconds": 282.498625,
+          "allocations": 4459025,
+          "allocated_bytes": 328573196,
+          "transcript_rows_read": 32772
+        },
+        "allocated_bytes_reduction_pct": 25.991637318808316,
+        "time_reduction_pct": 22.606040869820067
+      },
+      {
+        "case": "receipt_mismatch",
+        "argument_bytes": null,
+        "messages": 8192,
+        "position": "late",
+        "parent": {
+          "milliseconds": 416.428,
+          "allocations": 7703729,
+          "allocated_bytes": 500839020,
+          "transcript_rows_read": 32772
+        },
+        "changed": {
+          "milliseconds": 284.661792,
+          "allocations": 4459025,
+          "allocated_bytes": 328573196,
+          "transcript_rows_read": 32772
+        },
+        "allocated_bytes_reduction_pct": 34.395447862668526,
+        "time_reduction_pct": 31.64201446588606
+      }
+    ],
+    "receipt_size_limit_benchmark": {
+      "passed": true,
+      "command": "codet_persistence_bench recovery",
+      "log": "build/release/recovery-scaling.jsonl",
+      "counts": [
+        128,
+        1024,
+        8192,
+        65537
+      ],
+      "behavior": "Eligible cached appends read zero full-history rows; the oversized receipt uses strict fallback."
+    }
+  },
+  "source_sha256": {
+    ".github/workflows/modern-checks.yml": "c4284bfeb98c201d3a628d5c682b99b60e831dad90a444a857de9616b31a0d8e",
+    "Makefile": "d11bb59a7a86b32f065d32478143fd5fd4b68212f6634fc2311652b4b6cf34fc",
+    "README.md": "ed022eaa1c729d7d8ccd29a5bb1af856f12add2eea91a3256ff3585c719917e2",
+    "include/codet/core.hpp": "24920d69443b8a760cb5415d262a2d6154e72549b2ec550f772654c8bd899898",
+    "include/codet/diagnostics.hpp": "77b7d1b26f95036cd4cebbbe3c73d9cb84c2e6b5682b6d06c92db9654c4cf94b",
+    "src/modern/cli.cpp": "e3baef8ad9d0885f36a0aaa7ae0a1415a4c43935790f95acddedf5bc89538cd8",
+    "src/modern/platform.cpp": "2450e248f42e26196018f0a83420f9943f215ffbc2f16e8119b6e03daf41ac84",
+    "src/modern/state.cpp": "9fc7a53d551dd1687c2003118c26124469fd01ad034871c60aa531224e286f21",
+    "tests/cli_integration.py": "337de4a7d9efb9efa157f897ca633127a642baed50b8cd81d53400575c51caa4",
+    "tests/final_review_test.cpp": "7fbc8b000790c9ef4c4dbee70b790ea179fdea41b5523ed6b3d973e78d654b0f",
+    "tests/pr18_test.cpp": "dca53b6269c0d8e9de4c31dbbc41b4cdcb040a183a6c95d8de55b87bd3023d9f",
+    "tests/publication_fault_test.cpp": "1089c68c35270356ffdacbb67bdbe69426e2c77a58eeb2dccd8217a7542a21b7",
+    "tests/sanitization_bench.cpp": "1595f5758a9a6673f9599d767f502ffe7a7c584d84ecb880dbd240330d2301ef",
+    "tests/test_lint.py": "56b0e040cf8a0624c367b6c5be07964df464019e4f94cd23b6511dd8b0ca6ca6",
+    "tests/test_main.cpp": "6f9f1c139de3291f8eb1fdc087a829f1e8eec7ba08222f00c3d26ad3e370ec01",
+    "tests/test_semgrep_report.py": "5c69d9f9f48936f73f66b545e82d694e07e246b7c40555751fb958c0bf5b3db9"
+  }
+}
