@@ -2834,6 +2834,23 @@ TEST(FileDiagnostics, EmergencyPathFollowsCursesRestoration) {
   ASSERT_NE(notice, std::string::npos) << output;
   EXPECT_GT(notice, restored);
 }
+TEST(FileDiagnostics, TerminalHelperRejectsUnknownModesAndMalformedArguments) {
+  for (const auto &arguments :
+       {std::vector<std::string>{"--codet-file-notice-terminal-helper"},
+        std::vector<std::string>{"--codet-file-notice-terminal-helper", "path", "unknown"},
+        std::vector<std::string>{"--codet-file-notice-terminal-helper", "path", "preview",
+                                 "extra"}}) {
+    testing::internal::CaptureStderr();
+    const auto child = codet::test::start_helper(arguments);
+    int status = 0;
+    const bool collected = child > 0 && codet::test::wait_helper(child, status);
+    const auto output = testing::internal::GetCapturedStderr();
+    ASSERT_TRUE(collected);
+    ASSERT_TRUE(WIFEXITED(status));
+    EXPECT_EQ(WEXITSTATUS(status), 2);
+    EXPECT_THAT(output, HasSubstr("expects PATH [preview]"));
+  }
+}
 TEST(FileDiagnostics, SuccessfulPreviewRetainsLongUnicodePathsBeyondCursesRestoration) {
   const std::string path = "/Users/Jos\xc3\xa9/" + std::string(2048, 'p');
   testing::internal::CaptureStderr();

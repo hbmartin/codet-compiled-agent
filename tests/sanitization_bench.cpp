@@ -47,6 +47,15 @@ extern "C" int sqlite3_step(sqlite3_stmt *statement) {
   codet::test::journal_metrics.after(statement, status);
   return status;
 }
+extern "C" int sqlite3_prepare_v2(sqlite3 *db, const char *sql, int bytes, sqlite3_stmt **statement,
+                                  const char **tail) {
+  using Prepare = int (*)(sqlite3 *, const char *, int, sqlite3_stmt **, const char **);
+  static const auto prepare = reinterpret_cast<Prepare>(dlsym(RTLD_NEXT, "sqlite3_prepare_v2"));
+  const auto status = prepare(db, sql, bytes, statement, tail);
+  if (status == SQLITE_OK)
+    codet::test::journal_metrics.prepared(*statement);
+  return status;
+}
 namespace {
 template <class Work> void measure_journal(codet::Json description, Work work) {
   codet::test::journal_metrics = {true};
@@ -59,6 +68,14 @@ template <class Work> void measure_journal(codet::Json description, Work work) {
   const auto count = allocations.load(), bytes = allocated_bytes.load();
   const auto sql = codet::test::journal_metrics;
   codet::test::journal_metrics = {};
+  size_t retained_statements = 0, retained_bytes = 0;
+  for (auto *statement = sql.connection ? sqlite3_next_stmt(sql.connection, nullptr) : nullptr;
+       statement; statement = sqlite3_next_stmt(sql.connection, statement))
+    if (codet::test::JournalMetrics::candidate(statement)) {
+      ++retained_statements;
+      retained_bytes +=
+          static_cast<size_t>(sqlite3_stmt_status(statement, SQLITE_STMTSTATUS_MEMUSED, 0));
+    }
   description.update({{"iterations", 4},
                       {"milliseconds", elapsed},
                       {"allocations", count},
@@ -68,6 +85,10 @@ template <class Work> void measure_journal(codet::Json description, Work work) {
                       {"candidate_vm_steps", sql.vm_steps},
                       {"candidate_fullscan_steps", sql.fullscan_steps},
                       {"candidate_max_bindings", sql.max_bindings}});
+  description.update({{"candidate_preparations", sql.preparations},
+                      {"candidate_statement_bytes_peak", sql.statement_bytes_peak},
+                      {"candidate_retained_statements", retained_statements},
+                      {"candidate_retained_bytes", retained_bytes}});
   std::cout << description.dump() << '\n';
 }
 void journal_bench() {
@@ -99,6 +120,7 @@ void journal_bench() {
         throw Error("Cannot open benchmark journal");
       std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(raw, sqlite3_close);
       test::journal_history(store, session, raw, 1, "provisional", bytes, fallback);
+      // Saving the fixture canonicalizes the mutable session; restore raw bytes for fallback.
       if (fallback)
         session.messages[0].calls[0].arguments["invalid"] = std::string(1, static_cast<char>(0xff));
       measure_journal({{"case", "journal_revision"},

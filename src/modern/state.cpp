@@ -1073,6 +1073,9 @@ struct StateStore::Impl {
   struct JournalEntry {
     std::string result, status, name, args;
   };
+  static JournalEntry journal_metadata(sqlite3_stmt *row, int first) {
+    return {{}, column(row, first), column(row, first + 1), column(row, first + 2)};
+  }
   static std::optional<JournalEntry> read_journal_entry(Statement &row, const std::string &id,
                                                         const std::string &call_id) {
     sqlite3_reset(row.p);
@@ -1114,8 +1117,7 @@ struct StateStore::Impl {
       row.text(2, first->second.message.tool_call_id);
       const auto status = sqlite3_step(row.p);
       if (status == SQLITE_ROW)
-        remember(first->second.message.tool_call_id,
-                 {{}, column(row.p, 0), column(row.p, 1), column(row.p, 2)});
+        remember(first->second.message.tool_call_id, journal_metadata(row.p, 0));
       else if (status != SQLITE_DONE)
         sql_read_error(db, "Cannot inspect provisional tool journal", status);
     } else {
@@ -1159,7 +1161,7 @@ struct StateStore::Impl {
               ++occurrences;
           if (occurrences != 1)
             throw Error("Ambiguous duplicate tool results in session");
-          remember(id, {{}, column(row.p, 1), column(row.p, 2), column(row.p, 3)});
+          remember(id, journal_metadata(row.p, 1));
         }
         if (status != SQLITE_DONE)
           sql_read_error(db, "Cannot inspect provisional tool journal", status);

@@ -1,0 +1,584 @@
+{
+  "recorded_utc": "2026-10-22T15:27:47.989843+00:00",
+  "reviewed_pull_request": "https://github.com/hbmartin/codet-compiled-agent/pull/31",
+  "branch": "codex/notice-delivery-followup",
+  "baseline_commit": "66155d1c48f0e4af225b79342a2045463a77ec27",
+  "implementation_commit": "33dea25ba8f3391612866a7a7d842ff24f9ed106",
+  "implementation_commits": [
+    "6a0898a6a7a37290fad00cd0a739bd002d1096d8 Preserve failed notice writes and escape unsafe Unicode paths",
+    "b8946d6118f883393d7fe2aec13bb15b3f3f268c Couple terminal restoration with diagnostic receiver ownership",
+    "d228c19b86f440b015c7a40899d21dfb33be2c4d Measure candidate statement preparation and retain operation-local lookups",
+    "33dea25ba8f3391612866a7a7d842ff24f9ed106 Keep internal diagnostic headers in the maintained check inventory"
+  ],
+  "behavior": {
+    "fixes": [
+      "Checked file-notice writes outside fullscreen terminals",
+      "Allocation-free UTF-8 validation with reversible whole-path escaping for invalid UTF-8, backslash, C0/C1, Bidi_Control and U+2028/U+2029",
+      "Independent live, cleanup and notice drains in that order with stream-state recovery",
+      "One shared normal/emergency delivery helper and one reusable terminal/receiver scope type at both existing cleanup boundaries",
+      "Explicit terminal-helper mode and argument validation"
+    ],
+    "preserved": [
+      "Original exception identity",
+      "Complete owned paths and publication labels",
+      "One emergency attempt per released notice, allowing partial-render duplication",
+      "Ordinary diagnostic budgets",
+      "No changes to journal authority, database/wire formats, completion reads, canonical JSON or post-commit allocation guarantees"
+    ]
+  },
+  "runtime_checks": {
+    "debug": {
+      "passed": true,
+      "ctest_groups": 9,
+      "unit_total": 499,
+      "unit_passed": 497,
+      "fault_tests": 54,
+      "cli_integration_tests": 61,
+      "expected_skips": [
+        "NetworkOptIn.TlsHandshake",
+        "Contracts.NativeTigerDesktopAcceptance"
+      ],
+      "seconds": 97.05,
+      "log": "build/pr31-followup/debug-ctest.log"
+    },
+    "asan_ubsan": {
+      "passed": true,
+      "ctest_groups": 9,
+      "unit_total": 499,
+      "unit_passed": 497,
+      "fault_tests": 54,
+      "cli_integration_tests": 61,
+      "expected_skips": [
+        "NetworkOptIn.TlsHandshake",
+        "Contracts.NativeTigerDesktopAcceptance"
+      ],
+      "seconds": 168.54,
+      "log": "build/pr31-followup/sanitize-ctest.log"
+    },
+    "repeated_diagnostics": {
+      "iterations": 20,
+      "unit_tests_per_iteration": 17,
+      "fault_tests_per_iteration": 5,
+      "passed": true,
+      "asan_options": "detect_leaks=0 only for repeated subsets; full CTest uses the default sanitizer environment",
+      "logs": [
+        "build/pr31-followup/sanitize-repeated.log",
+        "build/pr31-followup/sanitize-fault-repeated.log"
+      ]
+    },
+    "baseline_reproductions": {
+      "note": "Triage probes were built against 029e96e, whose tree is identical to fetched baseline 66155d1, before implementation.",
+      "probe_source": "build/pr31-triage/probe.cpp",
+      "probe_output": "build/pr31-triage/probe.stdout",
+      "line_notice_missing_from_emergency_output": true,
+      "live_failure_discards_cleanup": true,
+      "unicode_controls_preserved_raw": true,
+      "unknown_helper_mode_exit": 0,
+      "invalid_argument_assignment_redundant": false
+    }
+  },
+  "tooling": {
+    "checks": [
+      {
+        "name": "sanitize-build",
+        "command": [
+          "cmake",
+          "--build",
+          "build/sanitize",
+          "-j4"
+        ],
+        "exit": 0,
+        "seconds": 15.3,
+        "log": "build/pr31-followup/sanitize-build.log"
+      },
+      {
+        "name": "sanitize-ctest",
+        "command": [
+          "ctest",
+          "--test-dir",
+          "build/sanitize",
+          "--output-on-failure"
+        ],
+        "exit": 0,
+        "seconds": 168.58,
+        "log": "build/pr31-followup/sanitize-ctest.log"
+      },
+      {
+        "name": "sanitize-repeated",
+        "command": [
+          "build/sanitize/codet_tests",
+          "--gtest_filter=FileDiagnostics.*:CliDiagnosticsTest.*",
+          "--gtest_repeat=20"
+        ],
+        "exit": 0,
+        "seconds": 10.54,
+        "log": "build/pr31-followup/sanitize-repeated.log"
+      },
+      {
+        "name": "sanitize-fault-repeated",
+        "command": [
+          "build/sanitize/codet_publication_fault_tests",
+          "--gtest_filter=FileDiagnosticsFault.*",
+          "--gtest_repeat=20"
+        ],
+        "exit": 0,
+        "seconds": 0.28,
+        "log": "build/pr31-followup/sanitize-fault-repeated.log"
+      },
+      {
+        "name": "lint",
+        "command": [
+          "make",
+          "check-lint",
+          "CHECK_PYTHON=python3"
+        ],
+        "exit": 0,
+        "seconds": 1.52,
+        "log": "build/pr31-followup/lint.log"
+      },
+      {
+        "name": "runner-tests",
+        "command": [
+          "make",
+          "test-lint-runners",
+          "test-modern-analysis-runner",
+          "CHECK_PYTHON=python3"
+        ],
+        "exit": 2,
+        "seconds": 6.04,
+        "log": "build/pr31-followup/runner-tests.log"
+      },
+      {
+        "name": "semgrep",
+        "command": [
+          "make",
+          "check-semgrep",
+          "CHECK_PYTHON=python3",
+          "SEMGREP=build/semgrep-venv/bin/pysemgrep"
+        ],
+        "exit": 0,
+        "seconds": 5.62,
+        "log": "build/pr31-followup/semgrep.log"
+      },
+      {
+        "name": "cppcheck",
+        "command": [
+          "python3",
+          "scripts/analyze-modern.py",
+          "--build-dir",
+          "/Volumes/Pro2T/codet-compiled-agent/build/pr31-followup/cppcheck-analysis",
+          "--tool",
+          "cppcheck",
+          "--jobs",
+          "4",
+          "--timeout",
+          "300"
+        ],
+        "exit": 0,
+        "seconds": 70.16,
+        "log": "build/pr31-followup/cppcheck.log"
+      },
+      {
+        "name": "clang-tidy",
+        "command": [
+          "python3",
+          "scripts/analyze-modern.py",
+          "--build-dir",
+          "/Volumes/Pro2T/codet-compiled-agent/build/pr31-followup/clang-tidy-analysis",
+          "--tool",
+          "clang-tidy",
+          "--jobs",
+          "4",
+          "--timeout",
+          "300"
+        ],
+        "exit": 1,
+        "seconds": 45.42,
+        "log": "build/pr31-followup/clang-tidy.log"
+      },
+      {
+        "name": "clang-analyzer",
+        "command": [
+          "python3",
+          "scripts/analyze-modern.py",
+          "--build-dir",
+          "/Volumes/Pro2T/codet-compiled-agent/build/pr31-followup/clang-analyzer-analysis",
+          "--tool",
+          "clang-analyzer",
+          "--jobs",
+          "4",
+          "--timeout",
+          "300"
+        ],
+        "exit": 1,
+        "seconds": 61.25,
+        "log": "build/pr31-followup/clang-analyzer.log"
+      },
+      {
+        "name": "analyzer-selftest",
+        "command": [
+          "python3",
+          "scripts/analyze-modern.py",
+          "--build-dir",
+          "build/host",
+          "--selftest",
+          "--jobs",
+          "4",
+          "--timeout",
+          "300"
+        ],
+        "exit": 1,
+        "seconds": 1.53,
+        "log": "build/pr31-followup/analyzer-selftest.log"
+      },
+      {
+        "name": "clang-tidy-provisioned",
+        "command": [
+          "build/lint-venv/bin/python",
+          "scripts/analyze-modern.py",
+          "--build-dir",
+          "/Volumes/Pro2T/codet-compiled-agent/build/pr31-followup/clang-tidy-analysis",
+          "--tool",
+          "clang-tidy",
+          "--jobs",
+          "4",
+          "--timeout",
+          "300"
+        ],
+        "exit": 1,
+        "seconds": 52.93,
+        "log": "build/pr31-followup/clang-tidy-provisioned.log"
+      },
+      {
+        "name": "analyzer-selftest-provisioned",
+        "command": [
+          "build/lint-venv/bin/python",
+          "scripts/analyze-modern.py",
+          "--build-dir",
+          "build/host",
+          "--selftest",
+          "--jobs",
+          "4",
+          "--timeout",
+          "300"
+        ],
+        "exit": 0,
+        "seconds": 2.5,
+        "log": "build/pr31-followup/analyzer-selftest-provisioned.log"
+      }
+    ],
+    "runner_tests": {
+      "passed": true,
+      "lint": 17,
+      "semgrep_report": 9,
+      "analysis": 37,
+      "log": "build/pr31-followup/runner-tests-provisioned.log",
+      "analysis_python": "build/lint-venv/bin/python",
+      "pyyaml_version": "6.0.3"
+    },
+    "environment_failure": {
+      "description": "The default Python 3.15 has no PyYAML; its analysis runner test and initial Clang-Tidy/self-check attempts failed. Re-running with the provisioned Python 3.12/PyYAML 6.0.3 interpreter passed runner/self-check tests and recovered the six baseline Clang-Tidy findings.",
+      "policy_changed": false
+    },
+    "semgrep": {
+      "passed": true,
+      "results": 0,
+      "errors": 0,
+      "frontend": "1.177.0",
+      "override": "SEMGREP=build/semgrep-venv/bin/pysemgrep",
+      "limitation": "Bundled native CLI remains 1.180.0 and fails the default exact-version readiness check; the locked Python frontend passes."
+    },
+    "analysis": {
+      "cppcheck": {
+        "passed": true,
+        "findings": 0,
+        "completed": 25,
+        "expected": 25,
+        "source_and_input_hashes_match": true,
+        "manifest": "build/pr31-followup/cppcheck-analysis/analysis/manifest.json",
+        "canary_count": 15,
+        "canaries_passed": true
+      },
+      "clang-tidy": {
+        "passed": false,
+        "findings": 6,
+        "completed": 24,
+        "expected": 25,
+        "source_and_input_hashes_match": true,
+        "manifest": "build/pr31-followup/clang-tidy-analysis/analysis/manifest.json",
+        "baseline_comparison": {
+          "same_baseline_findings": true,
+          "baseline_count": 6,
+          "current_count": 6,
+          "current_findings": [
+            {
+              "check": "bugprone-narrowing-conversions",
+              "file": "images.cpp",
+              "message": "narrowing conversion from 'unsigned long' to 'double'"
+            },
+            {
+              "check": "bugprone-narrowing-conversions",
+              "file": "images.cpp",
+              "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+            },
+            {
+              "check": "bugprone-narrowing-conversions",
+              "file": "images.cpp",
+              "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+            },
+            {
+              "check": "bugprone-exception-escape",
+              "file": "main.cpp",
+              "message": "an exception may be thrown in function 'main' which should not throw exceptions"
+            },
+            {
+              "check": "clang-diagnostic-error",
+              "file": "platform.cpp",
+              "message": "implicit instantiation of undefined template 'std::basic_istringstream<char>'"
+            },
+            {
+              "check": "bugprone-exception-escape",
+              "file": "state.cpp",
+              "message": "an exception may be thrown in function 'operator()' which should not throw exceptions"
+            }
+          ],
+          "changed_sources": [],
+          "changed_inputs": []
+        },
+        "limitation": "Clang-Tidy 18.1.8 needs the installed macOS 13.1 SDK wrapper; platform.cpp remains incomplete due to the same pre-existing std::istringstream SDK/template diagnostic. The same six file/check/message findings remain; this gate is not clean.",
+        "canary_count": 0,
+        "canaries_passed": null
+      },
+      "clang-analyzer": {
+        "passed": false,
+        "findings": 1,
+        "completed": 25,
+        "expected": 25,
+        "source_and_input_hashes_match": true,
+        "manifest": "build/pr31-followup/clang-analyzer-analysis/analysis/manifest.json",
+        "baseline_comparison": {
+          "unchanged_findings": true,
+          "findings": [
+            [
+              "context.cpp",
+              "core.DivideZero",
+              "Division by zero"
+            ]
+          ],
+          "source_unchanged_from_baseline": true
+        },
+        "canary_count": 0,
+        "canaries_passed": null
+      }
+    },
+    "self_checks": {
+      "passed": true,
+      "clang_tidy": true,
+      "cppcheck": true,
+      "clang_analyzer": true,
+      "log": "build/pr31-followup/analyzer-selftest-provisioned.log"
+    }
+  },
+  "cache_experiment": {
+    "retained": false,
+    "decision": "Rejected: the mixed-journal large replacement did not improve in either measurement set, failing the agreed all-three-modes repeated-latency gate.",
+    "protocol": {
+      "build_type": "Release",
+      "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin",
+      "cxx_flags": "-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+      "release_flags": "-O3 -DNDEBUG",
+      "identical_harness": true,
+      "warmup_runs_per_binary": 1,
+      "measurement_sets": 2,
+      "alternating_runs_per_binary_per_set": 5,
+      "iterations_per_case": 4,
+      "cases_per_set": 35,
+      "concurrent_tests_builds_or_analyzers": false
+    },
+    "large_replacement_medians": [
+      {
+        "set": 1,
+        "journal": "none",
+        "baseline_ms": 978.492583,
+        "cached_ms": 922.050625,
+        "time_change_percent": -5.768256089070423
+      },
+      {
+        "set": 1,
+        "journal": "complete",
+        "baseline_ms": 1032.599792,
+        "cached_ms": 892.51875,
+        "time_change_percent": -13.565859986150375
+      },
+      {
+        "set": 1,
+        "journal": "mixed",
+        "baseline_ms": 1048.85075,
+        "cached_ms": 1102.149375,
+        "time_change_percent": 5.081621479509835
+      },
+      {
+        "set": 2,
+        "journal": "none",
+        "baseline_ms": 880.018042,
+        "cached_ms": 835.129416,
+        "time_change_percent": -5.100875647729053
+      },
+      {
+        "set": 2,
+        "journal": "complete",
+        "baseline_ms": 919.126333,
+        "cached_ms": 883.792125,
+        "time_change_percent": -3.84432550035535
+      },
+      {
+        "set": 2,
+        "journal": "mixed",
+        "baseline_ms": 921.6225,
+        "cached_ms": 922.617125,
+        "time_change_percent": 0.10792108482595708
+      }
+    ],
+    "work": {
+      "warm_candidate_preparations_for_four_large_replacements": [
+        4,
+        0
+      ],
+      "candidate_executions_unchanged": 256,
+      "cached_statement_bytes_retained_per_connection": 30560,
+      "cpp_allocated_bytes_saved_per_replacement": 560,
+      "single_candidate_allocations_and_counts_unchanged": true,
+      "allocation_accounting": "operator new counts C++ allocations only; SQLite statement MEMUSED and VM/scan counters are reported separately. Cache creation during fixture setup is outside the measured window."
+    },
+    "full_medians": "docs/validation/notice-delivery-cache-medians.csv",
+    "medians_sha256": "10fb0a6131bf4c758e1464e46476eecc52388a90894f332d3689bc6d142732ff",
+    "raw_runs": [
+      {
+        "path": "build/pr31-followup/set0-base-0.jsonl",
+        "sha256": "2322c88e3e37179a9f21ed129047b48bb8e70d1ec85f2c322c1ca73e44f9f31e"
+      },
+      {
+        "path": "build/pr31-followup/set0-base-1.jsonl",
+        "sha256": "c5e1631d836746026dc7aa8f205dfd12356f8f18dde4e419b003eff37f354b20"
+      },
+      {
+        "path": "build/pr31-followup/set0-base-2.jsonl",
+        "sha256": "bae89e9000749c145df98252f3638a0d146589824fa6049429e49bfbd4973eec"
+      },
+      {
+        "path": "build/pr31-followup/set0-base-3.jsonl",
+        "sha256": "da9ce040dc58ff8a01f8855b15a69e41a0944b23b0a738dba6f76b004790f23f"
+      },
+      {
+        "path": "build/pr31-followup/set0-base-4.jsonl",
+        "sha256": "af227873f5d8d0a629f9b3211e23803a0a58d36576db852b20df1f518e22dc52"
+      },
+      {
+        "path": "build/pr31-followup/set0-cached-0.jsonl",
+        "sha256": "86a60505ece6cb8ee8995177f0e5507da0551e4e46173f75f482710ce38284b2"
+      },
+      {
+        "path": "build/pr31-followup/set0-cached-1.jsonl",
+        "sha256": "1b6720b0cbfac64ce9e1e7d9e7e225ab0bd00f185503c90f793418a3f8e166e9"
+      },
+      {
+        "path": "build/pr31-followup/set0-cached-2.jsonl",
+        "sha256": "3d7fafba36f12ee46640710aa6aba4b7ea108e7863b75c9096fb999a3e872311"
+      },
+      {
+        "path": "build/pr31-followup/set0-cached-3.jsonl",
+        "sha256": "54741833d393545734087632a97fd60b3454eff229fcc42862604c3c1c7fadfd"
+      },
+      {
+        "path": "build/pr31-followup/set0-cached-4.jsonl",
+        "sha256": "65aad5789130a7ba656c3162db0368ec1ea3d0fce74ce5d1f67d4df445026b2c"
+      },
+      {
+        "path": "build/pr31-followup/set1-base-0.jsonl",
+        "sha256": "749b25b4744a3bb2bfed6d7ee590a4f3909795b32b77988a3c0adabc8a6b21f8"
+      },
+      {
+        "path": "build/pr31-followup/set1-base-1.jsonl",
+        "sha256": "ae6b758a3d772d36ca3fee1a412d46616c74a08c12e6b473b4d2b52ac2b243b6"
+      },
+      {
+        "path": "build/pr31-followup/set1-base-2.jsonl",
+        "sha256": "7279245402b9d36607259b71f2abb3e75a307fbe07a10f3f610b8d6d8119136c"
+      },
+      {
+        "path": "build/pr31-followup/set1-base-3.jsonl",
+        "sha256": "21e0a036e1cd14ab5f3c8ba9e7a874d33fe87d8f0243c0ab33e4590bcd6e741d"
+      },
+      {
+        "path": "build/pr31-followup/set1-base-4.jsonl",
+        "sha256": "dd00450e8f0f6010ef9d730940dcc538b7b00ded215bb37b3f924b2f7ee399be"
+      },
+      {
+        "path": "build/pr31-followup/set1-cached-0.jsonl",
+        "sha256": "e868bb48b5b4b4a340f4ca37ca290cf20ec57ff1cc474c765189eabf23831b52"
+      },
+      {
+        "path": "build/pr31-followup/set1-cached-1.jsonl",
+        "sha256": "ae37a04eed5702d663a3a200e35c3378b293bfcc72ae5341eff05eb041442d23"
+      },
+      {
+        "path": "build/pr31-followup/set1-cached-2.jsonl",
+        "sha256": "2a494dbe08e0374664950614919726a497bd3b85de741a9d157186853fb110f7"
+      },
+      {
+        "path": "build/pr31-followup/set1-cached-3.jsonl",
+        "sha256": "41d6fb24b63415a6eb44ba92cd23e35d26d62b31445a41d55e3a502d492a0a99"
+      },
+      {
+        "path": "build/pr31-followup/set1-cached-4.jsonl",
+        "sha256": "ab3e3a0e9b4c0a9bd200ba749770e8fde05e26a65d5febf747044a161ad972b3"
+      },
+      {
+        "path": "build/pr31-followup/base-warmup.jsonl",
+        "sha256": "79e6fb37c0a857886c8fe19539b0d739df1c8357dc7b7e986a2b7281a6ee85df"
+      },
+      {
+        "path": "build/pr31-followup/cached-warmup.jsonl",
+        "sha256": "aba2fedc5a7d41dd1183ac14e46fa9181d75b6453f0952aeddbafdffd4b1be86"
+      }
+    ],
+    "experimental_state_sha256": "f67cf82564e5dc9f699a243d12550b46a80e42ffbdd0ee5fe52dc23ee07f7141",
+    "experimental_patch": "--- a/src/modern/state.cpp\n+++ b/src/modern/state.cpp\n@@ -447,6 +447,8 @@\n     }\n   };\n   sqlite3 *db = nullptr;\n+  std::optional<Statement> provisional_full;\n+  size_t provisional_width = 0;\n   fs::path home, artifact_root;\n   mutable fs::path artifact_anchor;\n   NativeFileSystem native_files;\n@@ -1125,8 +1127,12 @@\n       if (variables < 2)\n         throw Error(\"SQLite variable limit prevents provisional journal lookup\");\n       const auto width = std::min(size_t{64}, static_cast<size_t>(variables - 1));\n+      if (provisional_width != width) {\n+        provisional_full.reset();\n+        provisional_width = width;\n+      }\n       std::array<const Message *, 64> batch{};\n-      std::optional<Statement> full, remainder;\n+      std::optional<Statement> remainder;\n       auto source = first;\n       while (source != plan.rows.end()) {\n         size_t count = 0;\n@@ -1137,7 +1143,7 @@\n         }\n         if (!count)\n           break;\n-        auto &statement = count == width ? full : remainder;\n+        auto &statement = count == width ? provisional_full : remainder;\n         if (!statement) {\n           std::string query =\n               \"SELECT call_id,status,name,args FROM tools WHERE session=? AND call_id IN (\";\n@@ -1147,6 +1153,13 @@\n           statement.emplace(db, query.c_str());\n         }\n         auto &row = *statement;\n+        struct Reset {\n+          sqlite3_stmt *statement;\n+          ~Reset() {\n+            sqlite3_reset(statement);\n+            sqlite3_clear_bindings(statement);\n+          }\n+        } reset{row.p};\n         sqlite3_reset(row.p);\n         row.text(1, s.id);\n         for (size_t i = 0; i < count; ++i)\n@@ -1768,6 +1781,7 @@\n     }\n   }\n   ~Impl() {\n+    provisional_full.reset();\n     if (db)\n       sqlite3_close(db);\n   }\n",
+    "final_uncached_smoke": {
+      "cases": 35,
+      "identical_metrics": [
+        "allocations",
+        "allocated_bytes",
+        "candidate_queries",
+        "candidate_preparations",
+        "candidate_fullscan_steps",
+        "candidate_vm_steps",
+        "candidate_max_bindings",
+        "candidate_retained_statements",
+        "candidate_retained_bytes"
+      ],
+      "passed": true
+    }
+  },
+  "platform_limits": {
+    "linux_runtime_executed": false,
+    "tiger_runtime_executed": false,
+    "local_warning_downgrades": "The same pre-existing images.cpp conversion and runtime_test.cpp unused-result warning downgrades were used in baseline and changed local builds. No tracked warning policy or suppression changed."
+  },
+  "source_sha256": {
+    "CMakeLists.txt": "841ddb7ceb45030cc4615e1c33cff82fe105a9bfe20aff8823d531dc79e59933",
+    "include/codet/detail/cli_diagnostics.hpp": "dcb4c54332550113b13ec3f525568ec5af58d6e229f033044ea0941603b60395",
+    "include/codet/diagnostics.hpp": "028666448b62cac70ccf4296554b7bd1c81a9cfe72ee8c861826b81c6bb0d869",
+    "src/modern/cli.cpp": "3a22aff91fcbb4fec8d699bcfce836f7954826689e09ed9c010fd131ea5168cf",
+    "src/modern/platform.cpp": "52f6557d9deb1709ea0b3f46713ef1bd646cea37079ac6b514a1877e248f0af0",
+    "src/modern/state.cpp": "ed3a562fbcc3b54760848b610eead9868739305aee8462df22a5814f42e28baf",
+    "tests/cli_diagnostics_test.cpp": "1de9c436d3df1a21f6d5d41d49509c282588cc6727680dd31509e31a32f1f213",
+    "tests/cli_integration.py": "c9b6c56b696028c49c5605270cccbaa12be23071f6af7831b2b36579bc2a4fc8",
+    "tests/final_review_test.cpp": "f8a79e749d0a2fc1187d3798262603fd88b609feb2f19e810be3eb77c571b6eb",
+    "tests/journal_metrics.hpp": "ef06003b1552e719ef736717100fb4c8ca6d7c5d82010c0b984f6aa32ae1e764",
+    "tests/pr18_test.cpp": "f5f0cd3d35ee3ff129f3509952a193b1ccb7a21fbffa5984c8d6ec6630431fb4",
+    "tests/publication_fault_test.cpp": "bfcc396ec82ab30af2274c3251176cff818a96c62c9d81c8f55e6699eb015bc4",
+    "tests/sanitization_bench.cpp": "f891eea22dbb22322de3577513371c7c94b9e8f0cbcb695e0088c2b8ffd6e1b5",
+    "tests/test_main.cpp": "f6af4a67173b8b60f94cc89b9be25107787875175eabcc4027bdb9779999ae66"
+  }
+}

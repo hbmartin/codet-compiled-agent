@@ -2,6 +2,7 @@
 #include "codet/artifacts.hpp"
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
+#include "codet/detail/cli_diagnostics.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/prompt.hpp"
 #include "journal_fixture.hpp"
@@ -15,6 +16,15 @@
 #include <sqlite3.h>
 #include <typeinfo>
 using namespace codet;
+extern "C" int sqlite3_prepare_v2(sqlite3 *db, const char *sql, int bytes, sqlite3_stmt **statement,
+                                  const char **tail) {
+  using Prepare = int (*)(sqlite3 *, const char *, int, sqlite3_stmt **, const char **);
+  static const auto prepare = reinterpret_cast<Prepare>(dlsym(RTLD_NEXT, "sqlite3_prepare_v2"));
+  const auto status = prepare(db, sql, bytes, statement, tail);
+  if (status == SQLITE_OK)
+    codet::test::journal_metrics.prepared(*statement);
+  return status;
+}
 namespace fault {
 bool after_commit = false, after_token = false, fired = false;
 bool provider_read_error = false, rollback_read = false, token_error = false;
@@ -216,6 +226,52 @@ TEST(FileDiagnosticsFault, OwnershipTransferAndEmergencyFlushDoNotAllocate) {
   const auto output = testing::internal::GetCapturedStderr();
   EXPECT_FALSE(allocated);
   EXPECT_EQ(output, "Uncommitted tool result preserved at " + std::string(4096, 'p') + "\n");
+}
+TEST(FileDiagnosticsFault, ClearingOrdinaryDiagnosticsDoesNotAllocateOrLoseTheBudget) {
+  DiagnosticBuffer buffer(256);
+  buffer.add(std::string(1024, 'x'));
+  fault::fired = false;
+  fault::countdown = 0;
+  buffer.clear();
+  const bool allocated = fault::fired;
+  fault::disable();
+  EXPECT_FALSE(allocated);
+  EXPECT_EQ(buffer.add("after clear"), "after clear");
+}
+TEST(FileDiagnosticsFault, LiveReplayAllocationFailureDoesNotDiscardCleanupOrNotices) {
+  struct FixedStream : std::streambuf {
+    char bytes[4096]{};
+    size_t used = 0;
+    std::streamsize xsputn(const char *source, std::streamsize count) override {
+      const auto size = std::min(static_cast<size_t>(count), sizeof(bytes) - used);
+      std::memcpy(bytes + used, source, size);
+      used += size;
+      return static_cast<std::streamsize>(size);
+    }
+    int overflow(int character) override {
+      if (character == traits_type::eof())
+        return traits_type::not_eof(character);
+      const auto byte = static_cast<char>(character);
+      return xsputn(&byte, 1) == 1 ? character : traits_type::eof();
+    }
+  } buffer;
+  std::ostream output(&buffer);
+  TempDirectory temp;
+  StateStore state(temp.root / "state");
+  detail::CliDiagnostics diagnostics(output);
+  diagnostics.live = DiagnosticBuffer(256);
+  diagnostics.live.add(std::string(1024, 'x'));
+  diagnostics.cleanup.add("SessionEnd survives allocation failure");
+  diagnostics.files->submit(std::make_unique<FileNotice>("held-path", FileNoticeKind::tool_result));
+  fault::fired = false;
+  fault::countdown = 0;
+  diagnostics.restored(state);
+  const bool injected = fault::fired;
+  fault::disable();
+  EXPECT_TRUE(injected);
+  const std::string text(buffer.bytes, buffer.used);
+  EXPECT_NE(text.find("SessionEnd survives allocation failure\n"), std::string::npos);
+  EXPECT_NE(text.find("held-path\n"), std::string::npos);
 }
 TEST(FileDiagnosticsFault, PreviewAllocationFailureRetainsTheOwnedPathUntilFinish) {
   FileDiagnosticQueue queue;
@@ -1816,6 +1872,10 @@ TEST_F(PublicationFault, ProvisionalCandidatesUseBoundedIndexedBatches) {
     const auto metrics = codet::test::journal_metrics;
     fault::disable();
     EXPECT_EQ(metrics.queries, (count + 63) / 64);
+    EXPECT_EQ(metrics.preparations, count <= 64 || count % 64 == 0 ? 1u : 2u);
+    for (auto *statement = sqlite3_next_stmt(f.db, nullptr); statement;
+         statement = sqlite3_next_stmt(f.db, statement))
+      EXPECT_FALSE(codet::test::JournalMetrics::candidate(statement));
     EXPECT_EQ(metrics.rows, count);
     EXPECT_EQ(metrics.fullscan_steps, 0u);
     EXPECT_LE(metrics.max_bindings, 65u);

@@ -16,7 +16,11 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
-    if ((argc == 3 || argc == 4) && std::string(argv[1]) == "--codet-file-notice-terminal-helper") {
+    if (argc > 1 && std::string(argv[1]) == "--codet-file-notice-terminal-helper") {
+      if ((argc != 3 && argc != 4) || (argc == 4 && std::string(argv[3]) != "preview")) {
+        std::cerr << "file-notice helper expects PATH [preview]\n";
+        return 2;
+      }
       char terminal_type[] = "xterm";
       SCREEN *screen = ::newterm(terminal_type, stderr, stdin);
       if (!screen)

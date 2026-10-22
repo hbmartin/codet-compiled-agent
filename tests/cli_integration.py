@@ -1212,7 +1212,7 @@ class CliTests(unittest.TestCase):
                 db.execute("CREATE TRIGGER refuse_completion BEFORE UPDATE OF status ON tools WHEN NEW.status='complete' BEGIN SELECT RAISE(ABORT,'injected completion failure'); END")
         self.server.before_reply=reject_completion
         config=self.home/'config.toml'
-        config.write_text(config.read_text()+'\n[hooks]\nSessionStart=[{command="printf '+('x'*1024)+' >&2"}]\n')
+        config.write_text(config.read_text()+'\n[hooks]\nSessionStart=[{command="printf '+('x'*1024)+' >&2"}]\nSessionEnd=[{command="printf cleanup-before-notice >&2"}]\n')
         master,slave=pty.openpty()
         p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','curses','--permission-mode','bypass','-c','tool_output_limit=256'],
                            stdin=slave,stdout=slave,stderr=subprocess.PIPE,env=dict(self.env,TERM='xterm'))
@@ -1234,6 +1234,8 @@ class CliTests(unittest.TestCase):
             stderr=p.stderr.read()
             self.assertEqual(stderr.count(str(receipts[0]).encode()),1)
             self.assertIn(b'[Additional diagnostics omitted or truncated]',stderr)
+            self.assertLess(stderr.index(b'[Additional diagnostics omitted or truncated]'),stderr.index(b'cleanup-before-notice'))
+            self.assertLess(stderr.index(b'cleanup-before-notice'),stderr.index(str(receipts[0]).encode()))
             self.assertIn(b'\x1b[?1049l',received)
         finally:
             if p.poll() is None:p.kill();p.wait(timeout=5)

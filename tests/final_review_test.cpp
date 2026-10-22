@@ -369,6 +369,51 @@ TEST(FileDiagnostics, NormalTextPreservesUnicodeAndEscapesUnsafeBytesReversibly)
   FileNotice unsafe(std::string("/path/\n\x1b\\\xff\0", 11), FileNoticeKind::repair_backup);
   EXPECT_THAT(unsafe.text(), EndsWith("/path/\\x0A\\x1B\\x5C\\xFF\\x00"));
 }
+TEST(FileDiagnostics, NormalTextEscapesUnicodeControlsAndMalformedUtf8Losslessly) {
+  std::vector<std::string> unsafe = {
+      "\\",           "\x7f",         u8"\u061c",         u8"\u200e", u8"\u200f", u8"\u2028",
+      u8"\u2029",     u8"\u202a",     u8"\u202b",         u8"\u202c", u8"\u202d", u8"\u202e",
+      u8"\u2066",     u8"\u2067",     u8"\u2068",         u8"\u2069", "\x80",     "\xc0\xaf",
+      "\xe0\x80\xaf", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xf0\x9f", "\xe2x"};
+  for (unsigned int point = 0; point < 32; ++point)
+    unsafe.emplace_back(1, static_cast<char>(point));
+  for (unsigned int point = 0x80; point <= 0x9f; ++point)
+    unsafe.push_back(std::string("\xc2") + static_cast<char>(point));
+  constexpr char hex[] = "0123456789ABCDEF";
+  for (const auto &bytes : unsafe) {
+    FileNotice notice("/Jos\xc3\xa9/" + bytes + "/receipt", FileNoticeKind::tool_result);
+    std::string expected(notice.label());
+    for (const auto character : notice.path) {
+      const auto byte = static_cast<unsigned char>(character);
+      if (byte >= 0x20 && byte <= 0x7e && byte != '\\')
+        expected += static_cast<char>(byte);
+      else {
+        expected += "\\x";
+        expected += hex[byte >> 4u];
+        expected += hex[byte & 15u];
+      }
+    }
+    EXPECT_EQ(notice.text(), expected);
+  }
+  for (const auto *path :
+       {u8"/Jos\u00e9/雪/العربية/👩‍💻", u8"/a\u007e\u00a0\u061b\u061d",
+        u8"/\u200d\u2010\u2027\u202f\u2065\u206a/\U0010ffff"}) {
+    FileNotice notice(path, FileNoticeKind::repair_backup);
+    EXPECT_EQ(notice.text(), std::string(notice.label()) + path);
+  }
+}
+TEST(FileDiagnostics, ClearingOrdinaryBufferPreservesBudgetAndResetsOmission) {
+  DiagnosticBuffer buffer(256);
+  buffer.add(std::string(1024, 'x'));
+  ASSERT_TRUE(buffer.omitted());
+  buffer.clear();
+  EXPECT_FALSE(buffer.omitted());
+  EXPECT_TRUE(buffer.messages().empty());
+  EXPECT_EQ(buffer.add("cleanup still fits"), "cleanup still fits");
+  std::ostringstream output;
+  buffer.flush(output);
+  EXPECT_EQ(output.str(), "cleanup still fits\n");
+}
 struct SelectiveControl : ProcessControl {
   std::shared_ptr<ProcessControl> native = native_process_control();
   pid_t bad = -1;
