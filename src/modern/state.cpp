@@ -1086,7 +1086,10 @@ struct StateStore::Impl {
   }
   static void validate_journal_call(const JournalEntry &entry, const ToolCall &call) {
     try {
-      if (entry.name != call.name || stored_json(entry.args) != safe_json(call.arguments))
+      if (entry.name != call.name)
+        throw Error("Ambiguous journaled tool call id");
+      const auto arguments = stored_json(entry.args);
+      if (arguments != call.arguments && arguments != safe_json(call.arguments))
         throw Error("Ambiguous journaled tool call id");
     } catch (const Json::exception &) {
       throw Error("Corrupt journaled tool arguments");

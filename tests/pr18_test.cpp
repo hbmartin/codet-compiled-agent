@@ -2732,7 +2732,10 @@ TEST_F(Pr24, JournalComparisonsUseTheSanitizedArgumentsAtEveryBoundary) {
   state.set_diagnostics([](const auto &) {});
   for (const auto &value : {Json(std::numeric_limits<double>::infinity()),
                             Json(std::numeric_limits<double>::quiet_NaN()),
-                            Json(std::string(1, static_cast<char>(0xff)))}) {
+                            Json(std::string(1, static_cast<char>(0xff))), Json(42), Json(nullptr),
+                            Json::binary({0, 255}),
+                            Json{{std::string(1, static_cast<char>(0xff)), 1},
+                                 {std::string(1, static_cast<char>(0xfe)), 2}}}) {
     auto s = state.create();
     ToolCall call{"sanitized", "exec_command", {{"value", value}}};
     codet::Message assistant;
