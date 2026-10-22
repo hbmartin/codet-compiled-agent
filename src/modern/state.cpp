@@ -460,7 +460,7 @@ struct StateStore::Impl {
       return;
     }
     try {
-      const auto text = safe_text(std::string(notice->label()) + notice->path);
+      const auto text = notice->text();
       if (diagnostics)
         diagnostics(text);
       else
@@ -481,11 +481,7 @@ struct StateStore::Impl {
   void require_session_token(const std::string &id) {
     (void)session_version(id);
   }
-  struct Backup {
-    std::string path;
-    bool confirmed = false;
-    std::unique_ptr<FileNotice> notice;
-  };
+  using Backup = std::unique_ptr<FileNotice>;
   Json raw_backup(const std::string &id) const {
     Json backup = {{"session", id}, {"kind", "session_repair_backup"}};
     for (const auto *table : {"sessions", "session_messages", "provider_parts", "tools",
@@ -515,10 +511,10 @@ struct StateStore::Impl {
   }
   void write_backup(std::vector<Backup> &backups, const std::string &id, const Json &backup) {
     const auto bytes = backup.dump();
-    auto path = (repair_directory(home) / (id + "-backup-" + unique_id() + ".json")).string();
-    auto notice = std::make_unique<FileNotice>(path, FileNoticeKind::repair_backup);
-    backups.push_back({std::move(path), false, std::move(notice)});
-    auto &record = backups.back();
+    backups.push_back(std::make_unique<FileNotice>(
+        (repair_directory(home) / (id + "-backup-" + unique_id() + ".json")).string(),
+        FileNoticeKind::repair_backup));
+    auto &record = *backups.back();
     try {
       files->atomic_write(record.path, bytes, true);
       record.confirmed = true;
@@ -529,10 +525,7 @@ struct StateStore::Impl {
   }
   void report_backups(std::vector<Backup> &backups) const noexcept {
     for (auto &backup : backups)
-      if (backup.notice) {
-        backup.notice->confirmed = backup.confirmed;
-        report_file(std::move(backup.notice));
-      }
+      report_file(std::move(backup));
   }
   bool anchor() const {
     if (!artifact_anchor.empty())
@@ -2030,7 +2023,7 @@ StateStore::~StateStore() {
 void StateStore::set_diagnostics(DiagnosticSink sink) {
   impl_->diagnostics = std::move(sink);
 }
-void StateStore::set_file_diagnostics(std::shared_ptr<FileDiagnosticReceiver> receiver) {
+void StateStore::set_file_diagnostics(std::shared_ptr<FileDiagnosticReceiver> receiver) noexcept {
   impl_->file_diagnostics = std::move(receiver);
 }
 uint64_t StateStore::serialized_bytes() const {
@@ -2883,7 +2876,7 @@ Json StateStore::repair_session_token(const std::string &selector, bool last) {
           if (!backups.empty()) {
             report["backups"] = Json::array();
             for (const auto &record : backups)
-              report["backups"].push_back(record.path);
+              report["backups"].push_back(record->path);
           }
           return report;
         }
@@ -2896,11 +2889,11 @@ Json StateStore::repair_session_token(const std::string &selector, bool last) {
                      {"changed", true},
                      {"session_token_regenerated", true},
                      {"provider_cache_reset", false},
-                     {"backup", backups.back().path}};
+                     {"backup", backups.back()->path}};
       if (backups.size() > 1) {
         report["backups"] = Json::array();
         for (const auto &record : backups)
-          report["backups"].push_back(record.path);
+          report["backups"].push_back(record->path);
       }
       {
         Transaction publication(impl_->db);
@@ -3018,11 +3011,11 @@ Json StateStore::repair(const std::string &selector, bool last, bool provider_ca
         return report;
       impl_->write_backup(backups, id, backup);
       backup = nullptr;
-      report["backup"] = backups.back().path;
+      report["backup"] = backups.back()->path;
       if (backups.size() > 1) {
         report["backups"] = Json::array();
         for (const auto &backup : backups)
-          report["backups"].push_back(backup.path);
+          report["backups"].push_back(backup->path);
       }
       std::vector<std::string> payloads;
       std::set<std::string> retained;

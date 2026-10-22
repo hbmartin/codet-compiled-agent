@@ -316,6 +316,59 @@ TEST(FileDiagnostics, WorkerTransfersNoticesAndSuccessfulRenderingNeedsNoEmergen
   for (size_t i = 0; i < delivered.size(); ++i)
     EXPECT_THAT(delivered[i], EndsWith(std::to_string(i)));
 }
+TEST(FileDiagnostics, PreviewRetainsPathsOutsideReplayBudgetsAndFinishesOnceInOrder) {
+  FileDiagnosticQueue queue;
+  DiagnosticBuffer live(256);
+  live.add(std::string(256, 'x'));
+  const std::string path = "/Users/Jos\xc3\xa9/" + std::string(2048, 'p');
+  queue.submit(std::make_unique<FileNotice>(path, FileNoticeKind::repair_backup));
+  int previews = 0;
+  queue.preview([&](const auto &text) {
+    ++previews;
+    live.add(text);
+  });
+  queue.preview([&](const auto &) { ++previews; });
+  EXPECT_EQ(previews, 1);
+  queue.submit(std::make_unique<FileNotice>("never-previewed", FileNoticeKind::tool_result));
+  std::vector<std::string> delivered;
+  testing::internal::CaptureStderr();
+  queue.finish([&](const auto &text) { delivered.push_back(text); });
+  queue.finish([&](const auto &) { FAIL() << "notice delivered twice"; });
+  queue.flush();
+  EXPECT_EQ(testing::internal::GetCapturedStderr(), "");
+  ASSERT_EQ(delivered.size(), 2u);
+  EXPECT_THAT(delivered[0], EndsWith(path));
+  EXPECT_THAT(delivered[1], EndsWith("never-previewed"));
+}
+TEST(FileDiagnostics, FailedPreviewIsNotRetriedAndFailedFinalRenderingUsesEmergencyOnce) {
+  FileDiagnosticQueue queue;
+  auto first = std::make_unique<FileNotice>("preview-failed", FileNoticeKind::repair_backup);
+  first->confirmed = true;
+  queue.submit(std::move(first));
+  testing::internal::CaptureStderr();
+  queue.preview([](const auto &) { throw std::bad_alloc(); });
+  EXPECT_EQ(testing::internal::GetCapturedStderr(), "");
+  queue.submit(std::make_unique<FileNotice>("final-failed\xff", FileNoticeKind::tool_result));
+  int final_attempts = 0;
+  testing::internal::CaptureStderr();
+  queue.finish([&](const auto &) {
+    ++final_attempts;
+    std::cerr << "partial final output\n";
+    throw std::runtime_error("renderer failed");
+  });
+  queue.finish({});
+  queue.flush();
+  EXPECT_EQ(final_attempts, 1);
+  EXPECT_EQ(testing::internal::GetCapturedStderr(),
+            "Session repair backup: preview-failed\npartial final output\n"
+            "Tool result receipt candidate (publication unconfirmed): final-failed\\xFF\n");
+}
+TEST(FileDiagnostics, NormalTextPreservesUnicodeAndEscapesUnsafeBytesReversibly) {
+  FileNotice unicode("/Users/Jos\xc3\xa9/receipt", FileNoticeKind::tool_result);
+  EXPECT_THAT(unicode.text(), EndsWith(unicode.path));
+  FileNotice unsafe(std::string("/path/\n\x1b\\\xff\0", 11), FileNoticeKind::repair_backup);
+  EXPECT_THAT(unsafe.text(), EndsWith("/path/\\x0A\\x1B\\x5C\\xFF\\x00"));
+}
 struct SelectiveControl : ProcessControl {
   std::shared_ptr<ProcessControl> native = native_process_control();
   pid_t bad = -1;

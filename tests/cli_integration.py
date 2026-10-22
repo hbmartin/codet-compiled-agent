@@ -1168,6 +1168,92 @@ class CliTests(unittest.TestCase):
         self.assertEqual(sum(not request['body'].get('tools') for request in self.server.requests),1)
         self.assertEqual(sum(bool(request['body'].get('tools')) for request in self.server.requests),1)
 
+    def test_headless_receipt_reports_while_recovery_is_blocked(self):
+        import select
+        import sqlite3
+        renamed=self.root/'Jos\u00e9'
+        self.home.rename(renamed);self.home=renamed;self.env['CODET_HOME']=str(renamed)
+        (self.workspace/'output.txt').write_text('fixture output')
+        p=subprocess.Popen([BIN,'-C',str(self.workspace),'exec','--permission-mode','bypass','fixture-capture-wait'],
+                           stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=self.env)
+        lock=None
+        try:
+            deadline=time.monotonic()+7
+            while not (self.workspace/'ready').exists() and time.monotonic()<deadline:time.sleep(.01)
+            self.assertTrue((self.workspace/'ready').exists())
+            lock=sqlite3.connect(self.home/'state.sqlite3');lock.execute('BEGIN IMMEDIATE')
+            (self.workspace/'release').touch()
+            deadline=time.monotonic()+12
+            receipts=[]
+            while not receipts and time.monotonic()<deadline:
+                receipts=list((self.home/'repairs').glob('*-tool-result-*.json'));time.sleep(.01)
+            self.assertEqual(len(receipts),1)
+            # Keep the writer gate held: reconciliation and finish_turn cannot commit yet.
+            received=b'';deadline=time.monotonic()+7
+            while str(receipts[0]).encode() not in received and time.monotonic()<deadline:
+                if select.select([p.stderr],[],[],.02)[0]:received+=os.read(p.stderr.fileno(),65536)
+            self.assertIn(str(receipts[0]).encode(),received)
+            self.assertIn('Jos\u00e9'.encode(),received)
+            lock.rollback();lock.close();lock=None
+            out,err=p.communicate(timeout=15)
+            self.assertEqual(p.returncode,1,(out,received+err))
+        finally:
+            (self.workspace/'release').touch()
+            if lock is not None:lock.rollback();lock.close()
+            if p.poll() is None:p.kill();p.wait(timeout=5)
+            p.stdout.close();p.stderr.close()
+
+    def test_fullscreen_file_notice_bypasses_saturated_replay_budget(self):
+        import pty
+        import select
+        import sqlite3
+        def reject_completion():
+            with sqlite3.connect(self.home/'state.sqlite3') as db:
+                db.execute("CREATE TRIGGER refuse_completion BEFORE UPDATE OF status ON tools WHEN NEW.status='complete' BEGIN SELECT RAISE(ABORT,'injected completion failure'); END")
+        self.server.before_reply=reject_completion
+        config=self.home/'config.toml'
+        config.write_text(config.read_text()+'\n[hooks]\nSessionStart=[{command="printf '+('x'*1024)+' >&2"}]\n')
+        master,slave=pty.openpty()
+        p=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','curses','--permission-mode','bypass','-c','tool_output_limit=256'],
+                           stdin=slave,stdout=slave,stderr=subprocess.PIPE,env=dict(self.env,TERM='xterm'))
+        received=b''
+        def wait_for(marker):
+            nonlocal received
+            deadline=time.monotonic()+10
+            while marker not in received and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+            self.assertIn(marker,received)
+        try:
+            wait_for(b'codet>');os.write(master,b'fixture-command\n');wait_for(b'Error:')
+            receipts=list((self.home/'repairs').glob('*-tool-result-*.json'));self.assertEqual(len(receipts),1)
+            self.assertFalse(select.select([p.stderr],[],[],0)[0])
+            os.write(master,b'/quit\n');deadline=time.monotonic()+10
+            while p.poll() is None and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+            self.assertEqual(p.poll(),0,repr(received))
+            stderr=p.stderr.read()
+            self.assertEqual(stderr.count(str(receipts[0]).encode()),1)
+            self.assertIn(b'[Additional diagnostics omitted or truncated]',stderr)
+            self.assertIn(b'\x1b[?1049l',received)
+        finally:
+            if p.poll() is None:p.kill();p.wait(timeout=5)
+            p.stderr.close();os.close(master);os.close(slave)
+
+    def test_failed_repair_reports_unicode_backup_normally(self):
+        import sqlite3
+        renamed=self.root/'Jos\u00e9'
+        self.home.rename(renamed);self.home=renamed;self.env['CODET_HOME']=str(renamed)
+        result=self.run_cli('exec','--json','simple');self.assertEqual(result.returncode,0,result.stderr)
+        session=json.loads(result.stdout.splitlines()[0])['thread_id']
+        with sqlite3.connect(self.home/'state.sqlite3') as db:
+            db.execute("UPDATE session_revisions SET revision='broken'")
+            db.execute("CREATE TRIGGER refuse_token BEFORE UPDATE ON session_revisions BEGIN SELECT RAISE(ABORT,'injected repair failure'); END")
+        result=self.run_cli('repair',session,'--session-token')
+        self.assertEqual(result.returncode,1,result.stderr)
+        backups=list((self.home/'repairs').glob('*-backup-*.json'));self.assertEqual(len(backups),1)
+        self.assertIn(str(backups[0]),result.stderr)
+        self.assertNotIn('\\xC3',result.stderr)
+
     def test_repair_backs_up_corrupt_cache_and_preserves_failed_response(self):
         import sqlite3
         r=self.run_cli('exec','--json','simple');self.assertEqual(r.returncode,0,r.stderr)

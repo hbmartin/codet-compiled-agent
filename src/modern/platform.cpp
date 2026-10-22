@@ -223,6 +223,46 @@ const char *FileNotice::label() const noexcept {
   return confirmed ? "Uncommitted tool result preserved at "
                    : "Tool result receipt candidate (publication unconfirmed): ";
 }
+namespace {
+template <class Write> bool escaped_file_path(const std::string &path, Write write) {
+  constexpr char hex[] = "0123456789ABCDEF";
+  char buffer[512];
+  size_t used = 0;
+  for (const auto character : path) {
+    const auto byte = static_cast<unsigned int>(static_cast<unsigned char>(character));
+    if (used + 4 > sizeof(buffer)) {
+      if (!write(buffer, used))
+        return false;
+      used = 0;
+    }
+    if (byte >= 0x20 && byte <= 0x7e && byte != '\\')
+      buffer[used++] = character;
+    else {
+      buffer[used++] = '\\';
+      buffer[used++] = 'x';
+      buffer[used++] = hex[byte >> 4u];
+      buffer[used++] = hex[byte & 15u];
+    }
+  }
+  return write(buffer, used);
+}
+} // namespace
+std::string FileNotice::text() const {
+  std::string repaired;
+  const bool escape =
+      repair_text(path, repaired) || std::any_of(path.begin(), path.end(), [](unsigned char byte) {
+        return byte < 0x20 || byte == 0x7f || byte == '\\';
+      });
+  std::string result(label());
+  if (escape)
+    (void)escaped_file_path(path, [&](const char *bytes, size_t size) {
+      result.append(bytes, size);
+      return true;
+    });
+  else
+    result += path;
+  return result;
+}
 void emergency_file_diagnostic(const FileNotice &notice) noexcept {
   const auto write_all = [](const char *bytes, size_t size) noexcept {
     while (size) {
@@ -239,26 +279,7 @@ void emergency_file_diagnostic(const FileNotice &notice) noexcept {
   const auto *label = notice.label();
   if (!write_all(label, std::strlen(label)))
     return;
-  constexpr char hex[] = "0123456789ABCDEF";
-  char buffer[512];
-  size_t used = 0;
-  for (const auto character : notice.path) {
-    const auto byte = static_cast<unsigned int>(static_cast<unsigned char>(character));
-    if (used + 4 > sizeof(buffer)) {
-      if (!write_all(buffer, used))
-        return;
-      used = 0;
-    }
-    if (byte >= 0x20 && byte <= 0x7e && byte != '\\')
-      buffer[used++] = character;
-    else {
-      buffer[used++] = '\\';
-      buffer[used++] = 'x';
-      buffer[used++] = hex[byte >> 4u];
-      buffer[used++] = hex[byte & 15u];
-    }
-  }
-  if (write_all(buffer, used))
+  if (escaped_file_path(notice.path, write_all))
     (void)write_all("\n", 1);
 }
 void FileDiagnosticQueue::submit(std::unique_ptr<FileNotice> notice) noexcept {
@@ -280,42 +301,71 @@ FileNotice *FileDiagnosticQueue::take() noexcept {
   return ordered;
 }
 void FileDiagnosticQueue::deliver(const DiagnosticSink &sink) noexcept {
+  render(sink, false);
+}
+void FileDiagnosticQueue::preview(const DiagnosticSink &sink) noexcept {
+  render(sink, true);
+}
+void FileDiagnosticQueue::retain(std::unique_ptr<FileNotice> notice) noexcept {
+  if (deferred_tail_)
+    deferred_tail_->next = notice.get();
+  else
+    deferred_ = notice.get();
+  deferred_tail_ = notice.release();
+}
+void FileDiagnosticQueue::render(const DiagnosticSink &sink, bool preview) noexcept {
   auto *pending = take();
   while (pending) {
     std::unique_ptr<FileNotice> notice(pending);
     pending = pending->next;
     notice->next = nullptr;
-    const auto defer = [&]() noexcept {
-      if (deferred_tail_)
-        deferred_tail_->next = notice.get();
-      else
-        deferred_ = notice.get();
-      deferred_tail_ = notice.release();
-    };
     if (!sink) {
-      defer();
+      retain(std::move(notice));
       continue;
     }
     try {
-      sink(safe_text(std::string(notice->label()) + notice->path));
+      sink(notice->text());
     } catch (...) {
-      // Keep the original bytes for the emergency renderer after terminal restoration.
-      defer();
+      notice->rendering_failed = true;
     }
+    if (preview || notice->rendering_failed)
+      retain(std::move(notice));
   }
 }
-void FileDiagnosticQueue::flush() noexcept {
+FileNotice *FileDiagnosticQueue::take_all() noexcept {
   auto *pending = take();
   if (deferred_tail_)
     deferred_tail_->next = pending;
   else
     deferred_ = pending;
-  while (deferred_) {
-    std::unique_ptr<FileNotice> notice(deferred_);
-    deferred_ = notice->next;
+  auto *all = deferred_;
+  deferred_ = nullptr;
+  deferred_tail_ = nullptr;
+  return all;
+}
+void FileDiagnosticQueue::finish(const DiagnosticSink &sink) noexcept {
+  auto *pending = take_all();
+  while (pending) {
+    std::unique_ptr<FileNotice> notice(pending);
+    pending = notice->next;
+    if (!notice->rendering_failed && sink)
+      try {
+        sink(notice->text());
+        continue;
+      } catch (...) {
+        // Preserve the held bytes even if the final renderer partially emitted them.
+        notice->rendering_failed = true;
+      }
     emergency_file_diagnostic(*notice);
   }
-  deferred_tail_ = nullptr;
+}
+void FileDiagnosticQueue::flush() noexcept {
+  auto *pending = take_all();
+  while (pending) {
+    std::unique_ptr<FileNotice> notice(pending);
+    pending = notice->next;
+    emergency_file_diagnostic(*notice);
+  }
 }
 FileDiagnosticQueue::~FileDiagnosticQueue() {
   flush();

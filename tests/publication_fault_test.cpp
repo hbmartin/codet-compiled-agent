@@ -199,6 +199,42 @@ TEST(FileDiagnosticsFault, OwnershipTransferAndEmergencyFlushDoNotAllocate) {
   EXPECT_FALSE(allocated);
   EXPECT_EQ(output, "Uncommitted tool result preserved at " + std::string(4096, 'p') + "\n");
 }
+TEST(FileDiagnosticsFault, PreviewAllocationFailureRetainsTheOwnedPathUntilFinish) {
+  FileDiagnosticQueue queue;
+  auto notice = std::make_unique<FileNotice>(std::string(4096, 'p'), FileNoticeKind::repair_backup);
+  DiagnosticSink sink = [](const auto &) { ADD_FAILURE() << "text allocation should fail first"; };
+  queue.submit(std::move(notice));
+  testing::internal::CaptureStderr();
+  fault::fired = false;
+  fault::countdown = 0;
+  queue.preview(sink);
+  const bool failed_text = fault::fired;
+  fault::fired = false;
+  fault::countdown = 0;
+  queue.finish(sink);
+  const bool allocated_during_fallback = fault::fired;
+  fault::disable();
+  const auto output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(failed_text);
+  EXPECT_FALSE(allocated_during_fallback);
+  EXPECT_EQ(output, "Session repair backup candidate (publication unconfirmed): " +
+                        std::string(4096, 'p') + "\n");
+}
+TEST(FileDiagnosticsFault, SuccessfulPreviewRetentionAndEmergencyFlushDoNotAllocate) {
+  FileDiagnosticQueue queue;
+  queue.submit(std::make_unique<FileNotice>(std::string(4096, 'p'), FileNoticeKind::tool_result));
+  DiagnosticSink sink = [](const auto &) { fault::countdown = 0; };
+  testing::internal::CaptureStderr();
+  fault::fired = false;
+  queue.preview(sink);
+  queue.flush();
+  const bool allocated = fault::fired;
+  fault::disable();
+  const auto output = testing::internal::GetCapturedStderr();
+  EXPECT_FALSE(allocated);
+  EXPECT_EQ(output, "Tool result receipt candidate (publication unconfirmed): " +
+                        std::string(4096, 'p') + "\n");
+}
 TEST(FaultAllocator, NothrowAllocationsUseTheSameReplacementAndFailureInjection) {
   fault::disable();
   void *scalar = ::operator new(16, std::nothrow);

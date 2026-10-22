@@ -2831,6 +2831,24 @@ TEST(FileDiagnostics, EmergencyPathFollowsCursesRestoration) {
   ASSERT_NE(notice, std::string::npos) << output;
   EXPECT_GT(notice, restored);
 }
+TEST(FileDiagnostics, SuccessfulPreviewRetainsLongUnicodePathsBeyondCursesRestoration) {
+  const std::string path = "/Users/Jos\xc3\xa9/" + std::string(2048, 'p');
+  testing::internal::CaptureStderr();
+  const auto child =
+      codet::test::start_helper({"--codet-file-notice-terminal-helper", path, "preview"});
+  int status = 0;
+  const bool stopped = child > 0 && codet::test::wait_helper(child, status);
+  const auto output = testing::internal::GetCapturedStderr();
+  ASSERT_TRUE(stopped);
+  ASSERT_TRUE(WIFEXITED(status));
+  ASSERT_EQ(WEXITSTATUS(status), 0) << output;
+  const auto restored = output.find("\x1b[?1049l");
+  const auto notice = output.find(path);
+  ASSERT_NE(restored, std::string::npos);
+  ASSERT_NE(notice, std::string::npos);
+  EXPECT_GT(notice, restored);
+  EXPECT_EQ(output.find(path, notice + path.size()), std::string::npos);
+}
 
 namespace {
 class StartupWait : public Test {
