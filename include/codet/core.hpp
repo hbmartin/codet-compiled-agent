@@ -17,6 +17,7 @@ namespace codet {
 struct ReferenceObservation;
 struct ExecutionObservation;
 struct RecoveryCandidate;
+class FileDiagnosticReceiver;
 using Json = nlohmann::json;
 namespace fs = std::filesystem;
 std::string safe_text(const std::string &);
@@ -462,6 +463,7 @@ public:
              const StartupOptions &);
   ~StateStore();
   void set_diagnostics(DiagnosticSink);
+  void set_file_diagnostics(std::shared_ptr<FileDiagnosticReceiver>);
   Session create(const std::string &name = "");
   // Default loads are repaired snapshots, never persistent recovery writes.
   Session load(const std::string &id_or_name, bool repair = true);

@@ -2,6 +2,7 @@
 #include "codet/computer.hpp"
 #include "codet/context.hpp"
 #include "codet/core.hpp"
+#include "codet/diagnostics.hpp"
 #include "codet/support.hpp"
 #include <algorithm>
 #include <cassert>
@@ -450,23 +451,24 @@ struct StateStore::Impl {
   NativeFileSystem native_files;
   FileSystem *files = &native_files;
   DiagnosticSink diagnostics;
-  void report_file(const char *label, const char *path) const noexcept {
+  std::shared_ptr<FileDiagnosticReceiver> file_diagnostics;
+  void report_file(std::unique_ptr<FileNotice> notice) const noexcept {
+    if (!notice)
+      return;
+    if (file_diagnostics) {
+      file_diagnostics->submit(std::move(notice));
+      return;
+    }
     try {
-      report_diagnostic(diagnostics, std::string(label) + path);
+      const auto text = safe_text(std::string(notice->label()) + notice->path);
+      if (diagnostics)
+        diagnostics(text);
+      else
+        report_diagnostic({}, text);
+      return;
     } catch (...) {
-      // The file already exists. Report its held path even when allocation fails.
-      for (const auto *part : {label, path, "\n"}) {
-        auto remaining = std::strlen(part);
-        while (remaining) {
-          const auto written = ::write(STDERR_FILENO, part, remaining);
-          if (written < 0 && errno == EINTR)
-            continue;
-          if (written <= 0)
-            return;
-          part += written;
-          remaining -= static_cast<size_t>(written);
-        }
-      }
+      // The file and its held path survive a failed renderer.
+      emergency_file_diagnostic(*notice);
     }
   }
   bool publication_confirmed(const fs::path &path, const std::string &bytes) const noexcept {
@@ -482,6 +484,7 @@ struct StateStore::Impl {
   struct Backup {
     std::string path;
     bool confirmed = false;
+    std::unique_ptr<FileNotice> notice;
   };
   Json raw_backup(const std::string &id) const {
     Json backup = {{"session", id}, {"kind", "session_repair_backup"}};
@@ -512,8 +515,9 @@ struct StateStore::Impl {
   }
   void write_backup(std::vector<Backup> &backups, const std::string &id, const Json &backup) {
     const auto bytes = backup.dump();
-    backups.push_back(
-        {(repair_directory(home) / (id + "-backup-" + unique_id() + ".json")).string(), false});
+    auto path = (repair_directory(home) / (id + "-backup-" + unique_id() + ".json")).string();
+    auto notice = std::make_unique<FileNotice>(path, FileNoticeKind::repair_backup);
+    backups.push_back({std::move(path), false, std::move(notice)});
     auto &record = backups.back();
     try {
       files->atomic_write(record.path, bytes, true);
@@ -523,11 +527,12 @@ struct StateStore::Impl {
       throw;
     }
   }
-  void report_backups(const std::vector<Backup> &backups) const noexcept {
-    for (const auto &backup : backups)
-      report_file(backup.confirmed ? "Session repair backup: "
-                                   : "Session repair backup candidate (publication unconfirmed): ",
-                  backup.path.c_str());
+  void report_backups(std::vector<Backup> &backups) const noexcept {
+    for (auto &backup : backups)
+      if (backup.notice) {
+        backup.notice->confirmed = backup.confirmed;
+        report_file(std::move(backup.notice));
+      }
   }
   bool anchor() const {
     if (!artifact_anchor.empty())
@@ -2017,6 +2022,9 @@ StateStore::~StateStore() {
 void StateStore::set_diagnostics(DiagnosticSink sink) {
   impl_->diagnostics = std::move(sink);
 }
+void StateStore::set_file_diagnostics(std::shared_ptr<FileDiagnosticReceiver> receiver) {
+  impl_->file_diagnostics = std::move(receiver);
+}
 uint64_t StateStore::serialized_bytes() const {
   return impl_->serialized;
 }
@@ -2763,15 +2771,15 @@ void StateStore::complete_tool(Session &s, const ToolCall &call, Message result)
                                          {"dispatch_allowed", false}}))
                              .dump();
       bool confirmed = false;
+      auto notice = std::make_unique<FileNotice>(path.string(), FileNoticeKind::tool_result);
       try {
         impl_->files->atomic_write(path, bytes, true);
         confirmed = true;
       } catch (...) {
         confirmed = impl_->publication_confirmed(path, bytes);
       }
-      impl_->report_file(confirmed ? "Uncommitted tool result preserved at "
-                                   : "Tool result receipt candidate (publication unconfirmed): ",
-                         path.c_str());
+      notice->confirmed = confirmed;
+      impl_->report_file(std::move(notice));
     } catch (...) {
       // Preserve the original failure, including allocation and non-standard exceptions.
       std::rethrow_exception(failure);

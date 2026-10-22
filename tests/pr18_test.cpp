@@ -2,6 +2,7 @@
 #include "codet/computer.hpp"
 #include "codet/context.hpp"
 #include "codet/core.hpp"
+#include "codet/diagnostics.hpp"
 #include "codet/output.hpp"
 #include "codet/support.hpp"
 #include "temp.hpp"
@@ -2784,6 +2785,34 @@ TEST_F(Pr24, PreservedFilePathsSurviveDiagnosticAllocationFailures) {
   for (const auto &entry : fs::directory_iterator(config.state_root / "repairs"))
     if (entry.path().filename().string().find("-backup-") != std::string::npos)
       EXPECT_THAT(backup_diagnostic, HasSubstr(entry.path().string()));
+}
+TEST_F(Pr24, PreservedFileReceiverDefersReportingAndKeepsTheOriginalFailure) {
+  StateStore state(files, config.state_root);
+  auto queue = std::make_shared<FileDiagnosticQueue>();
+  state.set_file_diagnostics(queue);
+  state.set_diagnostics([](const auto &) { FAIL() << "file notices must use their receiver"; });
+  auto s = state.create();
+  ToolCall call{"pending", "exec_command", Json::object()};
+  state.tool_started(s.id, call);
+  call.name = "wrong";
+  codet::Message result;
+  result.role = "tool";
+  result.tool_call_id = call.id;
+  testing::internal::CaptureStderr();
+  try {
+    state.complete_tool(s, call, result);
+    FAIL();
+  } catch (const Error &error) {
+    EXPECT_STREQ(error.what(), "Ambiguous journaled tool call id");
+  }
+  queue->deliver([](const auto &) { throw std::bad_alloc(); });
+  EXPECT_EQ(testing::internal::GetCapturedStderr(), "");
+  testing::internal::CaptureStderr();
+  queue->flush();
+  const auto diagnostic = testing::internal::GetCapturedStderr();
+  EXPECT_THAT(diagnostic, HasSubstr("Uncommitted tool result preserved at "));
+  for (const auto &entry : fs::directory_iterator(config.state_root / "repairs"))
+    EXPECT_THAT(diagnostic, HasSubstr(entry.path().string()));
 }
 
 namespace {

@@ -1,10 +1,12 @@
 #include "codet/core.hpp"
+#include "codet/diagnostics.hpp"
 #include "codet/patch.hpp"
 #include "codet/process_control.hpp"
 #include "core_tools.hpp"
 #include "temp.hpp"
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <iostream>
 #include <limits>
 #include <random>
 #include <sqlite3.h>
@@ -264,6 +266,49 @@ TEST(Sanitization, PreservesJsonRepresentationAndInvalidKeyCollisionBehavior) {
   const auto reference = Json::parse(value.dump(-1, ' ', false, Json::error_handler_t::replace));
   EXPECT_EQ(safe_json(value), reference);
   EXPECT_EQ(safe_json(value).dump(), reference.dump());
+}
+TEST(FileDiagnostics, FailedNoticesAreHeldUntilRestorationAndEscapedWithoutTruncation) {
+  FileDiagnosticQueue queue;
+  const std::string path = std::string(2048, 'p') + "\n\x1b\\\xff";
+  queue.submit(std::make_unique<FileNotice>(path, FileNoticeKind::repair_backup));
+  auto confirmed = std::make_unique<FileNotice>("confirmed-path", FileNoticeKind::tool_result);
+  confirmed->confirmed = true;
+  queue.submit(std::move(confirmed));
+  int attempts = 0;
+  testing::internal::CaptureStderr();
+  queue.deliver([&](const auto &) {
+    ++attempts;
+    if (attempts == 2)
+      std::cerr << "partial renderer output\n";
+    throw std::bad_alloc();
+  });
+  const auto before_restoration = testing::internal::GetCapturedStderr();
+  EXPECT_EQ(before_restoration, "partial renderer output\n");
+  queue.deliver([&](const auto &) { ++attempts; });
+  EXPECT_EQ(attempts, 2);
+  testing::internal::CaptureStderr();
+  queue.flush();
+  queue.flush();
+  const auto emergency = testing::internal::GetCapturedStderr();
+  EXPECT_EQ(emergency,
+            "Session repair backup candidate (publication unconfirmed): " + std::string(2048, 'p') +
+                "\\x0A\\x1B\\x5C\\xFF\n" + "Uncommitted tool result preserved at confirmed-path\n");
+}
+TEST(FileDiagnostics, WorkerTransfersNoticesAndSuccessfulRenderingNeedsNoEmergencyOutput) {
+  FileDiagnosticQueue queue;
+  std::thread worker([&] {
+    for (int i = 0; i < 8; ++i)
+      queue.submit(std::make_unique<FileNotice>(std::to_string(i), FileNoticeKind::repair_backup));
+  });
+  worker.join();
+  std::vector<std::string> delivered;
+  testing::internal::CaptureStderr();
+  queue.deliver([&](const auto &text) { delivered.push_back(text); });
+  queue.flush();
+  EXPECT_EQ(testing::internal::GetCapturedStderr(), "");
+  ASSERT_EQ(delivered.size(), 8u);
+  for (size_t i = 0; i < delivered.size(); ++i)
+    EXPECT_THAT(delivered[i], EndsWith(std::to_string(i)));
 }
 struct SelectiveControl : ProcessControl {
   std::shared_ptr<ProcessControl> native = native_process_control();

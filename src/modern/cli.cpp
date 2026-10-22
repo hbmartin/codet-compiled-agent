@@ -561,6 +561,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     std::weak_ptr<Terminal> screen;
     bool buffering = false;
     DiagnosticBuffer live{65536}, cleanup{65536};
+    std::shared_ptr<FileDiagnosticQueue> files = std::make_shared<FileDiagnosticQueue>();
     void emit(const std::string &text) {
       if (buffering)
         cleanup.add(text);
@@ -572,6 +573,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
         std::cerr << text << '\n';
     }
     void flush() {
+      files->flush();
       live.flush(std::cerr);
       cleanup.flush(std::cerr);
     }
@@ -753,6 +755,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   StateStore state(files, state_home, artifact_directory(config), config.durability,
                    {&cancel, diagnostic});
   state.set_diagnostics(diagnostic);
+  state.set_file_diagnostics(diagnostics->files);
   if (o.command == "sessions") {
     std::cout << state.list().dump(2) << '\n';
     return 0;
@@ -938,6 +941,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     std::future<RunResult> work;
     std::optional<Json> pending;
     const auto deliver = [&](bool recovering = false) {
+      diagnostics->files->deliver(diagnostic);
       interaction->deliver(
           [&](const Json &event) {
             const auto type = event.value("type", "");
@@ -1059,6 +1063,13 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     }
   };
   auto run = [&](const std::string &text, bool steering = false) {
+    struct DeliverFiles {
+      FileDiagnosticQueue &files;
+      const DiagnosticSink &sink;
+      ~DeliverFiles() {
+        files.deliver(sink);
+      }
+    } deliver_files{*diagnostics->files, diagnostic};
     struct ClearImages {
       std::vector<ImageArtifact> &images;
       bool clear;
