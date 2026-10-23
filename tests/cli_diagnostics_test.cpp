@@ -1,4 +1,5 @@
 #include "codet/detail/cli_diagnostics.hpp"
+#include "process_helper.hpp"
 #include "temp.hpp"
 #include <gmock/gmock.h>
 #include <gtest/gtest-spi.h>
@@ -171,6 +172,14 @@ TEST_F(CliDiagnosticsTest, FailedNoticeDoesNotSuppressLaterOrdinaryStderrDiagnos
   detail::CliDiagnostics sink;
   sink.emit("later warning");
   EXPECT_EQ(buffer.str(), "hook warning\nlater warning\n");
+}
+TEST_F(CliDiagnosticsTest, NonblockingStderrFailureRecoversCppAndCStreamStateInAFreshProcess) {
+  const auto child = test::start_helper({"--codet-stderr-recovery-helper"});
+  ASSERT_GT(child, 0);
+  int status = 0;
+  ASSERT_TRUE(test::wait_helper(child, status));
+  ASSERT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
 }
 TEST_F(CliDiagnosticsTest, MissingStreamBufferRecoveryCannotMaskTheOriginalFailure) {
   std::ostream stream(nullptr);
