@@ -1,4 +1,5 @@
 #include "codet/core.hpp"
+#include "codet/detail/diagnostic_stream.hpp"
 #include <clocale>
 #include <csignal>
 #include <iostream>
@@ -26,15 +27,14 @@ int main(int argc, char **argv) {
   try {
     return codet::cli_main(args, c);
   } catch (const codet::ProviderError &e) {
-    std::cerr << "codet: " << e.what() << "\n";
-    std::cerr.write(e.body.data(), static_cast<std::streamsize>(e.body.size()));
-    std::cerr << "\n";
+    (void)codet::detail::write_diagnostic(std::cerr, {"codet: ", e.what()});
+    (void)codet::detail::write_diagnostic(std::cerr, {e.body});
     return e.code;
   } catch (const codet::Error &e) {
-    std::cerr << "codet: " << codet::safe_text(e.what()) << '\n';
+    (void)codet::detail::write_diagnostic(std::cerr, {"codet: ", codet::safe_text(e.what())});
     return e.code;
   } catch (const std::exception &e) {
-    std::cerr << "codet: " << codet::safe_text(e.what()) << '\n';
+    (void)codet::detail::write_diagnostic(std::cerr, {"codet: ", codet::safe_text(e.what())});
     return 1;
   }
 }

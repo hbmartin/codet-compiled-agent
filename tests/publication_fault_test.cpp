@@ -8,6 +8,7 @@
 #include "codet/prompt.hpp"
 #include "journal_fixture.hpp"
 #include "journal_metrics.hpp"
+#include "process_helper.hpp"
 #include "temp.hpp"
 #include <cstdlib>
 #include <cstring>
@@ -266,14 +267,23 @@ TEST(FileDiagnosticsFault, LiveReplayAllocationFailureDoesNotDiscardCleanupOrNot
   EXPECT_NE(text.find("held-path\n"), std::string::npos);
 }
 TEST(FileDiagnosticsFault, DefaultFileSinkIsAvailableWithoutAllocating) {
-  fault::disable();
-  fault::fired = false;
-  fault::countdown = 0;
-  const auto &sink = default_file_diagnostic_sink();
-  const bool allocated = fault::fired;
-  fault::disable();
-  EXPECT_FALSE(allocated);
-  EXPECT_TRUE(sink);
+  const auto child = test::start_helper({"--codet-file-sink-helper", "first-use"});
+  ASSERT_GT(child, 0);
+  int status = 0;
+  ASSERT_TRUE(test::wait_helper(child, status));
+  ASSERT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
+}
+TEST(FileDiagnosticsFault, DefaultFileSinkRemainsAvailableDuringLateStaticDestruction) {
+  testing::internal::CaptureStderr();
+  const auto child = test::start_helper({"--codet-file-sink-helper", "late-static"});
+  int status = 0;
+  const bool waited = child > 0 && test::wait_helper(child, status);
+  const auto output = testing::internal::GetCapturedStderr();
+  ASSERT_TRUE(waited);
+  ASSERT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
+  EXPECT_EQ(output, "late static sink\n");
 }
 TEST(FileDiagnosticsFault, NativeResourceCleanupDoesNotAllocate) {
   struct Ops final : detail::TerminalResourceOps {
@@ -2025,4 +2035,37 @@ TEST_F(PublicationFault, ProvisionalBatchAcknowledgementDoesNotAllocateAfterComm
   EXPECT_FALSE(failed);
   EXPECT_FALSE(allocated);
   EXPECT_EQ(f.store.load_id(f.session.id).messages[2].text, "new");
+}
+
+std::string codet::test::executable;
+namespace {
+int check_default_sink() {
+  fault::fired = false;
+  fault::countdown = 0;
+  const auto &sink = default_file_diagnostic_sink();
+  const bool allocated = fault::fired;
+  fault::disable();
+  return allocated || !sink ? 3 : 0;
+}
+void report_from_late_static() {
+  if (check_default_sink() != 0)
+    std::_Exit(4);
+  default_file_diagnostic_sink()("late static sink");
+}
+} // namespace
+int main(int argc, char **argv) {
+  std::signal(SIGPIPE, SIG_IGN);
+  codet::test::executable = fs::absolute(argv[0]).string();
+  if (argc > 1 && std::string_view(argv[1]) == "--codet-file-sink-helper") {
+    if (argc != 3 ||
+        (std::string_view(argv[2]) != "first-use" && std::string_view(argv[2]) != "late-static")) {
+      std::fputs("file-sink helper expects first-use or late-static\n", stderr);
+      return 2;
+    }
+    if (std::string_view(argv[2]) == "late-static" && std::atexit(report_from_late_static) != 0)
+      return 5;
+    return check_default_sink();
+  }
+  testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
 }

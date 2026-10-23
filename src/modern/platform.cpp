@@ -11,6 +11,8 @@
 #include <curl/curl.h>
 #include <fcntl.h>
 #include <iostream>
+#include <limits>
+#include <new>
 #include <poll.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
@@ -220,11 +222,11 @@ void report_diagnostic(const DiagnosticSink &sink, const std::string &message) {
     } catch (const std::bad_alloc &) {
       throw;
     } catch (...) { // A failed diagnostic renderer must not change a completed action.
-      std::cerr << text << '\n';
+      (void)detail::write_diagnostic(std::cerr, {text});
       return;
     }
   }
-  std::cerr << text << '\n';
+  (void)detail::write_diagnostic(std::cerr, {text});
 }
 const char *FileNotice::label() const noexcept {
   if (kind == FileNoticeKind::repair_backup)
@@ -315,13 +317,42 @@ void deliver_file_diagnostic(const FileNotice &notice, const DiagnosticSink &sin
     }
   emergency_file_diagnostic(notice);
 }
-void write_file_diagnostic(std::ostream &output, const std::string &text) {
-  output.clear();
+void detail::recover_diagnostic_stream(std::ostream &output) noexcept {
+  try {
+    output.clear();
+  } catch (...) {
+    // A missing stream buffer can keep clear() from succeeding; preserve the caller's error.
+  }
   if (&output == &std::cerr)
     std::clearerr(stderr);
-  output << text << '\n';
-  output.flush();
-  if (!output)
+}
+bool detail::write_diagnostic(std::ostream &output, std::initializer_list<std::string_view> parts,
+                              bool newline, bool flush) {
+  struct Recover {
+    std::ostream &stream;
+    ~Recover() {
+      recover_diagnostic_stream(stream);
+    }
+  } recover{output};
+  recover_diagnostic_stream(output);
+  for (auto part : parts) {
+    while (!part.empty() && output) {
+      const auto count =
+          std::min(part.size(), static_cast<size_t>(std::numeric_limits<std::streamsize>::max()));
+      output.write(part.data(), static_cast<std::streamsize>(count));
+      part.remove_prefix(count);
+    }
+    if (!output)
+      break;
+  }
+  if (newline && output)
+    output.put('\n');
+  if (flush)
+    output.flush();
+  return static_cast<bool>(output);
+}
+void write_file_diagnostic(std::ostream &output, const std::string &text) {
+  if (!detail::write_diagnostic(output, {text}, true, true))
     throw Error("Cannot render preserved-file notice");
 }
 namespace {
@@ -331,8 +362,11 @@ void write_default_file_diagnostic(const std::string &text) {
 } // namespace
 const DiagnosticSink &default_file_diagnostic_sink() noexcept {
   // std::function construction from a function pointer does not allocate.
-  static const DiagnosticSink sink = &write_default_file_diagnostic;
-  return sink;
+  // Keep the callback alive for late static destructors without allocating heap storage.
+  alignas(DiagnosticSink) static unsigned char storage[sizeof(DiagnosticSink)];
+  static const auto *sink =
+      ::new (static_cast<void *>(storage)) DiagnosticSink(&write_default_file_diagnostic);
+  return *sink;
 }
 void FileDiagnosticQueue::submit(std::unique_ptr<FileNotice> notice) noexcept {
   auto *node = notice.release();

@@ -340,7 +340,7 @@ public:
         el_set(resources_.editor, EL_HIST, history, resources_.entries);
       }
       set_mode(c.permission_mode);
-      std::cerr << status_ << '\n';
+      (void)detail::write_diagnostic(std::cerr, {status_});
     }
   }
   ~Terminal() override = default;
@@ -351,7 +351,7 @@ public:
     if (curses_)
       say(text);
     else
-      std::cerr << text << '\n';
+      (void)detail::write_diagnostic(std::cerr, {text});
   }
   void set_mode(const std::string &mode) {
     status_ = "Permissions: " + mode + "; no OS shell sandbox";
@@ -607,7 +607,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       credentials.save_key(config.provider == "codex" ? "openai" : config.provider, key);
     } else
       throw Error("Native sign-in is deferred. Use login --import FILE or --with-api-key", 2);
-    std::cerr << "Credentials stored privately in Codet state\n";
+    (void)detail::write_diagnostic(std::cerr, {"Credentials stored privately in Codet state"});
     return 0;
   }
   if (o.command == "doctor") {
@@ -747,7 +747,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     else {
       if (o.exec || !isatty(STDIN_FILENO))
         throw Error("Select a session id or --last", 2);
-      std::cerr << state.list().dump(2) << "\nSession id: ";
+      (void)detail::write_diagnostic(std::cerr, {state.list().dump(2), "\nSession id: "}, false);
       std::string id;
       std::getline(std::cin, id);
       session = state.load(id, o.command == "export");
@@ -830,9 +830,10 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
              !event["item"].value("final_result", false) &&
              (event["item"].value("phase", "") == "commentary" ||
               event["item"].value("phase", "") == "partial_answer"))
-      std::cerr << event["item"].value("text", "") << '\n';
+      (void)detail::write_diagnostic(std::cerr, {event["item"].value("text", "")});
     else if (event.value("type", "") == "item.started" && event["item"].contains("tool"))
-      std::cerr << "[" << event["item"]["tool"].get<std::string>() << "]\n";
+      (void)detail::write_diagnostic(
+          std::cerr, {"[", event["item"]["tool"].get_ref<const std::string &>(), "]"});
   };
   Agent agent(config, provider, tools, state, events, diagnostic);
   struct SessionEnd {
@@ -841,9 +842,11 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       try {
         end();
       } catch (const std::exception &error) {
-        std::cerr << "SessionEnd hook cleanup failed: " << safe_text(error.what()) << '\n';
+        (void)detail::write_diagnostic(
+            std::cerr, {"SessionEnd hook cleanup failed: ", safe_text(error.what())});
       } catch (...) {
-        std::cerr << "SessionEnd hook cleanup failed: unknown exception\n";
+        (void)detail::write_diagnostic(std::cerr,
+                                       {"SessionEnd hook cleanup failed: unknown exception"});
       }
     }
   } session_end{[&, started_id = session.id] {
