@@ -95,48 +95,60 @@ int main(int argc, char **argv) {
       codet::Cancellation cancel;
       return codet::cli_main(arguments, cancel);
     }
-    if (argc > 1 && std::string(argv[1]) == "--codet-stderr-recovery-helper") {
+    if (argc > 1 && (std::string(argv[1]) == "--codet-stderr-recovery-helper" ||
+                     std::string(argv[1]) == "--codet-stdout-recovery-helper")) {
+      const bool use_stdout = std::string(argv[1]) == "--codet-stdout-recovery-helper";
+      auto &stream = use_stdout ? std::cout : std::cerr;
+      const int target = use_stdout ? STDOUT_FILENO : STDERR_FILENO;
       if (argc != 2) {
-        std::fputs("stderr-recovery helper accepts no arguments\n", stderr);
+        std::fputs("stream-recovery helper accepts no arguments\n", stderr);
         return 2;
       }
       int descriptors[2];
       if (::pipe(descriptors) != 0)
         return 3;
-      const int saved = ::dup(STDERR_FILENO);
+      const int saved = ::dup(target);
       struct Restore {
-        int original, read, write;
+        int original, read, write, target;
+        std::ostream &stream;
         ~Restore() {
           if (original >= 0) {
-            (void)::dup2(original, STDERR_FILENO);
+            (void)::dup2(original, target);
             ::close(original);
           }
           ::close(read);
           ::close(write);
-          codet::detail::recover_diagnostic_stream(std::cerr);
+          codet::detail::recover_diagnostic_stream(stream);
         }
-      } restore{saved, descriptors[0], descriptors[1]};
+      } restore{saved, descriptors[0], descriptors[1], target, stream};
       if (saved < 0 || ::fcntl(descriptors[0], F_SETFL, O_NONBLOCK) < 0 ||
           ::fcntl(descriptors[1], F_SETFL, O_NONBLOCK) < 0)
         return 4;
       char bytes[4096]{};
       while (::write(descriptors[1], bytes, sizeof(bytes)) > 0) {
       }
-      if (errno != EAGAIN || ::dup2(descriptors[1], STDERR_FILENO) < 0)
+      if (errno != EAGAIN || ::dup2(descriptors[1], target) < 0)
         return 5;
       bool failed = false;
       try {
-        codet::write_file_diagnostic(std::cerr, "blocked notice");
+        codet::write_file_diagnostic(stream, "blocked notice");
       } catch (const codet::Error &) {
         failed = true;
       }
-      const bool recovered = std::cerr.good() && std::ferror(stderr) == 0;
+      const bool recovered = stream.good() && std::ferror(use_stdout ? stdout : stderr) == 0;
       while (::read(descriptors[0], bytes, sizeof(bytes)) > 0) {
       }
-      codet::report_diagnostic({}, "later warning");
+      if (use_stdout)
+        (void)codet::detail::write_diagnostic(stream, {"later warning"}, true, true);
+      else
+        codet::report_diagnostic({}, "later warning");
       const auto count = ::read(descriptors[0], bytes, sizeof(bytes));
+      const std::string observed = count > 0 ? std::string(bytes, static_cast<size_t>(count)) : "";
+      // Buffered stdout may retain bytes from the failed flush; later output must still work.
       const bool delivered =
-          count == 15 && std::string(bytes, static_cast<size_t>(count)) == "\nlater warning\n";
+          use_stdout ? observed.size() >= 14 &&
+                           observed.compare(observed.size() - 14, 14, "later warning\n") == 0
+                     : observed == "\nlater warning\n";
       return failed && recovered && delivered ? 0 : 6;
     }
     if (argc > 1 && std::string(argv[1]) == "--codet-terminal-startup-helper") {

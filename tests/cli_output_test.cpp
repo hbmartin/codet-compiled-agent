@@ -1,4 +1,5 @@
 #include "codet/detail/cli_output.hpp"
+#include "process_helper.hpp"
 #include <gtest/gtest.h>
 #include <sstream>
 using namespace codet;
@@ -81,5 +82,13 @@ TEST(CliOutput, SecondarySerializationCannotReplaceAnExistingFailure) {
   EXPECT_NO_THROW(output.secondary_record([]() -> std::string { throw std::bad_alloc(); }));
   EXPECT_TRUE(output.failed());
   EXPECT_TRUE(stream.str().empty());
+}
+TEST(CliOutput, NonblockingStdoutRecoversCppAndCStateAfterThePipeDrains) {
+  const auto child = test::start_helper({"--codet-stdout-recovery-helper"});
+  ASSERT_GT(child, 0);
+  int status = 0;
+  ASSERT_TRUE(test::wait_helper(child, status));
+  ASSERT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
 }
 } // namespace

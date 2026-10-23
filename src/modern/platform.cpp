@@ -360,6 +360,8 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
     std::ostream &stream;
     bool &pending;
     bool newline, attempted = false, complete = false;
+    Recovery(std::ostream &out, bool &separator, bool line) noexcept
+        : stream(out), pending(separator), newline(line) {}
     ~Recovery() {
       if (!complete) {
         if (newline && attempted)

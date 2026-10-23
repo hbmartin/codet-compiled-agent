@@ -1179,7 +1179,7 @@ class CliTests(unittest.TestCase):
             stdin=slave,stdout=slave,stderr=slave,pass_fds=(notify,),env=dict(self.env,TERM='xterm'))
         os.close(notify)
         received=b''
-        def until(text):
+        def until(text,master=master):
             nonlocal received
             deadline=time.monotonic()+10
             while text not in received and time.monotonic()<deadline:
@@ -1228,7 +1228,7 @@ class CliTests(unittest.TestCase):
             master,slave=pty.openpty()
             process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
             received=b''
-            def until(text):
+            def until(text,master=master):
                 nonlocal received
                 deadline=time.monotonic()+10
                 while text not in received and time.monotonic()<deadline:

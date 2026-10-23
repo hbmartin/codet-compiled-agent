@@ -1142,9 +1142,11 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
           sse.feed(chunk);
       });
     } catch (const Error &e) {
+      if (e.code == 130)
+        throw;
       if (consumer_failure)
         std::rethrow_exception(consumer_failure);
-      if (e.code == 130 || saw || attempt == 3)
+      if (saw || attempt == 3)
         throw;
       clock_.sleep_ms(250 * (1 << attempt), cancel);
       continue;
