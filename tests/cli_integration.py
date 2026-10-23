@@ -234,6 +234,26 @@ class CliTests(unittest.TestCase):
             self.tmp.cleanup()
     def run_cli(self,*args,input=''):
         return subprocess.run([BIN,'-C',str(self.workspace),*args],input=input,text=True,capture_output=True,env=self.env,timeout=15)
+    def terminal_startup(self,mode):
+        temporary=self.root/'terminal-tmp';temporary.mkdir()
+        helper=pathlib.Path(__file__).with_name('terminal_cli_helper.py')
+        result=subprocess.run([sys.executable,str(helper),mode,BIN],cwd=self.workspace,
+            env=dict(self.env,TMPDIR=str(temporary)),text=True,capture_output=True,timeout=15)
+        self.assertEqual(result.returncode,0,result.stderr)
+        value=json.loads(result.stdout)
+        self.assertNotIn('stopped',value,value)
+        self.assertNotIn('timeout',value,value)
+        self.assertTrue(value['restored'],value)
+        self.assertEqual(list(temporary.glob('codet-ephemeral-*')),[],value)
+        return value
+    def test_unknown_terminal_unwinds_and_removes_ephemeral_state(self):
+        value=self.terminal_startup('unknown-term')
+        self.assertEqual(value['exit'],1,value)
+        self.assertIn('codet: Cannot initialize terminal',value['output'])
+    def test_background_keybinding_error_does_not_restore_untouched_terminal(self):
+        value=self.terminal_startup('background-config')
+        self.assertEqual(value['exit'],2,value)
+        self.assertIn('keybindings support integer',value['output'])
     def test_teardown_stop_interrupts_fixture_delays(self):
         import http.client
         for prompt in ('fixture-wait','fixture-idle-stream'):

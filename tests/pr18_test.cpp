@@ -2791,6 +2791,11 @@ TEST_F(Pr24, PreservedFilePathsSurviveDiagnosticAllocationFailures) {
       EXPECT_THAT(backup_diagnostic, HasSubstr(entry.path().string()));
 }
 TEST_F(Pr24, DefaultFileReportingRecoversStderrAndPreservesUnicodeAndOriginalExceptions) {
+  struct RestoreStderr {
+    ~RestoreStderr() {
+      detail::recover_diagnostic_stream(std::cerr);
+    }
+  } restore_stderr;
   const auto home = config.state_root / u8"Jos\u00e9-雪";
   StateStore state(files, home);
   auto session = state.create();

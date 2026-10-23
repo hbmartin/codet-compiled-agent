@@ -1,5 +1,6 @@
 #pragma once
 #include "codet/core.hpp"
+#include "codet/detail/diagnostic_stream.hpp"
 #include <ostream>
 namespace codet {
 enum class FileNoticeKind : uint8_t { repair_backup, tool_result };
@@ -103,9 +104,9 @@ public:
   }
   void flush(std::ostream &stream) {
     for (const auto &message : messages_)
-      stream << message << '\n';
+      (void)detail::write_diagnostic(stream, {message});
     if (omitted_ && limit_)
-      stream << bounded_text(notice(), limit_ ? limit_ - 1 : 0) << '\n';
+      (void)detail::write_diagnostic(stream, {bounded_text(notice(), limit_ ? limit_ - 1 : 0)});
     clear();
   }
 };

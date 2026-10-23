@@ -1,4 +1,7 @@
 #include "codet/detail/terminal_resources.hpp"
+#if defined(timeout) || defined(getch) || defined(OK) || defined(ERR)
+#error "The shared terminal owner must not expose curses macros"
+#endif
 #include "process_helper.hpp"
 #include <cstring>
 #include <gtest/gtest.h>
@@ -14,12 +17,20 @@ struct Resources : detail::TerminalResourceOps {
   char calls[32]{};
   size_t used = 0;
   bool captured = true, screen = true, editor = true, entries = true;
+  bool applied = true;
+  termios changed{};
   void record(char call) noexcept {
     calls[used++] = call;
   }
-  bool capture(termios &) noexcept override {
+  bool capture(termios &settings) noexcept override {
     record('c');
+    settings.c_lflag = ICANON | ECHO;
     return captured;
+  }
+  bool apply(const termios &settings) noexcept override {
+    record('a');
+    changed = settings;
+    return applied;
   }
   void restore(const termios &) noexcept override {
     record('t');
@@ -46,6 +57,54 @@ struct Resources : detail::TerminalResourceOps {
     record('H');
   }
 };
+TEST(TerminalResources, ValidationBeforeAcquisitionDoesNotTouchTheTerminal) {
+  Resources ops;
+  {
+    detail::TerminalResources resources(ops);
+    EXPECT_FALSE(resources.saved());
+    resources.close();
+    resources.close();
+    EXPECT_THROW(resources.start_screen(), Error);
+    EXPECT_THROW(resources.start_editor(), Error);
+    EXPECT_THROW(resources.start_history(), Error);
+    EXPECT_THROW(resources.begin_active(), Error);
+  }
+  EXPECT_STREQ(ops.calls, "");
+}
+TEST(TerminalResources, DuplicateStartsCannotOverwriteAnOwnedHandle) {
+  Resources ops;
+  {
+    detail::TerminalResources resources(ops);
+    resources.start_screen();
+    resources.start_editor();
+    resources.start_history();
+    EXPECT_THROW(resources.start_screen(), Error);
+    EXPECT_THROW(resources.start_editor(), Error);
+    EXPECT_THROW(resources.start_history(), Error);
+    EXPECT_NE(resources.editor(), nullptr);
+    EXPECT_NE(resources.entries(), nullptr);
+  }
+  EXPECT_STREQ(ops.calls, "csehSEHt");
+}
+TEST(TerminalResources, ActiveModePreparationIsCheckedAndCleanupRestoresAfterFailure) {
+  for (bool applied : {false, true}) {
+    Resources ops;
+    ops.applied = applied;
+    {
+      detail::TerminalResources resources(ops);
+      resources.start_editor();
+      if (applied)
+        EXPECT_NO_THROW(resources.begin_active());
+      else
+        EXPECT_THROW(resources.begin_active(), Error);
+      EXPECT_EQ(ops.changed.c_lflag & (ICANON | ECHO), 0u);
+      EXPECT_EQ(ops.changed.c_cc[VMIN], 0);
+      EXPECT_EQ(ops.changed.c_cc[VTIME], 0);
+      resources.end_active();
+    }
+    EXPECT_STREQ(ops.calls, "ceatEt");
+  }
+}
 TEST(TerminalResources, FailedEnclosingConstructionClosesEachAcquiredResourceInOrder) {
   const auto original = std::make_exception_ptr(std::bad_alloc());
   struct Startup {
@@ -98,7 +157,7 @@ TEST(TerminalResources, FailedAcquisitionsAndRepeatedCloseReleaseOnlyOwnedResour
   EXPECT_STREQ(ops.calls, "cehE");
 }
 TEST(TerminalResources, StartupExceptionsRestoreRealPtyModesBeforeReporting) {
-  for (const auto *phase : {"screen", "render", "editor", "history"}) {
+  for (const auto *phase : {"screen", "render", "editor", "history", "active"}) {
     int master = -1, slave = -1;
     winsize size{24, 80, 0, 0};
     ASSERT_EQ(::openpty(&master, &slave, nullptr, nullptr, &size), 0);

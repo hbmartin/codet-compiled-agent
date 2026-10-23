@@ -1,4 +1,5 @@
 #include "codet/detail/cli_diagnostics.hpp"
+#include "process_helper.hpp"
 #include "temp.hpp"
 #include <gmock/gmock.h>
 #include <gtest/gtest-spi.h>
@@ -106,7 +107,7 @@ TEST_F(CliDiagnosticsTest, LaterLineNoticesRecoverFromInsertionAndFlushFailuresB
         scope.activate(std::make_shared<Surface>(false, restored, calls));
         sink->files->submit(std::make_unique<FileNotice>("failed", FileNoticeKind::tool_result));
         sink->deliver_files();
-        EXPECT_FALSE(stream.good());
+        EXPECT_TRUE(stream.good());
         const auto writes = buffer.writes;
         buffer.fail_write = buffer.fail_flush = false;
         sink->files->submit(std::make_unique<FileNotice>("later", FileNoticeKind::tool_result));
@@ -132,6 +133,81 @@ TEST_F(CliDiagnosticsTest, StaleStreamErrorsDoNotPreventNewLineWrites) {
     EXPECT_TRUE(output.good());
     EXPECT_THAT(output.str(), HasSubstr("new-path\n"));
   }
+}
+TEST_F(CliDiagnosticsTest, OrdinaryWritesRecoverAfterFailureWithoutRequiringAnotherNotice) {
+  for (bool throwing : {false, true}) {
+    NoticeStream buffer;
+    std::ostream stream(&buffer);
+    if (throwing)
+      stream.exceptions(std::ios::badbit | std::ios::failbit);
+    detail::CliDiagnostics sink(stream);
+    buffer.fail_write = true;
+    if (throwing)
+      EXPECT_THROW(sink.emit("failed warning"), std::ios_base::failure);
+    else
+      EXPECT_NO_THROW(sink.emit("failed warning"));
+    EXPECT_TRUE(stream.good());
+    buffer.fail_write = false;
+    sink.emit("hook warning");
+    (void)detail::write_diagnostic(stream, {"[", "tool", "]"});
+    const std::string body("raw\0body", 8);
+    EXPECT_TRUE(detail::write_diagnostic(stream, {"codet: ", body}));
+    EXPECT_EQ(buffer.str(), std::string("hook warning\n[tool]\ncodet: ") + body + "\n");
+  }
+}
+TEST_F(CliDiagnosticsTest, FailedNoticeDoesNotSuppressLaterOrdinaryStderrDiagnostics) {
+  NoticeStream buffer;
+  struct RestoreStderr {
+    std::streambuf *original;
+    ~RestoreStderr() {
+      std::cerr.rdbuf(original);
+      detail::recover_diagnostic_stream(std::cerr);
+    }
+  } restore{std::cerr.rdbuf(&buffer)};
+  buffer.fail_write = true;
+  EXPECT_THROW(write_file_diagnostic(std::cerr, "failed notice"), Error);
+  EXPECT_TRUE(std::cerr.good());
+  buffer.fail_write = false;
+  report_diagnostic({}, "hook warning");
+  detail::CliDiagnostics sink;
+  sink.emit("later warning");
+  EXPECT_EQ(buffer.str(), "hook warning\nlater warning\n");
+}
+TEST_F(CliDiagnosticsTest, NonblockingStderrFailureRecoversCppAndCStreamStateInAFreshProcess) {
+  const auto child = test::start_helper({"--codet-stderr-recovery-helper"});
+  ASSERT_GT(child, 0);
+  int status = 0;
+  ASSERT_TRUE(test::wait_helper(child, status));
+  ASSERT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
+}
+TEST_F(CliDiagnosticsTest, MissingStreamBufferRecoveryCannotMaskTheOriginalFailure) {
+  std::ostream stream(nullptr);
+  EXPECT_FALSE(detail::recover_diagnostic_stream(stream));
+  EXPECT_THROW(stream.exceptions(std::ios::badbit), std::ios_base::failure);
+  EXPECT_FALSE(detail::recover_diagnostic_stream(stream));
+  EXPECT_THROW(write_file_diagnostic(stream, "notice"), std::ios_base::failure);
+  EXPECT_EQ(stream.exceptions(), std::ios::badbit);
+}
+TEST_F(CliDiagnosticsTest, RecoveryPreservesTheOriginalRendererExceptionAndExceptionMask) {
+  const auto original = std::make_exception_ptr(std::logic_error("output failure"));
+  struct ThrowingStream : std::streambuf {
+    const std::exception_ptr &failure;
+    explicit ThrowingStream(const std::exception_ptr &value) : failure(value) {}
+    std::streamsize xsputn(const char *, std::streamsize) override {
+      std::rethrow_exception(failure);
+    }
+  } buffer(original);
+  std::ostream stream(&buffer);
+  stream.exceptions(std::ios::badbit);
+  try {
+    (void)detail::write_diagnostic(stream, {"failed"});
+    FAIL() << "renderer must throw";
+  } catch (...) {
+    EXPECT_EQ(std::current_exception(), original);
+  }
+  EXPECT_TRUE(stream.good());
+  EXPECT_EQ(stream.exceptions(), std::ios::badbit);
 }
 TEST_F(CliDiagnosticsTest, ImmediateFlushFailureUsesEmergencyAndNextNoticeRecovers) {
   NoticeStream buffer;

@@ -1,0 +1,875 @@
+{
+  "recorded_utc": "2026-10-23T16:32:32.003398+00:00",
+  "follow_up_to": "https://github.com/hbmartin/codet-compiled-agent/pull/33",
+  "branch": "codex/terminal-diagnostic-recovery",
+  "baseline_commit": "7267f4ec9a91f69a71829ec9d89e091e034e1adf",
+  "validated_commit": "51f1a1f74ccae4b598d76b6fa50beaea8511977e",
+  "commits": [
+    "4572b3ede9d2731e6444056453e29cb66df78900 Recover diagnostic streams and keep the default sink alive through shutdown",
+    "3a3766e1ace85a7d02d0e3d37e4c4c1afeacc461 Own recoverable curses startup and restore only attempted terminal changes",
+    "b60fc8980015bbfe8c1ccbdcf5683d32b778d9f5 Restore ASCII fast paths before shared Unicode decoding",
+    "bbfa2d69119e8ed94246bbb55fc9909ce6f86aea Report unrecoverable stream state without hiding configured exceptions",
+    "51f1a1f74ccae4b598d76b6fa50beaea8511977e Exercise real nonblocking stderr recovery in a fresh process"
+  ],
+  "source_hashes": {
+    "CMakeLists.txt": "30633d0e5b39dc66efa312e16e90bdfc3b27e0ca837b0713264a892605ff4514",
+    "README.md": "6b3398b050d4dbdc02e056e58899f7c980310eed963c5af94373fb0ff15f153d",
+    "include/codet/detail/cli_diagnostics.hpp": "e6dda91444e98678627be6326a02a1c7edcdd98f98dd82d6b3e8bef9333ff536",
+    "include/codet/detail/diagnostic_stream.hpp": "c6278040dc721fb70693a7df21f67fae650ff4d5d33e1a1334caaa647276dab9",
+    "include/codet/detail/native_terminal.hpp": "720e0ad052e71b8c3f5d7f6ee63a736a42b1decfad6b0f2c90776e382f345431",
+    "include/codet/detail/terminal_resources.hpp": "d1eb811d2cd178b4066a4b65357f488163f68d391146ddb4da3e5bb63a46e7a8",
+    "include/codet/diagnostics.hpp": "7a0225e5f1d16731c20887e5bd7fd6bf2edba374e364c5762b4fe5089c2c7e55",
+    "src/modern/cli.cpp": "c870ece45ce00c6607f590d12d52cb0976c85d172c3eb62ab582105b13ad25b1",
+    "src/modern/main.cpp": "1343b0d5e1753b1a319c0a51dd1e264b0fde2ad0a9457a00486b4e85a396c68c",
+    "src/modern/platform.cpp": "6f3aa3f5a7fc57ce0d13039570895243ac369ea916cdf2c11de592965d6ad74c",
+    "tests/cli_diagnostics_test.cpp": "b6c17e5607e115bf26e39f104b6ff526152597c7fb2340b12443898830cc0b75",
+    "tests/cli_integration.py": "87d9476f49d46bc4227441fb7f36a7bc6c24b319dcbc52055173bd5d9d666e55",
+    "tests/pr18_test.cpp": "b71a36d977df1ad788b3be23579245a31dcace0fe9d050e5660fcde2efa70299",
+    "tests/publication_fault_test.cpp": "608d95ae5950f0fade968327e37372eafd58d0f3d9e80b9c5e6bd07c3bf4a7ca",
+    "tests/terminal_cli_helper.py": "f332d9b490dd640c763833eff614db843dffe60f61dc98d2326c7b9cbeac7164",
+    "tests/terminal_resources_test.cpp": "360b1c91fd54b800b884c2aecb420914582acf5d712a410e345321683767f8d3",
+    "tests/test_main.cpp": "0b807487189900db2778a667abf18aa2461532081061838038a12509fcd2e79f"
+  },
+  "behavior": [
+    "One byte-span writer recovers ostream/C stderr errors before output and after failure, preserving stream exception masks and renderer exception identity.",
+    "Ordinary diagnostic writes remain best-effort; preserved-file notices require successful insertion and explicit flushing. Failed notices remain owned for restoration.",
+    "A function-pointer-backed default sink lives in aligned static storage without heap allocation or a registered destructor, including first use and late static shutdown.",
+    "Native curses startup uses checked newterm and owns SCREEN through endwin/delscreen. Shared ownership headers expose no curses macros.",
+    "Snapshot/restoration responsibility begins before a potentially mutating operation, not during member construction. Validation errors leave background terminals untouched.",
+    "Private terminal handles reject duplicate acquisition and use after close; checked active-mode changes go through the adapter; close remains idempotent and allocation-free.",
+    "ASCII is handled before the shared UTF-8 decoder. Canonical repair grouping and the approved selective Unicode path policy are unchanged.",
+    "Live, cleanup, and file replay ordering, worker quiescence, independent drains, full paths, and best-effort emergency delivery are retained."
+  ],
+  "tests": {
+    "debug": {
+      "runs": [
+        57,
+        515
+      ],
+      "expected_skips": [
+        "Contracts.NativeTigerDesktopAcceptance",
+        "NetworkOptIn.TlsHandshake"
+      ],
+      "integration": [
+        "63",
+        "7",
+        "6",
+        "9",
+        "17",
+        "3"
+      ]
+    },
+    "sanitize": {
+      "runs": [
+        57,
+        515
+      ],
+      "expected_skips": [
+        "Contracts.NativeTigerDesktopAcceptance",
+        "NetworkOptIn.TlsHandshake"
+      ],
+      "integration": [
+        "63",
+        "7",
+        "6",
+        "9",
+        "17",
+        "3"
+      ]
+    },
+    "repeated_unit_tests": 32,
+    "repeated_fault_tests": 8,
+    "repetitions": 20,
+    "total_repeated_executions": 800,
+    "repeat_environment": "ASAN_OPTIONS=detect_leaks=0 only for repeated subsets; full ASan/UBSan CTest uses default settings.",
+    "new_regressions": [
+      "Insertion/flush failures followed by ordinary warnings/progress/error bytes; missing stream buffers and exception masks; original renderer exception identity.",
+      "Real nonblocking stderr saturation and recovery of both C++ and C stream state in a fresh executable.",
+      "First-use allocation trapping and late-static default sink access in fresh fault-test helpers.",
+      "Real PTY unknown TERM ephemeral cleanup and background invalid-keybinding error without SIGTTOU.",
+      "Untouched startup, duplicate acquisition, closed ownership, failed active preparation, real active-mode restoration, and curses-macro compile isolation."
+    ]
+  },
+  "checks": [
+    {
+      "name": "pinned-dependencies",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/fetch-deps.py",
+        "--offline"
+      ],
+      "exit": 0,
+      "seconds": 0.61,
+      "log": "build/terminal-diagnostic-recovery/pinned-dependencies.log"
+    },
+    {
+      "name": "debug-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/host",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 0.13,
+      "log": "build/terminal-diagnostic-recovery/debug-build.log"
+    },
+    {
+      "name": "debug-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/host",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 87.12,
+      "log": "build/terminal-diagnostic-recovery/debug-ctest.log"
+    },
+    {
+      "name": "sanitize-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/sanitize",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 3.1,
+      "log": "build/terminal-diagnostic-recovery/sanitize-build.log"
+    },
+    {
+      "name": "sanitize-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/sanitize",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 144.22,
+      "log": "build/terminal-diagnostic-recovery/sanitize-ctest.log"
+    },
+    {
+      "name": "sanitize-diagnostic-repeated",
+      "command": [
+        "build/sanitize/codet_tests",
+        "--gtest_filter=FileDiagnostics.*:CliDiagnosticsTest.*:TerminalResources.*",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 20.28,
+      "log": "build/terminal-diagnostic-recovery/sanitize-diagnostic-repeated.log"
+    },
+    {
+      "name": "sanitize-fault-repeated",
+      "command": [
+        "build/sanitize/codet_publication_fault_tests",
+        "--gtest_filter=FileDiagnosticsFault.*",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 2.63,
+      "log": "build/terminal-diagnostic-recovery/sanitize-fault-repeated.log"
+    },
+    {
+      "name": "lint",
+      "command": [
+        "make",
+        "check-lint",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 1.14,
+      "log": "build/terminal-diagnostic-recovery/lint.log"
+    },
+    {
+      "name": "runner-tests",
+      "command": [
+        "make",
+        "test-lint-runners",
+        "test-modern-analysis-runner",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "ANALYSIS_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 5.43,
+      "log": "build/terminal-diagnostic-recovery/runner-tests.log"
+    },
+    {
+      "name": "semgrep",
+      "command": [
+        "make",
+        "check-semgrep",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "SEMGREP=build/semgrep-venv/bin/pysemgrep"
+      ],
+      "exit": 0,
+      "seconds": 3.78,
+      "log": "build/terminal-diagnostic-recovery/semgrep.log"
+    }
+  ],
+  "sanitizer_retry": {
+    "failed_test": "Policies.CleanupReapsWithoutAnExitObserverAfterTransientReapFailure",
+    "initial_suite": {
+      "name": "sanitize-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/sanitize",
+        "--output-on-failure"
+      ],
+      "exit": 8,
+      "seconds": 146.14,
+      "log": "build/terminal-diagnostic-recovery/sanitize-ctest.log"
+    },
+    "focused_changed_repetitions": 20,
+    "focused_changed_exit": 0,
+    "baseline_release_repetitions": 100,
+    "baseline_release_exit": 0,
+    "interpretation": "One assertion failure in unchanged process cleanup polling; not reproduced in 20 current sanitizer or 100 baseline Release focused repetitions. No process/test code was changed or checks weakened.",
+    "final_suite": {
+      "name": "sanitize-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/sanitize",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 144.22,
+      "log": "build/terminal-diagnostic-recovery/sanitize-ctest.log"
+    }
+  },
+  "analysis": {
+    "cppcheck": {
+      "passed": true,
+      "expected_sources": 25,
+      "completed_sources": 25,
+      "findings": [],
+      "canaries": 15,
+      "canaries_passed": true,
+      "versions": [
+        {
+          "command": [
+            "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck",
+            "--version"
+          ],
+          "exit": 0,
+          "banner": "Cppcheck 2.22.0"
+        }
+      ],
+      "manifest": "build/terminal-diagnostic-recovery/cppcheck-analysis/analysis/manifest.json",
+      "manifest_sha256": "153ad9eb92b2d8ef71794ec3dc8276c44b40946bc26e31299d7ede5be842f680",
+      "matches_previous_baseline_findings": true,
+      "baseline_manifest_sha256": "5d793ec055353404a03f49521b16310010349518ef1d06ef3bba5b874644e00c"
+    },
+    "clang-tidy": {
+      "passed": false,
+      "expected_sources": 25,
+      "completed_sources": 24,
+      "findings": [
+        {
+          "file": "src/modern/images.cpp",
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'unsigned long' to 'double'"
+        },
+        {
+          "file": "src/modern/images.cpp",
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+        },
+        {
+          "file": "src/modern/images.cpp",
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+        },
+        {
+          "file": "src/modern/main.cpp",
+          "check": "bugprone-exception-escape",
+          "message": "an exception may be thrown in function 'main' which should not throw exceptions"
+        },
+        {
+          "file": "src/modern/platform.cpp",
+          "check": "clang-diagnostic-error",
+          "message": "implicit instantiation of undefined template 'std::basic_istringstream<char>'"
+        },
+        {
+          "file": "src/modern/state.cpp",
+          "check": "bugprone-exception-escape",
+          "message": "an exception may be thrown in function 'operator()' which should not throw exceptions"
+        }
+      ],
+      "canaries": 0,
+      "canaries_passed": true,
+      "versions": [
+        {
+          "command": [
+            "/Volumes/Pro2T/codet-compiled-agent/build/tidy18/clang-tidy-sdk13",
+            "--version"
+          ],
+          "exit": 0,
+          "banner": "LLVM (http://llvm.org/):\n  LLVM version 18.1.8\n  Optimized build."
+        }
+      ],
+      "manifest": "build/terminal-diagnostic-recovery/clang-tidy-analysis/analysis/manifest.json",
+      "manifest_sha256": "c4e1dcb1208bb5e9b563790d0af78f4b4bb5f17ed3067083396eb8177e931653",
+      "matches_previous_baseline_findings": true,
+      "baseline_manifest_sha256": "aca4cac246c465897579b6c44d1971dbbec915023f0affdd41b627733994e63f"
+    },
+    "clang-analyzer": {
+      "passed": false,
+      "expected_sources": 25,
+      "completed_sources": 25,
+      "findings": [
+        {
+          "file": "src/modern/context.cpp",
+          "check": "core.DivideZero",
+          "message": "Division by zero"
+        }
+      ],
+      "canaries": 0,
+      "canaries_passed": true,
+      "versions": [
+        {
+          "command": [
+            "/usr/bin/c++",
+            "--version"
+          ],
+          "exit": 0,
+          "banner": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix"
+        },
+        {
+          "command": [
+            "/usr/bin/cc",
+            "--version"
+          ],
+          "exit": 0,
+          "banner": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix"
+        }
+      ],
+      "manifest": "build/terminal-diagnostic-recovery/clang-analyzer-analysis/analysis/manifest.json",
+      "manifest_sha256": "3da30e01edfdf907cdd5bb12f0728f458729e835e31cd4a16789b42a8a71b680",
+      "matches_previous_baseline_findings": true,
+      "baseline_manifest_sha256": "f5d18bf39e2424e3ff960d8fce86a4d46556504232d6afdf5e88a742447eb9a6"
+    }
+  },
+  "analysis_commands": [
+    {
+      "name": "cppcheck",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/terminal-diagnostic-recovery/cppcheck-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--tool",
+        "cppcheck"
+      ],
+      "exit": 0,
+      "seconds": 57.26,
+      "log": "build/terminal-diagnostic-recovery/cppcheck.log"
+    },
+    {
+      "name": "clang-tidy",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/terminal-diagnostic-recovery/clang-tidy-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--tool",
+        "clang-tidy"
+      ],
+      "exit": 1,
+      "seconds": 37.8,
+      "log": "build/terminal-diagnostic-recovery/clang-tidy.log"
+    },
+    {
+      "name": "clang-analyzer",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/terminal-diagnostic-recovery/clang-analyzer-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--tool",
+        "clang-analyzer"
+      ],
+      "exit": 1,
+      "seconds": 56.61,
+      "log": "build/terminal-diagnostic-recovery/clang-analyzer.log"
+    },
+    {
+      "name": "selftest",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/terminal-diagnostic-recovery/selftest-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--selftest"
+      ],
+      "exit": 0,
+      "seconds": 1.44,
+      "log": "build/terminal-diagnostic-recovery/selftest.log"
+    }
+  ],
+  "initial_correction": "The initial Clang-Tidy run found one new empty-catch diagnostic. Recovery now returns explicit success/failure and preserves exception-mask behavior for unrecoverable streams; the focused missing-buffer test and final analysis pass with no new findings.",
+  "benchmark": {
+    "baseline_commit": "7267f4ec9a91f69a71829ec9d89e091e034e1adf",
+    "measured_commit": "51f1a1f74ccae4b598d76b6fa50beaea8511977e",
+    "protocol": "Two sets; one warm-up and five alternating measured runs per build/mode per set; identical Release settings and harnesses; no concurrent analyzers or validation jobs.",
+    "cases_per_set": 53,
+    "sets": 2,
+    "identical_allocation_and_work_comparisons": 106,
+    "targets": [
+      {
+        "measurement_set": 1,
+        "mode": "default",
+        "identity": {
+          "case": "transcript_save_serialization",
+          "implementation": "utf8_tree",
+          "iterations": 20,
+          "serialized_bytes": 16474020
+        },
+        "baseline_ms": 60.01525,
+        "changed_ms": 52.313,
+        "change_percent": -12.833821403726553,
+        "allocations": 16380,
+        "allocated_bytes": 61718240,
+        "equal_work": true,
+        "baseline_runs_ms": [
+          62.19775,
+          60.01525,
+          59.900166,
+          62.797375,
+          59.877833
+        ],
+        "changed_runs_ms": [
+          52.470209,
+          51.935209,
+          52.313,
+          52.470458,
+          52.201
+        ]
+      },
+      {
+        "measurement_set": 1,
+        "mode": "review",
+        "identity": {
+          "argument_bytes": 1048576,
+          "case": "large_arguments",
+          "iterations": 8
+        },
+        "baseline_ms": 42.776958,
+        "changed_ms": 36.171959,
+        "change_percent": -15.440553299746096,
+        "allocations": 928,
+        "allocated_bytes": 34902336,
+        "equal_work": true,
+        "baseline_runs_ms": [
+          42.4665,
+          42.776958,
+          55.080375,
+          42.281125,
+          45.732792
+        ],
+        "changed_runs_ms": [
+          33.79325,
+          36.171959,
+          33.60925,
+          47.536708,
+          38.242
+        ]
+      },
+      {
+        "measurement_set": 2,
+        "mode": "default",
+        "identity": {
+          "case": "transcript_save_serialization",
+          "implementation": "utf8_tree",
+          "iterations": 20,
+          "serialized_bytes": 16474020
+        },
+        "baseline_ms": 61.716459,
+        "changed_ms": 52.062167,
+        "change_percent": -15.642977831894079,
+        "allocations": 16380,
+        "allocated_bytes": 61718240,
+        "equal_work": true,
+        "baseline_runs_ms": [
+          61.716459,
+          61.902458,
+          59.874708,
+          62.214583,
+          59.8605
+        ],
+        "changed_runs_ms": [
+          52.062167,
+          51.99125,
+          53.862959,
+          51.786,
+          54.459375
+        ]
+      },
+      {
+        "measurement_set": 2,
+        "mode": "review",
+        "identity": {
+          "argument_bytes": 1048576,
+          "case": "large_arguments",
+          "iterations": 8
+        },
+        "baseline_ms": 42.5515,
+        "changed_ms": 33.546833,
+        "change_percent": -21.16180863189311,
+        "allocations": 928,
+        "allocated_bytes": 34902336,
+        "equal_work": true,
+        "baseline_runs_ms": [
+          44.393333,
+          42.5515,
+          42.586042,
+          41.706208,
+          41.966958
+        ],
+        "changed_runs_ms": [
+          33.639625,
+          33.569541,
+          33.490792,
+          33.405916,
+          33.546833
+        ]
+      }
+    ],
+    "default_mode_limitation": "Default mode emits seven cases then exits 1 at the same existing legacy Glob guard in both builds. Review and journal modes exit 0.",
+    "shared_build_settings": {
+      "CMAKE_BUILD_TYPE": "Release",
+      "CMAKE_CXX_COMPILER": "/usr/bin/c++",
+      "CMAKE_CXX_FLAGS": "-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+      "CMAKE_CXX_FLAGS_RELEASE": "-O3 -DNDEBUG",
+      "CMAKE_OSX_ARCHITECTURES": "arm64",
+      "CMAKE_OSX_SYSROOT": "",
+      "CODET_SANITIZERS": "OFF",
+      "CODET_DEPENDENCY_ROOT": "/Volumes/Pro2T/codet-compiled-agent/.deps"
+    },
+    "compiler_banner": "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+    "harness_files": {
+      "sanitization_bench.cpp": "e65cefb040833a65ea241b1dd80399699467e35928c062b5df265f0e02263226",
+      "journal_metrics.hpp": "ef06003b1552e719ef736717100fb4c8ca6d7c5d82010c0b984f6aa32ae1e764",
+      "journal_fixture.hpp": "dc3d91005262c9ae0b895d028d49a46dffe0a092740086370137d8995db83f06",
+      "journal_prepare_interposer.cpp": "017b14a0f1621d862bce95a7d67293e8a8a40795682af73d758ea45d3bef30a4"
+    },
+    "csv": "docs/validation/terminal-diagnostic-recovery-benchmark.csv",
+    "csv_sha256": "2813a3c004e5ff99668317c0ee7211c044359cd565eb846b6201e0f04c6605fd",
+    "assembly": [
+      {
+        "optimization": "O2",
+        "decoder_call_addresses": [
+          "0x22e4",
+          "0x140"
+        ],
+        "call_contexts": [
+          [
+            "00000000000022a4\tldrb\tw8, [x23, x22]",
+            "00000000000022a8\ttbnz\tw8, #0x7, 0x22d8",
+            "00000000000022ac\tand\tw8, w8, #0xff",
+            "00000000000022b0\tcmp\tw8, #0x20",
+            "00000000000022b4\tb.lo\t0x23b0",
+            "00000000000022b8\tcmp\tw8, #0x5c",
+            "00000000000022bc\tb.eq\t0x23b0",
+            "00000000000022c0\tcmp\tw8, #0x7f",
+            "00000000000022c4\tb.eq\t0x23b0",
+            "00000000000022c8\tadd\tx22, x22, #0x1",
+            "00000000000022cc\tcmp\tx22, x20",
+            "00000000000022d0\tb.lo\t0x22a4",
+            "00000000000022d4\tb\t0x2398",
+            "00000000000022d8\tmov\tx8, sp",
+            "00000000000022dc\tmov\tx0, x21",
+            "00000000000022e0\tmov\tx1, x22",
+            "00000000000022e4\tbl\t0x22e4",
+            "00000000000022e8\tldrb\tw8, [sp, #0x10]"
+          ],
+          [
+            "0000000000000100\tb\t0x120",
+            "0000000000000104\tadd\tx23, x23, #0x1",
+            "0000000000000108\tsxtb\tw8, w24",
+            "000000000000010c\tcmp\tw8, #0x0",
+            "0000000000000110\tcset\tw8, lt",
+            "0000000000000114\tcsel\tx9, x25, x24, lt",
+            "0000000000000118\tcmp\tx23, x9",
+            "000000000000011c\tb.hs\t0x198",
+            "0000000000000120\tldr\tx9, [x19]",
+            "0000000000000124\ttst\tw8, #0x1",
+            "0000000000000128\tcsel\tx8, x9, x19, ne",
+            "000000000000012c\tldrsb\tw8, [x8, x23]",
+            "0000000000000130\ttbz\tw8, #0x1f, 0x104",
+            "0000000000000134\tadd\tx8, sp, #0x8",
+            "0000000000000138\tmov\tx0, x19",
+            "000000000000013c\tmov\tx1, x23",
+            "0000000000000140\tbl\t0x140",
+            "0000000000000144\tldrb\tw8, [sp, #0x18]"
+          ]
+        ],
+        "conclusion": "Each decoder call is reached only after the caller excludes ASCII; the repair loop uses a sign-bit test to advance ASCII directly.",
+        "assembly_sha256": "04069197f740bd2a449a48aa588440cfedbbdecf1ea11cbd1d8b14051be7a265",
+        "relocations_sha256": "84bf659d328042deafc0dc02d8c953348a153ced8139cfc79b892c011f29a0e3"
+      },
+      {
+        "optimization": "O3",
+        "decoder_call_addresses": [
+          "0x2454",
+          "0x150"
+        ],
+        "call_contexts": [
+          [
+            "0000000000002414\tldrb\tw8, [x23, x22]",
+            "0000000000002418\ttbnz\tw8, #0x7, 0x2448",
+            "000000000000241c\tand\tw8, w8, #0xff",
+            "0000000000002420\tcmp\tw8, #0x20",
+            "0000000000002424\tb.lo\t0x2520",
+            "0000000000002428\tcmp\tw8, #0x5c",
+            "000000000000242c\tb.eq\t0x2520",
+            "0000000000002430\tcmp\tw8, #0x7f",
+            "0000000000002434\tb.eq\t0x2520",
+            "0000000000002438\tadd\tx22, x22, #0x1",
+            "000000000000243c\tcmp\tx22, x20",
+            "0000000000002440\tb.lo\t0x2414",
+            "0000000000002444\tb\t0x2508",
+            "0000000000002448\tmov\tx0, sp",
+            "000000000000244c\tmov\tx1, x21",
+            "0000000000002450\tmov\tx2, x22",
+            "0000000000002454\tbl\t0x2454",
+            "0000000000002458\tldrb\tw8, [sp, #0x10]"
+          ],
+          [
+            "0000000000000110\tb\t0x130",
+            "0000000000000114\tadd\tx23, x23, #0x1",
+            "0000000000000118\tsxtb\tw8, w24",
+            "000000000000011c\tcmp\tw8, #0x0",
+            "0000000000000120\tcset\tw8, lt",
+            "0000000000000124\tcsel\tx9, x25, x24, lt",
+            "0000000000000128\tcmp\tx23, x9",
+            "000000000000012c\tb.hs\t0x1a8",
+            "0000000000000130\tldr\tx9, [x19]",
+            "0000000000000134\ttst\tw8, #0x1",
+            "0000000000000138\tcsel\tx8, x9, x19, ne",
+            "000000000000013c\tldrsb\tw8, [x8, x23]",
+            "0000000000000140\ttbz\tw8, #0x1f, 0x114",
+            "0000000000000144\tadd\tx0, sp, #0x8",
+            "0000000000000148\tmov\tx1, x19",
+            "000000000000014c\tmov\tx2, x23",
+            "0000000000000150\tbl\t0x150",
+            "0000000000000154\tldrb\tw8, [sp, #0x18]"
+          ]
+        ],
+        "conclusion": "Each decoder call is reached only after the caller excludes ASCII; the repair loop uses a sign-bit test to advance ASCII directly.",
+        "assembly_sha256": "c44d77db5472e33b0c82677daf63e14f69ba6dbe76279ee1ea870bff79070a2b",
+        "relocations_sha256": "d920c38ca0318c4e99e4030ec734d0e6c266668ea8d8505a32ac0acdde30ebfb"
+      }
+    ]
+  },
+  "limitations": [
+    "Existing Clang-Tidy findings and the old-SDK incomplete platform.cpp translation unit remain; this is not a clean Clang-Tidy gate.",
+    "Existing Clang Analyzer context.cpp divide-by-zero finding remains; this is not a clean analyzer gate.",
+    "Semgrep uses the locked Python frontend 1.177.0 override; the bundled native CLI version mismatch remains.",
+    "The provisioned Python 3.12/PyYAML environment is used for tooling. Existing local implicit-int-float-conversion/unused-result warning downgrades are unchanged.",
+    "The default benchmark retains its existing final legacy Glob guard failure in both builds. Review and journal modes succeed.",
+    "Linux and native Tiger runtime acceptance were not executed on this macOS host. No tracked check or warning policy was weakened."
+  ],
+  "raw_logs": [
+    {
+      "path": "build/terminal-diagnostic-recovery/analysis-progress.log",
+      "sha256": "c56fcd9b0ec2bbe9cfa6d69f728a4b8aaff5c2e3ad0eaa37765f21f151d74388"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/ascii-build.log",
+      "sha256": "cbfad3f0b9e3e798b8b1999dd15c84dc25ba191ea958cfb98e45ebe06ce76707"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/ascii-unit.log",
+      "sha256": "ce06da4e2086d8ef9076ebcfbae359d43351196dc9e25f5ffa5737da23dd6c24"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/assembly-build.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/assembly-inspection.log",
+      "sha256": "f286955231d97895fe1b93c6d8cacf22a08a0964208a1dee31cabcfa45a22746"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/baseline-policy-build.log",
+      "sha256": "2792f1c98a28b4eba79530b9fc9cee923dd3e8b9c14443bd4c1a45f76610e02f"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/baseline-policy-repeat.log",
+      "sha256": "1d1f22715bb686176ab1b4e9d39e561575b8a520b5fc995fca8b67c407543739"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/baseline-release-build.log",
+      "sha256": "adddc2edcacb47615ff7ed4b83f62799ec66873461d07d2dc00a9e0325f50d46"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/benchmark-build-progress.log",
+      "sha256": "c41edb851b52edf10ad02987f1f908e103d4c52dd9257ea58b74579f82e04e32"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/benchmark-progress.log",
+      "sha256": "8ca6dcf1e1aa961a562f3e133ab1f16a344d2b0e33a00c9636f18c1de5b70977"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/changed-release-build.log",
+      "sha256": "9412d5e67ab9e4dada8a22aed54fb8db8c797938777fbc372b2dd958c9d57334"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/clang-analyzer.log",
+      "sha256": "dd3fae32add7956acfac95d5309a90dfb41c85f57f24b3e84c45e5750965e46e"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/clang-tidy.log",
+      "sha256": "3a3370676eeab0e8f1964a2d7f6cac1288f655261b5cb0ee4d5a7c2f48c98611"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/cppcheck.log",
+      "sha256": "85147d57bfae3c39e9a09e4d5e2e3b88cc883480b371e5f8cc9731fa14d64e9a"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/debug-build.log",
+      "sha256": "8c35b1682f73592d30612d7b0fabdb384fcfff35cb5a076cb48b85b1368aa794"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/debug-ctest.log",
+      "sha256": "ed0f9747ee68d62b3b438fe4ae725e882b347eb797ad004fd2d61fd827aab140"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/diagnostic-build.log",
+      "sha256": "26a47b8ea7b8fef2ed3262f363963fddadf25317b76b55963ba85af49c71152a"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/diagnostic-fault.log",
+      "sha256": "fb59839b9315d631a41d41fabf66c4d7e4dd3f929597581ed9141275f23f2824"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/diagnostic-unit.log",
+      "sha256": "1089c792fecee855dd119254c4264f6851b980ddd4f47394134798fb6a344bdf"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/initial-analysis-progress.log",
+      "sha256": "08efa5bfd4d3f31c51ec9b4036435d587a5a144d7175a7f6c30eb9bea9eed918"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/initial-validation-progress.log",
+      "sha256": "43052b0122b9e6101f9b8853f0c1d82507637705e9a29554092d14955c01a55e"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/lint.log",
+      "sha256": "3caddd0ee716d9c2d036b85759bc269aa47f8d138781af9edc6f35922a002b66"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/nonblocking-build.log",
+      "sha256": "c7dd117b75f319295dd73232788e367a57cfef600ef0189fed3440144885186d"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/nonblocking-probe.log",
+      "sha256": "1cf39a9d65a17fc998e4fb30ac9e3ec16253fd93976faa9e1b31ec3fdc8bd7f0"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/nonblocking-unit.log",
+      "sha256": "3134df52ed8830d1a83c3ee5969e55df9d0b174669023ae7e81c8f1bc5af7cce"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/pinned-dependencies.log",
+      "sha256": "c7321bbd9a63460d252ad4387ec1b29c82353b104c497af5a86de15d6616f3a2"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/policy-retry-focused.log",
+      "sha256": "7baeb4f53f62d2f2316006d3c1a213146effbe9bb540a9af79e2c184c00ece3b"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/pre-final-validation-progress.log",
+      "sha256": "4e86658f364d7c6c485e44d2593f126417cdf13a56c4d57bb2eb1d34e2feba54"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/python-focused.log",
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/recovery-status-build.log",
+      "sha256": "cbfad3f0b9e3e798b8b1999dd15c84dc25ba191ea958cfb98e45ebe06ce76707"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/recovery-status-unit.log",
+      "sha256": "8ff91fe3c7f351d3d0faaa32e87d51529577ad4951dde931c2ac6a6c5b2b9f15"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/runner-tests.log",
+      "sha256": "b791840daf4ffca6616ae5196f72c8aeacb18a4aaa5d0a2d3a553599f45b94fa"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/sanitize-build.log",
+      "sha256": "c7dd117b75f319295dd73232788e367a57cfef600ef0189fed3440144885186d"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/sanitize-ctest.log",
+      "sha256": "04abd3105ba57b94abdc1d75d1998ff7a6ff29a9fce6056ee8e22b9971477a0e"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/sanitize-diagnostic-repeated.log",
+      "sha256": "d3962d971a06c96939d22336504b69e0131bc5f31f1597307e88ec200c74813f"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/sanitize-fault-repeated.log",
+      "sha256": "13ff8a40282de1f4a729f0db66dd55f6938403a714b8538096efbb905cf8195a"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/sanitize-intermittent-ctest.log",
+      "sha256": "40e79e0246d7cf1ad59d5de58a058d6508c69fa2d8aed52745576ef407f74e81"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/sanitize-intermittent-lasttest.log",
+      "sha256": "afe2275415b253727ce8860e5aad07228568710232428e7280b63fe55b0c2461"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/selftest.log",
+      "sha256": "740d555865ff458e6ea3a80a11ab83ce36bd761be27466ba58af1b8f395df79b"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/semgrep.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/terminal-build.log",
+      "sha256": "781a0c0bf82e5f7bc2d1bd22dab7c94798ac2a8e21d58a8970bdd91da6f0fa40"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/terminal-fault.log",
+      "sha256": "16264b1a570396fc3976b871d3c79935d2c026890b2f4b3457fa76337c20c6e3"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/terminal-integration.log",
+      "sha256": "e28af1d61c37c343e73fff3438b741c5d684f4621602fa242538262e31e02260"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/terminal-unit.log",
+      "sha256": "0621c6a6919286e72414406542d25e0a5fbb1c97ed75921560aab02c671b47e2"
+    },
+    {
+      "path": "build/terminal-diagnostic-recovery/validation-progress.log",
+      "sha256": "06ff5b0ce87be8bd3446c40b61a301bdcae5d61c6939e505819a6183448e685d"
+    }
+  ]
+}

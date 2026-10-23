@@ -1,7 +1,7 @@
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
-#include "codet/detail/terminal_resources.hpp"
+#include "codet/detail/native_terminal.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/interaction.hpp"
 #include "codet/prompt.hpp"
@@ -325,22 +325,22 @@ public:
     } else {
       resources_.start_editor();
       el_set(
-          resources_.editor, EL_PROMPT, +[](EditLine *edit) -> const char * {
+          resources_.editor(), EL_PROMPT, +[](EditLine *edit) -> const char * {
             void *data = nullptr;
             el_get(edit, EL_CLIENTDATA, &data);
             return static_cast<Terminal *>(data)->prompt_.c_str();
           });
-      el_set(resources_.editor, EL_EDITOR, "emacs");
-      el_set(resources_.editor, EL_SIGNAL, 0);
-      el_set(resources_.editor, EL_CLIENTDATA, this);
-      el_set(resources_.editor, EL_GETCFN, &Terminal::read_character);
+      el_set(resources_.editor(), EL_EDITOR, "emacs");
+      el_set(resources_.editor(), EL_SIGNAL, 0);
+      el_set(resources_.editor(), EL_CLIENTDATA, this);
+      el_set(resources_.editor(), EL_GETCFN, &Terminal::read_character);
       resources_.start_history();
-      if (resources_.entries) {
-        history(resources_.entries, &history_event_, H_SETSIZE, 500);
-        el_set(resources_.editor, EL_HIST, history, resources_.entries);
+      if (resources_.entries()) {
+        history(resources_.entries(), &history_event_, H_SETSIZE, 500);
+        el_set(resources_.editor(), EL_HIST, history, resources_.entries());
       }
       set_mode(c.permission_mode);
-      std::cerr << status_ << '\n';
+      (void)detail::write_diagnostic(std::cerr, {status_});
     }
   }
   ~Terminal() override = default;
@@ -351,7 +351,7 @@ public:
     if (curses_)
       say(text);
     else
-      std::cerr << text << '\n';
+      (void)detail::write_diagnostic(std::cerr, {text});
   }
   void set_mode(const std::string &mode) {
     status_ = "Permissions: " + mode + "; no OS shell sandbox";
@@ -381,16 +381,16 @@ public:
   std::optional<std::string> read(Cancellation &cancel) {
     if (!curses_) {
       read_cancel_ = &cancel;
-      el_set(resources_.editor, EL_PREP_TERM, 1);
+      el_set(resources_.editor(), EL_PREP_TERM, 1);
       int count = 0;
-      const char *text = el_gets(resources_.editor, &count);
+      const char *text = el_gets(resources_.editor(), &count);
       if (!text || count <= 0)
         return std::nullopt;
       std::string line(text, static_cast<size_t>(count));
       while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
         line.pop_back();
-      if (resources_.entries)
-        history(resources_.entries, &history_event_, H_ENTER, line.c_str());
+      if (resources_.entries())
+        history(resources_.entries(), &history_event_, H_ENTER, line.c_str());
       return line;
     }
     input_.clear();
@@ -431,19 +431,14 @@ public:
   }
   void begin_active() {
     input_.clear();
-    if (!curses_ && resources_.saved) {
-      el_set(resources_.editor, EL_PREP_TERM, 0);
-      auto settings = resources_.original;
-      settings.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO));
-      settings.c_cc[VMIN] = 0;
-      settings.c_cc[VTIME] = 0;
-      if (tcsetattr(STDIN_FILENO, TCSANOW, &settings) != 0)
-        throw Error("Cannot prepare active terminal input");
+    if (!curses_ && resources_.saved()) {
+      el_set(resources_.editor(), EL_PREP_TERM, 0);
+      resources_.begin_active();
     }
   }
   void end_active() {
-    if (!curses_ && resources_.saved)
-      (void)tcsetattr(STDIN_FILENO, TCSANOW, &resources_.original);
+    if (!curses_ && resources_.saved())
+      resources_.end_active();
     input_.clear();
     render();
   }
@@ -607,7 +602,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       credentials.save_key(config.provider == "codex" ? "openai" : config.provider, key);
     } else
       throw Error("Native sign-in is deferred. Use login --import FILE or --with-api-key", 2);
-    std::cerr << "Credentials stored privately in Codet state\n";
+    (void)detail::write_diagnostic(std::cerr, {"Credentials stored privately in Codet state"});
     return 0;
   }
   if (o.command == "doctor") {
@@ -747,7 +742,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     else {
       if (o.exec || !isatty(STDIN_FILENO))
         throw Error("Select a session id or --last", 2);
-      std::cerr << state.list().dump(2) << "\nSession id: ";
+      (void)detail::write_diagnostic(std::cerr, {state.list().dump(2), "\nSession id: "}, false);
       std::string id;
       std::getline(std::cin, id);
       session = state.load(id, o.command == "export");
@@ -830,9 +825,10 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
              !event["item"].value("final_result", false) &&
              (event["item"].value("phase", "") == "commentary" ||
               event["item"].value("phase", "") == "partial_answer"))
-      std::cerr << event["item"].value("text", "") << '\n';
+      (void)detail::write_diagnostic(std::cerr, {event["item"].value("text", "")});
     else if (event.value("type", "") == "item.started" && event["item"].contains("tool"))
-      std::cerr << "[" << event["item"]["tool"].get<std::string>() << "]\n";
+      (void)detail::write_diagnostic(
+          std::cerr, {"[", event["item"]["tool"].get_ref<const std::string &>(), "]"});
   };
   Agent agent(config, provider, tools, state, events, diagnostic);
   struct SessionEnd {
@@ -841,9 +837,11 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       try {
         end();
       } catch (const std::exception &error) {
-        std::cerr << "SessionEnd hook cleanup failed: " << safe_text(error.what()) << '\n';
+        (void)detail::write_diagnostic(
+            std::cerr, {"SessionEnd hook cleanup failed: ", safe_text(error.what())});
       } catch (...) {
-        std::cerr << "SessionEnd hook cleanup failed: unknown exception\n";
+        (void)detail::write_diagnostic(std::cerr,
+                                       {"SessionEnd hook cleanup failed: unknown exception"});
       }
     }
   } session_end{[&, started_id = session.id] {

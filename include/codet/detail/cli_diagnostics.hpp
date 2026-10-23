@@ -26,7 +26,10 @@ class CliDiagnostics {
   DiagnosticSink file_sink_;
   void flush(DiagnosticBuffer &buffer) noexcept {
     try {
-      output_.clear();
+      if (!recover_diagnostic_stream(output_)) {
+        buffer.clear();
+        return;
+      }
       buffer.flush(output_);
     } catch (...) {
       // Each ordinary replay gets one independent attempt; notices must still be delivered.
@@ -65,7 +68,7 @@ public:
       if (terminal->fullscreen())
         live.add(text);
     } else
-      output_ << text << '\n';
+      (void)write_diagnostic(output_, {text});
   }
   void deliver_files() noexcept {
     if (auto terminal = screen_.lock(); terminal && terminal->fullscreen())
@@ -79,12 +82,6 @@ public:
     buffering = false;
     flush(live);
     flush(cleanup);
-    try {
-      output_.clear();
-    } catch (...) {
-      files->flush();
-      return;
-    }
     files->finish(file_sink_);
   }
 };

@@ -1,4 +1,4 @@
-#include "codet/detail/terminal_resources.hpp"
+#include "codet/detail/native_terminal.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/output.hpp"
 #include "process_helper.hpp"
@@ -17,10 +17,54 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc > 1 && std::string(argv[1]) == "--codet-stderr-recovery-helper") {
+      if (argc != 2) {
+        std::fputs("stderr-recovery helper accepts no arguments\n", stderr);
+        return 2;
+      }
+      int descriptors[2];
+      if (::pipe(descriptors) != 0)
+        return 3;
+      const int saved = ::dup(STDERR_FILENO);
+      struct Restore {
+        int original, read, write;
+        ~Restore() {
+          if (original >= 0) {
+            (void)::dup2(original, STDERR_FILENO);
+            ::close(original);
+          }
+          ::close(read);
+          ::close(write);
+          codet::detail::recover_diagnostic_stream(std::cerr);
+        }
+      } restore{saved, descriptors[0], descriptors[1]};
+      if (saved < 0 || ::fcntl(descriptors[0], F_SETFL, O_NONBLOCK) < 0 ||
+          ::fcntl(descriptors[1], F_SETFL, O_NONBLOCK) < 0)
+        return 4;
+      char bytes[4096]{};
+      while (::write(descriptors[1], bytes, sizeof(bytes)) > 0) {
+      }
+      if (errno != EAGAIN || ::dup2(descriptors[1], STDERR_FILENO) < 0)
+        return 5;
+      bool failed = false;
+      try {
+        codet::write_file_diagnostic(std::cerr, "blocked notice");
+      } catch (const codet::Error &) {
+        failed = true;
+      }
+      const bool recovered = std::cerr.good() && std::ferror(stderr) == 0;
+      while (::read(descriptors[0], bytes, sizeof(bytes)) > 0) {
+      }
+      codet::report_diagnostic({}, "later warning");
+      const auto count = ::read(descriptors[0], bytes, sizeof(bytes));
+      const bool delivered =
+          count == 14 && std::string(bytes, static_cast<size_t>(count)) == "later warning\n";
+      return failed && recovered && delivered ? 0 : 6;
+    }
     if (argc > 1 && std::string(argv[1]) == "--codet-terminal-startup-helper") {
       const std::string phase = argc > 2 ? argv[2] : "";
-      if (argc != 4 ||
-          (phase != "screen" && phase != "render" && phase != "editor" && phase != "history")) {
+      if (argc != 4 || (phase != "screen" && phase != "render" && phase != "editor" &&
+                        phase != "history" && phase != "active")) {
         std::cerr << "terminal-startup helper expects PHASE PTY_FD\n";
         return 2;
       }
@@ -45,15 +89,15 @@ int main(int argc, char **argv) {
           resources.start_editor();
           if (phase == "history")
             resources.start_history();
-          ::el_set(resources.editor, EL_PREP_TERM, 1);
+          ::el_set(resources.editor(), EL_PREP_TERM, phase == "active" ? 0 : 1);
+          if (phase == "active")
+            resources.begin_active();
         }
         std::rethrow_exception(original);
       } catch (...) {
         if (std::current_exception() != original)
           return 4;
       }
-      if ((phase == "screen" || phase == "render") && !::isendwin())
-        return 5;
       std::cerr << "startup exception preserved after restoration\n";
       return 0;
     }
