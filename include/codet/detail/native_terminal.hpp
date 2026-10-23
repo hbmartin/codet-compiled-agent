@@ -60,8 +60,7 @@ public:
     if (capture(current) && same_terminal_settings(current, settings))
       return;
     TerminalCleanupSignals signals;
-    if (signals.ready())
-      (void)apply(settings);
+    (void)apply(settings);
   }
   bool start_screen() override {
     if (screen_)
@@ -75,10 +74,8 @@ public:
   void stop_screen() noexcept override {
     if (auto *held = std::exchange(screen_, nullptr)) {
       TerminalCleanupSignals signals;
-      if (signals.ready()) {
-        (void)::set_term(held);
-        (void)::endwin();
-      }
+      (void)::set_term(held);
+      (void)::endwin();
       ::delscreen(held);
     }
   }
@@ -87,8 +84,7 @@ public:
   }
   void stop_editor(EditLine *editor) noexcept override {
     TerminalCleanupSignals signals;
-    if (signals.ready())
-      ::el_end(editor);
+    ::el_end(editor);
   }
   History *start_history() override {
     return ::history_init();
