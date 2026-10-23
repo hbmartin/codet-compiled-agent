@@ -9,6 +9,7 @@
 #include "journal_fixture.hpp"
 #include "journal_metrics.hpp"
 #include "process_helper.hpp"
+#include "static_lifetime_metrics.hpp"
 #include "temp.hpp"
 #include <cstdlib>
 #include <cstring>
@@ -315,6 +316,14 @@ TEST(FileDiagnosticsFault, DefaultFileSinkRemainsAvailableDuringLateStaticDestru
   ASSERT_TRUE(WIFEXITED(status));
   EXPECT_EQ(WEXITSTATUS(status), 0);
   EXPECT_EQ(output, "late static sink\n");
+}
+TEST(FileDiagnosticsFault, DefaultFileSinkRegistersNoDestructorWithAWorkingPositiveControl) {
+  const auto child = test::start_helper({"--codet-file-sink-helper", "registration"});
+  ASSERT_GT(child, 0);
+  int status = 0;
+  ASSERT_TRUE(test::wait_helper(child, status));
+  ASSERT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
 }
 TEST(FileDiagnosticsFault, NativeResourceCleanupDoesNotAllocate) {
   struct Ops final : detail::TerminalResourceOps {
@@ -2086,15 +2095,38 @@ void report_from_late_static() {
     std::_Exit(4);
   default_file_diagnostic_sink()("late static sink");
 }
+const void *destructible_positive_control() {
+  struct Positive {
+    ~Positive() {
+      ++codet::test::static_lifetime_metrics.destructions;
+    }
+  };
+  static Positive object;
+  return &object;
+}
 } // namespace
 int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = fs::absolute(argv[0]).string();
   if (argc > 1 && std::string_view(argv[1]) == "--codet-file-sink-helper") {
     if (argc != 3 ||
-        (std::string_view(argv[2]) != "first-use" && std::string_view(argv[2]) != "late-static")) {
-      std::fputs("file-sink helper expects first-use or late-static\n", stderr);
+        (std::string_view(argv[2]) != "first-use" && std::string_view(argv[2]) != "late-static" &&
+         std::string_view(argv[2]) != "registration")) {
+      std::fputs("file-sink helper expects first-use, late-static or registration\n", stderr);
       return 2;
+    }
+    if (std::string_view(argv[2]) == "registration") {
+      auto &metrics = codet::test::static_lifetime_metrics;
+      metrics.observe = true;
+      const auto result = check_default_sink();
+      const auto *positive = destructible_positive_control();
+      metrics.observe = false;
+      if (result || metrics.overflow || !metrics.registered(positive) ||
+          metrics.registered(&default_file_diagnostic_sink())) {
+        std::fputs("default sink destructor registration or observer control failed\n", stderr);
+        return 6;
+      }
+      return 0;
     }
     if (std::string_view(argv[2]) == "late-static" && std::atexit(report_from_late_static) != 0)
       return 5;
