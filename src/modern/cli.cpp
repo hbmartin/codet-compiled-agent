@@ -239,7 +239,6 @@ Options parse(const std::vector<std::string> &args) {
 }
 class Terminal final : public detail::CliDiagnosticSurface {
   detail::NativeTerminalResourceOps native_resources_;
-  detail::TerminalResources resources_{native_resources_};
   bool curses_ = false;
   HistEvent history_event_{};
   std::vector<std::string> transcript_;
@@ -247,6 +246,8 @@ class Terminal final : public detail::CliDiagnosticSurface {
   std::string prompt_;
   std::map<std::string, int> bindings_{{"submit", 10}, {"quit", 4}, {"backspace", 127}};
   const Cancellation *read_cancel_ = nullptr;
+  // Release native callbacks before destroying the prompt/history data they can reference.
+  detail::TerminalResources resources_{native_resources_};
   static int read_character(EditLine *edit, wchar_t *character) {
     void *data = nullptr;
     el_get(edit, EL_CLIENTDATA, &data);
