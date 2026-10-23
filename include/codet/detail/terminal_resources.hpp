@@ -5,6 +5,7 @@
 #include <histedit.h>
 #include <termios.h>
 #include <unistd.h>
+#include <utility>
 
 namespace codet::detail {
 class TerminalResourceOps {
