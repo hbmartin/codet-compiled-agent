@@ -324,10 +324,14 @@ void write_file_diagnostic(std::ostream &output, const std::string &text) {
   if (!output)
     throw Error("Cannot render preserved-file notice");
 }
+namespace {
+void write_default_file_diagnostic(const std::string &text) {
+  write_file_diagnostic(std::cerr, text);
+}
+} // namespace
 const DiagnosticSink &default_file_diagnostic_sink() noexcept {
   // std::function construction from a function pointer does not allocate.
-  static const DiagnosticSink sink =
-      +[](const std::string &text) { write_file_diagnostic(std::cerr, text); };
+  static const DiagnosticSink sink = &write_default_file_diagnostic;
   return sink;
 }
 void FileDiagnosticQueue::submit(std::unique_ptr<FileNotice> notice) noexcept {
