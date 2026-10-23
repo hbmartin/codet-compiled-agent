@@ -157,7 +157,8 @@ TEST(TerminalResources, FailedAcquisitionsAndRepeatedCloseReleaseOnlyOwnedResour
   EXPECT_STREQ(ops.calls, "cehE");
 }
 TEST(TerminalResources, StartupExceptionsRestoreRealPtyModesBeforeReporting) {
-  for (const auto *phase : {"screen", "render", "editor", "history", "active"}) {
+  for (const auto *phase :
+       {"screen", "render", "editor", "history", "active", "unchanged", "failed"}) {
     int master = -1, slave = -1;
     winsize size{24, 80, 0, 0};
     ASSERT_EQ(::openpty(&master, &slave, nullptr, nullptr, &size), 0);
@@ -207,8 +208,9 @@ TEST(TerminalResources, StartupExceptionsRestoreRealPtyModesBeforeReporting) {
     EXPECT_EQ(after.c_cflag, before.c_cflag) << phase;
     EXPECT_EQ(after.c_lflag, before.c_lflag) << phase;
     EXPECT_EQ(std::memcmp(after.c_cc, before.c_cc, sizeof(before.c_cc)), 0) << phase;
-    EXPECT_NE(output.find("startup exception preserved after restoration"), std::string::npos)
-        << phase;
+    if (std::string(phase) != "unchanged")
+      EXPECT_NE(output.find("startup exception preserved after restoration"), std::string::npos)
+          << phase;
   }
 }
 } // namespace

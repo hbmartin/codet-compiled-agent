@@ -11,7 +11,7 @@ import time
 
 
 def main():
-    if len(sys.argv) != 3 or sys.argv[1] not in ("unknown-term", "background-config"):
+    if len(sys.argv) != 3 or sys.argv[1] not in ("unknown-term", "background-term", "background-config", "background-partial"):
         print("terminal helper expects MODE CODET", file=sys.stderr)
         return 2
     mode, binary = sys.argv[1:]
@@ -22,12 +22,14 @@ def main():
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     before = termios.tcgetattr(slave)
     command = [binary, "--ephemeral"]
+    if mode == "background-partial":
+        command = [binary, "--codet-terminal-startup-helper", "failed", "0"]
     if mode == "background-config":
         command += ["-c", "keybindings.invalid=1"]
-    environment = dict(os.environ, TERM="codet-invalid-terminal-33" if mode == "unknown-term" else "xterm")
+    environment = dict(os.environ, TERM="codet-invalid-terminal-33" if mode.endswith("term") else "xterm")
     child = os.fork()
     if child == 0:
-        if mode == "background-config":
+        if mode.startswith("background"):
             os.setpgid(0, 0)
         signal.signal(signal.SIGTTOU, signal.SIG_DFL)
         for descriptor in range(3):

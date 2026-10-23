@@ -234,10 +234,10 @@ class CliTests(unittest.TestCase):
             self.tmp.cleanup()
     def run_cli(self,*args,input=''):
         return subprocess.run([BIN,'-C',str(self.workspace),*args],input=input,text=True,capture_output=True,env=self.env,timeout=15)
-    def terminal_startup(self,mode):
+    def terminal_startup(self,mode,binary=BIN):
         temporary=self.root/'terminal-tmp';temporary.mkdir()
         helper=pathlib.Path(__file__).with_name('terminal_cli_helper.py')
-        result=subprocess.run([sys.executable,str(helper),mode,BIN],cwd=self.workspace,
+        result=subprocess.run([sys.executable,str(helper),mode,binary],cwd=self.workspace,
             env=dict(self.env,TMPDIR=str(temporary)),text=True,capture_output=True,timeout=15)
         self.assertEqual(result.returncode,0,result.stderr)
         value=json.loads(result.stdout)
@@ -254,6 +254,14 @@ class CliTests(unittest.TestCase):
         value=self.terminal_startup('background-config')
         self.assertEqual(value['exit'],2,value)
         self.assertIn('keybindings support integer',value['output'])
+    def test_background_unknown_terminal_unwinds_without_sigttou(self):
+        value=self.terminal_startup('background-term')
+        self.assertEqual(value['exit'],1,value)
+        self.assertIn('codet: Cannot initialize terminal',value['output'])
+    def test_background_partial_acquisition_restores_changed_modes(self):
+        value=self.terminal_startup('background-partial',str(pathlib.Path(BIN).with_name('codet_tests')))
+        self.assertEqual(value['exit'],0,value)
+        self.assertIn('startup exception preserved after restoration',value['output'])
     def test_teardown_stop_interrupts_fixture_delays(self):
         import http.client
         for prompt in ('fixture-wait','fixture-idle-stream'):

@@ -1,6 +1,7 @@
 #include "codet/detail/native_terminal.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/output.hpp"
+#include "native_terminal_metrics.hpp"
 #include "process_helper.hpp"
 #include "temp.hpp"
 #include <csignal>
@@ -13,6 +14,47 @@
 #include <sys/resource.h>
 
 std::string codet::test::executable;
+namespace {
+class MutatingFailureOps final : public codet::detail::TerminalResourceOps {
+  codet::detail::NativeTerminalResourceOps native_;
+
+public:
+  bool capture(termios &settings) noexcept override {
+    return native_.capture(settings);
+  }
+  bool apply(const termios &settings) noexcept override {
+    return native_.apply(settings);
+  }
+  void restore(const termios &settings) noexcept override {
+    native_.restore(settings);
+  }
+  bool start_screen() override {
+    termios settings{};
+    if (!capture(settings))
+      throw codet::Error("Cannot capture fixture terminal");
+    settings.c_lflag ^= ECHO;
+    codet::detail::TerminalCleanupSignals signals;
+    if (!signals.ready() || !apply(settings))
+      throw codet::Error("Cannot mutate fixture terminal");
+    return false;
+  }
+  void stop_screen() noexcept override {
+    native_.stop_screen();
+  }
+  EditLine *start_editor() override {
+    return native_.start_editor();
+  }
+  void stop_editor(EditLine *editor) noexcept override {
+    native_.stop_editor(editor);
+  }
+  History *start_history() override {
+    return native_.start_history();
+  }
+  void stop_history(History *entries) noexcept override {
+    native_.stop_history(entries);
+  }
+};
+} // namespace
 int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
@@ -63,8 +105,9 @@ int main(int argc, char **argv) {
     }
     if (argc > 1 && std::string(argv[1]) == "--codet-terminal-startup-helper") {
       const std::string phase = argc > 2 ? argv[2] : "";
-      if (argc != 4 || (phase != "screen" && phase != "render" && phase != "editor" &&
-                        phase != "history" && phase != "active")) {
+      if (argc != 4 ||
+          (phase != "screen" && phase != "render" && phase != "editor" && phase != "history" &&
+           phase != "active" && phase != "unchanged" && phase != "failed")) {
         std::cerr << "terminal-startup helper expects PHASE PTY_FD\n";
         return 2;
       }
@@ -76,10 +119,32 @@ int main(int argc, char **argv) {
         ::close(descriptor);
       ::setenv("TERM", "xterm", 1);
       codet::detail::NativeTerminalResourceOps ops;
+      MutatingFailureOps failure_ops;
+      sigset_t mask_before{}, mask_after{};
+      (void)::pthread_sigmask(SIG_SETMASK, nullptr, &mask_before);
+      auto &metrics = codet::test::native_terminal_metrics;
+      if (phase == "unchanged") {
+        termios settings{};
+        if (!ops.capture(settings))
+          return 5;
+        metrics.observe = true;
+        ops.restore(settings);
+        return metrics.settings == 0 ? 0 : 6;
+      }
       const auto original = std::make_exception_ptr(std::bad_alloc());
       try {
-        codet::detail::TerminalResources resources(ops);
-        if (phase == "screen" || phase == "render") {
+        codet::detail::TerminalResources resources(
+            phase == "failed" ? static_cast<codet::detail::TerminalResourceOps &>(failure_ops)
+                              : ops);
+        if (phase == "failed") {
+          try {
+            resources.start_screen();
+            return 9;
+          } catch (const codet::Error &error) {
+            if (std::string(error.what()) != "Cannot initialize terminal")
+              throw;
+          }
+        } else if (phase == "screen" || phase == "render") {
           resources.start_screen();
           (void)::cbreak();
           (void)::noecho();
@@ -93,11 +158,20 @@ int main(int argc, char **argv) {
           if (phase == "active")
             resources.begin_active();
         }
+        metrics.observe = true;
         std::rethrow_exception(original);
       } catch (...) {
         if (std::current_exception() != original)
           return 4;
       }
+      metrics.observe = false;
+      (void)::pthread_sigmask(SIG_SETMASK, nullptr, &mask_after);
+      for (int signal = 1; signal < NSIG; ++signal)
+        if (sigismember(&mask_before, signal) != sigismember(&mask_after, signal))
+          return 7;
+      if ((phase == "screen" || phase == "render") &&
+          (metrics.ends != 1 || metrics.deletes != 1 || !metrics.ended_before_delete))
+        return 8;
       std::cerr << "startup exception preserved after restoration\n";
       return 0;
     }
