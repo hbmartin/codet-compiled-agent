@@ -47,15 +47,6 @@ extern "C" int sqlite3_step(sqlite3_stmt *statement) {
   codet::test::journal_metrics.after(statement, status);
   return status;
 }
-extern "C" int sqlite3_prepare_v2(sqlite3 *db, const char *sql, int bytes, sqlite3_stmt **statement,
-                                  const char **tail) {
-  using Prepare = int (*)(sqlite3 *, const char *, int, sqlite3_stmt **, const char **);
-  static const auto prepare = reinterpret_cast<Prepare>(dlsym(RTLD_NEXT, "sqlite3_prepare_v2"));
-  const auto status = prepare(db, sql, bytes, statement, tail);
-  if (status == SQLITE_OK)
-    codet::test::journal_metrics.prepared(*statement);
-  return status;
-}
 namespace {
 template <class Work> void measure_journal(codet::Json description, Work work) {
   codet::test::journal_metrics = {true};

@@ -17,15 +17,6 @@
 #include <sqlite3.h>
 #include <typeinfo>
 using namespace codet;
-extern "C" int sqlite3_prepare_v2(sqlite3 *db, const char *sql, int bytes, sqlite3_stmt **statement,
-                                  const char **tail) {
-  using Prepare = int (*)(sqlite3 *, const char *, int, sqlite3_stmt **, const char **);
-  static const auto prepare = reinterpret_cast<Prepare>(dlsym(RTLD_NEXT, "sqlite3_prepare_v2"));
-  const auto status = prepare(db, sql, bytes, statement, tail);
-  if (status == SQLITE_OK)
-    codet::test::journal_metrics.prepared(*statement);
-  return status;
-}
 namespace fault {
 bool after_commit = false, after_token = false, fired = false;
 bool provider_read_error = false, rollback_read = false, token_error = false;
