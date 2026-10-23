@@ -59,6 +59,42 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc > 1 && std::string(argv[1]) == "--codet-line-output-helper") {
+      if (argc < 4) {
+        std::fputs("line-output helper expects FD CLI_ARGS\n", stderr);
+        return 2;
+      }
+      struct ReplyFailure : std::streambuf {
+        std::streambuf *original;
+        int notify;
+        bool failed = false;
+        ReplyFailure(std::streambuf *buffer, int fd) : original(buffer), notify(fd) {}
+        std::streamsize xsputn(const char *text, std::streamsize size) override {
+          if (!failed && std::string_view(text, static_cast<size_t>(size)) == "fixture done") {
+            failed = true;
+            (void)::write(notify, "f", 1);
+            return 0;
+          }
+          return original->sputn(text, size);
+        }
+        int overflow(int character) override {
+          return original->sputc(static_cast<char>(character));
+        }
+        int sync() override {
+          return original->pubsync();
+        }
+      } buffer(std::cout.rdbuf(), std::stoi(argv[2]));
+      struct RestoreOutput {
+        std::streambuf *original;
+        ~RestoreOutput() {
+          std::cout.rdbuf(original);
+          codet::detail::recover_diagnostic_stream(std::cout);
+        }
+      } restore{std::cout.rdbuf(&buffer)};
+      std::vector<std::string> arguments(argv + 3, argv + argc);
+      codet::Cancellation cancel;
+      return codet::cli_main(arguments, cancel);
+    }
     if (argc > 1 && std::string(argv[1]) == "--codet-stderr-recovery-helper") {
       if (argc != 2) {
         std::fputs("stderr-recovery helper accepts no arguments\n", stderr);

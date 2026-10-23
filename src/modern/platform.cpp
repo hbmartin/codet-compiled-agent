@@ -331,6 +331,8 @@ void deliver_file_diagnostic(const FileNotice &notice, const DiagnosticSink &sin
 bool detail::recover_diagnostic_stream(std::ostream &output) noexcept {
   if (&output == &std::cerr)
     std::clearerr(stderr);
+  else if (&output == &std::cout)
+    std::clearerr(stdout);
   try {
     output.clear();
     return static_cast<bool>(output);

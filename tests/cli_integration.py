@@ -180,7 +180,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif 'fixture-question' in prompt:
             answer=completed[-1]['content']
             delta={'content':'question answered' if 'libcurl' in answer else 'answer missing'};reason='stop'
-        else:delta={'content':'fixture done'};reason='stop'
+        else:delta={'content':'recovered reply' if 'fixture-recovered-output' in prompt else 'fixture done'};reason='stop'
         frame={'choices':[{'delta':delta,'finish_reason':reason}],'usage':{'prompt_tokens':10,'completion_tokens':2}}
         data=('data: '+json.dumps(frame)+'\n\ndata: [DONE]\n\n').encode()
         if 'fixture-active-stream' in prompt or 'fixture-idle-stream' in prompt:
@@ -1129,6 +1129,76 @@ class CliTests(unittest.TestCase):
 
     def test_stdin_and_single_json_result(self):
         r=self.run_cli('exec','--output-format=json',input='piped prompt');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(json.loads(r.stdout)['result'],'fixture done')
+    def test_nonblocking_jsonl_failure_stops_without_retry_or_error_record(self):
+        for early in (True,False):
+            with self.subTest(early=early):
+                self.server.requests=[]
+                reader,writer=os.pipe();os.set_blocking(reader,False);os.set_blocking(writer,False)
+                def fill(writer=writer):
+                    with contextlib.suppress(BlockingIOError):
+                        while True:os.write(writer,b'x'*4096)
+                if early:fill()
+                else:self.server.before_reply=fill
+                process=subprocess.Popen([BIN,'-C',str(self.workspace),'exec','--output-format=jsonl','fixture'],
+                    stdin=subprocess.DEVNULL,stdout=writer,stderr=subprocess.PIPE,env=self.env)
+                try:
+                    _,error=process.communicate(timeout=10)
+                    self.assertEqual(process.returncode,1,error)
+                    self.assertIn(b'Cannot write standard output',error)
+                    self.assertEqual(len(self.server.requests),0 if early else 1)
+                    emitted=b''
+                    with contextlib.suppress(BlockingIOError):
+                        while True:
+                            chunk=os.read(reader,65536)
+                            if not chunk:break
+                            emitted+=chunk
+                    self.assertNotIn(b'turn.failed',emitted)
+                    self.assertNotIn(b'fixture done',emitted)
+                finally:
+                    if process.poll() is None:process.kill();process.wait(timeout=5)
+                    process.stderr.close();os.close(reader);os.close(writer)
+    def test_required_stdout_commands_reject_broken_pipes(self):
+        for arguments in (['--help'],['--version'],['sessions'],['doctor']):
+            reader,writer=os.pipe();os.close(reader)
+            try:
+                result=subprocess.run([BIN,'-C',str(self.workspace),*arguments],stdin=subprocess.DEVNULL,
+                    stdout=writer,stderr=subprocess.PIPE,env=self.env,timeout=10)
+                self.assertEqual(result.returncode,1,(arguments,result.stderr))
+                self.assertIn(b'Cannot write standard output',result.stderr)
+            finally:os.close(writer)
+    def test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure(self):
+        import pty
+        import select
+        master,slave=pty.openpty();ready,notify=os.pipe()
+        helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+        process=subprocess.Popen([helper,'--codet-line-output-helper',str(notify),'-C',str(self.workspace),'--ui=line'],
+            stdin=slave,stdout=slave,stderr=slave,pass_fds=(notify,),env=dict(self.env,TERM='xterm'))
+        os.close(notify)
+        received=b''
+        def until(text):
+            nonlocal received
+            deadline=time.monotonic()+10
+            while text not in received and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+            self.assertIn(text,received)
+        try:
+            until(b'codet>')
+            os.write(master,b'fixture\n')
+            deadline=time.monotonic()+10
+            while not select.select([ready],[],[],0)[0] and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+            self.assertTrue(select.select([ready],[],[],0)[0],'required reply did not reach failure gate')
+            self.assertEqual(os.read(ready,1),b'f','required reply did not reach failure gate')
+            os.write(master,b'fixture-recovered-output\n')
+            until(b'recovered reply')
+            os.write(master,b'/quit\n')
+            deadline=time.monotonic()+5
+            while process.poll() is None and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+            self.assertEqual(process.poll(),1,received)
+        finally:
+            if process.poll() is None:process.kill();process.wait(timeout=5)
+            os.close(ready);os.close(master);os.close(slave)
     def test_schema_validates_final_answer(self):
         schema=self.root/'schema.json';schema.write_text(json.dumps({'type':'object','properties':{'answer':{'type':'integer'}},'required':['answer']}))
         r=self.run_cli('exec','--output-format=json','--output-schema',str(schema),'fixture-schema')

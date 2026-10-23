@@ -1,6 +1,7 @@
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
+#include "codet/detail/cli_output.hpp"
 #include "codet/detail/native_terminal.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/interaction.hpp"
@@ -238,6 +239,7 @@ Options parse(const std::vector<std::string> &args) {
   return o;
 }
 class Terminal final : public detail::CliDiagnosticSurface {
+  detail::CliOutput &output_;
   detail::NativeTerminalResourceOps native_resources_;
   bool curses_ = false;
   HistEvent history_event_{};
@@ -301,7 +303,7 @@ class Terminal final : public detail::CliDiagnosticSurface {
   }
 
 public:
-  Terminal(const Config &c, const std::string &color) {
+  Terminal(const Config &c, const std::string &color, detail::CliOutput &output) : output_(output) {
     curses_ =
         (c.ui == "curses" || (c.ui == "auto" && env("TERM") != "dumb" && !env("TERM").empty()));
     for (auto it = c.keybindings.begin(); it != c.keybindings.end(); ++it) {
@@ -368,7 +370,7 @@ public:
                           transcript_.begin() + static_cast<long>(transcript_.size() - 1000));
       render();
     } else
-      std::cout << text << '\n';
+      (void)output_.display({text});
   }
   static std::vector<std::string> split(const std::string &text) {
     std::vector<std::string> ls;
@@ -472,7 +474,7 @@ public:
       auto text = input_;
       input_.clear();
       if (!curses_)
-        std::cout << '\n';
+        output_.echo({"\n"});
       else
         say("you> " + text);
       render();
@@ -487,12 +489,14 @@ public:
             break;
         } while (!input_.empty());
         if (!curses_)
-          std::cout << "\b \b" << std::flush;
+          output_.echo({"\b \b"});
       }
     } else if (ch >= 32 && ch <= 255 && input_.size() < 65536) {
       input_ += static_cast<char>(ch);
-      if (!curses_)
-        std::cout << static_cast<char>(ch) << std::flush;
+      if (!curses_) {
+        const auto character = static_cast<char>(ch);
+        output_.echo({std::string_view(&character, 1)});
+      }
     }
     render();
     return {};
@@ -522,12 +526,13 @@ public:
 } // namespace
 int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   const auto o = parse(args);
+  detail::CliOutput output;
   if (o.help) {
-    std::cout << help;
+    output.required({help}, false);
     return 0;
   }
   if (o.version) {
-    std::cout << "codet " << CODET_VERSION << "\n";
+    output.required({"codet ", CODET_VERSION});
     return 0;
   }
   if (!o.images.empty() && !o.command.empty() && o.command != "exec" && o.command != "resume" &&
@@ -585,10 +590,9 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     if (o.action == "status") {
       const auto auth = credentials.load();
       const bool present = auth.contains("codex") || auth.contains("api_keys");
-      std::cout << Json({{"credentials_present", present},
-                         {"subscription_imported", auth.contains("codex")}})
-                       .dump()
-                << '\n';
+      output.required({Json({{"credentials_present", present},
+                             {"subscription_imported", auth.contains("codex")}})
+                           .dump()});
       return present ? 0 : 1;
     }
     if (!o.import.empty() && o.key)
@@ -607,19 +611,18 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   }
   if (o.command == "doctor") {
     NativeProcesses processes;
-    std::cout << Json({{"version", CODET_VERSION},
-                       {"pointer_bits", sizeof(void *) * 8},
-                       {"provider", config.provider},
-                       {"durability", config.durability},
-                       {"cwd", config.cwd.string()},
-                       {"state", config.home.string()},
-                       {"os_sandbox", false},
-                       {"application_permissions", true},
-                       {"target_runtime_verified", false},
-                       {"capabilities",
-                        Tools(config, files, processes, http, clock).capabilities()}})
-                     .dump(2)
-              << '\n';
+    output.required(
+        {Json({{"version", CODET_VERSION},
+               {"pointer_bits", sizeof(void *) * 8},
+               {"provider", config.provider},
+               {"durability", config.durability},
+               {"cwd", config.cwd.string()},
+               {"state", config.home.string()},
+               {"os_sandbox", false},
+               {"application_permissions", true},
+               {"target_runtime_verified", false},
+               {"capabilities", Tools(config, files, processes, http, clock).capabilities()}})
+             .dump(2)});
     return 0;
   }
   fs::path state_home = config.home;
@@ -719,18 +722,18 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   state.set_diagnostics(diagnostic);
   diagnostics->install(state);
   if (o.command == "sessions") {
-    std::cout << state.list().dump(2) << '\n';
+    output.required({state.list().dump(2)});
     return 0;
   }
   if (o.command == "repair") {
     if (o.repair_token) {
-      std::cout << state.repair_session_token(o.session, o.last).dump(2) << '\n';
+      output.required({state.repair_session_token(o.session, o.last).dump(2)});
       return 0;
     }
     Tools inspection(config, files, processes, http, clock);
-    std::cout
-        << state.repair(o.session, o.last, o.repair_provider, o.repair_recovery, inspection).dump(2)
-        << '\n';
+    output.required(
+        {state.repair(o.session, o.last, o.repair_provider, o.repair_recovery, inspection)
+             .dump(2)});
     return 0;
   }
   Session session;
@@ -750,13 +753,11 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     if (o.command == "export") {
       if (o.format == "text") {
         for (const auto &m : session.messages)
-          std::cout << m.role << ": " << m.text << "\n\n";
+          output.required({m.role, ": ", m.text, "\n"});
       } else
-        std::cout << Json({{"id", session.id},
-                           {"name", session.name},
-                           {"messages", session.messages}})
-                         .dump(2)
-                  << '\n';
+        output.required(
+            {Json({{"id", session.id}, {"name", session.name}, {"messages", session.messages}})
+                 .dump(2)});
       return 0;
     }
   }
@@ -795,7 +796,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   diagnostics->cleanup = DiagnosticBuffer(config.tool_output_limit);
   detail::TerminalDiagnosticsScope<Terminal> restore_diagnostics{terminal, diagnostics, state};
   if (interactive) {
-    restore_diagnostics.activate(std::make_shared<Terminal>(config, o.color));
+    restore_diagnostics.activate(std::make_shared<Terminal>(config, o.color, output));
     terminal->set_mode(config.permission_mode);
   }
   interaction = terminal ? std::make_shared<Interaction>() : std::shared_ptr<Interaction>{};
@@ -819,12 +820,16 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   auto events = [&](const Json &event) {
     if (terminal)
       interaction->post(event);
-    else if (o.format == "jsonl")
-      std::cout << event.dump(-1, ' ', false, Json::error_handler_t::replace) << '\n' << std::flush;
-    else if (event.value("type", "") == "item.completed" &&
-             !event["item"].value("final_result", false) &&
-             (event["item"].value("phase", "") == "commentary" ||
-              event["item"].value("phase", "") == "partial_answer"))
+    else if (o.format == "jsonl") {
+      if (event.value("type", "") == "turn.failed") {
+        if (!output.failed())
+          output.secondary({event.dump(-1, ' ', false, Json::error_handler_t::replace)});
+      } else
+        output.required({event.dump(-1, ' ', false, Json::error_handler_t::replace)});
+    } else if (event.value("type", "") == "item.completed" &&
+               !event["item"].value("final_result", false) &&
+               (event["item"].value("phase", "") == "commentary" ||
+                event["item"].value("phase", "") == "partial_answer"))
       (void)detail::write_diagnostic(std::cerr, {event["item"].value("text", "")});
     else if (event.value("type", "") == "item.started" && event["item"].contains("tool"))
       (void)detail::write_diagnostic(
@@ -1032,18 +1037,17 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       if (terminal)
         terminal->say(answer);
       else if (o.format == "text")
-        std::cout << answer << '\n';
+        output.required({answer});
       else if (o.format == "json")
-        std::cout << Json({{"session_id", session.id},
-                           {"status", "success"},
-                           {"result", result.text},
-                           {"structured_output", result.structured},
-                           {"usage",
-                            {{"input_tokens", result.usage.input},
-                             {"output_tokens", result.usage.output},
-                             {"cached_input_tokens", result.usage.cached}}}})
-                         .dump()
-                  << '\n';
+        output.required({Json({{"session_id", session.id},
+                               {"status", "success"},
+                               {"result", result.text},
+                               {"structured_output", result.structured},
+                               {"usage",
+                                {{"input_tokens", result.usage.input},
+                                 {"output_tokens", result.usage.output},
+                                 {"cached_input_tokens", result.usage.cached}}}})
+                             .dump()});
       return 0;
     } catch (const Error &e) {
       if (terminal) {
@@ -1054,13 +1058,16 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
         cancel.requested = false;
         return e.code;
       }
-      if (o.format == "json") {
-        Json failed = {{"session_id", session.id}, {"status", "error"}, {"error", e.what()}};
-        if (const auto *raw = dynamic_cast<const ProviderError *>(&e))
-          failed["provider_error"] = raw->details();
-        if (dynamic_cast<const HookFailure *>(&e))
-          failed["hook_failure"] = true;
-        std::cout << failed.dump() << '\n';
+      if (o.format == "json" && !output.failed()) {
+        try {
+          Json failed = {{"session_id", session.id}, {"status", "error"}, {"error", e.what()}};
+          if (const auto *raw = dynamic_cast<const ProviderError *>(&e))
+            failed["provider_error"] = raw->details();
+          if (dynamic_cast<const HookFailure *>(&e))
+            failed["hook_failure"] = true;
+          output.secondary({failed.dump()});
+        } catch (...) { // NOLINT(bugprone-empty-catch): Preserve the original operation error.
+        }
       }
       throw;
     } catch (const std::exception &e) {
@@ -1090,7 +1097,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   if (!interactive) {
 
     if (prompt.empty() && pending_images.empty() && o.command == "fork") {
-      std::cout << Json({{"type", "thread.started"}, {"thread_id", session.id}}).dump() << '\n';
+      output.required({Json({{"type", "thread.started"}, {"thread_id", session.id}}).dump()});
       return 0;
     }
     if (prompt.empty() && pending_images.empty())
@@ -1100,7 +1107,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   if (!prompt.empty() || !pending_images.empty())
     run(prompt);
   if (quit_requested)
-    return 0;
+    return output.status(0);
   while (!cancel.requested && !quit_requested) {
     std::optional<std::string> input;
     if (!followups.empty()) {
@@ -1245,6 +1252,6 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     }
     run(*input);
   }
-  return quit_requested ? 0 : cancel.requested ? 130 : 0;
+  return output.status(quit_requested ? 0 : cancel.requested ? 130 : 0);
 }
 } // namespace codet
