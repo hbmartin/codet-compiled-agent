@@ -9,6 +9,90 @@
 using namespace codet;
 using namespace testing;
 namespace {
+struct PartialDiagnosticStream : std::streambuf {
+  std::string bytes;
+  bool partial = true, fail_newline = false;
+  size_t records = 0;
+  std::streamsize xsputn(const char *text, std::streamsize count) override {
+    ++records;
+    const auto written = partial ? std::min(count, std::streamsize{2}) : count;
+    bytes.append(text, static_cast<size_t>(written));
+    return written;
+  }
+  int overflow(int character) override {
+    if (fail_newline)
+      return traits_type::eof();
+    bytes += static_cast<char>(character);
+    return character;
+  }
+};
+TEST(DiagnosticWriter, PartialRecordsRetainASeparatorAcrossFailedAttempts) {
+  for (bool mask : {false, true}) {
+    PartialDiagnosticStream buffer;
+    std::ostream stream(&buffer);
+    if (mask)
+      stream.exceptions(std::ios::badbit);
+    detail::DiagnosticWriter writer(stream);
+    if (mask)
+      EXPECT_THROW(writer.write({"first"}), std::ios_base::failure);
+    else
+      EXPECT_FALSE(writer.write({"first"}));
+    buffer.partial = false;
+    buffer.fail_newline = true;
+    if (mask)
+      EXPECT_THROW(writer.write({"must not start"}), std::ios_base::failure);
+    else
+      EXPECT_FALSE(writer.write({"must not start"}));
+    EXPECT_EQ(buffer.records, 1u);
+    buffer.fail_newline = false;
+    EXPECT_TRUE(writer.write({"second"}));
+    EXPECT_EQ(buffer.bytes, "fi\nsecond\n");
+  }
+}
+TEST(DiagnosticWriter, FailedTrailingNewlineIsRepairedBeforeTheNextRecord) {
+  PartialDiagnosticStream buffer;
+  buffer.partial = false;
+  buffer.fail_newline = true;
+  std::ostream stream(&buffer);
+  detail::DiagnosticWriter writer(stream);
+  EXPECT_FALSE(writer.write({"first"}));
+  buffer.fail_newline = false;
+  EXPECT_TRUE(writer.write({"second"}));
+  EXPECT_EQ(buffer.bytes, "first\nsecond\n");
+}
+TEST(DiagnosticWriter, HumanTextEscapesControlsWithoutChangingRawJsonSanitization) {
+  const std::string text =
+      std::string("raw\0\r\x1b]0;title\a\x7f", 16) + "\xc2\x9b\xe2\x80\xae\xe2\x80\xa8\xff";
+  const auto shown = detail::terminal_text(text);
+  EXPECT_EQ(shown,
+            "raw\\x00\\x0D\\x1B]0;title\\x07\\x7F\\xC2\\x9B\\xE2\\x80\\xAE\\xE2\\x80\\xA8\\xFF");
+  const std::string printable = "Jose\xc3\xa9 \xe9\x9b\xaa \xf0\x9f\x90\xb1\n\tpath\\name";
+  EXPECT_EQ(detail::terminal_text(printable), printable);
+  EXPECT_EQ(safe_text("\x1b\r\a"), "\x1b\r\a");
+  EXPECT_EQ(safe_json(Json("\x1b")), "\x1b");
+}
+TEST(DiagnosticWriter, HumanTextPreservesPrintableAsciiAndEscapesMalformedPrefixesByteForByte) {
+  const auto escaped = [](const std::string &text) {
+    constexpr char hex[] = "0123456789ABCDEF";
+    std::string result;
+    for (const auto character : text) {
+      const auto byte = static_cast<unsigned char>(character);
+      result += "\\x";
+      result += hex[byte >> 4u];
+      result += hex[byte & 15u];
+    }
+    return result;
+  };
+  for (unsigned byte = 0; byte < 128; ++byte) {
+    const std::string text(1, static_cast<char>(byte));
+    EXPECT_EQ(detail::terminal_text(text),
+              byte == '\n' || byte == '\t' || (byte >= 0x20 && byte != 0x7f) ? text
+                                                                             : escaped(text));
+  }
+  for (const std::string bad :
+       {"\xc0\xaf", "\xe0\x80", "\xed\xa0\x80", "\xf0\x80\x80", "\xf4\x90\x80\x80", "\xe2\x82"})
+    EXPECT_EQ(detail::terminal_text(bad + "X"), escaped(bad) + "X");
+}
 struct NoticeStream : std::stringbuf {
   size_t writes = 0, flushes = 0;
   bool fail_write = false, fail_flush = false;
@@ -67,6 +151,17 @@ struct CliDiagnosticsTest : Test {
     diagnostics->files->submit(std::move(held));
   }
 };
+TEST_F(CliDiagnosticsTest, NoticesShareThePartialOrdinaryDiagnosticBoundary) {
+  PartialDiagnosticStream buffer;
+  std::ostream stream(&buffer);
+  detail::CliDiagnostics sink(stream);
+  sink.emit("warning");
+  buffer.partial = false;
+  sink.files->submit(std::make_unique<FileNotice>("held-path", FileNoticeKind::tool_result));
+  sink.deliver_files();
+  EXPECT_EQ(buffer.bytes,
+            "wa\nTool result receipt candidate (publication unconfirmed): held-path\n");
+}
 TEST_F(CliDiagnosticsTest, FailedLineNoticeIsRetainedForOneEmergencyAttemptAfterRestoration) {
   NoticeStream buffer;
   buffer.fail_write = true;
@@ -152,7 +247,7 @@ TEST_F(CliDiagnosticsTest, OrdinaryWritesRecoverAfterFailureWithoutRequiringAnot
     (void)detail::write_diagnostic(stream, {"[", "tool", "]"});
     const std::string body("raw\0body", 8);
     EXPECT_TRUE(detail::write_diagnostic(stream, {"codet: ", body}));
-    EXPECT_EQ(buffer.str(), std::string("hook warning\n[tool]\ncodet: ") + body + "\n");
+    EXPECT_EQ(buffer.str(), std::string("\nhook warning\n[tool]\ncodet: ") + body + "\n");
   }
 }
 TEST_F(CliDiagnosticsTest, FailedNoticeDoesNotSuppressLaterOrdinaryStderrDiagnostics) {
@@ -171,7 +266,7 @@ TEST_F(CliDiagnosticsTest, FailedNoticeDoesNotSuppressLaterOrdinaryStderrDiagnos
   report_diagnostic({}, "hook warning");
   detail::CliDiagnostics sink;
   sink.emit("later warning");
-  EXPECT_EQ(buffer.str(), "hook warning\nlater warning\n");
+  EXPECT_EQ(buffer.str(), "\nhook warning\nlater warning\n");
 }
 TEST_F(CliDiagnosticsTest, NonblockingStderrFailureRecoversCppAndCStreamStateInAFreshProcess) {
   const auto child = test::start_helper({"--codet-stderr-recovery-helper"});

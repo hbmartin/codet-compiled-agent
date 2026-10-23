@@ -240,6 +240,16 @@ const char *FileNotice::label() const noexcept {
                    : "Tool result receipt candidate (publication unconfirmed): ";
 }
 namespace {
+bool stderr_separator = false, stdout_separator = false;
+bool unsafe_unicode_control(uint32_t point) noexcept {
+  return (point >= 0x80 && point <= 0x9f) || point == 0x61c || point == 0x200e || point == 0x200f ||
+         (point >= 0x2028 && point <= 0x202e) || (point >= 0x2060 && point <= 0x2064) ||
+         (point >= 0x2066 && point <= 0x206f) || point == 0xad || point == 0x200b ||
+         point == 0xfeff;
+}
+FILE *diagnostic_file(std::ostream &stream) noexcept {
+  return &stream == &std::cerr ? stderr : &stream == &std::cout ? stdout : nullptr;
+}
 bool printable_file_path(const std::string &path) noexcept {
   for (size_t i = 0; i < path.size();) {
     const auto lead = static_cast<unsigned char>(path[i]);
@@ -252,12 +262,7 @@ bool printable_file_path(const std::string &path) noexcept {
     const auto decoded = decode_text_point(path, i);
     if (!decoded.valid)
       return false;
-    const auto point = decoded.value;
-    // Terminal controls, bidi controls, separators, and selected invisible format characters.
-    if (point < 0x20 || (point >= 0x7f && point <= 0x9f) || point == '\\' || point == 0x61c ||
-        point == 0x200e || point == 0x200f || (point >= 0x2028 && point <= 0x202e) ||
-        (point >= 0x2060 && point <= 0x2064) || (point >= 0x2066 && point <= 0x206f) ||
-        point == 0xad || point == 0x200b || point == 0xfeff)
+    if (unsafe_unicode_control(decoded.value))
       return false;
     i += decoded.consumed;
   }
@@ -310,11 +315,17 @@ void emergency_file_diagnostic(const FileNotice &notice) noexcept {
     }
     return true;
   };
+  if (stderr_separator) {
+    if (!write_all("\n", 1))
+      return;
+    stderr_separator = false;
+  }
   const auto *label = notice.label();
+  stderr_separator = true;
   if (!write_all(label, std::strlen(label)))
     return;
-  if (escaped_file_path(notice.path, write_all))
-    (void)write_all("\n", 1);
+  if (escaped_file_path(notice.path, write_all) && write_all("\n", 1))
+    stderr_separator = false;
 }
 void deliver_file_diagnostic(const FileNotice &notice, const DiagnosticSink &sink) noexcept {
   if (sink)
@@ -329,10 +340,8 @@ void deliver_file_diagnostic(const FileNotice &notice, const DiagnosticSink &sin
   emergency_file_diagnostic(notice);
 }
 bool detail::recover_diagnostic_stream(std::ostream &output) noexcept {
-  if (&output == &std::cerr)
-    std::clearerr(stderr);
-  else if (&output == &std::cout)
-    std::clearerr(stdout);
+  if (auto *file = diagnostic_file(output))
+    std::clearerr(file);
   try {
     output.clear();
     return static_cast<bool>(output);
@@ -341,36 +350,95 @@ bool detail::recover_diagnostic_stream(std::ostream &output) noexcept {
     return false;
   }
 }
-bool detail::write_diagnostic(std::ostream &output, std::initializer_list<std::string_view> parts,
-                              bool newline, bool flush) {
-  struct Recover {
+detail::DiagnosticWriter::DiagnosticWriter(std::ostream &output) noexcept
+    : output_(output), pending_(&output == &std::cerr   ? stderr_separator
+                                : &output == &std::cout ? stdout_separator
+                                                        : separator_) {}
+bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> parts, bool newline,
+                                     bool flush) {
+  struct Recovery {
     std::ostream &stream;
-    ~Recover() {
-      recover_diagnostic_stream(stream);
+    bool &pending;
+    bool newline, attempted = false, complete = false;
+    ~Recovery() {
+      if (!complete) {
+        if (newline && attempted)
+          pending = true;
+        recover_diagnostic_stream(stream);
+      }
     }
-  } recover{output};
-  if (!recover_diagnostic_stream(output))
-    output.clear(output.rdstate()); // Preserve configured exception-mask behavior on entry.
+  } recovery{output_, pending_, newline};
+  auto *file = diagnostic_file(output_);
+  if ((!output_ || (file && std::ferror(file))) && !recover_diagnostic_stream(output_))
+    output_.clear(output_.rdstate()); // Preserve configured exception-mask behavior.
+  if (pending_) {
+    output_.put('\n');
+    if (!output_)
+      return false;
+    pending_ = false;
+  }
   for (auto part : parts) {
-    while (!part.empty() && output) {
+    while (!part.empty() && output_) {
       const auto count =
           std::min(part.size(), static_cast<size_t>(std::numeric_limits<std::streamsize>::max()));
-      output.write(part.data(), static_cast<std::streamsize>(count));
+      recovery.attempted = true;
+      output_.write(part.data(), static_cast<std::streamsize>(count));
       part.remove_prefix(count);
     }
-    if (!output)
+    if (!output_)
       break;
   }
-  if (newline && output)
-    output.put('\n');
+  if (newline && output_) {
+    recovery.attempted = true;
+    output_.put('\n');
+  }
   if (flush)
-    output.flush();
-  return static_cast<bool>(output);
+    output_.flush();
+  recovery.complete = static_cast<bool>(output_);
+  return recovery.complete;
 }
-void write_file_diagnostic(std::ostream &output, const std::string &text) {
-  if (!detail::write_diagnostic(output, {text}, true, true))
+bool detail::write_diagnostic(std::ostream &output, std::initializer_list<std::string_view> parts,
+                              bool newline, bool flush) {
+  DiagnosticWriter writer(output);
+  return writer.write(parts, newline, flush);
+}
+void detail::DiagnosticWriter::file(const std::string &text) {
+  if (!write({text}, true, true))
     throw Error("Cannot render preserved-file notice");
 }
+void write_file_diagnostic(std::ostream &output, const std::string &text) {
+  detail::DiagnosticWriter writer(output);
+  writer.file(text);
+}
+std::string detail::terminal_text(const std::string &text) {
+  constexpr char hex[] = "0123456789ABCDEF";
+  std::string result;
+  result.reserve(text.size());
+  for (size_t i = 0; i < text.size();) {
+    const auto lead = static_cast<unsigned char>(text[i]);
+    size_t consumed = 1;
+    bool safe;
+    if (lead < 0x80)
+      safe = lead == '\n' || lead == '\t' || (lead >= 0x20 && lead != 0x7f);
+    else {
+      const auto point = decode_text_point(text, i);
+      consumed = point.consumed;
+      safe = point.valid && !unsafe_unicode_control(point.value);
+    }
+    if (safe)
+      result.append(text, i, consumed);
+    else
+      for (size_t j = 0; j < consumed; ++j) {
+        const auto byte = static_cast<unsigned char>(text[i + j]);
+        result += "\\x";
+        result += hex[byte >> 4u];
+        result += hex[byte & 15u];
+      }
+    i += consumed;
+  }
+  return result;
+}
+
 namespace {
 void write_default_file_diagnostic(const std::string &text) {
   write_file_diagnostic(std::cerr, text);

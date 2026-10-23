@@ -231,6 +231,37 @@ TEST(FileDiagnosticsFault, ClearingOrdinaryDiagnosticsDoesNotAllocateOrLoseTheBu
   EXPECT_FALSE(allocated);
   EXPECT_EQ(buffer.add("after clear"), "after clear");
 }
+TEST(FileDiagnosticsFault, PartialDiagnosticRecoveryAndSeparatorRetentionDoNotAllocate) {
+  struct FixedStream : std::streambuf {
+    char bytes[64]{};
+    size_t used = 0;
+    bool partial = true;
+    std::streamsize xsputn(const char *source, std::streamsize count) override {
+      const auto size =
+          std::min(static_cast<size_t>(count), partial ? size_t{2} : sizeof(bytes) - used);
+      std::memcpy(bytes + used, source, size);
+      used += size;
+      return static_cast<std::streamsize>(size);
+    }
+    int overflow(int character) override {
+      const auto byte = static_cast<char>(character);
+      return xsputn(&byte, 1) == 1 ? character : traits_type::eof();
+    }
+  } buffer;
+  std::ostream output(&buffer);
+  detail::DiagnosticWriter writer(output);
+  fault::fired = false;
+  fault::countdown = 0;
+  const bool first = writer.write({"first"});
+  buffer.partial = false;
+  const bool second = writer.write({"second"});
+  const bool allocated = fault::fired;
+  fault::disable();
+  EXPECT_FALSE(allocated);
+  EXPECT_FALSE(first);
+  EXPECT_TRUE(second);
+  EXPECT_EQ(std::string(buffer.bytes, buffer.used), "fi\nsecond\n");
+}
 TEST(FileDiagnosticsFault, LiveReplayAllocationFailureDoesNotDiscardCleanupOrNotices) {
   struct FixedStream : std::streambuf {
     char bytes[4096]{};

@@ -75,4 +75,11 @@ TEST(CliOutput, MissingBufferAndConfiguredExceptionsCannotBecomeSuccess) {
   EXPECT_EQ(output.status(0), 1);
   EXPECT_EQ(stream.exceptions(), std::ios::badbit);
 }
+TEST(CliOutput, SecondarySerializationCannotReplaceAnExistingFailure) {
+  std::ostringstream stream;
+  detail::CliOutput output(stream);
+  EXPECT_NO_THROW(output.secondary_record([]() -> std::string { throw std::bad_alloc(); }));
+  EXPECT_TRUE(output.failed());
+  EXPECT_TRUE(stream.str().empty());
+}
 } // namespace

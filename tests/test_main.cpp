@@ -136,7 +136,7 @@ int main(int argc, char **argv) {
       codet::report_diagnostic({}, "later warning");
       const auto count = ::read(descriptors[0], bytes, sizeof(bytes));
       const bool delivered =
-          count == 14 && std::string(bytes, static_cast<size_t>(count)) == "later warning\n";
+          count == 15 && std::string(bytes, static_cast<size_t>(count)) == "\nlater warning\n";
       return failed && recovered && delivered ? 0 : 6;
     }
     if (argc > 1 && std::string(argv[1]) == "--codet-terminal-startup-helper") {

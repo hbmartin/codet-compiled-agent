@@ -822,8 +822,8 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       interaction->post(event);
     else if (o.format == "jsonl") {
       if (event.value("type", "") == "turn.failed") {
-        if (!output.failed())
-          output.secondary({event.dump(-1, ' ', false, Json::error_handler_t::replace)});
+        output.secondary_record(
+            [&] { return event.dump(-1, ' ', false, Json::error_handler_t::replace); });
       } else
         output.required({event.dump(-1, ' ', false, Json::error_handler_t::replace)});
     } else if (event.value("type", "") == "item.completed" &&
@@ -1052,28 +1052,27 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     } catch (const Error &e) {
       if (terminal) {
         pending_input(false);
-        terminal->say(std::string("Error: ") + safe_text(e.what()));
+        terminal->say(std::string("Error: ") + detail::terminal_text(e.what()));
         if (const auto *raw = dynamic_cast<const ProviderError *>(&e))
-          terminal->say(raw->body);
+          terminal->say(detail::terminal_text(raw->body));
         cancel.requested = false;
         return e.code;
       }
-      if (o.format == "json" && !output.failed()) {
-        try {
+      if (o.format == "json") {
+        output.secondary_record([&] {
           Json failed = {{"session_id", session.id}, {"status", "error"}, {"error", e.what()}};
           if (const auto *raw = dynamic_cast<const ProviderError *>(&e))
             failed["provider_error"] = raw->details();
           if (dynamic_cast<const HookFailure *>(&e))
             failed["hook_failure"] = true;
-          output.secondary({failed.dump()});
-        } catch (...) { // NOLINT(bugprone-empty-catch): Preserve the original operation error.
-        }
+          return failed.dump();
+        });
       }
       throw;
     } catch (const std::exception &e) {
       if (terminal) {
         pending_input(false);
-        terminal->say("Error: " + safe_text(e.what()));
+        terminal->say("Error: " + detail::terminal_text(e.what()));
         if (!quit_requested)
           cancel.requested = false;
         return 1;

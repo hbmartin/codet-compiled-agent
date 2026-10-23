@@ -100,6 +100,13 @@ Interactive workflows include `/model [MODEL [EFFORT]]`, `/status`, and `/compac
 Preserved-file notices keep readable Unicode paths and selectively escape unsafe bytes and
 terminal controls. This display policy does not guarantee visually unique Unicode paths.
 Emergency output uses reversible ASCII byte escapes for the complete path.
+Delivery remains best effort: an unwritable or full nonblocking stderr can prevent the notice
+from being printed. Emergency output does not wait for the descriptor to become writable.
+
+Required headless stdout writes are checked, including flushing; delivery failure exits nonzero.
+Line-mode sessions attempt later replies after an output failure and report a failed exit status
+if a reply was lost. Human-facing provider errors escape unsafe terminal controls, including in
+redirected stderr; structured provider errors retain their original body or base64 representation.
 
 ## Documentation
 

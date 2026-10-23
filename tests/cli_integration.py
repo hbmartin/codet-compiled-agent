@@ -125,6 +125,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if 'fixture-error' in prompt:
             data=b'{"error":{"message":"do-not-leak-fake-credential"}}'
             self.send_response(401);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+        if 'fixture-control-error' in prompt:
+            data=b'provider:\x1b]0;spoofed\x07\r\x00\xc2\x9b\xe2\x80\xae\n\tJos\xc3\xa9'
+            if 'invalid' in prompt:data+=b'\xff'
+            self.send_response(401);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
         if 'fixture-wait' in prompt and self.stop.wait(2):return
         last_user=max((i for i,m in enumerate(messages) if m['role']=='user'),default=0)
         completed=[m for m in messages[last_user:] if m['role']=='tool']
@@ -1205,6 +1209,42 @@ class CliTests(unittest.TestCase):
         self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(json.loads(r.stdout)['structured_output'],{'answer':42})
     def test_provider_errors_preserve_raw_body(self):
         r=self.run_cli('exec','--output-format=json','fixture-error');self.assertEqual(r.returncode,1);self.assertEqual(json.loads(r.stdout)['status'],'error');self.assertEqual(json.loads(r.stdout)['provider_error']['body'],'{"error":{"message":"do-not-leak-fake-credential"}}')
+    def test_provider_controls_are_escaped_in_stderr_but_structured_bytes_survive(self):
+        import base64
+        raw=b'provider:\x1b]0;spoofed\x07\r\x00\xc2\x9b\xe2\x80\xae\n\tJos\xc3\xa9'
+        for invalid in (False,True):
+            body=raw+(b'\xff' if invalid else b'')
+            result=self.run_cli('exec','--output-format=json','fixture-control-error'+('-invalid' if invalid else ''))
+            self.assertEqual(result.returncode,1)
+            details=json.loads(result.stdout)['provider_error']
+            self.assertEqual(base64.b64decode(details['body_base64']) if invalid else details['body'].encode(),body)
+            self.assertIn('provider:\\x1B]0;spoofed\\x07\\x0D\\x00\\xC2\\x9B\\xE2\\x80\\xAE\n\tJos\u00e9',result.stderr)
+            for control in ('\x1b','\a','\r','\0','\x9b','\u202e'):self.assertNotIn(control,result.stderr)
+            if invalid:self.assertIn('\\xFF',result.stderr)
+    def test_provider_controls_are_escaped_in_both_interactive_displays(self):
+        import pty
+        import select
+        for mode in ('line','curses'):
+            master,slave=pty.openpty()
+            process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+            received=b''
+            def until(text):
+                nonlocal received
+                deadline=time.monotonic()+10
+                while text not in received and time.monotonic()<deadline:
+                    if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+                self.assertIn(text,received)
+            try:
+                until(b'codet>');os.write(master,b'fixture-control-error\n')
+                until(b'provider:\\x1B]0;spoofed')
+                self.assertNotIn(b'\x1b]0;spoofed',received)
+                os.write(master,b'/quit\n');deadline=time.monotonic()+5
+                while process.poll() is None and time.monotonic()<deadline:
+                    if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+                self.assertEqual(process.poll(),0,received)
+            finally:
+                if process.poll() is None:process.kill();process.wait(timeout=5)
+                os.close(master);os.close(slave)
     def test_curl_incomplete_frames_keep_body_and_never_retry(self):
         for mode in ('named','unnamed','malformed'):
             with self.subTest(mode=mode):
