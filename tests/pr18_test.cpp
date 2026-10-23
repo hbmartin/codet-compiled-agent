@@ -2790,6 +2790,40 @@ TEST_F(Pr24, PreservedFilePathsSurviveDiagnosticAllocationFailures) {
     if (entry.path().filename().string().find("-backup-") != std::string::npos)
       EXPECT_THAT(backup_diagnostic, HasSubstr(entry.path().string()));
 }
+TEST_F(Pr24, DefaultFileReportingRecoversStderrAndPreservesUnicodeAndOriginalExceptions) {
+  const auto home = config.state_root / u8"Jos\u00e9-雪";
+  StateStore state(files, home);
+  auto session = state.create();
+  ToolCall call{"receipt", "exec_command", Json::object()};
+  state.tool_started(session.id, call);
+  call.name = "wrong";
+  codet::Message result;
+  result.role = "tool";
+  result.tool_call_id = call.id;
+  testing::internal::CaptureStderr();
+  std::cerr.setstate(std::ios::badbit);
+  EXPECT_THROW(state.complete_tool(session, call, result), Error);
+  const auto receipt = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(std::cerr.good());
+  EXPECT_THAT(receipt, HasSubstr("Uncommitted tool result preserved at "));
+  EXPECT_THAT(receipt, HasSubstr(home.string()));
+  Db raw(home / "state.sqlite3");
+  raw.exec("UPDATE session_revisions SET revision='broken'");
+  const auto original = std::make_exception_ptr(std::logic_error("published backup failure"));
+  files.on_backup = [&] { std::rethrow_exception(original); };
+  testing::internal::CaptureStderr();
+  std::cerr.setstate(std::ios::badbit);
+  try {
+    state.repair_session_token(session.id, false);
+    ADD_FAILURE() << "repair should preserve the publication exception";
+  } catch (...) {
+    EXPECT_EQ(std::current_exception(), original);
+  }
+  const auto backup = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(std::cerr.good());
+  EXPECT_THAT(backup, HasSubstr("Session repair backup: "));
+  EXPECT_THAT(backup, HasSubstr(home.string()));
+}
 TEST_F(Pr24, PreservedFileReceiverDefersReportingAndKeepsTheOriginalFailure) {
   StateStore state(files, config.state_root);
   auto queue = std::make_shared<FileDiagnosticQueue>();

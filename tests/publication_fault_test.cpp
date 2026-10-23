@@ -273,6 +273,16 @@ TEST(FileDiagnosticsFault, LiveReplayAllocationFailureDoesNotDiscardCleanupOrNot
   EXPECT_NE(text.find("SessionEnd survives allocation failure\n"), std::string::npos);
   EXPECT_NE(text.find("held-path\n"), std::string::npos);
 }
+TEST(FileDiagnosticsFault, DefaultFileSinkIsAvailableWithoutAllocating) {
+  fault::disable();
+  fault::fired = false;
+  fault::countdown = 0;
+  const auto &sink = default_file_diagnostic_sink();
+  const bool allocated = fault::fired;
+  fault::disable();
+  EXPECT_FALSE(allocated);
+  EXPECT_TRUE(sink);
+}
 TEST(FileDiagnosticsFault, PreviewAllocationFailureRetainsTheOwnedPathUntilFinish) {
   FileDiagnosticQueue queue;
   auto notice = std::make_unique<FileNotice>(std::string(4096, 'p'), FileNoticeKind::repair_backup);

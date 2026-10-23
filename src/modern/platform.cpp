@@ -318,6 +318,21 @@ void deliver_file_diagnostic(const FileNotice &notice, const DiagnosticSink &sin
     }
   emergency_file_diagnostic(notice);
 }
+void write_file_diagnostic(std::ostream &output, const std::string &text) {
+  output.clear();
+  if (&output == &std::cerr)
+    std::clearerr(stderr);
+  output << text << '\n';
+  output.flush();
+  if (!output)
+    throw Error("Cannot render preserved-file notice");
+}
+const DiagnosticSink &default_file_diagnostic_sink() noexcept {
+  // std::function construction from a function pointer does not allocate.
+  static const DiagnosticSink sink =
+      +[](const std::string &text) { write_file_diagnostic(std::cerr, text); };
+  return sink;
+}
 void FileDiagnosticQueue::submit(std::unique_ptr<FileNotice> notice) noexcept {
   auto *node = notice.release();
   node->next = pending_.load(std::memory_order_relaxed);
