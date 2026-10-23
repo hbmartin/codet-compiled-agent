@@ -9,6 +9,7 @@
 #include "journal_fixture.hpp"
 #include "journal_metrics.hpp"
 #include "process_helper.hpp"
+#include "static_lifetime_metrics.hpp"
 #include "temp.hpp"
 #include <cstdlib>
 #include <cstring>
@@ -231,6 +232,37 @@ TEST(FileDiagnosticsFault, ClearingOrdinaryDiagnosticsDoesNotAllocateOrLoseTheBu
   EXPECT_FALSE(allocated);
   EXPECT_EQ(buffer.add("after clear"), "after clear");
 }
+TEST(FileDiagnosticsFault, PartialDiagnosticRecoveryAndSeparatorRetentionDoNotAllocate) {
+  struct FixedStream : std::streambuf {
+    char bytes[64]{};
+    size_t used = 0;
+    bool partial = true;
+    std::streamsize xsputn(const char *source, std::streamsize count) override {
+      const auto size =
+          std::min(static_cast<size_t>(count), partial ? size_t{2} : sizeof(bytes) - used);
+      std::memcpy(bytes + used, source, size);
+      used += size;
+      return static_cast<std::streamsize>(size);
+    }
+    int overflow(int character) override {
+      const auto byte = static_cast<char>(character);
+      return xsputn(&byte, 1) == 1 ? character : traits_type::eof();
+    }
+  } buffer;
+  std::ostream output(&buffer);
+  detail::DiagnosticWriter writer(output);
+  fault::fired = false;
+  fault::countdown = 0;
+  const bool first = writer.write({"first"});
+  buffer.partial = false;
+  const bool second = writer.write({"second"});
+  const bool allocated = fault::fired;
+  fault::disable();
+  EXPECT_FALSE(allocated);
+  EXPECT_FALSE(first);
+  EXPECT_TRUE(second);
+  EXPECT_EQ(std::string(buffer.bytes, buffer.used), "fi\nsecond\n");
+}
 TEST(FileDiagnosticsFault, LiveReplayAllocationFailureDoesNotDiscardCleanupOrNotices) {
   struct FixedStream : std::streambuf {
     char bytes[4096]{};
@@ -284,6 +316,14 @@ TEST(FileDiagnosticsFault, DefaultFileSinkRemainsAvailableDuringLateStaticDestru
   ASSERT_TRUE(WIFEXITED(status));
   EXPECT_EQ(WEXITSTATUS(status), 0);
   EXPECT_EQ(output, "late static sink\n");
+}
+TEST(FileDiagnosticsFault, DefaultFileSinkRegistersNoDestructorWithAWorkingPositiveControl) {
+  const auto child = test::start_helper({"--codet-file-sink-helper", "registration"});
+  ASSERT_GT(child, 0);
+  int status = 0;
+  ASSERT_TRUE(test::wait_helper(child, status));
+  ASSERT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
 }
 TEST(FileDiagnosticsFault, NativeResourceCleanupDoesNotAllocate) {
   struct Ops final : detail::TerminalResourceOps {
@@ -2055,15 +2095,38 @@ void report_from_late_static() {
     std::_Exit(4);
   default_file_diagnostic_sink()("late static sink");
 }
+const void *destructible_positive_control() {
+  struct Positive {
+    ~Positive() {
+      ++codet::test::static_lifetime_metrics.destructions;
+    }
+  };
+  static Positive object;
+  return &object;
+}
 } // namespace
 int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = fs::absolute(argv[0]).string();
   if (argc > 1 && std::string_view(argv[1]) == "--codet-file-sink-helper") {
     if (argc != 3 ||
-        (std::string_view(argv[2]) != "first-use" && std::string_view(argv[2]) != "late-static")) {
-      std::fputs("file-sink helper expects first-use or late-static\n", stderr);
+        (std::string_view(argv[2]) != "first-use" && std::string_view(argv[2]) != "late-static" &&
+         std::string_view(argv[2]) != "registration")) {
+      std::fputs("file-sink helper expects first-use, late-static or registration\n", stderr);
       return 2;
+    }
+    if (std::string_view(argv[2]) == "registration") {
+      auto &metrics = codet::test::static_lifetime_metrics;
+      metrics.observe = true;
+      const auto result = check_default_sink();
+      const auto *positive = destructible_positive_control();
+      metrics.observe = false;
+      if (result || metrics.overflow || !metrics.registered(positive) ||
+          metrics.registered(&default_file_diagnostic_sink())) {
+        std::fputs("default sink destructor registration or observer control failed\n", stderr);
+        return 6;
+      }
+      return 0;
     }
     if (std::string_view(argv[2]) == "late-static" && std::atexit(report_from_late_static) != 0)
       return 5;

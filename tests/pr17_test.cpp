@@ -414,6 +414,32 @@ TEST_F(Pr17, MalformedStreamFieldsAreTypedObservedErrorsAndConsumerFailuresRemai
                                  [](const auto &) { throw std::logic_error("consumer failed"); }),
                std::logic_error);
 }
+TEST_F(Pr17, TransportWrappingCannotReplaceAnOutputConsumerFailure) {
+  struct WrappingTransport : HttpTransport {
+    ProbeHttp &inner;
+    explicit WrappingTransport(ProbeHttp &source) : inner(source) {}
+    HttpResponse perform(const HttpRequest &request, const Cancellation &cancel,
+                         const ChunkSink &sink) override {
+      try {
+        return inner.perform(request, cancel, sink);
+      } catch (const Error &) {
+        throw Error("transport wrapper");
+      }
+    }
+  } transport(http);
+  http.stream = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"text\"}\n\n";
+  CredentialStore credentials(config.home, files, clock);
+  ApiProvider provider(transport, credentials, clock);
+  const auto original = std::make_exception_ptr(Error("stdout failed"));
+  try {
+    provider.complete(config, "", {}, Json::array(), cancel,
+                      [&](const auto &) { std::rethrow_exception(original); });
+    FAIL();
+  } catch (...) {
+    EXPECT_EQ(std::current_exception(), original);
+  }
+  EXPECT_EQ(http.requests, 1u);
+}
 TEST_F(Pr17, RetiredFactsInEitherLegacySystemFieldProduceAnExplicitRuntimeUpdate) {
   for (const auto *key : {"system", "latest_system"}) {
     StateStore state(config.state_root);

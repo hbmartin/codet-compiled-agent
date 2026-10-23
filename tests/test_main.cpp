@@ -1,6 +1,7 @@
 #include "codet/detail/native_terminal.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/output.hpp"
+#include "native_terminal_metrics.hpp"
 #include "process_helper.hpp"
 #include "temp.hpp"
 #include <csignal>
@@ -13,58 +14,148 @@
 #include <sys/resource.h>
 
 std::string codet::test::executable;
+namespace {
+class MutatingFailureOps final : public codet::detail::TerminalResourceOps {
+  codet::detail::NativeTerminalResourceOps native_;
+
+public:
+  bool capture(termios &settings) noexcept override {
+    return native_.capture(settings);
+  }
+  bool apply(const termios &settings) noexcept override {
+    return native_.apply(settings);
+  }
+  void restore(const termios &settings) noexcept override {
+    native_.restore(settings);
+  }
+  bool start_screen() override {
+    termios settings{};
+    if (!capture(settings))
+      throw codet::Error("Cannot capture fixture terminal");
+    settings.c_lflag ^= ECHO;
+    codet::detail::TerminalCleanupSignals signals;
+    if (!signals.ready() || !apply(settings))
+      throw codet::Error("Cannot mutate fixture terminal");
+    return false;
+  }
+  void stop_screen() noexcept override {
+    native_.stop_screen();
+  }
+  EditLine *start_editor() override {
+    return native_.start_editor();
+  }
+  void stop_editor(EditLine *editor) noexcept override {
+    native_.stop_editor(editor);
+  }
+  History *start_history() override {
+    return native_.start_history();
+  }
+  void stop_history(History *entries) noexcept override {
+    native_.stop_history(entries);
+  }
+};
+} // namespace
 int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
-    if (argc > 1 && std::string(argv[1]) == "--codet-stderr-recovery-helper") {
+    if (argc > 1 && std::string(argv[1]) == "--codet-line-output-helper") {
+      if (argc < 4) {
+        std::fputs("line-output helper expects FD CLI_ARGS\n", stderr);
+        return 2;
+      }
+      struct ReplyFailure : std::streambuf {
+        std::streambuf *original;
+        int notify;
+        bool failed = false;
+        ReplyFailure(std::streambuf *buffer, int fd) : original(buffer), notify(fd) {}
+        std::streamsize xsputn(const char *text, std::streamsize size) override {
+          if (!failed && std::string_view(text, static_cast<size_t>(size)) == "fixture done") {
+            failed = true;
+            (void)::write(notify, "f", 1);
+            return 0;
+          }
+          return original->sputn(text, size);
+        }
+        int overflow(int character) override {
+          return original->sputc(static_cast<char>(character));
+        }
+        int sync() override {
+          return original->pubsync();
+        }
+      } buffer(std::cout.rdbuf(), std::stoi(argv[2]));
+      struct RestoreOutput {
+        std::streambuf *original;
+        ~RestoreOutput() {
+          std::cout.rdbuf(original);
+          codet::detail::recover_diagnostic_stream(std::cout);
+        }
+      } restore{std::cout.rdbuf(&buffer)};
+      std::vector<std::string> arguments(argv + 3, argv + argc);
+      codet::Cancellation cancel;
+      return codet::cli_main(arguments, cancel);
+    }
+    if (argc > 1 && (std::string(argv[1]) == "--codet-stderr-recovery-helper" ||
+                     std::string(argv[1]) == "--codet-stdout-recovery-helper")) {
+      const bool use_stdout = std::string(argv[1]) == "--codet-stdout-recovery-helper";
+      auto &stream = use_stdout ? std::cout : std::cerr;
+      const int target = use_stdout ? STDOUT_FILENO : STDERR_FILENO;
       if (argc != 2) {
-        std::fputs("stderr-recovery helper accepts no arguments\n", stderr);
+        std::fputs("stream-recovery helper accepts no arguments\n", stderr);
         return 2;
       }
       int descriptors[2];
       if (::pipe(descriptors) != 0)
         return 3;
-      const int saved = ::dup(STDERR_FILENO);
+      const int saved = ::dup(target);
       struct Restore {
-        int original, read, write;
+        int original, read, write, target;
+        std::ostream &stream;
         ~Restore() {
           if (original >= 0) {
-            (void)::dup2(original, STDERR_FILENO);
+            (void)::dup2(original, target);
             ::close(original);
           }
           ::close(read);
           ::close(write);
-          codet::detail::recover_diagnostic_stream(std::cerr);
+          codet::detail::recover_diagnostic_stream(stream);
         }
-      } restore{saved, descriptors[0], descriptors[1]};
+      } restore{saved, descriptors[0], descriptors[1], target, stream};
       if (saved < 0 || ::fcntl(descriptors[0], F_SETFL, O_NONBLOCK) < 0 ||
           ::fcntl(descriptors[1], F_SETFL, O_NONBLOCK) < 0)
         return 4;
       char bytes[4096]{};
       while (::write(descriptors[1], bytes, sizeof(bytes)) > 0) {
       }
-      if (errno != EAGAIN || ::dup2(descriptors[1], STDERR_FILENO) < 0)
+      if (errno != EAGAIN || ::dup2(descriptors[1], target) < 0)
         return 5;
       bool failed = false;
       try {
-        codet::write_file_diagnostic(std::cerr, "blocked notice");
+        codet::write_file_diagnostic(stream, "blocked notice");
       } catch (const codet::Error &) {
         failed = true;
       }
-      const bool recovered = std::cerr.good() && std::ferror(stderr) == 0;
+      const bool recovered = stream.good() && std::ferror(use_stdout ? stdout : stderr) == 0;
       while (::read(descriptors[0], bytes, sizeof(bytes)) > 0) {
       }
-      codet::report_diagnostic({}, "later warning");
+      if (use_stdout)
+        (void)codet::detail::write_diagnostic(stream, {"later warning"}, true, true);
+      else
+        codet::report_diagnostic({}, "later warning");
       const auto count = ::read(descriptors[0], bytes, sizeof(bytes));
+      const std::string observed = count > 0 ? std::string(bytes, static_cast<size_t>(count)) : "";
+      // Buffered stdout may retain bytes from the failed flush; later output must still work.
       const bool delivered =
-          count == 14 && std::string(bytes, static_cast<size_t>(count)) == "later warning\n";
+          use_stdout ? observed.size() >= 14 &&
+                           observed.compare(observed.size() - 14, 14, "later warning\n") == 0
+                     : observed == "\nlater warning\n";
       return failed && recovered && delivered ? 0 : 6;
     }
     if (argc > 1 && std::string(argv[1]) == "--codet-terminal-startup-helper") {
       const std::string phase = argc > 2 ? argv[2] : "";
-      if (argc != 4 || (phase != "screen" && phase != "render" && phase != "editor" &&
-                        phase != "history" && phase != "active")) {
+      if (argc != 4 ||
+          (phase != "screen" && phase != "render" && phase != "editor" && phase != "history" &&
+           phase != "active" && phase != "unchanged" && phase != "failed")) {
         std::cerr << "terminal-startup helper expects PHASE PTY_FD\n";
         return 2;
       }
@@ -76,10 +167,32 @@ int main(int argc, char **argv) {
         ::close(descriptor);
       ::setenv("TERM", "xterm", 1);
       codet::detail::NativeTerminalResourceOps ops;
+      MutatingFailureOps failure_ops;
+      sigset_t mask_before{}, mask_after{};
+      (void)::pthread_sigmask(SIG_SETMASK, nullptr, &mask_before);
+      auto &metrics = codet::test::native_terminal_metrics;
+      if (phase == "unchanged") {
+        termios settings{};
+        if (!ops.capture(settings))
+          return 5;
+        metrics.observe = true;
+        ops.restore(settings);
+        return metrics.settings == 0 ? 0 : 6;
+      }
       const auto original = std::make_exception_ptr(std::bad_alloc());
       try {
-        codet::detail::TerminalResources resources(ops);
-        if (phase == "screen" || phase == "render") {
+        codet::detail::TerminalResources resources(
+            phase == "failed" ? static_cast<codet::detail::TerminalResourceOps &>(failure_ops)
+                              : ops);
+        if (phase == "failed") {
+          try {
+            resources.start_screen();
+            return 9;
+          } catch (const codet::Error &error) {
+            if (std::string(error.what()) != "Cannot initialize terminal")
+              throw;
+          }
+        } else if (phase == "screen" || phase == "render") {
           resources.start_screen();
           (void)::cbreak();
           (void)::noecho();
@@ -93,11 +206,22 @@ int main(int argc, char **argv) {
           if (phase == "active")
             resources.begin_active();
         }
+        metrics.observe = true;
         std::rethrow_exception(original);
       } catch (...) {
         if (std::current_exception() != original)
           return 4;
       }
+      metrics.observe = false;
+      (void)::pthread_sigmask(SIG_SETMASK, nullptr, &mask_after);
+      for (int signal = 1; signal < NSIG; ++signal)
+        if (sigismember(&mask_before, signal) != sigismember(&mask_after, signal))
+          return 7;
+#ifdef CODET_NATIVE_TERMINAL_METRICS
+      if ((phase == "screen" || phase == "render") &&
+          (metrics.ends != 1 || metrics.deletes != 1 || !metrics.ended_before_delete))
+        return 8;
+#endif
       std::cerr << "startup exception preserved after restoration\n";
       return 0;
     }

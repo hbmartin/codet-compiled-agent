@@ -11,7 +11,7 @@ public:
 };
 
 class CliDiagnostics {
-  std::ostream &output_;
+  std::shared_ptr<DiagnosticWriter> writer_;
   std::weak_ptr<CliDiagnosticSurface> screen_;
   class Immediate final : public FileDiagnosticReceiver {
     DiagnosticSink sink_;
@@ -26,11 +26,7 @@ class CliDiagnostics {
   DiagnosticSink file_sink_;
   void flush(DiagnosticBuffer &buffer) noexcept {
     try {
-      if (!recover_diagnostic_stream(output_)) {
-        buffer.clear();
-        return;
-      }
-      buffer.flush(output_);
+      buffer.flush_to(*writer_);
     } catch (...) {
       // Each ordinary replay gets one independent attempt; notices must still be delivered.
       buffer.clear();
@@ -42,14 +38,14 @@ public:
   DiagnosticBuffer live{65536}, cleanup{65536};
   std::shared_ptr<FileDiagnosticQueue> files = std::make_shared<FileDiagnosticQueue>();
   explicit CliDiagnostics(std::ostream &output = std::cerr)
-      : output_(output),
+      : writer_(std::make_shared<DiagnosticWriter>(output)),
         immediate_(std::make_shared<Immediate>(
-            [stream = &output](const auto &text) { write_file_diagnostic(*stream, text); })),
+            [writer = writer_](const auto &text) { writer->file(text); })),
         file_sink_([this](const std::string &text) {
           if (auto terminal = screen_.lock(); terminal && terminal->fullscreen())
             terminal->diagnostic(text);
           else
-            write_file_diagnostic(output_, text);
+            writer_->file(text);
         }) {}
   CliDiagnostics(const CliDiagnostics &) = delete;
   CliDiagnostics &operator=(const CliDiagnostics &) = delete;
@@ -68,7 +64,7 @@ public:
       if (terminal->fullscreen())
         live.add(text);
     } else
-      (void)write_diagnostic(output_, {text});
+      (void)writer_->write({text});
   }
   void deliver_files() noexcept {
     if (auto terminal = screen_.lock(); terminal && terminal->fullscreen())

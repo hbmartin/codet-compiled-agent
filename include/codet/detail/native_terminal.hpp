@@ -3,9 +3,47 @@
 #include <cstdio>
 #include <curses.h>
 #include <histedit.h>
+#include <pthread.h>
+#include <signal.h>
 #include <unistd.h>
 
 namespace codet::detail {
+class TerminalCleanupSignals {
+  sigset_t previous_{};
+  bool blocked_;
+
+public:
+  TerminalCleanupSignals() noexcept {
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGTTOU);
+    blocked_ = ::pthread_sigmask(SIG_BLOCK, &mask, &previous_) == 0;
+  }
+  TerminalCleanupSignals(const TerminalCleanupSignals &) = delete;
+  TerminalCleanupSignals &operator=(const TerminalCleanupSignals &) = delete;
+  ~TerminalCleanupSignals() {
+    if (blocked_)
+      (void)::pthread_sigmask(SIG_SETMASK, &previous_, nullptr);
+  }
+  bool ready() const noexcept {
+    return blocked_;
+  }
+};
+inline bool same_terminal_settings(const termios &left, const termios &right) noexcept {
+  if (left.c_iflag != right.c_iflag || left.c_oflag != right.c_oflag ||
+      left.c_cflag != right.c_cflag || left.c_lflag != right.c_lflag ||
+      ::cfgetispeed(&left) != ::cfgetispeed(&right) ||
+      ::cfgetospeed(&left) != ::cfgetospeed(&right))
+    return false;
+#ifdef __linux__
+  if (left.c_line != right.c_line)
+    return false;
+#endif
+  for (size_t i = 0; i < NCCS; ++i)
+    if (left.c_cc[i] != right.c_cc[i])
+      return false;
+  return true;
+}
 // Include only at native terminal call sites: curses intentionally exposes macros here.
 class NativeTerminalResourceOps final : public TerminalResourceOps {
   SCREEN *screen_ = nullptr;
@@ -18,6 +56,10 @@ public:
     return ::tcsetattr(STDIN_FILENO, TCSANOW, &settings) == 0;
   }
   void restore(const termios &settings) noexcept override {
+    termios current{};
+    if (capture(current) && same_terminal_settings(current, settings))
+      return;
+    TerminalCleanupSignals signals;
     (void)apply(settings);
   }
   bool start_screen() override {
@@ -31,6 +73,7 @@ public:
   }
   void stop_screen() noexcept override {
     if (auto *held = std::exchange(screen_, nullptr)) {
+      TerminalCleanupSignals signals;
       (void)::set_term(held);
       (void)::endwin();
       ::delscreen(held);
@@ -40,6 +83,7 @@ public:
     return ::el_init("codet", stdin, stdout, stderr);
   }
   void stop_editor(EditLine *editor) noexcept override {
+    TerminalCleanupSignals signals;
     ::el_end(editor);
   }
   History *start_history() override {

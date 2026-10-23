@@ -204,3 +204,10 @@ Two alternating five-run Release measurement sets compare all
 allocation counts, allocated bytes, and SQLite work. The record retains an initial process-cleanup
 test failure, focused reruns, and the successful full sanitizer retry. Existing Clang and legacy
 benchmark limitations remain separate from the changes in this follow-up.
+
+The [checked stdout and terminal cleanup record](validation/output-startup-followup.json)
+documents Debug and ASan/UBSan suites, 1,060 focused repetitions, real pipe and PTY regressions,
+and mutation checks that detect destructible sink storage and missing or late `endwin()` calls.
+Its [53 existing allocation/work comparisons](validation/output-startup-followup-counters.csv)
+retain identical counters against fetched main. These are smoke comparisons, with no latency
+claim. Existing Clang findings and the legacy default-benchmark failure are recorded separately.

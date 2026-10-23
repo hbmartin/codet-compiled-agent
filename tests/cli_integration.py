@@ -125,6 +125,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if 'fixture-error' in prompt:
             data=b'{"error":{"message":"do-not-leak-fake-credential"}}'
             self.send_response(401);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+        if 'fixture-control-error' in prompt:
+            data=b'provider:\x1b]0;spoofed\x07\r\x00\xc2\x9b\xe2\x80\xae\n\tJos\xc3\xa9'
+            if 'invalid' in prompt:data+=b'\xff'
+            self.send_response(401);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
         if 'fixture-wait' in prompt and self.stop.wait(2):return
         last_user=max((i for i,m in enumerate(messages) if m['role']=='user'),default=0)
         completed=[m for m in messages[last_user:] if m['role']=='tool']
@@ -180,7 +184,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif 'fixture-question' in prompt:
             answer=completed[-1]['content']
             delta={'content':'question answered' if 'libcurl' in answer else 'answer missing'};reason='stop'
-        else:delta={'content':'fixture done'};reason='stop'
+        else:delta={'content':'recovered reply' if 'fixture-recovered-output' in prompt else 'fixture done'};reason='stop'
         frame={'choices':[{'delta':delta,'finish_reason':reason}],'usage':{'prompt_tokens':10,'completion_tokens':2}}
         data=('data: '+json.dumps(frame)+'\n\ndata: [DONE]\n\n').encode()
         if 'fixture-active-stream' in prompt or 'fixture-idle-stream' in prompt:
@@ -234,10 +238,10 @@ class CliTests(unittest.TestCase):
             self.tmp.cleanup()
     def run_cli(self,*args,input=''):
         return subprocess.run([BIN,'-C',str(self.workspace),*args],input=input,text=True,capture_output=True,env=self.env,timeout=15)
-    def terminal_startup(self,mode):
+    def terminal_startup(self,mode,binary=BIN):
         temporary=self.root/'terminal-tmp';temporary.mkdir()
         helper=pathlib.Path(__file__).with_name('terminal_cli_helper.py')
-        result=subprocess.run([sys.executable,str(helper),mode,BIN],cwd=self.workspace,
+        result=subprocess.run([sys.executable,str(helper),mode,binary],cwd=self.workspace,
             env=dict(self.env,TMPDIR=str(temporary)),text=True,capture_output=True,timeout=15)
         self.assertEqual(result.returncode,0,result.stderr)
         value=json.loads(result.stdout)
@@ -254,6 +258,14 @@ class CliTests(unittest.TestCase):
         value=self.terminal_startup('background-config')
         self.assertEqual(value['exit'],2,value)
         self.assertIn('keybindings support integer',value['output'])
+    def test_background_unknown_terminal_unwinds_without_sigttou(self):
+        value=self.terminal_startup('background-term')
+        self.assertEqual(value['exit'],1,value)
+        self.assertIn('codet: Cannot initialize terminal',value['output'])
+    def test_background_partial_acquisition_restores_changed_modes(self):
+        value=self.terminal_startup('background-partial',str(pathlib.Path(BIN).with_name('codet_tests')))
+        self.assertEqual(value['exit'],0,value)
+        self.assertIn('startup exception preserved after restoration',value['output'])
     def test_teardown_stop_interrupts_fixture_delays(self):
         import http.client
         for prompt in ('fixture-wait','fixture-idle-stream'):
@@ -1121,12 +1133,118 @@ class CliTests(unittest.TestCase):
 
     def test_stdin_and_single_json_result(self):
         r=self.run_cli('exec','--output-format=json',input='piped prompt');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(json.loads(r.stdout)['result'],'fixture done')
+    def test_nonblocking_jsonl_failure_stops_without_retry_or_error_record(self):
+        for early in (True,False):
+            with self.subTest(early=early):
+                self.server.requests=[]
+                reader,writer=os.pipe();os.set_blocking(reader,False);os.set_blocking(writer,False)
+                def fill(writer=writer):
+                    with contextlib.suppress(BlockingIOError):
+                        while True:os.write(writer,b'x'*4096)
+                if early:fill()
+                else:self.server.before_reply=fill
+                process=subprocess.Popen([BIN,'-C',str(self.workspace),'exec','--output-format=jsonl','fixture'],
+                    stdin=subprocess.DEVNULL,stdout=writer,stderr=subprocess.PIPE,env=self.env)
+                try:
+                    _,error=process.communicate(timeout=10)
+                    self.assertEqual(process.returncode,1,error)
+                    self.assertIn(b'Cannot write standard output',error)
+                    self.assertEqual(len(self.server.requests),0 if early else 1)
+                    emitted=b''
+                    with contextlib.suppress(BlockingIOError):
+                        while True:
+                            chunk=os.read(reader,65536)
+                            if not chunk:break
+                            emitted+=chunk
+                    self.assertNotIn(b'turn.failed',emitted)
+                    self.assertNotIn(b'fixture done',emitted)
+                finally:
+                    if process.poll() is None:process.kill();process.wait(timeout=5)
+                    process.stderr.close();os.close(reader);os.close(writer)
+    def test_required_stdout_commands_reject_broken_pipes(self):
+        for arguments in (['--help'],['--version'],['sessions'],['doctor']):
+            reader,writer=os.pipe();os.close(reader)
+            try:
+                result=subprocess.run([BIN,'-C',str(self.workspace),*arguments],stdin=subprocess.DEVNULL,
+                    stdout=writer,stderr=subprocess.PIPE,env=self.env,timeout=10)
+                self.assertEqual(result.returncode,1,(arguments,result.stderr))
+                self.assertIn(b'Cannot write standard output',result.stderr)
+            finally:os.close(writer)
+    def test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure(self):
+        import pty
+        import select
+        master,slave=pty.openpty();ready,notify=os.pipe()
+        helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+        process=subprocess.Popen([helper,'--codet-line-output-helper',str(notify),'-C',str(self.workspace),'--ui=line'],
+            stdin=slave,stdout=slave,stderr=slave,pass_fds=(notify,),env=dict(self.env,TERM='xterm'))
+        os.close(notify)
+        received=b''
+        def until(text,master=master):
+            nonlocal received
+            deadline=time.monotonic()+10
+            while text not in received and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+            self.assertIn(text,received)
+        try:
+            until(b'codet>')
+            os.write(master,b'fixture\n')
+            deadline=time.monotonic()+10
+            while not select.select([ready],[],[],0)[0] and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+            self.assertTrue(select.select([ready],[],[],0)[0],'required reply did not reach failure gate')
+            self.assertEqual(os.read(ready,1),b'f','required reply did not reach failure gate')
+            os.write(master,b'fixture-recovered-output\n')
+            until(b'recovered reply')
+            os.write(master,b'/quit\n')
+            deadline=time.monotonic()+5
+            while process.poll() is None and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+            self.assertEqual(process.poll(),1,received)
+        finally:
+            if process.poll() is None:process.kill();process.wait(timeout=5)
+            os.close(ready);os.close(master);os.close(slave)
     def test_schema_validates_final_answer(self):
         schema=self.root/'schema.json';schema.write_text(json.dumps({'type':'object','properties':{'answer':{'type':'integer'}},'required':['answer']}))
         r=self.run_cli('exec','--output-format=json','--output-schema',str(schema),'fixture-schema')
         self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(json.loads(r.stdout)['structured_output'],{'answer':42})
     def test_provider_errors_preserve_raw_body(self):
         r=self.run_cli('exec','--output-format=json','fixture-error');self.assertEqual(r.returncode,1);self.assertEqual(json.loads(r.stdout)['status'],'error');self.assertEqual(json.loads(r.stdout)['provider_error']['body'],'{"error":{"message":"do-not-leak-fake-credential"}}')
+    def test_provider_controls_are_escaped_in_stderr_but_structured_bytes_survive(self):
+        import base64
+        raw=b'provider:\x1b]0;spoofed\x07\r\x00\xc2\x9b\xe2\x80\xae\n\tJos\xc3\xa9'
+        for invalid in (False,True):
+            body=raw+(b'\xff' if invalid else b'')
+            result=self.run_cli('exec','--output-format=json','fixture-control-error'+('-invalid' if invalid else ''))
+            self.assertEqual(result.returncode,1)
+            details=json.loads(result.stdout)['provider_error']
+            self.assertEqual(base64.b64decode(details['body_base64']) if invalid else details['body'].encode(),body)
+            self.assertIn('provider:\\x1B]0;spoofed\\x07\\x0D\\x00\\xC2\\x9B\\xE2\\x80\\xAE\n\tJos\u00e9',result.stderr)
+            for control in ('\x1b','\a','\r','\0','\x9b','\u202e'):self.assertNotIn(control,result.stderr)
+            if invalid:self.assertIn('\\xFF',result.stderr)
+    def test_provider_controls_are_escaped_in_both_interactive_displays(self):
+        import pty
+        import select
+        for mode in ('line','curses'):
+            master,slave=pty.openpty()
+            process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+            received=b''
+            def until(text,master=master):
+                nonlocal received
+                deadline=time.monotonic()+10
+                while text not in received and time.monotonic()<deadline:
+                    if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+                self.assertIn(text,received)
+            try:
+                until(b'codet>');os.write(master,b'fixture-control-error\n')
+                until(b'provider:\\x1B]0;spoofed')
+                self.assertNotIn(b'\x1b]0;spoofed',received)
+                os.write(master,b'/quit\n');deadline=time.monotonic()+5
+                while process.poll() is None and time.monotonic()<deadline:
+                    if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+                self.assertEqual(process.poll(),0,received)
+            finally:
+                if process.poll() is None:process.kill();process.wait(timeout=5)
+                os.close(master);os.close(slave)
     def test_curl_incomplete_frames_keep_body_and_never_retry(self):
         for mode in ('named','unnamed','malformed'):
             with self.subTest(mode=mode):

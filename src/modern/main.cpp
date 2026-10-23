@@ -27,14 +27,17 @@ int main(int argc, char **argv) {
   try {
     return codet::cli_main(args, c);
   } catch (const codet::ProviderError &e) {
-    (void)codet::detail::write_diagnostic(std::cerr, {"codet: ", e.what()});
-    (void)codet::detail::write_diagnostic(std::cerr, {e.body});
+    (void)codet::detail::write_diagnostic(std::cerr,
+                                          {"codet: ", codet::detail::terminal_text(e.what())});
+    (void)codet::detail::write_diagnostic(std::cerr, {codet::detail::terminal_text(e.body)});
     return e.code;
   } catch (const codet::Error &e) {
-    (void)codet::detail::write_diagnostic(std::cerr, {"codet: ", codet::safe_text(e.what())});
+    (void)codet::detail::write_diagnostic(std::cerr,
+                                          {"codet: ", codet::detail::terminal_text(e.what())});
     return e.code;
   } catch (const std::exception &e) {
-    (void)codet::detail::write_diagnostic(std::cerr, {"codet: ", codet::safe_text(e.what())});
+    (void)codet::detail::write_diagnostic(std::cerr,
+                                          {"codet: ", codet::detail::terminal_text(e.what())});
     return 1;
   }
 }

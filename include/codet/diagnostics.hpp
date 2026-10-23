@@ -103,10 +103,14 @@ public:
     omitted_ = false;
   }
   void flush(std::ostream &stream) {
+    detail::DiagnosticWriter writer(stream);
+    flush_to(writer);
+  }
+  void flush_to(detail::DiagnosticWriter &writer) {
     for (const auto &message : messages_)
-      (void)detail::write_diagnostic(stream, {message});
+      (void)writer.write({message});
     if (omitted_ && limit_)
-      (void)detail::write_diagnostic(stream, {bounded_text(notice(), limit_ ? limit_ - 1 : 0)});
+      (void)writer.write({bounded_text(notice(), limit_ ? limit_ - 1 : 0)});
     clear();
   }
 };
