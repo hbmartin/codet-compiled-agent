@@ -193,3 +193,14 @@ The record includes Debug and ASan/UBSan suites, twenty diagnostic repetitions, 
 The default benchmark retains its existing final `Glob` failure in both builds; its seven
 preceding cases and all review/journal cases have identical allocation and work counters.
 No timing improvement is claimed. Existing native Clang limitations remain explicit.
+
+Recovery of ordinary stderr diagnostics after notice failures, checked `newterm()` startup,
+lazy terminal restoration, and ASCII decoder fast paths are covered by the
+[terminal and diagnostic recovery validation](validation/terminal-diagnostic-recovery.json).
+It records fresh-process first-use/shutdown and nonblocking-stderr tests, real PTY startup
+regressions, Debug and ASan/UBSan suites, and 800 focused diagnostic/lifecycle repetitions.
+Two alternating five-run Release measurement sets compare all
+[53 cases per set](validation/terminal-diagnostic-recovery-benchmark.csv), including raw timings,
+allocation counts, allocated bytes, and SQLite work. The record retains an initial process-cleanup
+test failure, focused reruns, and the successful full sanitizer retry. Existing Clang and legacy
+benchmark limitations remain separate from the changes in this follow-up.
