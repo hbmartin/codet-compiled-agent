@@ -97,6 +97,10 @@ State lives under `CODET_HOME` or `~/.codet`. No existing Codex or Claurst files
 
 Interactive workflows include `/model [MODEL [EFFORT]]`, `/status`, and `/compact`. Instructions use Codex filename precedence, and skills are discovered lazily with bounded metadata.
 
+Preserved-file notices keep readable Unicode paths and selectively escape unsafe bytes and
+terminal controls. This display policy does not guarantee visually unique Unicode paths.
+Emergency output uses reversible ASCII byte escapes for the complete path.
+
 ## Documentation
 
 - [Codex tool contracts and native Tiger computer use](docs/CODEX-TOOLS.md)

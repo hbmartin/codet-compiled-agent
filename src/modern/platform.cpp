@@ -135,6 +135,10 @@ bool repair_text(const std::string &text, std::string &result) {
   size_t copied = 0;
   bool repaired = false;
   for (size_t i = 0; i < text.size();) {
+    if (static_cast<unsigned char>(text[i]) < 0x80) {
+      ++i;
+      continue;
+    }
     const auto point = decode_text_point(text, i);
     if (point.valid) {
       i += point.consumed;
@@ -238,6 +242,13 @@ const char *FileNotice::label() const noexcept {
 namespace {
 bool printable_file_path(const std::string &path) noexcept {
   for (size_t i = 0; i < path.size();) {
+    const auto lead = static_cast<unsigned char>(path[i]);
+    if (lead < 0x80) {
+      if (lead < 0x20 || lead == 0x7f || lead == '\\')
+        return false;
+      ++i;
+      continue;
+    }
     const auto decoded = decode_text_point(path, i);
     if (!decoded.valid)
       return false;
