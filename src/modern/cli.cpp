@@ -1,6 +1,7 @@
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
+#include "codet/detail/terminal_resources.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/interaction.hpp"
 #include "codet/prompt.hpp"
@@ -237,16 +238,14 @@ Options parse(const std::vector<std::string> &args) {
   return o;
 }
 class Terminal final : public detail::CliDiagnosticSurface {
+  detail::NativeTerminalResourceOps native_resources_;
+  detail::TerminalResources resources_{native_resources_};
   bool curses_ = false;
-  EditLine *edit_ = nullptr;
-  History *history_ = nullptr;
   HistEvent history_event_{};
   std::vector<std::string> transcript_;
   std::string input_, status_, progress_;
   std::string prompt_;
   std::map<std::string, int> bindings_{{"submit", 10}, {"quit", 4}, {"backspace", 127}};
-  struct termios original_ {};
-  bool restore_ = false;
   const Cancellation *read_cancel_ = nullptr;
   static int read_character(EditLine *edit, wchar_t *character) {
     void *data = nullptr;
@@ -302,7 +301,6 @@ class Terminal final : public detail::CliDiagnosticSurface {
 
 public:
   Terminal(const Config &c, const std::string &color) {
-    restore_ = tcgetattr(STDIN_FILENO, &original_) == 0;
     curses_ =
         (c.ui == "curses" || (c.ui == "auto" && env("TERM") != "dumb" && !env("TERM").empty()));
     for (auto it = c.keybindings.begin(); it != c.keybindings.end(); ++it) {
@@ -311,8 +309,7 @@ public:
       bindings_[it.key()] = it.value();
     }
     if (curses_) {
-      if (!initscr())
-        throw Error("Cannot initialize terminal");
+      resources_.start_screen();
       cbreak();
       noecho();
       keypad(stdscr, TRUE);
@@ -325,38 +322,27 @@ public:
       }
       render();
     } else {
-      edit_ = el_init("codet", stdin, stdout, stderr);
-      if (!edit_)
-        throw Error("Cannot initialize line editor");
+      resources_.start_editor();
       el_set(
-          edit_, EL_PROMPT, +[](EditLine *edit) -> const char * {
+          resources_.editor, EL_PROMPT, +[](EditLine *edit) -> const char * {
             void *data = nullptr;
             el_get(edit, EL_CLIENTDATA, &data);
             return static_cast<Terminal *>(data)->prompt_.c_str();
           });
-      el_set(edit_, EL_EDITOR, "emacs");
-      el_set(edit_, EL_SIGNAL, 0);
-      el_set(edit_, EL_CLIENTDATA, this);
-      el_set(edit_, EL_GETCFN, &Terminal::read_character);
-      history_ = history_init();
-      if (history_) {
-        history(history_, &history_event_, H_SETSIZE, 500);
-        el_set(edit_, EL_HIST, history, history_);
+      el_set(resources_.editor, EL_EDITOR, "emacs");
+      el_set(resources_.editor, EL_SIGNAL, 0);
+      el_set(resources_.editor, EL_CLIENTDATA, this);
+      el_set(resources_.editor, EL_GETCFN, &Terminal::read_character);
+      resources_.start_history();
+      if (resources_.entries) {
+        history(resources_.entries, &history_event_, H_SETSIZE, 500);
+        el_set(resources_.editor, EL_HIST, history, resources_.entries);
       }
       set_mode(c.permission_mode);
       std::cerr << status_ << '\n';
     }
   }
-  ~Terminal() override {
-    if (curses_)
-      endwin();
-    if (edit_)
-      el_end(edit_);
-    if (history_)
-      history_end(history_);
-    if (restore_)
-      (void)tcsetattr(STDIN_FILENO, TCSANOW, &original_);
-  }
+  ~Terminal() override = default;
   bool fullscreen() const override {
     return curses_;
   }
@@ -394,16 +380,16 @@ public:
   std::optional<std::string> read(Cancellation &cancel) {
     if (!curses_) {
       read_cancel_ = &cancel;
-      el_set(edit_, EL_PREP_TERM, 1);
+      el_set(resources_.editor, EL_PREP_TERM, 1);
       int count = 0;
-      const char *text = el_gets(edit_, &count);
+      const char *text = el_gets(resources_.editor, &count);
       if (!text || count <= 0)
         return std::nullopt;
       std::string line(text, static_cast<size_t>(count));
       while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
         line.pop_back();
-      if (history_)
-        history(history_, &history_event_, H_ENTER, line.c_str());
+      if (resources_.entries)
+        history(resources_.entries, &history_event_, H_ENTER, line.c_str());
       return line;
     }
     input_.clear();
@@ -444,9 +430,9 @@ public:
   }
   void begin_active() {
     input_.clear();
-    if (!curses_ && restore_) {
-      el_set(edit_, EL_PREP_TERM, 0);
-      auto settings = original_;
+    if (!curses_ && resources_.saved) {
+      el_set(resources_.editor, EL_PREP_TERM, 0);
+      auto settings = resources_.original;
       settings.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO));
       settings.c_cc[VMIN] = 0;
       settings.c_cc[VTIME] = 0;
@@ -455,8 +441,8 @@ public:
     }
   }
   void end_active() {
-    if (!curses_ && restore_)
-      (void)tcsetattr(STDIN_FILENO, TCSANOW, &original_);
+    if (!curses_ && resources_.saved)
+      (void)tcsetattr(STDIN_FILENO, TCSANOW, &resources_.original);
     input_.clear();
     render();
   }

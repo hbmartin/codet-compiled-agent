@@ -3,6 +3,7 @@
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
+#include "codet/detail/terminal_resources.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/prompt.hpp"
 #include "journal_fixture.hpp"
@@ -282,6 +283,50 @@ TEST(FileDiagnosticsFault, DefaultFileSinkIsAvailableWithoutAllocating) {
   fault::disable();
   EXPECT_FALSE(allocated);
   EXPECT_TRUE(sink);
+}
+TEST(FileDiagnosticsFault, NativeResourceCleanupDoesNotAllocate) {
+  struct Ops final : detail::TerminalResourceOps {
+    size_t released = 0;
+    bool capture(termios &) noexcept override {
+      return true;
+    }
+    void restore(const termios &) noexcept override {
+      ++released;
+    }
+    bool start_screen() override {
+      return true;
+    }
+    void stop_screen() noexcept override {
+      ++released;
+    }
+    EditLine *start_editor() override {
+      return reinterpret_cast<EditLine *>(this);
+    }
+    void stop_editor(EditLine *) noexcept override {
+      ++released;
+    }
+    History *start_history() override {
+      return reinterpret_cast<History *>(this);
+    }
+    void stop_history(History *) noexcept override {
+      ++released;
+    }
+  } ops;
+  fault::disable();
+  {
+    detail::TerminalResources resources(ops);
+    resources.start_screen();
+    resources.start_editor();
+    resources.start_history();
+    fault::fired = false;
+    fault::countdown = 0;
+    resources.close();
+    resources.close();
+  }
+  const bool allocated = fault::fired;
+  fault::disable();
+  EXPECT_FALSE(allocated);
+  EXPECT_EQ(ops.released, 4u);
 }
 TEST(FileDiagnosticsFault, PreviewAllocationFailureRetainsTheOwnedPathUntilFinish) {
   FileDiagnosticQueue queue;
