@@ -328,14 +328,16 @@ void deliver_file_diagnostic(const FileNotice &notice, const DiagnosticSink &sin
     }
   emergency_file_diagnostic(notice);
 }
-void detail::recover_diagnostic_stream(std::ostream &output) noexcept {
-  try {
-    output.clear();
-  } catch (...) {
-    // A missing stream buffer can keep clear() from succeeding; preserve the caller's error.
-  }
+bool detail::recover_diagnostic_stream(std::ostream &output) noexcept {
   if (&output == &std::cerr)
     std::clearerr(stderr);
+  try {
+    output.clear();
+    return static_cast<bool>(output);
+  } catch (...) {
+    // A missing stream buffer can keep clear() from succeeding; preserve the caller's error.
+    return false;
+  }
 }
 bool detail::write_diagnostic(std::ostream &output, std::initializer_list<std::string_view> parts,
                               bool newline, bool flush) {
@@ -345,7 +347,8 @@ bool detail::write_diagnostic(std::ostream &output, std::initializer_list<std::s
       recover_diagnostic_stream(stream);
     }
   } recover{output};
-  recover_diagnostic_stream(output);
+  if (!recover_diagnostic_stream(output))
+    output.clear(output.rdstate()); // Preserve configured exception-mask behavior on entry.
   for (auto part : parts) {
     while (!part.empty() && output) {
       const auto count =

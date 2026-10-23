@@ -26,7 +26,10 @@ class CliDiagnostics {
   DiagnosticSink file_sink_;
   void flush(DiagnosticBuffer &buffer) noexcept {
     try {
-      recover_diagnostic_stream(output_);
+      if (!recover_diagnostic_stream(output_)) {
+        buffer.clear();
+        return;
+      }
       buffer.flush(output_);
     } catch (...) {
       // Each ordinary replay gets one independent attempt; notices must still be delivered.

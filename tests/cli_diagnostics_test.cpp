@@ -172,6 +172,14 @@ TEST_F(CliDiagnosticsTest, FailedNoticeDoesNotSuppressLaterOrdinaryStderrDiagnos
   sink.emit("later warning");
   EXPECT_EQ(buffer.str(), "hook warning\nlater warning\n");
 }
+TEST_F(CliDiagnosticsTest, MissingStreamBufferRecoveryCannotMaskTheOriginalFailure) {
+  std::ostream stream(nullptr);
+  EXPECT_FALSE(detail::recover_diagnostic_stream(stream));
+  EXPECT_THROW(stream.exceptions(std::ios::badbit), std::ios_base::failure);
+  EXPECT_FALSE(detail::recover_diagnostic_stream(stream));
+  EXPECT_THROW(write_file_diagnostic(stream, "notice"), std::ios_base::failure);
+  EXPECT_EQ(stream.exceptions(), std::ios::badbit);
+}
 TEST_F(CliDiagnosticsTest, RecoveryPreservesTheOriginalRendererExceptionAndExceptionMask) {
   const auto original = std::make_exception_ptr(std::logic_error("output failure"));
   struct ThrowingStream : std::streambuf {
