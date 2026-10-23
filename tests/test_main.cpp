@@ -1,3 +1,4 @@
+#include "codet/detail/terminal_resources.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/output.hpp"
 #include "process_helper.hpp"
@@ -16,6 +17,46 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc > 1 && std::string(argv[1]) == "--codet-terminal-startup-helper") {
+      const std::string phase = argc > 2 ? argv[2] : "";
+      if (argc != 4 ||
+          (phase != "screen" && phase != "render" && phase != "editor" && phase != "history")) {
+        std::cerr << "terminal-startup helper expects PHASE PTY_FD\n";
+        return 2;
+      }
+      const int descriptor = std::stoi(argv[3]);
+      for (int target = 0; target != 3; ++target)
+        if (::dup2(descriptor, target) < 0)
+          return 3;
+      if (descriptor > 2)
+        ::close(descriptor);
+      ::setenv("TERM", "xterm", 1);
+      codet::detail::NativeTerminalResourceOps ops;
+      const auto original = std::make_exception_ptr(std::bad_alloc());
+      try {
+        codet::detail::TerminalResources resources(ops);
+        if (phase == "screen" || phase == "render") {
+          resources.start_screen();
+          (void)::cbreak();
+          (void)::noecho();
+          if (phase == "render")
+            (void)::refresh();
+        } else {
+          resources.start_editor();
+          if (phase == "history")
+            resources.start_history();
+          ::el_set(resources.editor, EL_PREP_TERM, 1);
+        }
+        std::rethrow_exception(original);
+      } catch (...) {
+        if (std::current_exception() != original)
+          return 4;
+      }
+      if ((phase == "screen" || phase == "render") && !::isendwin())
+        return 5;
+      std::cerr << "startup exception preserved after restoration\n";
+      return 0;
+    }
     if (argc > 1 && std::string(argv[1]) == "--codet-file-notice-terminal-helper") {
       if ((argc != 3 && argc != 4) || (argc == 4 && std::string(argv[3]) != "preview")) {
         std::cerr << "file-notice helper expects PATH [preview]\n";

@@ -24,11 +24,6 @@ class CliDiagnostics {
   };
   std::shared_ptr<FileDiagnosticReceiver> immediate_;
   DiagnosticSink file_sink_;
-  static void write_file_notice(std::ostream &output, const std::string &text) {
-    output << text << '\n';
-    if (!output)
-      throw Error("Cannot render preserved-file notice");
-  }
   void flush(DiagnosticBuffer &buffer) noexcept {
     try {
       output_.clear();
@@ -46,12 +41,12 @@ public:
   explicit CliDiagnostics(std::ostream &output = std::cerr)
       : output_(output),
         immediate_(std::make_shared<Immediate>(
-            [stream = &output](const auto &text) { write_file_notice(*stream, text); })),
+            [stream = &output](const auto &text) { write_file_diagnostic(*stream, text); })),
         file_sink_([this](const std::string &text) {
           if (auto terminal = screen_.lock(); terminal && terminal->fullscreen())
             terminal->diagnostic(text);
           else
-            write_file_notice(output_, text);
+            write_file_diagnostic(output_, text);
         }) {}
   CliDiagnostics(const CliDiagnostics &) = delete;
   CliDiagnostics &operator=(const CliDiagnostics &) = delete;

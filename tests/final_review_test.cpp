@@ -371,10 +371,13 @@ TEST(FileDiagnostics, NormalTextPreservesUnicodeAndEscapesUnsafeBytesReversibly)
 }
 TEST(FileDiagnostics, NormalTextEscapesUnicodeControlsAndMalformedUtf8Losslessly) {
   std::vector<std::string> unsafe = {
-      "\\",           "\x7f",         u8"\u061c",         u8"\u200e", u8"\u200f", u8"\u2028",
-      u8"\u2029",     u8"\u202a",     u8"\u202b",         u8"\u202c", u8"\u202d", u8"\u202e",
-      u8"\u2066",     u8"\u2067",     u8"\u2068",         u8"\u2069", "\x80",     "\xc0\xaf",
-      "\xe0\x80\xaf", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xf0\x9f", "\xe2x"};
+      u8"\u00ad", u8"\u200b", u8"\ufeff",     u8"\u2060",     u8"\u2061",         u8"\u2062",
+      u8"\u2063", u8"\u2064", u8"\u206a",     u8"\u206b",     u8"\u206c",         u8"\u206d",
+      u8"\u206e", u8"\u206f", "\\",           "\x7f",         u8"\u061c",         u8"\u200e",
+      u8"\u200f", u8"\u2028", u8"\u2029",     u8"\u202a",     u8"\u202b",         u8"\u202c",
+      u8"\u202d", u8"\u202e", u8"\u2066",     u8"\u2067",     u8"\u2068",         u8"\u2069",
+      "\x80",     "\xc0\xaf", "\xe0\x80\xaf", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xf0\x9f",
+      "\xe2x"};
   for (unsigned int point = 0; point < 32; ++point)
     unsafe.emplace_back(1, static_cast<char>(point));
   for (unsigned int point = 0x80; point <= 0x9f; ++point)
@@ -397,7 +400,8 @@ TEST(FileDiagnostics, NormalTextEscapesUnicodeControlsAndMalformedUtf8Losslessly
   }
   for (const auto *path :
        {u8"/Jos\u00e9/雪/العربية/👩‍💻", u8"/a\u007e\u00a0\u061b\u061d",
-        u8"/\u200d\u2010\u2027\u202f\u2065\u206a/\U0010ffff"}) {
+        u8"/\u00ac\u00ae\u200a\u200c\u200d\u2010\u2027\u202f\u205f\u2065\u2070/\U0010ffff",
+        u8"/\ufefe\uff00/❤️/\U000e0100/نامه\u200cای"}) {
     FileNotice notice(path, FileNoticeKind::repair_backup);
     EXPECT_EQ(notice.text(), std::string(notice.label()) + path);
   }

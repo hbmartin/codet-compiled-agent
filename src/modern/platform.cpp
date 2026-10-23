@@ -98,40 +98,50 @@ int curl_progress(void *data, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
 }
 } // namespace
 namespace {
+struct TextPoint {
+  uint32_t value;
+  size_t consumed;
+  bool valid;
+};
+TextPoint decode_text_point(const std::string &text, size_t offset) noexcept {
+  const auto lead = static_cast<unsigned char>(text[offset]);
+  if (lead < 0x80)
+    return {lead, 1, true};
+  const size_t width = lead >= 0xc2 && lead <= 0xdf   ? 2
+                       : lead >= 0xe0 && lead <= 0xef ? 3
+                       : lead >= 0xf0 && lead <= 0xf4 ? 4
+                                                      : 0;
+  uint32_t point = lead & (0x7fu >> width);
+  size_t accepted = 1;
+  while (width && accepted < width && accepted < text.size() - offset) {
+    const auto byte = static_cast<unsigned char>(text[offset + accepted]);
+    const unsigned char low = accepted == 1 && lead == 0xe0   ? 0xa0
+                              : accepted == 1 && lead == 0xf0 ? 0x90
+                                                              : 0x80;
+    const unsigned char high = accepted == 1 && lead == 0xed   ? 0x9f
+                               : accepted == 1 && lead == 0xf4 ? 0x8f
+                                                               : 0xbf;
+    if (byte < low || byte > high)
+      break;
+    point = (point << 6u) | (byte & 0x3fu);
+    ++accepted;
+  }
+  // Consume the same malformed prefix as pinned nlohmann replacement sanitization.
+  return {point, accepted, width != 0 && accepted == width};
+}
 bool repair_text(const std::string &text, std::string &result) {
   size_t copied = 0;
   bool repaired = false;
   for (size_t i = 0; i < text.size();) {
-    const auto lead = static_cast<unsigned char>(text[i]);
-    if (lead < 0x80) {
-      ++i;
-      continue;
-    }
-    const size_t width = lead >= 0xc2 && lead <= 0xdf   ? 2
-                         : lead >= 0xe0 && lead <= 0xef ? 3
-                         : lead >= 0xf0 && lead <= 0xf4 ? 4
-                                                        : 0;
-    size_t accepted = 1;
-    while (width && accepted < width && i + accepted < text.size()) {
-      const auto byte = static_cast<unsigned char>(text[i + accepted]);
-      const unsigned char low = accepted == 1 && lead == 0xe0   ? 0xa0
-                                : accepted == 1 && lead == 0xf0 ? 0x90
-                                                                : 0x80;
-      const unsigned char high = accepted == 1 && lead == 0xed   ? 0x9f
-                                 : accepted == 1 && lead == 0xf4 ? 0x8f
-                                                                 : 0xbf;
-      if (byte < low || byte > high)
-        break;
-      ++accepted;
-    }
-    if (width && accepted == width) {
-      i += width;
+    const auto point = decode_text_point(text, i);
+    if (point.valid) {
+      i += point.consumed;
       continue;
     }
     repaired = true;
     result.append(text, copied, i - copied);
     result += "\xef\xbf\xbd";
-    i += accepted;
+    i += point.consumed;
     copied = i;
   }
   if (repaired)
@@ -226,30 +236,17 @@ const char *FileNotice::label() const noexcept {
 namespace {
 bool printable_file_path(const std::string &path) noexcept {
   for (size_t i = 0; i < path.size();) {
-    const auto lead = static_cast<unsigned char>(path[i]);
-    const size_t width = lead < 0x80                    ? 1
-                         : lead >= 0xc2 && lead <= 0xdf ? 2
-                         : lead >= 0xe0 && lead <= 0xef ? 3
-                         : lead >= 0xf0 && lead <= 0xf4 ? 4
-                                                        : 0;
-    if (!width || width > path.size() - i)
+    const auto decoded = decode_text_point(path, i);
+    if (!decoded.valid)
       return false;
-    uint32_t point = width == 1 ? lead : lead & (0x7fu >> width);
-    for (size_t j = 1; j < width; ++j) {
-      const auto byte = static_cast<unsigned char>(path[i + j]);
-      if ((byte & 0xc0u) != 0x80u)
-        return false;
-      point = (point << 6u) | (byte & 0x3fu);
-    }
-    const uint32_t minimum = width == 1 ? 0 : width == 2 ? 0x80 : width == 3 ? 0x800 : 0x10000;
-    if (point < minimum || point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff))
-      return false;
-    // C0/C1, Bidi_Control, and Unicode line/paragraph separators are unsafe in paths.
+    const auto point = decoded.value;
+    // Terminal controls, bidi controls, separators, and selected invisible format characters.
     if (point < 0x20 || (point >= 0x7f && point <= 0x9f) || point == '\\' || point == 0x61c ||
         point == 0x200e || point == 0x200f || (point >= 0x2028 && point <= 0x202e) ||
-        (point >= 0x2066 && point <= 0x2069))
+        (point >= 0x2060 && point <= 0x2064) || (point >= 0x2066 && point <= 0x206f) ||
+        point == 0xad || point == 0x200b || point == 0xfeff)
       return false;
-    i += width;
+    i += decoded.consumed;
   }
   return true;
 }
@@ -317,6 +314,25 @@ void deliver_file_diagnostic(const FileNotice &notice, const DiagnosticSink &sin
       return;
     }
   emergency_file_diagnostic(notice);
+}
+void write_file_diagnostic(std::ostream &output, const std::string &text) {
+  output.clear();
+  if (&output == &std::cerr)
+    std::clearerr(stderr);
+  output << text << '\n';
+  output.flush();
+  if (!output)
+    throw Error("Cannot render preserved-file notice");
+}
+namespace {
+void write_default_file_diagnostic(const std::string &text) {
+  write_file_diagnostic(std::cerr, text);
+}
+} // namespace
+const DiagnosticSink &default_file_diagnostic_sink() noexcept {
+  // std::function construction from a function pointer does not allocate.
+  static const DiagnosticSink sink = &write_default_file_diagnostic;
+  return sink;
 }
 void FileDiagnosticQueue::submit(std::unique_ptr<FileNotice> notice) noexcept {
   auto *node = notice.release();

@@ -184,3 +184,12 @@ toolchain findings. Two alternating five-run Release comparisons rejected cross-
 caching: mixed-journal replacements did not improve in either set. The record retains the
 experimental patch and links all [seventy measured medians](validation/notice-delivery-cache-medians.csv);
 production candidate statements remain scoped to each write operation.
+
+Stream recovery and checked notice flushing, exception-safe native terminal ownership,
+selective invisible-character escaping, and shared host instrumentation are covered by
+the [notice stream recovery validation](validation/notice-stream-recovery.json).
+The record includes Debug and ASan/UBSan suites, twenty diagnostic repetitions, and
+[53 Release allocation/work comparisons](validation/notice-stream-recovery-benchmark.csv).
+The default benchmark retains its existing final `Glob` failure in both builds; its seven
+preceding cases and all review/journal cases have identical allocation and work counters.
+No timing improvement is claimed. Existing native Clang limitations remain explicit.

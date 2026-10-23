@@ -20,6 +20,9 @@ private:
 void emergency_file_diagnostic(const FileNotice &) noexcept;
 // Attempt normal rendering once; preserve the full path through emergency output on failure.
 void deliver_file_diagnostic(const FileNotice &, const DiagnosticSink &) noexcept;
+// Clear stale errors and check both insertion and flushing before releasing a notice.
+void write_file_diagnostic(std::ostream &, const std::string &);
+const DiagnosticSink &default_file_diagnostic_sink() noexcept;
 class FileDiagnosticReceiver {
 public:
   virtual ~FileDiagnosticReceiver() = default;

@@ -1,0 +1,534 @@
+{
+  "recorded_utc": "2026-10-23T14:34:59.410011+00:00",
+  "follow_up_to": "https://github.com/hbmartin/codet-compiled-agent/pull/32",
+  "branch": "codex/notice-stream-recovery",
+  "baseline_commit": "2da9ad3bc6b732602d64f69b2d523f8ffd3c52cc",
+  "validated_commit": "e9db79cc0085e39f0037e8804ef25e57004146bb",
+  "commits": [
+    "867ca8f1d8ffceeea82a25c1828fd59ff89a6850 Recover notice streams and check flushing before releasing paths",
+    "2d01057eebfcff377fb8db4e3079c63e2ee41eb6 Own native terminal resources before startup can throw",
+    "e037b23921d35204a55ac1b904bbedbb1ad59201 Share UTF-8 decoding and escape selected invisible path characters",
+    "8a1138c3f5658b7794b3fa902d1bcb92559d3b8e Share host-only SQLite preparation interception",
+    "c36df421056f3220defc8be9bb0404f1d815652c Pass terminal dependency headers to resource tests explicitly",
+    "7b418f65c3fb575e919901d8488c805c767f190d Separate the deferred stderr callback from its noexcept accessor",
+    "e9db79cc0085e39f0037e8804ef25e57004146bb Release terminal callbacks before their backing data"
+  ],
+  "source_hashes": {
+    "CMakeLists.txt": "877a6705f83783b8d4bb00f448d478524b613360473260811bb0601f4901ed20",
+    "include/codet/detail/cli_diagnostics.hpp": "9b255f8e73a000c758a00a92ab56890c90b95c68e46a9b347579bc5cfdebf3f2",
+    "include/codet/detail/terminal_resources.hpp": "2aebdeb4272b38eb82ba4ce1e294ae6956a384d514dbd84d40e536d818a72a6f",
+    "include/codet/diagnostics.hpp": "411111cf943cb5ca9a5c4cf039d18c7f7d310d5d731b80feb1042f2b9bb86a73",
+    "src/modern/cli.cpp": "7506a76a38f33af078bf3dc488f099b9d383b23c986c6cfc2efe03310ce94458",
+    "src/modern/platform.cpp": "3b717574fdac1da87babb9e2fb9fd1491e2418e6056d1a781d76730d68533ed5",
+    "src/modern/state.cpp": "fc56e0adbcc130b4e43e7ea1eaf4c68533171bf90299b2b2d28025d1fb8cbf88",
+    "tests/cli_diagnostics_test.cpp": "858d2da5789ecbfa179be7e347b4f822a969bf47e455c923ecd9518333e08e62",
+    "tests/final_review_test.cpp": "3a24179d9fa2ef3bbfd6d6edc73264ae4480b29566389d59cde0c6aa447f4c10",
+    "tests/journal_prepare_interposer.cpp": "017b14a0f1621d862bce95a7d67293e8a8a40795682af73d758ea45d3bef30a4",
+    "tests/pr18_test.cpp": "3c92b0a88826b877076d11cf4f83db824164e15a3390b353d636b11ffea22fe4",
+    "tests/publication_fault_test.cpp": "87e08afef91380dc120ddfe992381c68fe782995837ed64265fa84ee634d7d04",
+    "tests/sanitization_bench.cpp": "e65cefb040833a65ea241b1dd80399699467e35928c062b5df265f0e02263226",
+    "tests/terminal_resources_test.cpp": "14a3de5d8722127f45a0c532399fad2cbda814c098ac728e334fd2ffc6152926",
+    "tests/test_main.cpp": "02c8f8a444725dc7a9931276af33d82f19d3dfe9935a47b909f7644518f0289e"
+  },
+  "behavior": [
+    "Clear stale ostream and default stderr C-stream errors before each new file notice; check insertion and flushing.",
+    "Retain failed line-mode notices until restoration; later notices receive fresh normal attempts. No EAGAIN retry loop.",
+    "Share normal/emergency delivery with an allocation-free function-pointer-backed default sink; preserve full Unicode paths and original exceptions.",
+    "A fully constructed RAII member owns terminal resources before startup can throw. Native adapters enable deterministic partial-acquisition tests.",
+    "Keep ordinary diagnostic semantics and live/cleanup/file replay order, including independent drains and one emergency attempt per released notice.",
+    "Share allocation-free UTF-8 decoding without changing malformed-prefix replacement or canonical JSON equality.",
+    "Escape U+00AD, U+200B, U+2060-U+2064, U+206A-U+206F, U+FEFF in addition to the existing unsafe set; preserve joiners, variation selectors, multilingual paths and emoji.",
+    "Link SQLite preparation interception exclusively into the host benchmark and publication-fault executable."
+  ],
+  "tests": {
+    "unit_total": 507,
+    "unit_passed": 505,
+    "expected_unit_skips": [
+      "NetworkOptIn.TlsHandshake",
+      "Contracts.NativeTigerDesktopAcceptance"
+    ],
+    "publication_faults": 56,
+    "cli_integration": 61,
+    "repeated_unit_tests": 24,
+    "repeated_fault_tests": 7,
+    "repetitions": 20,
+    "total_repeated_executions": 620,
+    "repeat_environment": "ASAN_OPTIONS=detect_leaks=0 only for repeated subsets; full sanitizer CTest uses default sanitizer settings."
+  },
+  "checks": [
+    {
+      "name": "debug-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/host",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 2.39,
+      "log": "build/notice-stream-recovery/debug-build.log"
+    },
+    {
+      "name": "debug-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/host",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 90.81,
+      "log": "build/notice-stream-recovery/debug-ctest.log"
+    },
+    {
+      "name": "sanitize-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/sanitize",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 4.05,
+      "log": "build/notice-stream-recovery/sanitize-build.log"
+    },
+    {
+      "name": "sanitize-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/sanitize",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 179.44,
+      "log": "build/notice-stream-recovery/sanitize-ctest.log"
+    },
+    {
+      "name": "sanitize-diagnostic-repeated",
+      "command": [
+        "build/sanitize/codet_tests",
+        "--gtest_filter=FileDiagnostics.*:CliDiagnosticsTest.*:TerminalResources.*",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 20.18,
+      "log": "build/notice-stream-recovery/sanitize-diagnostic-repeated.log"
+    },
+    {
+      "name": "sanitize-fault-repeated",
+      "command": [
+        "build/sanitize/codet_publication_fault_tests",
+        "--gtest_filter=FileDiagnosticsFault.*",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 0.26,
+      "log": "build/notice-stream-recovery/sanitize-fault-repeated.log"
+    },
+    {
+      "name": "lint",
+      "command": [
+        "make",
+        "check-lint",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 1.33,
+      "log": "build/notice-stream-recovery/lint.log"
+    },
+    {
+      "name": "runner-tests",
+      "command": [
+        "make",
+        "test-lint-runners",
+        "test-modern-analysis-runner",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "ANALYSIS_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 6.09,
+      "log": "build/notice-stream-recovery/runner-tests.log"
+    },
+    {
+      "name": "semgrep",
+      "command": [
+        "make",
+        "check-semgrep",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "SEMGREP=build/semgrep-venv/bin/pysemgrep"
+      ],
+      "exit": 0,
+      "seconds": 5.35,
+      "log": "build/notice-stream-recovery/semgrep.log"
+    }
+  ],
+  "final_checks": [
+    {
+      "name": "debug-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/host",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 90.81,
+      "log": "build/notice-stream-recovery/debug-ctest.log"
+    },
+    {
+      "name": "sanitize-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/sanitize",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 179.44,
+      "log": "build/notice-stream-recovery/sanitize-ctest.log"
+    }
+  ],
+  "analysis": {
+    "cppcheck": {
+      "passed": true,
+      "expected_sources": 25,
+      "completed_sources": 25,
+      "findings": [],
+      "canaries": 15,
+      "canaries_passed": true,
+      "versions": [
+        {
+          "command": [
+            "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck",
+            "--version"
+          ],
+          "exit": 0,
+          "banner": "Cppcheck 2.22.0"
+        }
+      ],
+      "manifest": "build/notice-stream-recovery/cppcheck-analysis/analysis/manifest.json",
+      "manifest_sha256": "5d793ec055353404a03f49521b16310010349518ef1d06ef3bba5b874644e00c",
+      "matches_previous_baseline_findings": true,
+      "baseline_manifest": "build/pr31-followup/cppcheck-analysis/analysis/manifest.json",
+      "baseline_manifest_sha256": "9a995468189865950941133a97c6643e16d1c3af7baf575c815e1ec175c8e8d1"
+    },
+    "clang-tidy": {
+      "passed": false,
+      "expected_sources": 25,
+      "completed_sources": 24,
+      "findings": [
+        {
+          "file": "src/modern/images.cpp",
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'unsigned long' to 'double'"
+        },
+        {
+          "file": "src/modern/images.cpp",
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+        },
+        {
+          "file": "src/modern/images.cpp",
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+        },
+        {
+          "file": "src/modern/main.cpp",
+          "check": "bugprone-exception-escape",
+          "message": "an exception may be thrown in function 'main' which should not throw exceptions"
+        },
+        {
+          "file": "src/modern/platform.cpp",
+          "check": "clang-diagnostic-error",
+          "message": "implicit instantiation of undefined template 'std::basic_istringstream<char>'"
+        },
+        {
+          "file": "src/modern/state.cpp",
+          "check": "bugprone-exception-escape",
+          "message": "an exception may be thrown in function 'operator()' which should not throw exceptions"
+        }
+      ],
+      "canaries": 0,
+      "canaries_passed": true,
+      "versions": [
+        {
+          "command": [
+            "/Volumes/Pro2T/codet-compiled-agent/build/tidy18/clang-tidy-sdk13",
+            "--version"
+          ],
+          "exit": 0,
+          "banner": "LLVM (http://llvm.org/):\n  LLVM version 18.1.8\n  Optimized build."
+        }
+      ],
+      "manifest": "build/notice-stream-recovery/clang-tidy-analysis/analysis/manifest.json",
+      "manifest_sha256": "aca4cac246c465897579b6c44d1971dbbec915023f0affdd41b627733994e63f",
+      "matches_previous_baseline_findings": true,
+      "baseline_manifest": "build/pr31-followup/clang-tidy-analysis/analysis/manifest.json",
+      "baseline_manifest_sha256": "2ba6a28fbb4e679c10972084b6dca1e2721f017cfd164f153801f8fb33792d9c"
+    },
+    "clang-analyzer": {
+      "passed": false,
+      "expected_sources": 25,
+      "completed_sources": 25,
+      "findings": [
+        {
+          "file": "src/modern/context.cpp",
+          "check": "core.DivideZero",
+          "message": "Division by zero"
+        }
+      ],
+      "canaries": 0,
+      "canaries_passed": true,
+      "versions": [
+        {
+          "command": [
+            "/usr/bin/c++",
+            "--version"
+          ],
+          "exit": 0,
+          "banner": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix"
+        },
+        {
+          "command": [
+            "/usr/bin/cc",
+            "--version"
+          ],
+          "exit": 0,
+          "banner": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix"
+        }
+      ],
+      "manifest": "build/notice-stream-recovery/clang-analyzer-analysis/analysis/manifest.json",
+      "manifest_sha256": "f5d18bf39e2424e3ff960d8fce86a4d46556504232d6afdf5e88a742447eb9a6",
+      "matches_previous_baseline_findings": true,
+      "baseline_manifest": "build/pr31-followup/clang-analyzer-analysis/analysis/manifest.json",
+      "baseline_manifest_sha256": "d7f200908839e8bc59320899276f7e6ecfd5b98be52420a982378989962717b0"
+    }
+  },
+  "analysis_commands": [
+    {
+      "name": "cppcheck",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/notice-stream-recovery/cppcheck-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--tool",
+        "cppcheck"
+      ],
+      "exit": 0,
+      "seconds": 56.0,
+      "log": "build/notice-stream-recovery/cppcheck.log"
+    },
+    {
+      "name": "clang-tidy",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/notice-stream-recovery/clang-tidy-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--tool",
+        "clang-tidy"
+      ],
+      "exit": 1,
+      "seconds": 40.73,
+      "log": "build/notice-stream-recovery/clang-tidy.log"
+    },
+    {
+      "name": "clang-analyzer",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/notice-stream-recovery/clang-analyzer-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--tool",
+        "clang-analyzer"
+      ],
+      "exit": 1,
+      "seconds": 65.81,
+      "log": "build/notice-stream-recovery/clang-analyzer.log"
+    },
+    {
+      "name": "selftest",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/notice-stream-recovery/selftest-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--selftest"
+      ],
+      "exit": 0,
+      "seconds": 1.87,
+      "log": "build/notice-stream-recovery/selftest.log"
+    }
+  ],
+  "benchmark": {
+    "baseline_commit": "2da9ad3bc6b732602d64f69b2d523f8ffd3c52cc",
+    "measured_commit": "e9db79cc0085e39f0037e8804ef25e57004146bb",
+    "cases": 53,
+    "identical_work": 53,
+    "protocol": "Identical harnesses and Release settings; one warm-up then one refactor-check run per mode; no concurrent analyzers; no latency improvement claim.",
+    "statuses": [
+      {
+        "mode": "default",
+        "baseline_exit": 1,
+        "changed_exit": 1
+      },
+      {
+        "mode": "review",
+        "baseline_exit": 0,
+        "changed_exit": 0
+      },
+      {
+        "mode": "journal",
+        "baseline_exit": 0,
+        "changed_exit": 0
+      }
+    ],
+    "existing_default_mode_failure": "Both baseline and changed default mode exit 1 at the unchanged final legacy Glob benchmark guard; the preceding emitted cases are compared, and review/journal modes must succeed.",
+    "shared_build_settings": {
+      "CMAKE_BUILD_TYPE": "Release",
+      "CMAKE_CXX_COMPILER": "/usr/bin/c++",
+      "CMAKE_CXX_FLAGS": "-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+      "CMAKE_CXX_FLAGS_RELEASE": "-O3 -DNDEBUG",
+      "CMAKE_OSX_ARCHITECTURES": "arm64",
+      "CMAKE_OSX_SYSROOT": "",
+      "CODET_SANITIZERS": "OFF",
+      "CODET_DEPENDENCY_ROOT": "/Volumes/Pro2T/codet-compiled-agent/.deps"
+    },
+    "compiler_banner": "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+    "harness_files": {
+      "sanitization_bench.cpp": "e65cefb040833a65ea241b1dd80399699467e35928c062b5df265f0e02263226",
+      "journal_metrics.hpp": "ef06003b1552e719ef736717100fb4c8ca6d7c5d82010c0b984f6aa32ae1e764",
+      "journal_fixture.hpp": "dc3d91005262c9ae0b895d028d49a46dffe0a092740086370137d8995db83f06",
+      "journal_prepare_interposer.cpp": "017b14a0f1621d862bce95a7d67293e8a8a40795682af73d758ea45d3bef30a4"
+    },
+    "medians_claimed": false,
+    "csv": "docs/validation/notice-stream-recovery-benchmark.csv",
+    "csv_sha256": "7e56affdfbb79cb1651f793d26465f362702ffe0fd1f88eb0e2cf46bdf403ea8"
+  },
+  "limitations": [
+    "Existing Clang-Tidy findings and the old-SDK incomplete translation unit remain; not a clean Clang-Tidy gate.",
+    "Existing Clang Analyzer context.cpp finding remains; not a clean analyzer gate.",
+    "Semgrep validation uses the locked Python frontend 1.177.0 override; bundled native CLI version mismatch remains.",
+    "The provisioned Python 3.12/PyYAML interpreter is used for analysis runner tests and analysis.",
+    "The unchanged default benchmark exits at its final legacy Glob guard in both builds; review and journal modes succeed.",
+    "Existing local images.cpp conversion/runtime_test.cpp unused-result warning downgrades remain unchanged; no tracked check policy weakened.",
+    "Linux and native Tiger runtime acceptance were not executed on this macOS host."
+  ],
+  "initial_cppcheck_correction": "Cppcheck attributed the throwing callback nested inside a noexcept sink accessor to that accessor. Moving the callback to a named function preserved function-pointer construction without suppression or policy changes.",
+  "raw_logs": [
+    {
+      "path": "build/notice-stream-recovery/baseline-release-build.log",
+      "sha256": "ec11409999cdfc9ccbdfb80a1ee9fe0ea3fce895f927b0265a4282cdc3233f06"
+    },
+    {
+      "path": "build/notice-stream-recovery/changed-release-build.log",
+      "sha256": "b5aa526c57612a2326d61e99cac4e923ab625c5ad2b990133182b48508129cc1"
+    },
+    {
+      "path": "build/notice-stream-recovery/clang-analyzer.log",
+      "sha256": "dd3fae32add7956acfac95d5309a90dfb41c85f57f24b3e84c45e5750965e46e"
+    },
+    {
+      "path": "build/notice-stream-recovery/clang-tidy.log",
+      "sha256": "3a3370676eeab0e8f1964a2d7f6cac1288f655261b5cb0ee4d5a7c2f48c98611"
+    },
+    {
+      "path": "build/notice-stream-recovery/cppcheck-initial.log",
+      "sha256": "3fecd608e25d97370ee6c39733e5d7c5403468844937e1c2a679c161faf7fa6b"
+    },
+    {
+      "path": "build/notice-stream-recovery/cppcheck.log",
+      "sha256": "85147d57bfae3c39e9a09e4d5e2e3b88cc883480b371e5f8cc9731fa14d64e9a"
+    },
+    {
+      "path": "build/notice-stream-recovery/debug-build.log",
+      "sha256": "52656c3149bbf80752d9765f5456d43a5b008455621a8dbb1775faa855f5800a"
+    },
+    {
+      "path": "build/notice-stream-recovery/debug-ctest.log",
+      "sha256": "89a6cc549cbf12a85dd987788916b5b18bbc0e94e3309cb3c59fe1ce68c444e3"
+    },
+    {
+      "path": "build/notice-stream-recovery/debug-lasttest.log",
+      "sha256": "802fb15a1c141c7b14eebee3f9ea5c3a8f49f92c16c54b2084a4917cd97c98db"
+    },
+    {
+      "path": "build/notice-stream-recovery/final-host-build.log",
+      "sha256": "f4e0e4a366eff42f6264d9e0c198912f194fc6132f6608018b70d11190e882f8"
+    },
+    {
+      "path": "build/notice-stream-recovery/final-host-ctest.log",
+      "sha256": "89a6cc549cbf12a85dd987788916b5b18bbc0e94e3309cb3c59fe1ce68c444e3"
+    },
+    {
+      "path": "build/notice-stream-recovery/final-host-lasttest.log",
+      "sha256": "802fb15a1c141c7b14eebee3f9ea5c3a8f49f92c16c54b2084a4917cd97c98db"
+    },
+    {
+      "path": "build/notice-stream-recovery/final-sanitize-build.log",
+      "sha256": "302fad3a799f68812afcdd74aaa7a54fddf8ebabb7c121afd4637eed34415989"
+    },
+    {
+      "path": "build/notice-stream-recovery/final-sanitize-ctest.log",
+      "sha256": "796c3c84dec4de1e1fc873ca506beb0166548b01a1887f20f449efd3a12e7298"
+    },
+    {
+      "path": "build/notice-stream-recovery/final-sanitize-lasttest.log",
+      "sha256": "3fc6d2fe036771b3b65017b1950dd6459932abe068698cde680161360571810e"
+    },
+    {
+      "path": "build/notice-stream-recovery/lint.log",
+      "sha256": "3caddd0ee716d9c2d036b85759bc269aa47f8d138781af9edc6f35922a002b66"
+    },
+    {
+      "path": "build/notice-stream-recovery/runner-tests.log",
+      "sha256": "f08c7bdaac0e4c743dd8865e35f21dd3deb6ce478a74e4c1609898a356c5b137"
+    },
+    {
+      "path": "build/notice-stream-recovery/sanitize-build.log",
+      "sha256": "4283074c085629f3de8ad0e1ec118b278e1627b12893f8769913565ed60ae947"
+    },
+    {
+      "path": "build/notice-stream-recovery/sanitize-ctest.log",
+      "sha256": "796c3c84dec4de1e1fc873ca506beb0166548b01a1887f20f449efd3a12e7298"
+    },
+    {
+      "path": "build/notice-stream-recovery/sanitize-diagnostic-repeated.log",
+      "sha256": "de09b50ae7623f2181dd9ae23cfd37fa1c88c858ef7091461f474d35dc5bfae6"
+    },
+    {
+      "path": "build/notice-stream-recovery/sanitize-fault-repeated.log",
+      "sha256": "f603b066c23ca1cafc1d9fe3e1091f410e552efafc3d34305682a988ca5a7125"
+    },
+    {
+      "path": "build/notice-stream-recovery/sanitize-lasttest.log",
+      "sha256": "3fc6d2fe036771b3b65017b1950dd6459932abe068698cde680161360571810e"
+    },
+    {
+      "path": "build/notice-stream-recovery/selftest.log",
+      "sha256": "740d555865ff458e6ea3a80a11ab83ce36bd761be27466ba58af1b8f395df79b"
+    },
+    {
+      "path": "build/notice-stream-recovery/semgrep.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

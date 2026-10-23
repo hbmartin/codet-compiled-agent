@@ -460,17 +460,7 @@ struct StateStore::Impl {
       file_diagnostics->submit(std::move(notice));
       return;
     }
-    try {
-      const auto text = notice->text();
-      if (diagnostics)
-        diagnostics(text);
-      else
-        report_diagnostic({}, text);
-      return;
-    } catch (...) {
-      // The file and its held path survive a failed renderer.
-      emergency_file_diagnostic(*notice);
-    }
+    deliver_file_diagnostic(*notice, diagnostics ? diagnostics : default_file_diagnostic_sink());
   }
   bool publication_confirmed(const fs::path &path, const std::string &bytes) const noexcept {
     try {

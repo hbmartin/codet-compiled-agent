@@ -3,6 +3,7 @@
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
+#include "codet/detail/terminal_resources.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/prompt.hpp"
 #include "journal_fixture.hpp"
@@ -16,15 +17,6 @@
 #include <sqlite3.h>
 #include <typeinfo>
 using namespace codet;
-extern "C" int sqlite3_prepare_v2(sqlite3 *db, const char *sql, int bytes, sqlite3_stmt **statement,
-                                  const char **tail) {
-  using Prepare = int (*)(sqlite3 *, const char *, int, sqlite3_stmt **, const char **);
-  static const auto prepare = reinterpret_cast<Prepare>(dlsym(RTLD_NEXT, "sqlite3_prepare_v2"));
-  const auto status = prepare(db, sql, bytes, statement, tail);
-  if (status == SQLITE_OK)
-    codet::test::journal_metrics.prepared(*statement);
-  return status;
-}
 namespace fault {
 bool after_commit = false, after_token = false, fired = false;
 bool provider_read_error = false, rollback_read = false, token_error = false;
@@ -272,6 +264,60 @@ TEST(FileDiagnosticsFault, LiveReplayAllocationFailureDoesNotDiscardCleanupOrNot
   const std::string text(buffer.bytes, buffer.used);
   EXPECT_NE(text.find("SessionEnd survives allocation failure\n"), std::string::npos);
   EXPECT_NE(text.find("held-path\n"), std::string::npos);
+}
+TEST(FileDiagnosticsFault, DefaultFileSinkIsAvailableWithoutAllocating) {
+  fault::disable();
+  fault::fired = false;
+  fault::countdown = 0;
+  const auto &sink = default_file_diagnostic_sink();
+  const bool allocated = fault::fired;
+  fault::disable();
+  EXPECT_FALSE(allocated);
+  EXPECT_TRUE(sink);
+}
+TEST(FileDiagnosticsFault, NativeResourceCleanupDoesNotAllocate) {
+  struct Ops final : detail::TerminalResourceOps {
+    size_t released = 0;
+    bool capture(termios &) noexcept override {
+      return true;
+    }
+    void restore(const termios &) noexcept override {
+      ++released;
+    }
+    bool start_screen() override {
+      return true;
+    }
+    void stop_screen() noexcept override {
+      ++released;
+    }
+    EditLine *start_editor() override {
+      return reinterpret_cast<EditLine *>(this);
+    }
+    void stop_editor(EditLine *) noexcept override {
+      ++released;
+    }
+    History *start_history() override {
+      return reinterpret_cast<History *>(this);
+    }
+    void stop_history(History *) noexcept override {
+      ++released;
+    }
+  } ops;
+  fault::disable();
+  {
+    detail::TerminalResources resources(ops);
+    resources.start_screen();
+    resources.start_editor();
+    resources.start_history();
+    fault::fired = false;
+    fault::countdown = 0;
+    resources.close();
+    resources.close();
+  }
+  const bool allocated = fault::fired;
+  fault::disable();
+  EXPECT_FALSE(allocated);
+  EXPECT_EQ(ops.released, 4u);
 }
 TEST(FileDiagnosticsFault, PreviewAllocationFailureRetainsTheOwnedPathUntilFinish) {
   FileDiagnosticQueue queue;
