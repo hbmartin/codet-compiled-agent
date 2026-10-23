@@ -1,4 +1,4 @@
-#include "codet/detail/terminal_resources.hpp"
+#include "codet/detail/native_terminal.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/output.hpp"
 #include "process_helper.hpp"
@@ -19,8 +19,8 @@ int main(int argc, char **argv) {
   try {
     if (argc > 1 && std::string(argv[1]) == "--codet-terminal-startup-helper") {
       const std::string phase = argc > 2 ? argv[2] : "";
-      if (argc != 4 ||
-          (phase != "screen" && phase != "render" && phase != "editor" && phase != "history")) {
+      if (argc != 4 || (phase != "screen" && phase != "render" && phase != "editor" &&
+                        phase != "history" && phase != "active")) {
         std::cerr << "terminal-startup helper expects PHASE PTY_FD\n";
         return 2;
       }
@@ -45,15 +45,15 @@ int main(int argc, char **argv) {
           resources.start_editor();
           if (phase == "history")
             resources.start_history();
-          ::el_set(resources.editor, EL_PREP_TERM, 1);
+          ::el_set(resources.editor(), EL_PREP_TERM, phase == "active" ? 0 : 1);
+          if (phase == "active")
+            resources.begin_active();
         }
         std::rethrow_exception(original);
       } catch (...) {
         if (std::current_exception() != original)
           return 4;
       }
-      if ((phase == "screen" || phase == "render") && !::isendwin())
-        return 5;
       std::cerr << "startup exception preserved after restoration\n";
       return 0;
     }

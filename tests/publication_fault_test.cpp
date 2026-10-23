@@ -291,6 +291,9 @@ TEST(FileDiagnosticsFault, NativeResourceCleanupDoesNotAllocate) {
     bool capture(termios &) noexcept override {
       return true;
     }
+    bool apply(const termios &) noexcept override {
+      return true;
+    }
     void restore(const termios &) noexcept override {
       ++released;
     }

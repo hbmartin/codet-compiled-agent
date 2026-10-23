@@ -1,7 +1,7 @@
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
-#include "codet/detail/terminal_resources.hpp"
+#include "codet/detail/native_terminal.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/interaction.hpp"
 #include "codet/prompt.hpp"
@@ -325,19 +325,19 @@ public:
     } else {
       resources_.start_editor();
       el_set(
-          resources_.editor, EL_PROMPT, +[](EditLine *edit) -> const char * {
+          resources_.editor(), EL_PROMPT, +[](EditLine *edit) -> const char * {
             void *data = nullptr;
             el_get(edit, EL_CLIENTDATA, &data);
             return static_cast<Terminal *>(data)->prompt_.c_str();
           });
-      el_set(resources_.editor, EL_EDITOR, "emacs");
-      el_set(resources_.editor, EL_SIGNAL, 0);
-      el_set(resources_.editor, EL_CLIENTDATA, this);
-      el_set(resources_.editor, EL_GETCFN, &Terminal::read_character);
+      el_set(resources_.editor(), EL_EDITOR, "emacs");
+      el_set(resources_.editor(), EL_SIGNAL, 0);
+      el_set(resources_.editor(), EL_CLIENTDATA, this);
+      el_set(resources_.editor(), EL_GETCFN, &Terminal::read_character);
       resources_.start_history();
-      if (resources_.entries) {
-        history(resources_.entries, &history_event_, H_SETSIZE, 500);
-        el_set(resources_.editor, EL_HIST, history, resources_.entries);
+      if (resources_.entries()) {
+        history(resources_.entries(), &history_event_, H_SETSIZE, 500);
+        el_set(resources_.editor(), EL_HIST, history, resources_.entries());
       }
       set_mode(c.permission_mode);
       (void)detail::write_diagnostic(std::cerr, {status_});
@@ -381,16 +381,16 @@ public:
   std::optional<std::string> read(Cancellation &cancel) {
     if (!curses_) {
       read_cancel_ = &cancel;
-      el_set(resources_.editor, EL_PREP_TERM, 1);
+      el_set(resources_.editor(), EL_PREP_TERM, 1);
       int count = 0;
-      const char *text = el_gets(resources_.editor, &count);
+      const char *text = el_gets(resources_.editor(), &count);
       if (!text || count <= 0)
         return std::nullopt;
       std::string line(text, static_cast<size_t>(count));
       while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
         line.pop_back();
-      if (resources_.entries)
-        history(resources_.entries, &history_event_, H_ENTER, line.c_str());
+      if (resources_.entries())
+        history(resources_.entries(), &history_event_, H_ENTER, line.c_str());
       return line;
     }
     input_.clear();
@@ -431,19 +431,14 @@ public:
   }
   void begin_active() {
     input_.clear();
-    if (!curses_ && resources_.saved) {
-      el_set(resources_.editor, EL_PREP_TERM, 0);
-      auto settings = resources_.original;
-      settings.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO));
-      settings.c_cc[VMIN] = 0;
-      settings.c_cc[VTIME] = 0;
-      if (tcsetattr(STDIN_FILENO, TCSANOW, &settings) != 0)
-        throw Error("Cannot prepare active terminal input");
+    if (!curses_ && resources_.saved()) {
+      el_set(resources_.editor(), EL_PREP_TERM, 0);
+      resources_.begin_active();
     }
   }
   void end_active() {
-    if (!curses_ && resources_.saved)
-      (void)tcsetattr(STDIN_FILENO, TCSANOW, &resources_.original);
+    if (!curses_ && resources_.saved())
+      resources_.end_active();
     input_.clear();
     render();
   }
