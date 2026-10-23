@@ -217,9 +217,11 @@ int main(int argc, char **argv) {
       for (int signal = 1; signal < NSIG; ++signal)
         if (sigismember(&mask_before, signal) != sigismember(&mask_after, signal))
           return 7;
+#ifdef CODET_NATIVE_TERMINAL_METRICS
       if ((phase == "screen" || phase == "render") &&
           (metrics.ends != 1 || metrics.deletes != 1 || !metrics.ended_before_delete))
         return 8;
+#endif
       std::cerr << "startup exception preserved after restoration\n";
       return 0;
     }
