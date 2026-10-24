@@ -1,6 +1,9 @@
 #include "codet/detail/cli_output.hpp"
 #include "codet/detail/native_terminal.hpp"
 #include "codet/diagnostics.hpp"
+#ifdef CODET_NATIVE_TERMINAL_METRICS
+#include "native_symbol.hpp"
+#endif
 #include "codet/output.hpp"
 #include "native_terminal_metrics.hpp"
 #include "process_helper.hpp"
@@ -60,6 +63,14 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc > 1 && std::string(argv[1]) == "--codet-native-symbol-helper") {
+#ifdef CODET_NATIVE_TERMINAL_METRICS
+      if (argc != 3 || ::dup2(std::stoi(argv[2]), STDERR_FILENO) < 0)
+        return 2;
+      (void)codet::test::native_symbol("codet_missing_native_symbol_fixture");
+#endif
+      return 3;
+    }
     if (argc > 1 && std::string(argv[1]) == "--codet-active-job-control-helper") {
       if (argc != 5)
         return 2;
