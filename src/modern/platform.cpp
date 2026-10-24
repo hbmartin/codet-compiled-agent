@@ -218,7 +218,7 @@ Json safe_json(Json &&value) {
   return std::move(value);
 }
 void report_diagnostic(const DiagnosticSink &sink, const std::string &message) {
-  const auto text = bounded_text(message, size_t{1024} * 1024);
+  const auto text = bounded_text(detail::terminal_text(message), size_t{1024} * 1024);
   if (sink) {
     try {
       sink(text);

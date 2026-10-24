@@ -71,6 +71,19 @@ TEST(DiagnosticWriter, HumanTextEscapesControlsWithoutChangingRawJsonSanitizatio
   EXPECT_EQ(safe_text("\x1b\r\a"), "\x1b\r\a");
   EXPECT_EQ(safe_json(Json("\x1b")), "\x1b");
 }
+TEST(DiagnosticWriter, DiagnosticBudgetsAccountForEscapedHumanText) {
+  DiagnosticBuffer buffer(128);
+  const std::string controls(100, '\x1b');
+  buffer.add(controls);
+  std::ostringstream output;
+  buffer.flush(output);
+  EXPECT_LE(output.str().size(), 128u);
+  EXPECT_EQ(output.str().find('\x1b'), std::string::npos);
+  EXPECT_NE(output.str().find("\\x1B"), std::string::npos);
+  std::string received;
+  report_diagnostic([&](const auto &text) { received = text; }, "hook\x1b\r\xff");
+  EXPECT_EQ(received, "hook\\x1B\\x0D\\xFF");
+}
 TEST(DiagnosticWriter, HumanTextPreservesPrintableAsciiAndEscapesMalformedPrefixesByteForByte) {
   const auto escaped = [](const std::string &text) {
     constexpr char hex[] = "0123456789ABCDEF";

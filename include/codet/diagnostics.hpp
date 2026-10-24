@@ -73,7 +73,7 @@ public:
   std::optional<std::string> add(const std::string &text) {
     const auto reserve = std::min(limit_, notice().size() + 1);
     const auto payload = limit_ - reserve;
-    auto clean = safe_text(text);
+    auto clean = detail::terminal_text(text);
     if (used_ >= payload) {
       omitted_ = true;
       return {};

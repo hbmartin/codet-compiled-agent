@@ -15,6 +15,8 @@ import unittest
 
 BIN=str(pathlib.Path(sys.argv.pop(1)).resolve())
 FIXTURES=pathlib.Path(__file__).resolve().parent/'fixtures'
+DISPLAY_CONTROLS='unsafe:\x1b[2K\rhidden\a\u009b\u202e 雪'
+DISPLAY_ESCAPED=r'unsafe:\x1B[2K\x0Dhidden\x07\xC2\x9B\xE2\x80\xAE 雪'
 
 def normalized_events(events,workspace):
     """Only nondeterministic IDs and the temporary workspace are normalized."""
@@ -92,9 +94,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 named='' if prompt.endswith('unnamed') else 'event: response.incomplete\n'
                 data=(named+'data: '+payload+'\n\n').encode()
                 self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
-            items=[{'type':'message' ,'id':'progress-'+str(len(self.server.requests)),'phase':'commentary','role':'assistant','content':[{'type':'output_text','text':'Checking fixture'}]}]
+            items=[{'type':'message' ,'id':'progress-'+str(len(self.server.requests)),'phase':'commentary','role':'assistant','content':[{'type':'output_text','text':DISPLAY_CONTROLS if 'fixture-display-controls' in str(prompt) else 'Checking fixture'}]}]
             if prompt!='commentary-only':
-                items.append({'type':'message','id':'final-'+str(len(self.server.requests)),'phase':'final_answer','role':'assistant','content':[{'type':'output_text','text':'Final fixture answer'}]})
+                items.append({'type':'message','id':'final-'+str(len(self.server.requests)),'phase':'final_answer','role':'assistant','content':[{'type':'output_text','text':DISPLAY_CONTROLS if 'fixture-display-controls' in str(prompt) else 'Final fixture answer'}]})
             frames=[]
             for index,item in enumerate(items):
                 frames.extend([{'type':'response.output_item.added','output_index':index,'item':item},
@@ -165,6 +167,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif 'fixture-long-batch' in prompt and not completed:
             commands=['printf begun > begun; while test ! -f release; do sleep .02; done','printf completed > completed']
             delta={'tool_calls':[{'index':i,'id':'batch-'+str(i),'function':{'name':'exec_command','arguments':json.dumps({'cmd':command,'login':False})}} for i,command in enumerate(commands)]};reason='tool_calls'
+        elif 'fixture-control-approval' in prompt and not completed:
+            delta={'tool_calls':[{'index':0,'id':'control-approval','function':{'name':'exec_command','arguments':json.dumps({'cmd':DISPLAY_CONTROLS,'login':False})}}]};reason='tool_calls'
         elif 'fixture-command' in messages[last_user].get('content','') and not completed:
             delta={'tool_calls':[{'index':0,'id':'shell-'+str(last_user),'function':{'name':'exec_command','arguments':json.dumps({'cmd':'printf approved','login':False})}}]};reason='tool_calls'
         elif 'fixture-edit' in prompt and not completed:
@@ -180,11 +184,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif 'fixture-recall' in prompt:
             delta={'content':'memory recovered' if any('Consolidated facts' in m.get('content','') for m in messages if m['role']=='system') else 'memory missing'};reason='stop'
         elif 'fixture-question' in prompt and not completed:
-            delta={'tool_calls':[{'index':0,'id':'question','function':{'name':'request_user_input','arguments':json.dumps({'questions':[{'id':'library','header':'Library','question':'Which library is available?','options':[{'label':'Catch2','description':'test library'},{'label':'libcurl','description':'HTTP library'}]}]})}}]};reason='tool_calls'
+            delta={'tool_calls':[{'index':0,'id':'question','function':{'name':'request_user_input','arguments':json.dumps({'questions':[{'id':'library','header':'Library','question':DISPLAY_CONTROLS if 'controls' in prompt else 'Which library is available?','options':[{'label':'Catch2','description':'test library'},{'label':'libcurl','description':'HTTP library'}]}]})}}]};reason='tool_calls'
         elif 'fixture-question' in prompt:
             answer=completed[-1]['content']
             delta={'content':'question answered' if 'libcurl' in answer else 'answer missing'};reason='stop'
-        else:delta={'content':'recovered reply' if 'fixture-recovered-output' in prompt else 'fixture done'};reason='stop'
+        else:delta={'content':DISPLAY_CONTROLS if 'fixture-display-controls' in prompt else 'recovered reply' if 'fixture-recovered-output' in prompt else 'fixture done'};reason='stop'
         frame={'choices':[{'delta':delta,'finish_reason':reason}],'usage':{'prompt_tokens':10,'completion_tokens':2}}
         data=('data: '+json.dumps(frame)+'\n\ndata: [DONE]\n\n').encode()
         if 'fixture-active-stream' in prompt or 'fixture-idle-stream' in prompt:
@@ -1203,6 +1207,77 @@ class CliTests(unittest.TestCase):
         finally:
             if process.poll() is None:process.kill();process.wait(timeout=5)
             os.close(ready);os.close(master);os.close(slave)
+    def test_human_displays_escape_approval_questions_answers_and_commentary(self):
+        import fcntl
+        import pty
+        import select
+        import struct
+        for mode in ('line','curses'):
+            for prompt in ('fixture-control-approval','fixture-question-controls','fixture-display-controls'):
+                with self.subTest(mode=mode,prompt=prompt):
+                    master,slave=pty.openpty()
+                    fcntl.ioctl(slave,__import__('termios').TIOCSWINSZ,struct.pack('HHHH',40,200,0,0))
+                    flags=['-c','providers.openai.wire_api="responses"'] if prompt=='fixture-display-controls' else ['--permission-mode','plan'] if prompt=='fixture-question-controls' else []
+                    process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',mode,*flags,prompt],
+                        stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+                    received=b''
+                    try:
+                        expected=DISPLAY_ESCAPED.encode();deadline=time.monotonic()+7
+                        while expected not in received and time.monotonic()<deadline:
+                            if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+                        self.assertIn(expected,received)
+                        self.assertNotIn(b'unsafe:\x1b[2K',received)
+                        os.write(master,b'/quit\n');deadline=time.monotonic()+7
+                        while process.poll() is None and time.monotonic()<deadline:
+                            if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+                        self.assertEqual(process.poll(),0,received)
+                    finally:
+                        if process.poll() is None:process.kill();process.wait(timeout=5)
+                        os.close(master);os.close(slave)
+
+    def test_display_escaping_preserves_data_outputs_and_bounds_hook_replay(self):
+        import pty
+        import select
+        # Pipes, structured results, export and requested output files are data channels.
+        for format in ('text','json','jsonl'):
+            result=subprocess.run([BIN,'-C',str(self.workspace),'exec','--output-format',format,'fixture-display-controls'],capture_output=True,env=self.env,timeout=15)
+            self.assertEqual(result.returncode,0,result.stderr)
+            if format=='text':self.assertEqual(result.stdout,(DISPLAY_CONTROLS+'\n').encode())
+            elif format=='json':self.assertEqual(json.loads(result.stdout)['result'],DISPLAY_CONTROLS)
+            else:self.assertTrue(any(e.get('item',{}).get('text')==DISPLAY_CONTROLS for e in map(json.loads,result.stdout.splitlines())))
+        saved=self.root/'raw-answer.txt'
+        result=self.run_cli('exec','-o',str(saved),'fixture-display-controls')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(saved.read_bytes(),(DISPLAY_CONTROLS+'\n').encode())
+        sessions=json.loads(self.run_cli('sessions').stdout)
+        exported=subprocess.run([BIN,'-C',str(self.workspace),'export',sessions[0]['id']],
+            capture_output=True,env=self.env,timeout=15)
+        self.assertEqual(exported.returncode,0,exported.stderr)
+        self.assertIn(DISPLAY_CONTROLS.encode()+b'\n\n',exported.stdout)
+        result=self.run_cli('exec','-c','providers.openai.wire_api="responses"','fixture-display-controls')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn(DISPLAY_ESCAPED,result.stderr);self.assertNotIn('\x1b',result.stderr)
+        config=self.home/'config.toml'
+        config.write_text(config.read_text()+"\n[hooks]\nSessionEnd=[{command=\"printf '\\\\033[2K\\\\rhidden' >&2\"}]\n")
+        result=self.run_cli('exec','fixture')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn(r'\x1B[2K\x0Dhidden',result.stderr)
+        master,slave=pty.openpty()
+        process=subprocess.Popen([BIN,'-C',str(self.workspace),'exec','fixture-display-controls'],
+            stdin=subprocess.DEVNULL,stdout=slave,stderr=subprocess.PIPE,env=self.env)
+        received=b''
+        try:
+            deadline=time.monotonic()+7
+            while process.poll() is None and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+            while select.select([master],[],[],0)[0]:received+=os.read(master,65536)
+            self.assertEqual(process.poll(),0,process.stderr.read())
+            self.assertIn(DISPLAY_ESCAPED.encode(),received)
+            self.assertNotIn(b'unsafe:\x1b',received)
+        finally:
+            if process.poll() is None:process.kill();process.wait(timeout=5)
+            process.stderr.close();os.close(master);os.close(slave)
+
     def test_schema_validates_final_answer(self):
         schema=self.root/'schema.json';schema.write_text(json.dumps({'type':'object','properties':{'answer':{'type':'integer'}},'required':['answer']}))
         r=self.run_cli('exec','--output-format=json','--output-schema',str(schema),'fixture-schema')
