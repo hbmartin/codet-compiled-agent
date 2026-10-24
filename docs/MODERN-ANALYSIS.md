@@ -211,3 +211,35 @@ and mutation checks that detect destructible sink storage and missing or late `e
 Its [53 existing allocation/work comparisons](validation/output-startup-followup-counters.csv)
 retain identical counters against fetched main. These are smoke comparisons, with no latency
 claim. Existing Clang findings and the legacy default-benchmark failure are recorded separately.
+
+## Output delivery follow-up validation
+
+The follow-up to #35 starts from fetched main `b4d768a`. Its source validation record is
+[output-delivery-followup.json](validation/output-delivery-followup.json), with exact commands,
+source and log hashes, test counts, initial validation corrections, and baseline analyzer comparisons.
+Debug and ASan/UBSan each pass all nine CTest groups: 536 unit tests (534 passed and two expected
+skips), 59 publication-fault tests, and 74 CLI integration tests. Twenty repetitions cover 1,040
+focused diagnostic/lifecycle/output executions, 200 fault executions, and 100 CLI test executions,
+for **1,340** total. Pinned dependencies, lint, Semgrep's locked frontend, runner checks, and analyzer
+self-checks pass. Cppcheck completes 25/25 sources without findings. The same six Clang-Tidy
+findings (including one old-SDK incomplete translation unit) and the same Clang Analyzer finding
+remain; those gates are not clean. An initial ASan run had a child-setup failure in the unchanged
+ownership-observation test; thirty isolated repetitions and the final full suite passed, and the
+test was not changed.
+
+The host-only `codet_export_bench` target measures a complete CLI export after fixture creation,
+to `/dev/null`. Baseline and changed Release builds use identical harnesses and compiler settings,
+one warm-up and five alternating measured runs per size, with no concurrent analyzers or tests.
+[Export measurements](validation/output-delivery-followup-exports.csv) retain all summary counters;
+the JSON record includes all 24 warm-up/measured samples.
+
+| Export | Baseline median | Changed median | Baseline stream flushes | Changed descriptor writes |
+| --- | ---: | ---: | ---: | ---: |
+| 100 messages, 26,400 bytes | 1.723 ms | 1.382 ms | 100 | 1 |
+| 10,000 messages, 10,320,000 bytes | 104.227 ms | 94.456 ms | 10,000 | 158 |
+
+Allocation counts are unchanged (4,790 and 500,218); allocated bytes increase by 16 per invocation
+for the larger diagnostic state. Stream flushes and intercepted descriptor calls are separate
+observations, not a count of every hidden libc syscall. These are local timing observations, with
+no timing-based CI threshold. Canonical JSON and ASCII text-repair implementation bytes are
+unchanged. Linux and native Tiger runtime acceptance remain untested locally.
