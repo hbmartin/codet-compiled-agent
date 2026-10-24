@@ -440,6 +440,95 @@ TEST_F(Pr17, TransportWrappingCannotReplaceAnOutputConsumerFailure) {
   }
   EXPECT_EQ(http.requests, 1u);
 }
+TEST_F(Pr17, ConsumerFailuresSurviveEveryTransportExitWithoutAnotherRequest) {
+  for (int mode = 0; mode != 5; ++mode) {
+    struct Wrapped : HttpTransport {
+      int mode, requests = 0;
+      explicit Wrapped(int behavior) : mode(behavior) {}
+      HttpResponse perform(const HttpRequest &, const Cancellation &,
+                           const ChunkSink &sink) override {
+        ++requests;
+        try {
+          sink("data: {\"type\":\"response.output_text.delta\",\"delta\":\"text\"}\n\n");
+        } catch (...) {
+          if (mode == 0)
+            throw Error("wrapper");
+          if (mode == 1)
+            throw std::runtime_error("wrapper");
+          return {mode == 2 ? 503 : mode == 3 ? 200 : 401, "wrapper"};
+        }
+        throw std::logic_error("consumer should fail");
+      }
+    } transport(mode);
+    CredentialStore credentials(config.home, files, clock);
+    ApiProvider provider(transport, credentials, clock);
+    const auto original = std::make_exception_ptr(std::logic_error("consumer identity"));
+    try {
+      provider.complete(config, "", {}, Json::array(), cancel,
+                        [&](const auto &) { std::rethrow_exception(original); });
+      FAIL();
+    } catch (...) {
+      EXPECT_EQ(std::current_exception(), original);
+    }
+    EXPECT_EQ(transport.requests, 1);
+  }
+}
+TEST_F(Pr17, CompletedSessionSurvivesDeliveryFailureWithTheOriginalException) {
+  for (bool standard : {false, true}) {
+    StateStore state(config.state_root);
+    auto session = state.create();
+    const ToolCall prior{"already-complete", "exec_command", Json::object()};
+    codet::Message assistant;
+    assistant.role = "assistant";
+    assistant.calls = {prior};
+    session.messages = {assistant};
+    state.save(session);
+    state.tool_started(session.id, prior);
+    state.reconcile(session, false);
+    codet::Message result;
+    result.role = "tool";
+    result.tool_call_id = prior.id;
+    result.text = "durable completed tool result";
+    state.complete_tool(session, prior, result);
+    Db raw(config.state_root / "state.sqlite3");
+    const auto journal_query =
+        "SELECT status||result FROM tools WHERE session='" + session.id + "'";
+    const auto journal = raw.value(journal_query);
+    Tools tools(config, files, processes, http, clock);
+    ProbeProvider provider;
+    const auto original = standard ? std::make_exception_ptr(std::logic_error("delivery failed"))
+                                   : std::make_exception_ptr(Error("delivery failed"));
+    bool completed = false, failed = false;
+    Agent agent(config, provider, tools, state, [&](const Json &event) {
+      if (event.value("type", "") == "turn.completed") {
+        completed = true;
+        std::rethrow_exception(original);
+      }
+      failed |= event.value("type", "") == "turn.failed";
+    });
+    try {
+      agent.run(session, "finish then fail delivery", cancel);
+      FAIL();
+    } catch (...) {
+      EXPECT_EQ(std::current_exception(), original);
+    }
+    EXPECT_TRUE(completed);
+    EXPECT_FALSE(failed);
+    const auto listed = state.list();
+    const auto found = std::find_if(listed.begin(), listed.end(),
+                                    [&](const Json &row) { return row.at("id") == session.id; });
+    ASSERT_NE(found, listed.end());
+    EXPECT_EQ(found->at("status"), "complete");
+    EXPECT_EQ(state.load_id(session.id, true).messages.back().text, "received response");
+    const auto loaded = state.load_id(session.id, true);
+    const auto tool = std::find_if(
+        loaded.messages.begin(), loaded.messages.end(),
+        [&](const codet::Message &message) { return message.tool_call_id == prior.id; });
+    ASSERT_NE(tool, loaded.messages.end());
+    EXPECT_EQ(tool->text, result.text);
+    EXPECT_EQ(raw.value(journal_query), journal);
+  }
+}
 TEST_F(Pr17, RetiredFactsInEitherLegacySystemFieldProduceAnExplicitRuntimeUpdate) {
   for (const auto *key : {"system", "latest_system"}) {
     StateStore state(config.state_root);

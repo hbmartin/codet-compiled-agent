@@ -404,7 +404,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
       report_diagnostic(diagnostics_, "Turn status update failed: " + std::string(e.what()));
     }
   };
-  bool soft_failed = false;
+  bool soft_failed = false, turn_complete = false;
   try {
     const auto submitted = tools_.run_hooks("UserPromptSubmit",
                                             {{"hook_event_name", "UserPromptSubmit"},
@@ -726,6 +726,7 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
           continue;
         }
         state_.finish_turn(session.id, "complete");
+        turn_complete = true;
         emit({{"type", "turn.completed"},
               {"usage",
                {{"input_tokens", out.usage.input},
@@ -851,6 +852,8 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
   } catch (const Error &e) {
     if (e.code == 130)
       tools_.cancel_exec();
+    if (turn_complete)
+      throw;
     recover(e.code == 130 ? "interrupted" : "failed");
     const auto *provider_error = dynamic_cast<const ProviderError *>(&e);
     auto details = provider_error ? provider_error->details() : Json{{"message", e.what()}};
@@ -859,6 +862,8 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
     emit({{"type", "turn.failed"}, {"error", details}});
     throw;
   } catch (const std::exception &e) {
+    if (turn_complete)
+      throw;
     recover("failed");
     emit({{"type", "turn.failed"}, {"error", {{"message", e.what()}}}});
     throw Error(safe_text(e.what()));

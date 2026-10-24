@@ -1144,13 +1144,22 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
     } catch (const Error &e) {
       if (e.code == 130)
         throw;
+      cancel.check();
       if (consumer_failure)
         std::rethrow_exception(consumer_failure);
       if (saw || attempt == 3)
         throw;
       clock_.sleep_ms(250 * (1 << attempt), cancel);
       continue;
+    } catch (...) {
+      cancel.check();
+      if (consumer_failure)
+        std::rethrow_exception(consumer_failure);
+      throw;
     }
+    cancel.check();
+    if (consumer_failure)
+      std::rethrow_exception(consumer_failure);
     if (response.status == 429 || response.status == 408 || response.status >= 500) {
       if (attempt == 3)
         throw ProviderError("Provider temporarily unavailable (HTTP " +
