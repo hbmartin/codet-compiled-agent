@@ -1,3 +1,4 @@
+#include "codet/detail/cli_output.hpp"
 #include "codet/detail/native_terminal.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/output.hpp"
@@ -59,6 +60,27 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc > 1 && std::string(argv[1]) == "--codet-required-stdout-helper") {
+      if (argc != 4)
+        return 2;
+      static char buffer[8192];
+      if (::setvbuf(stdout, buffer, _IOFBF, sizeof(buffer)) != 0)
+        return 3;
+      codet::detail::CliOutput output;
+      try {
+        output.required({"failed-required-record"});
+        return 4;
+      } catch (const codet::Error &) {
+      }
+      (void)::write(std::stoi(argv[2]), "F", 1);
+      char token;
+      if (!codet::test::read_token(std::stoi(argv[3]), token))
+        return 5;
+      output.secondary({"must-not-publish"});
+      codet::report_diagnostic({}, "final output failure");
+      (void)::fflush(stdout);
+      return output.status(0);
+    }
     if (argc > 1 && std::string(argv[1]) == "--codet-line-output-helper") {
       if (argc < 4) {
         std::fputs("line-output helper expects FD CLI_ARGS\n", stderr);

@@ -1165,6 +1165,37 @@ class CliTests(unittest.TestCase):
                 finally:
                     if process.poll() is None:process.kill();process.wait(timeout=5)
                     process.stderr.close();os.close(reader);os.close(writer)
+    def test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown(self):
+        import fcntl
+        import select
+        helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+        reader,writer=os.pipe();ready,notify=os.pipe();gate,release=os.pipe()
+        os.set_blocking(reader,False);os.set_blocking(writer,False)
+        flags=fcntl.fcntl(writer,fcntl.F_GETFL);filled=0
+        with contextlib.suppress(BlockingIOError):
+            while True:filled+=os.write(writer,b'x'*4096)
+        process=subprocess.Popen([helper,'--codet-required-stdout-helper',str(notify),str(gate)],
+            stdout=writer,stderr=subprocess.PIPE,pass_fds=(notify,gate),env=self.env)
+        os.close(notify);os.close(gate)
+        try:
+            self.assertTrue(select.select([ready],[],[],5)[0])
+            self.assertEqual(os.read(ready,1),b'F')
+            drained=b''
+            with contextlib.suppress(BlockingIOError):
+                while True:drained+=os.read(reader,65536)
+            self.assertEqual(drained,b'x'*filled)
+            os.write(release,b'G');_,error=process.communicate(timeout=10)
+            self.assertEqual(process.returncode,1,error)
+            status_mask=os.O_NONBLOCK|os.O_APPEND|os.O_ASYNC|os.O_SYNC
+            self.assertEqual(fcntl.fcntl(writer,fcntl.F_GETFL)&status_mask,flags&status_mask)
+            os.close(writer);writer=None
+            self.assertEqual(os.read(reader,65536),b'')
+            self.assertIn(b'final output failure',error)
+        finally:
+            if process.poll() is None:process.kill();process.wait(timeout=5)
+            for descriptor in (reader,writer,ready,release):
+                if descriptor is not None:os.close(descriptor)
+
     def test_required_stdout_commands_reject_broken_pipes(self):
         for arguments in (['--help'],['--version'],['sessions'],['doctor']):
             reader,writer=os.pipe();os.close(reader)

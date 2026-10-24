@@ -753,8 +753,14 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     }
     if (o.command == "export") {
       if (o.format == "text") {
-        for (const auto &m : session.messages)
-          output.required({m.role, ": ", m.text, "\n"});
+        detail::TextExport exported(output);
+        for (const auto &m : session.messages) {
+          exported.append(m.role);
+          exported.append(": ");
+          exported.append(m.text);
+          exported.append("\n\n");
+        }
+        exported.finish();
       } else
         output.required(
             {Json({{"id", session.id}, {"name", session.name}, {"messages", session.messages}})

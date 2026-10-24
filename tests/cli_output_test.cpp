@@ -80,8 +80,9 @@ TEST(CliOutput, SecondarySerializationCannotReplaceAnExistingFailure) {
   std::ostringstream stream;
   detail::CliOutput output(stream);
   EXPECT_NO_THROW(output.secondary_record([]() -> std::string { throw std::bad_alloc(); }));
-  EXPECT_TRUE(output.failed());
+  EXPECT_FALSE(output.failed());
   EXPECT_TRUE(stream.str().empty());
+  EXPECT_NO_THROW(output.required({"later"}));
 }
 TEST(CliOutput, NonblockingStdoutRecoversCppAndCStateAfterThePipeDrains) {
   const auto child = test::start_helper({"--codet-stdout-recovery-helper"});
@@ -90,5 +91,76 @@ TEST(CliOutput, NonblockingStdoutRecoversCppAndCStateAfterThePipeDrains) {
   ASSERT_TRUE(test::wait_helper(child, status));
   ASSERT_TRUE(WIFEXITED(status));
   EXPECT_EQ(WEXITSTATUS(status), 0);
+}
+struct DescriptorProbe {
+  std::string delivered;
+  int attempts = 0, interrupted = 0, fail = 0;
+  size_t chunk = 1000000;
+  static ssize_t write(void *context, int, const void *data, size_t size) {
+    auto &probe = *static_cast<DescriptorProbe *>(context);
+    ++probe.attempts;
+    if (probe.interrupted-- > 0) {
+      errno = EINTR;
+      return -1;
+    }
+    if (probe.fail) {
+      errno = probe.fail;
+      return -1;
+    }
+    size = std::min(size, probe.chunk);
+    probe.delivered.append(static_cast<const char *>(data), size);
+    return static_cast<ssize_t>(size);
+  }
+  detail::DescriptorOutput writer() {
+    return detail::DescriptorOutput(123, write, this);
+  }
+};
+TEST(CliOutput, DescriptorWritesFinishShortWritesAndInterruptedCalls) {
+  DescriptorProbe probe;
+  probe.chunk = 2;
+  probe.interrupted = 2;
+  detail::CliOutput output(probe.writer());
+  output.required({"first", "second"});
+  EXPECT_EQ(probe.delivered, "firstsecond\n");
+  EXPECT_EQ(output.status(0), 0);
+}
+TEST(CliOutput, DescriptorFailuresLatchWithoutRetryingOrFlushingAtDestruction) {
+  for (int error : {EAGAIN, EPIPE, 0}) {
+    DescriptorProbe probe;
+    probe.fail = error;
+    if (!error)
+      probe.chunk = 0;
+    {
+      detail::CliOutput output(probe.writer());
+      EXPECT_THROW(output.required({"lost"}), Error);
+      EXPECT_EQ(output.status(0), 1);
+      probe.fail = 0;
+      probe.chunk = 100;
+      output.secondary({"error"});
+      EXPECT_THROW(output.required({"later"}), Error);
+      EXPECT_EQ(probe.attempts, 1);
+    }
+    EXPECT_TRUE(probe.delivered.empty());
+    EXPECT_EQ(probe.attempts, 1);
+  }
+}
+TEST(CliOutput, TextExportsBatchExactBytesAndDiscardUnpublishedTails) {
+  DescriptorProbe probe;
+  detail::CliOutput output(probe.writer());
+  const std::string message(1000, 'x');
+  {
+    detail::TextExport exported(output);
+    for (int i = 0; i != 100; ++i)
+      exported.append(message);
+    exported.finish();
+    exported.finish();
+  }
+  EXPECT_EQ(probe.delivered, std::string(100000, 'x'));
+  EXPECT_EQ(probe.attempts, 2);
+  {
+    detail::TextExport discarded(output);
+    discarded.append("must not flush from a destructor");
+  }
+  EXPECT_EQ(probe.attempts, 2);
 }
 } // namespace
