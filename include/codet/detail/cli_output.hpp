@@ -108,6 +108,7 @@ public:
         secondary({record});
       } catch (...) {
         // Building a secondary report does not imply that stdout delivery failed.
+        return;
       }
   }
   void echo(std::initializer_list<std::string_view> parts) {
@@ -122,7 +123,7 @@ public:
 // One bounded application buffer for a complete text export. Destruction never publishes it.
 class TextExport {
   CliOutput &output_;
-  std::array<char, 64 * 1024> bytes_{};
+  std::array<char, size_t{64} * 1024> bytes_{};
   size_t used_ = 0;
 
 public:
