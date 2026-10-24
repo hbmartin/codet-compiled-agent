@@ -1,4 +1,5 @@
 // Host-only observations; native calls still execute against a real PTY.
+#include "native_symbol.hpp"
 #include "native_terminal_metrics.hpp"
 #include <curses.h>
 #include <dlfcn.h>
@@ -8,7 +9,7 @@ NativeTerminalMetrics native_terminal_metrics;
 }
 extern "C" int endwin() {
   using End = int (*)();
-  static const auto original = reinterpret_cast<End>(::dlsym(RTLD_NEXT, "endwin"));
+  static const auto original = reinterpret_cast<End>(codet::test::native_symbol("endwin"));
   const auto status = original();
   if (codet::test::native_terminal_metrics.observe)
     ++codet::test::native_terminal_metrics.ends;
@@ -16,7 +17,7 @@ extern "C" int endwin() {
 }
 extern "C" void delscreen(SCREEN *screen) {
   using Delete = void (*)(SCREEN *);
-  static const auto original = reinterpret_cast<Delete>(::dlsym(RTLD_NEXT, "delscreen"));
+  static const auto original = reinterpret_cast<Delete>(codet::test::native_symbol("delscreen"));
   auto &metrics = codet::test::native_terminal_metrics;
   if (metrics.observe) {
     metrics.ended_before_delete = metrics.ends == 1 && ::isendwin();
@@ -30,7 +31,7 @@ extern "C" int tcsetattr(int fd, int action, const termios *settings)
 #endif
 {
   using Set = int (*)(int, int, const termios *);
-  static const auto original = reinterpret_cast<Set>(::dlsym(RTLD_NEXT, "tcsetattr"));
+  static const auto original = reinterpret_cast<Set>(codet::test::native_symbol("tcsetattr"));
   if (codet::test::native_terminal_metrics.observe)
     ++codet::test::native_terminal_metrics.settings;
   return original(fd, action, settings);

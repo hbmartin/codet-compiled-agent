@@ -1,0 +1,3 @@
+case,baseline_milliseconds,baseline_allocations,baseline_allocated_bytes,baseline_stream_writes,baseline_stream_flushes,baseline_stream_bytes,baseline_descriptor_writes,baseline_descriptor_bytes,baseline_expected_bytes,changed_milliseconds,changed_allocations,changed_allocated_bytes,changed_stream_writes,changed_stream_flushes,changed_stream_bytes,changed_descriptor_writes,changed_descriptor_bytes,changed_expected_bytes,time_change_percent
+small,1.722708,4790,629716,400,100,26400,0,0,26400,1.382167,4790,629732,0,0,0,1,26400,26400,-19.767772599883436
+large,104.226834,500218,150122664,40000,10000,10320000,0,0,10320000,94.455708,500218,150122680,0,0,0,158,10320000,10320000,-9.374865977412306

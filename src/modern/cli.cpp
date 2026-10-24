@@ -353,7 +353,7 @@ public:
     if (curses_)
       say(text);
     else
-      (void)detail::write_diagnostic(std::cerr, {text});
+      (void)detail::write_diagnostic(std::cerr, {detail::terminal_text(text)});
   }
   void set_mode(const std::string &mode) {
     status_ = "Permissions: " + mode + "; no OS shell sandbox";
@@ -362,15 +362,16 @@ public:
       render();
   }
   void say(const std::string &text) {
+    const auto shown = detail::terminal_text(text);
     if (curses_) {
-      for (const auto &l : split(text))
+      for (const auto &l : split(shown))
         transcript_.push_back(l);
       if (transcript_.size() > 1000)
         transcript_.erase(transcript_.begin(),
                           transcript_.begin() + static_cast<long>(transcript_.size() - 1000));
       render();
     } else
-      (void)output_.display({text});
+      (void)output_.display({shown});
   }
   static std::vector<std::string> split(const std::string &text) {
     std::vector<std::string> ls;
@@ -518,13 +519,14 @@ public:
       render();
     }
     if (curses_ && type == "item.updated") {
-      progress_ = "Responding: " + event["item"].value("text_delta", "");
+      progress_ = "Responding: " + detail::terminal_text(event["item"].value("text_delta", ""));
       render();
     }
   }
 };
 } // namespace
 int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
+  detail::reset_standard_diagnostics();
   const auto o = parse(args);
   detail::CliOutput output;
   if (o.help) {
@@ -752,8 +754,14 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     }
     if (o.command == "export") {
       if (o.format == "text") {
-        for (const auto &m : session.messages)
-          output.required({m.role, ": ", m.text, "\n"});
+        detail::TextExport exported(output);
+        for (const auto &m : session.messages) {
+          exported.append(m.role);
+          exported.append(": ");
+          exported.append(m.text);
+          exported.append("\n\n");
+        }
+        exported.finish();
       } else
         output.required(
             {Json({{"id", session.id}, {"name", session.name}, {"messages", session.messages}})
@@ -830,10 +838,11 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
                !event["item"].value("final_result", false) &&
                (event["item"].value("phase", "") == "commentary" ||
                 event["item"].value("phase", "") == "partial_answer"))
-      (void)detail::write_diagnostic(std::cerr, {event["item"].value("text", "")});
+      (void)detail::write_diagnostic(std::cerr,
+                                     {detail::terminal_text(event["item"].value("text", ""))});
     else if (event.value("type", "") == "item.started" && event["item"].contains("tool"))
-      (void)detail::write_diagnostic(
-          std::cerr, {"[", event["item"]["tool"].get_ref<const std::string &>(), "]"});
+      (void)detail::write_diagnostic(std::cerr,
+                                     {"[", detail::terminal_text(event["item"]["tool"]), "]"});
   };
   Agent agent(config, provider, tools, state, events, diagnostic);
   struct SessionEnd {
@@ -843,7 +852,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
         end();
       } catch (const std::exception &error) {
         (void)detail::write_diagnostic(
-            std::cerr, {"SessionEnd hook cleanup failed: ", safe_text(error.what())});
+            std::cerr, {"SessionEnd hook cleanup failed: ", detail::terminal_text(error.what())});
       } catch (...) {
         (void)detail::write_diagnostic(std::cerr,
                                        {"SessionEnd hook cleanup failed: unknown exception"});
@@ -1037,7 +1046,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       if (terminal)
         terminal->say(answer);
       else if (o.format == "text")
-        output.required({answer});
+        output.required({isatty(STDOUT_FILENO) ? detail::terminal_text(answer) : answer});
       else if (o.format == "json")
         output.required({Json({{"session_id", session.id},
                                {"status", "success"},
@@ -1052,9 +1061,9 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     } catch (const Error &e) {
       if (terminal) {
         pending_input(false);
-        terminal->say(std::string("Error: ") + detail::terminal_text(e.what()));
+        terminal->say(std::string("Error: ") + e.what());
         if (const auto *raw = dynamic_cast<const ProviderError *>(&e))
-          terminal->say(detail::terminal_text(raw->body));
+          terminal->say(raw->body);
         cancel.requested = false;
         return e.code;
       }
@@ -1072,7 +1081,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     } catch (const std::exception &e) {
       if (terminal) {
         pending_input(false);
-        terminal->say("Error: " + detail::terminal_text(e.what()));
+        terminal->say(std::string("Error: ") + e.what());
         if (!quit_requested)
           cancel.requested = false;
         return 1;

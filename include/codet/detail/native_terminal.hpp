@@ -1,5 +1,6 @@
 #pragma once
 #include "codet/detail/terminal_resources.hpp"
+#include <cerrno>
 #include <cstdio>
 #include <curses.h>
 #include <histedit.h>
@@ -53,13 +54,20 @@ public:
     return ::tcgetattr(STDIN_FILENO, &settings) == 0;
   }
   bool apply(const termios &settings) noexcept override {
-    return ::tcsetattr(STDIN_FILENO, TCSANOW, &settings) == 0;
+    int status;
+    do {
+      status = ::tcsetattr(STDIN_FILENO, TCSANOW, &settings);
+    } while (status < 0 && errno == EINTR);
+    return status == 0;
   }
   void restore(const termios &settings) noexcept override {
+    TerminalCleanupSignals signals;
+    restore_active(settings);
+  }
+  void restore_active(const termios &settings) noexcept override {
     termios current{};
     if (capture(current) && same_terminal_settings(current, settings))
       return;
-    TerminalCleanupSignals signals;
     (void)apply(settings);
   }
   bool start_screen() override {

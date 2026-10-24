@@ -1,0 +1,1522 @@
+{
+  "recorded_utc": "2026-10-24T17:31:21.763600+00:00",
+  "follow_up_to": 35,
+  "branch": "codex/output-delivery-followup",
+  "baseline_commit": "b4d768ae797b2352e9f17961c9cc36f3c2136b50",
+  "validated_source_commit": "d7687bf646622252dd6f41cee02442cac9811e08",
+  "source_hashes": {
+    "CMakeLists.txt": "0cf13828d6da73aecee387c2a41a9ff7dbe398c8ca6865fc80100703c05ae6a2",
+    "include/codet/detail/cli_diagnostics.hpp": "e08a6efd7772099b5953dace2be94b4cc55a149f36f2b6d659e822f7eb7b649d",
+    "include/codet/detail/cli_output.hpp": "7e99c792728d061d0291d89859d5bc080a153999eb8f803be25b14bd71cc8566",
+    "include/codet/detail/diagnostic_stream.hpp": "3f13b8669e9e6ec3378bd6f339e71e1e857870a00c46d269f2979e583889a7e5",
+    "include/codet/detail/native_terminal.hpp": "7820a7db74d0f109b3d250777d6b432eb6ec1f4b82e4491af94524bc509545ca",
+    "include/codet/detail/terminal_resources.hpp": "273d65777e7f88abf6246ada5a36b5aee40a9e0a67d25da54fcdae5f28502e6c",
+    "include/codet/diagnostics.hpp": "389e5638515143818e818ad991758f81f055edd39856c7310194026981aa5071",
+    "src/modern/agent.cpp": "e12c09f5a3df81421d10bfa0ac22c62b8b2ee8acf3edb724c629bc043d1504fc",
+    "src/modern/cli.cpp": "975d07952e8f100b1fba6f7e3333bf8d699c4cbacff5fc36fdd8c3b9174e6cc5",
+    "src/modern/platform.cpp": "42a3364c21b3b893de9057624f9e1f7e1f222cf27fcf27ebb8cd654b911caab5",
+    "src/modern/provider.cpp": "9560c6f08c03b9417209f6ee7b0b5f1f0337184048ba00e55fc4bbb9172161dc",
+    "tests/cli_diagnostics_test.cpp": "8db11ec15beead12506009f41b0d2bbe87bfbaa665d030a2068f64320726bab1",
+    "tests/cli_integration.py": "ea2e940a949f82fb3bc47f236e88cd9cb6889d1e3e6c99bc8b1f3d9b1352a2d3",
+    "tests/cli_output_test.cpp": "85a2e1674a2a04e106eea5585a5b718527df324897001a196a26f06ff7c5c1c9",
+    "tests/export_bench.cpp": "95d479501a1c918382db578c2f680011d6ceb95b7cd5462bbd05bd637915edcc",
+    "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6",
+    "tests/native_terminal_interposer.cpp": "809831f48323cc686bb9c506022575e8cc0f9737998f92c3e9adebf5fe50941a",
+    "tests/pr17_test.cpp": "d45ae2309114ae9b53ca6b10f73bc7bf4e7611b06ad98cfe43ecb174afb24766",
+    "tests/terminal_cli_helper.py": "74db7f99cc6f6e6304eca1c1f54fd57ea843d8055a711e002ce88c599c0f408b",
+    "tests/terminal_resources_test.cpp": "f74f91dc18b519f832aa61dcdcabd09770f3f17e1642359b6b91ffdc234a0df9",
+    "tests/test_main.cpp": "90f9d59770a863e2b2fe74934dd42af2824437466dd4c4ac3c990f4b382778ee"
+  },
+  "behavior": [
+    "Escape interactive and TTY answer displays and stderr diagnostics before budget accounting; preserve data output bytes.",
+    "Required native stdout uses descriptor writes and cannot retain records in stdio; no EAGAIN waiting or descriptor-flag changes.",
+    "Completion notification failures retain complete session status, journal payloads, transcript and exception identity.",
+    "Consumer failures are checked across all transport exits before retries; cancellation keeps precedence.",
+    "Routine active restoration obeys job control; final cleanup retains SIGTTOU masking and native release order.",
+    "Shared preallocated diagnostic state is rebound on rdbuf replacement and reset on invocation; conservative separators and sticky display failure remain."
+  ],
+  "tests": {
+    "host": {
+      "unit_and_fault_runs": [
+        59,
+        536
+      ],
+      "unit_and_fault_passes": [
+        59,
+        534
+      ],
+      "expected_skips": [
+        "Contracts.NativeTigerDesktopAcceptance",
+        "NetworkOptIn.TlsHandshake"
+      ],
+      "python_test_groups": [
+        74,
+        7,
+        6,
+        9,
+        17,
+        3
+      ],
+      "log": "build/output-delivery-followup/host-final-lasttest.log",
+      "sha256": "82bf85a488705e87ec4320ac458d82f7b19df09e359c6ea7de89bc001d8629f8"
+    },
+    "sanitize": {
+      "unit_and_fault_runs": [
+        59,
+        536
+      ],
+      "unit_and_fault_passes": [
+        59,
+        534
+      ],
+      "expected_skips": [
+        "Contracts.NativeTigerDesktopAcceptance",
+        "NetworkOptIn.TlsHandshake"
+      ],
+      "python_test_groups": [
+        74,
+        7,
+        6,
+        9,
+        17,
+        3
+      ],
+      "log": "build/output-delivery-followup/sanitize-final-lasttest.log",
+      "sha256": "777796d5e365056d7b9f2ad503c1c8f20b00c6e5eabbfbc62d488416ea81a0a1"
+    }
+  },
+  "checks": [
+    {
+      "name": "pinned-dependencies",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/fetch-deps.py",
+        "--offline"
+      ],
+      "exit": 0,
+      "seconds": 0.64,
+      "log": "build/output-delivery-followup/pinned-dependencies.log"
+    },
+    {
+      "name": "final-debug-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/host",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 2.79,
+      "log": "build/output-delivery-followup/final-debug-build.log"
+    },
+    {
+      "name": "final-debug-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/host",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 96.42,
+      "log": "build/output-delivery-followup/final-debug-ctest.log"
+    },
+    {
+      "name": "final-sanitize-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/sanitize",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 5.3,
+      "log": "build/output-delivery-followup/final-sanitize-build.log"
+    },
+    {
+      "name": "final-sanitize-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/sanitize",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 160.06,
+      "log": "build/output-delivery-followup/final-sanitize-ctest.log"
+    },
+    {
+      "name": "final-sanitize-diagnostic-repeated",
+      "command": [
+        "build/sanitize/codet_tests",
+        "--gtest_filter=FileDiagnostics.*:CliDiagnosticsTest.*:TerminalResources.*:DiagnosticWriter.*:CliOutput.*:Pr17.ConsumerFailuresSurviveEveryTransportExitWithoutAnotherRequest:Pr17.CompletedSessionSurvivesDeliveryFailureWithTheOriginalException",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 28.57,
+      "log": "build/output-delivery-followup/final-sanitize-diagnostic-repeated.log"
+    },
+    {
+      "name": "final-sanitize-fault-repeated",
+      "command": [
+        "build/sanitize/codet_publication_fault_tests",
+        "--gtest_filter=FileDiagnosticsFault.*",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 3.86,
+      "log": "build/output-delivery-followup/final-sanitize-fault-repeated.log"
+    },
+    {
+      "name": "lint",
+      "command": [
+        "make",
+        "check-lint",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 1.22,
+      "log": "build/output-delivery-followup/lint.log"
+    },
+    {
+      "name": "runner-tests",
+      "command": [
+        "make",
+        "test-lint-runners",
+        "test-modern-analysis-runner",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "ANALYSIS_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 5.49,
+      "log": "build/output-delivery-followup/runner-tests.log"
+    },
+    {
+      "name": "semgrep",
+      "command": [
+        "make",
+        "check-semgrep",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "SEMGREP=build/semgrep-venv/bin/pysemgrep"
+      ],
+      "exit": 0,
+      "seconds": 3.55,
+      "log": "build/output-delivery-followup/semgrep.log"
+    }
+  ],
+  "repeated": {
+    "final-sanitize-diagnostic-repeated": {
+      "repetitions": 20,
+      "tests_per_repetition": 52,
+      "executions": 1040,
+      "sha256": "c4042495f4c935e903fcd15a76c0e12f98d7319d7c0cd61f1c34767ad8579f6f"
+    },
+    "final-sanitize-fault-repeated": {
+      "repetitions": 20,
+      "tests_per_repetition": 10,
+      "executions": 200,
+      "sha256": "9afe0310c0ba023111b1e2903bd7892aa9c566f74917b15f1b480333fe558772"
+    },
+    "sanitized-cli": {
+      "repetitions": 20,
+      "tests_per_repetition": 5,
+      "executions": 100,
+      "runs": [
+        {
+          "run": 0,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.22
+        },
+        {
+          "run": 1,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.08
+        },
+        {
+          "run": 2,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.01
+        },
+        {
+          "run": 3,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.02
+        },
+        {
+          "run": 4,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.43
+        },
+        {
+          "run": 5,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.33
+        },
+        {
+          "run": 6,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.13
+        },
+        {
+          "run": 7,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.25
+        },
+        {
+          "run": 8,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.36
+        },
+        {
+          "run": 9,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.36
+        },
+        {
+          "run": 10,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.2
+        },
+        {
+          "run": 11,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.07
+        },
+        {
+          "run": 12,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.3
+        },
+        {
+          "run": 13,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.31
+        },
+        {
+          "run": 14,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.14
+        },
+        {
+          "run": 15,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.01
+        },
+        {
+          "run": 16,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.06
+        },
+        {
+          "run": 17,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.08
+        },
+        {
+          "run": 18,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 3.16
+        },
+        {
+          "run": 19,
+          "command": [
+            "python3",
+            "tests/hermetic.py",
+            "python3",
+            "tests/cli_integration.py",
+            "build/sanitize/codet",
+            "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+            "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+            "CliTests.test_failed_required_records_do_not_reappear_after_tie_flush_or_shutdown",
+            "CliTests.test_active_background_restoration_respects_foreground_job_control",
+            "CliTests.test_line_stdout_recovers_after_a_lost_reply_and_quit_reports_failure"
+          ],
+          "exit": 0,
+          "seconds": 2.91
+        }
+      ]
+    }
+  },
+  "total_repeated_executions": 1340,
+  "analysis": {
+    "cppcheck": {
+      "passed": true,
+      "expected_sources": 25,
+      "completed_sources": 25,
+      "findings": [],
+      "canaries_passed": true,
+      "manifest": "build/output-delivery-followup/final-cppcheck-analysis/analysis/manifest.json",
+      "sha256": "c6f4f09c67a96cc7662294a27dbbc784a4ec8ca95ef166aa5e7bb0b81928a795",
+      "versions": [
+        {
+          "command": [
+            "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck",
+            "--version"
+          ],
+          "directory": "/Volumes/Pro2T/codet-compiled-agent",
+          "exit_code": 0,
+          "stdout": "Cppcheck 2.22.0\n",
+          "stderr": "",
+          "failure": null,
+          "seconds": 0.005
+        }
+      ],
+      "matches_baseline_findings": true,
+      "baseline_manifest_sha256": "eace81fe4709619b53988fec3217c006a594aaaf8326509fac79c7904304eb8e"
+    },
+    "clang-tidy": {
+      "passed": false,
+      "expected_sources": 25,
+      "completed_sources": 24,
+      "findings": [
+        {
+          "file": "src/modern/images.cpp",
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'unsigned long' to 'double'"
+        },
+        {
+          "file": "src/modern/images.cpp",
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+        },
+        {
+          "file": "src/modern/images.cpp",
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+        },
+        {
+          "file": "src/modern/main.cpp",
+          "check": "bugprone-exception-escape",
+          "message": "an exception may be thrown in function 'main' which should not throw exceptions"
+        },
+        {
+          "file": "src/modern/platform.cpp",
+          "check": "clang-diagnostic-error",
+          "message": "implicit instantiation of undefined template 'std::basic_istringstream<char>'"
+        },
+        {
+          "file": "src/modern/state.cpp",
+          "check": "bugprone-exception-escape",
+          "message": "an exception may be thrown in function 'operator()' which should not throw exceptions"
+        }
+      ],
+      "canaries_passed": true,
+      "manifest": "build/output-delivery-followup/final-clang-tidy-analysis/analysis/manifest.json",
+      "sha256": "5cc1852be929389c911d18c40e7d717631511bfa102de9e6c0da477c4fb8204c",
+      "versions": [
+        {
+          "command": [
+            "/Volumes/Pro2T/codet-compiled-agent/build/tidy18/clang-tidy-sdk13",
+            "--version"
+          ],
+          "directory": "/Volumes/Pro2T/codet-compiled-agent",
+          "exit_code": 0,
+          "stdout": "LLVM (http://llvm.org/):\n  LLVM version 18.1.8\n  Optimized build.\n",
+          "stderr": "",
+          "failure": null,
+          "seconds": 0.011
+        }
+      ],
+      "matches_baseline_findings": true,
+      "baseline_manifest_sha256": "3e164bfddc0c60e06ffbeb2bb78a73c16aeb787a0361c2e4b14aa8e48eea3e53"
+    },
+    "clang-analyzer": {
+      "passed": false,
+      "expected_sources": 25,
+      "completed_sources": 25,
+      "findings": [
+        {
+          "file": "src/modern/context.cpp",
+          "check": "core.DivideZero",
+          "message": "Division by zero"
+        }
+      ],
+      "canaries_passed": true,
+      "manifest": "build/output-delivery-followup/final-clang-analyzer-analysis/analysis/manifest.json",
+      "sha256": "9333d9fed53caccfd4ed33de0bb53278422a8dbefcc900db4fda07ecbe2bc775",
+      "versions": [
+        {
+          "command": [
+            "/usr/bin/c++",
+            "--version"
+          ],
+          "directory": "/Volumes/Pro2T/codet-compiled-agent",
+          "exit_code": 0,
+          "stdout": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n",
+          "stderr": "",
+          "failure": null,
+          "seconds": 0.016
+        },
+        {
+          "command": [
+            "/usr/bin/cc",
+            "--version"
+          ],
+          "directory": "/Volumes/Pro2T/codet-compiled-agent",
+          "exit_code": 0,
+          "stdout": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n",
+          "stderr": "",
+          "failure": null,
+          "seconds": 0.012
+        }
+      ],
+      "matches_baseline_findings": true,
+      "baseline_manifest_sha256": "f83e0aed5dbc95b0ec4bed7fb2572095743afc2b2b13b31205c7bcb019ada68a"
+    }
+  },
+  "analysis_commands": [
+    {
+      "name": "cppcheck",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/output-delivery-followup/final-cppcheck-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--tool",
+        "cppcheck"
+      ],
+      "exit": 0,
+      "seconds": 60.57,
+      "log": "build/output-delivery-followup/final-cppcheck.log"
+    },
+    {
+      "name": "clang-tidy",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/output-delivery-followup/final-clang-tidy-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--tool",
+        "clang-tidy"
+      ],
+      "exit": 1,
+      "seconds": 42.91,
+      "log": "build/output-delivery-followup/final-clang-tidy.log"
+    },
+    {
+      "name": "clang-analyzer",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/output-delivery-followup/final-clang-analyzer-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--tool",
+        "clang-analyzer"
+      ],
+      "exit": 1,
+      "seconds": 62.2,
+      "log": "build/output-delivery-followup/final-clang-analyzer.log"
+    },
+    {
+      "name": "selftest",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/output-delivery-followup/final-selftest-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--selftest"
+      ],
+      "exit": 0,
+      "seconds": 1.32,
+      "log": "build/output-delivery-followup/final-selftest.log"
+    }
+  ],
+  "benchmarks": {
+    "protocol": "Fresh-process CLI export after fixture creation, to /dev/null; one warm-up and five alternating measured runs per size and build. No concurrent analyzers or tests during measurement. Exact byte counts verified by each backend. Flush counts and intercepted descriptor-write calls are distinct metrics, not a claim about all hidden libc syscalls.",
+    "summary": [
+      {
+        "case": "small",
+        "baseline_milliseconds": 1.722708,
+        "baseline_allocations": 4790,
+        "baseline_allocated_bytes": 629716,
+        "baseline_stream_writes": 400,
+        "baseline_stream_flushes": 100,
+        "baseline_stream_bytes": 26400,
+        "baseline_descriptor_writes": 0,
+        "baseline_descriptor_bytes": 0,
+        "baseline_expected_bytes": 26400,
+        "changed_milliseconds": 1.382167,
+        "changed_allocations": 4790,
+        "changed_allocated_bytes": 629732,
+        "changed_stream_writes": 0,
+        "changed_stream_flushes": 0,
+        "changed_stream_bytes": 0,
+        "changed_descriptor_writes": 1,
+        "changed_descriptor_bytes": 26400,
+        "changed_expected_bytes": 26400,
+        "time_change_percent": -19.767772599883436
+      },
+      {
+        "case": "large",
+        "baseline_milliseconds": 104.226834,
+        "baseline_allocations": 500218,
+        "baseline_allocated_bytes": 150122664,
+        "baseline_stream_writes": 40000,
+        "baseline_stream_flushes": 10000,
+        "baseline_stream_bytes": 10320000,
+        "baseline_descriptor_writes": 0,
+        "baseline_descriptor_bytes": 0,
+        "baseline_expected_bytes": 10320000,
+        "changed_milliseconds": 94.455708,
+        "changed_allocations": 500218,
+        "changed_allocated_bytes": 150122680,
+        "changed_stream_writes": 0,
+        "changed_stream_flushes": 0,
+        "changed_stream_bytes": 0,
+        "changed_descriptor_writes": 158,
+        "changed_descriptor_bytes": 10320000,
+        "changed_expected_bytes": 10320000,
+        "time_change_percent": -9.374865977412306
+      }
+    ],
+    "runs": [
+      {
+        "allocated_bytes": 629716,
+        "allocations": 4790,
+        "case": "small",
+        "descriptor_bytes": 0,
+        "descriptor_writes": 0,
+        "expected_bytes": 26400,
+        "messages": 100,
+        "milliseconds": 2.246625,
+        "stream_bytes": 26400,
+        "stream_flushes": 100,
+        "stream_writes": 400,
+        "build": "baseline",
+        "run": 0,
+        "warmup": true
+      },
+      {
+        "allocated_bytes": 150122664,
+        "allocations": 500218,
+        "case": "large",
+        "descriptor_bytes": 0,
+        "descriptor_writes": 0,
+        "expected_bytes": 10320000,
+        "messages": 10000,
+        "milliseconds": 106.244416,
+        "stream_bytes": 10320000,
+        "stream_flushes": 10000,
+        "stream_writes": 40000,
+        "build": "baseline",
+        "run": 0,
+        "warmup": true
+      },
+      {
+        "allocated_bytes": 629732,
+        "allocations": 4790,
+        "case": "small",
+        "descriptor_bytes": 26400,
+        "descriptor_writes": 1,
+        "expected_bytes": 26400,
+        "messages": 100,
+        "milliseconds": 1.63225,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0,
+        "build": "changed",
+        "run": 0,
+        "warmup": true
+      },
+      {
+        "allocated_bytes": 150122680,
+        "allocations": 500218,
+        "case": "large",
+        "descriptor_bytes": 10320000,
+        "descriptor_writes": 158,
+        "expected_bytes": 10320000,
+        "messages": 10000,
+        "milliseconds": 96.144,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0,
+        "build": "changed",
+        "run": 0,
+        "warmup": true
+      },
+      {
+        "allocated_bytes": 629732,
+        "allocations": 4790,
+        "case": "small",
+        "descriptor_bytes": 26400,
+        "descriptor_writes": 1,
+        "expected_bytes": 26400,
+        "messages": 100,
+        "milliseconds": 1.479958,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0,
+        "build": "changed",
+        "run": 1,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 150122680,
+        "allocations": 500218,
+        "case": "large",
+        "descriptor_bytes": 10320000,
+        "descriptor_writes": 158,
+        "expected_bytes": 10320000,
+        "messages": 10000,
+        "milliseconds": 94.455708,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0,
+        "build": "changed",
+        "run": 1,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 629716,
+        "allocations": 4790,
+        "case": "small",
+        "descriptor_bytes": 0,
+        "descriptor_writes": 0,
+        "expected_bytes": 26400,
+        "messages": 100,
+        "milliseconds": 1.986042,
+        "stream_bytes": 26400,
+        "stream_flushes": 100,
+        "stream_writes": 400,
+        "build": "baseline",
+        "run": 1,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 150122664,
+        "allocations": 500218,
+        "case": "large",
+        "descriptor_bytes": 0,
+        "descriptor_writes": 0,
+        "expected_bytes": 10320000,
+        "messages": 10000,
+        "milliseconds": 101.230959,
+        "stream_bytes": 10320000,
+        "stream_flushes": 10000,
+        "stream_writes": 40000,
+        "build": "baseline",
+        "run": 1,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 629716,
+        "allocations": 4790,
+        "case": "small",
+        "descriptor_bytes": 0,
+        "descriptor_writes": 0,
+        "expected_bytes": 26400,
+        "messages": 100,
+        "milliseconds": 1.8035,
+        "stream_bytes": 26400,
+        "stream_flushes": 100,
+        "stream_writes": 400,
+        "build": "baseline",
+        "run": 2,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 150122664,
+        "allocations": 500218,
+        "case": "large",
+        "descriptor_bytes": 0,
+        "descriptor_writes": 0,
+        "expected_bytes": 10320000,
+        "messages": 10000,
+        "milliseconds": 104.1875,
+        "stream_bytes": 10320000,
+        "stream_flushes": 10000,
+        "stream_writes": 40000,
+        "build": "baseline",
+        "run": 2,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 629732,
+        "allocations": 4790,
+        "case": "small",
+        "descriptor_bytes": 26400,
+        "descriptor_writes": 1,
+        "expected_bytes": 26400,
+        "messages": 100,
+        "milliseconds": 1.485583,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0,
+        "build": "changed",
+        "run": 2,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 150122680,
+        "allocations": 500218,
+        "case": "large",
+        "descriptor_bytes": 10320000,
+        "descriptor_writes": 158,
+        "expected_bytes": 10320000,
+        "messages": 10000,
+        "milliseconds": 127.895958,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0,
+        "build": "changed",
+        "run": 2,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 629732,
+        "allocations": 4790,
+        "case": "small",
+        "descriptor_bytes": 26400,
+        "descriptor_writes": 1,
+        "expected_bytes": 26400,
+        "messages": 100,
+        "milliseconds": 1.346583,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0,
+        "build": "changed",
+        "run": 3,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 150122680,
+        "allocations": 500218,
+        "case": "large",
+        "descriptor_bytes": 10320000,
+        "descriptor_writes": 158,
+        "expected_bytes": 10320000,
+        "messages": 10000,
+        "milliseconds": 93.247542,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0,
+        "build": "changed",
+        "run": 3,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 629716,
+        "allocations": 4790,
+        "case": "small",
+        "descriptor_bytes": 0,
+        "descriptor_writes": 0,
+        "expected_bytes": 26400,
+        "messages": 100,
+        "milliseconds": 1.551709,
+        "stream_bytes": 26400,
+        "stream_flushes": 100,
+        "stream_writes": 400,
+        "build": "baseline",
+        "run": 3,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 150122664,
+        "allocations": 500218,
+        "case": "large",
+        "descriptor_bytes": 0,
+        "descriptor_writes": 0,
+        "expected_bytes": 10320000,
+        "messages": 10000,
+        "milliseconds": 107.0985,
+        "stream_bytes": 10320000,
+        "stream_flushes": 10000,
+        "stream_writes": 40000,
+        "build": "baseline",
+        "run": 3,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 629716,
+        "allocations": 4790,
+        "case": "small",
+        "descriptor_bytes": 0,
+        "descriptor_writes": 0,
+        "expected_bytes": 26400,
+        "messages": 100,
+        "milliseconds": 1.722708,
+        "stream_bytes": 26400,
+        "stream_flushes": 100,
+        "stream_writes": 400,
+        "build": "baseline",
+        "run": 4,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 150122664,
+        "allocations": 500218,
+        "case": "large",
+        "descriptor_bytes": 0,
+        "descriptor_writes": 0,
+        "expected_bytes": 10320000,
+        "messages": 10000,
+        "milliseconds": 108.429208,
+        "stream_bytes": 10320000,
+        "stream_flushes": 10000,
+        "stream_writes": 40000,
+        "build": "baseline",
+        "run": 4,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 629732,
+        "allocations": 4790,
+        "case": "small",
+        "descriptor_bytes": 26400,
+        "descriptor_writes": 1,
+        "expected_bytes": 26400,
+        "messages": 100,
+        "milliseconds": 1.37475,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0,
+        "build": "changed",
+        "run": 4,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 150122680,
+        "allocations": 500218,
+        "case": "large",
+        "descriptor_bytes": 10320000,
+        "descriptor_writes": 158,
+        "expected_bytes": 10320000,
+        "messages": 10000,
+        "milliseconds": 93.102083,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0,
+        "build": "changed",
+        "run": 4,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 629732,
+        "allocations": 4790,
+        "case": "small",
+        "descriptor_bytes": 26400,
+        "descriptor_writes": 1,
+        "expected_bytes": 26400,
+        "messages": 100,
+        "milliseconds": 1.382167,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0,
+        "build": "changed",
+        "run": 5,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 150122680,
+        "allocations": 500218,
+        "case": "large",
+        "descriptor_bytes": 10320000,
+        "descriptor_writes": 158,
+        "expected_bytes": 10320000,
+        "messages": 10000,
+        "milliseconds": 98.0925,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0,
+        "build": "changed",
+        "run": 5,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 629716,
+        "allocations": 4790,
+        "case": "small",
+        "descriptor_bytes": 0,
+        "descriptor_writes": 0,
+        "expected_bytes": 26400,
+        "messages": 100,
+        "milliseconds": 1.458459,
+        "stream_bytes": 26400,
+        "stream_flushes": 100,
+        "stream_writes": 400,
+        "build": "baseline",
+        "run": 5,
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 150122664,
+        "allocations": 500218,
+        "case": "large",
+        "descriptor_bytes": 0,
+        "descriptor_writes": 0,
+        "expected_bytes": 10320000,
+        "messages": 10000,
+        "milliseconds": 104.226834,
+        "stream_bytes": 10320000,
+        "stream_flushes": 10000,
+        "stream_writes": 40000,
+        "build": "baseline",
+        "run": 5,
+        "warmup": false
+      }
+    ],
+    "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+    "settings": {
+      "CMAKE_BUILD_TYPE": "Release",
+      "CMAKE_CXX_COMPILER": "/usr/bin/c++",
+      "CMAKE_CXX_FLAGS": "-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+      "CMAKE_CXX_FLAGS_RELEASE": "-O3 -DNDEBUG",
+      "CMAKE_OSX_ARCHITECTURES": "arm64",
+      "CODET_DEPENDENCY_ROOT": "/Volumes/Pro2T/codet-compiled-agent/.deps"
+    },
+    "harness_sha256": "95d479501a1c918382db578c2f680011d6ceb95b7cd5462bbd05bd637915edcc",
+    "csv": "docs/validation/output-delivery-followup-exports.csv",
+    "csv_sha256": "9654b9210056dc33a916df22e4f8802b412fe020eb2ea7b55c1a78a81c1e1ae3",
+    "ascii_and_canonical_sanitizer_source_unchanged": true,
+    "sanitizer_region_sha256": "49a39f1150d58c5c7726a8f576307a2b0920ab6e12e882f260f5e0a67487b043"
+  },
+  "validation_corrections": [
+    "Question fixture requires plan mode; byte-preservation tests use binary capture to avoid Python universal-newline conversion.",
+    "Darwin public file-status flags are compared separately from internal kernel write-history bits.",
+    "Foreground resume can interrupt tcsetattr; native application now retries EINTR.",
+    "Completed journal coverage compares durable journal payloads directly; retrying a pre-normalization message is a separate contract.",
+    "One initial ASan unit run reported Child process setup failed in unchanged Followup.ObservationOwnershipLossNeverSignals. Thirty isolated repetitions and the final full suite passed; root cause was not established and the test was not changed.",
+    "New analyzer findings were resolved with initialized export storage, size_t multiplication and explicit return after suppressed serialization failure. No checks were weakened."
+  ],
+  "limitations": [
+    "Clang-Tidy completes 24/25 sources and retains the same six baseline findings, including the old-SDK incomplete platform.cpp translation unit. This gate is not clean.",
+    "Clang Analyzer retains the same context.cpp core.DivideZero finding. This gate is not clean.",
+    "Semgrep uses the locked Python frontend 1.177.0; existing native frontend mismatch remains separate.",
+    "Existing local implicit-int-float-conversion and unused-result compiler warning downgrades are unchanged; no tracked checks were weakened.",
+    "Linux and native Tiger runtime acceptance were not run locally."
+  ],
+  "raw_logs": [
+    {
+      "path": "build/output-delivery-followup/analysis-progress.log",
+      "sha256": "9d6059df9356003157fa068ae37a4137feae9ad5a41b5c0edb167b1ee3730797"
+    },
+    {
+      "path": "build/output-delivery-followup/baseline-release-build.log",
+      "sha256": "8f257d7cafec83ead940ecc22b4ed0ec96aeaa4dbf856def207ad2b19fbc42fe"
+    },
+    {
+      "path": "build/output-delivery-followup/changed-release-build.log",
+      "sha256": "10b8b4a0d059c8e407f5fc6a62679548f86374f9c6022e8ac40dbf9b7ecbaa5a"
+    },
+    {
+      "path": "build/output-delivery-followup/changed-release-rebuild.log",
+      "sha256": "1fb1a0f93014e738e2675dc420aa505996d6e5f53989f7eb8fdbf179e38f9ff3"
+    },
+    {
+      "path": "build/output-delivery-followup/clang-analyzer.log",
+      "sha256": "dd3fae32add7956acfac95d5309a90dfb41c85f57f24b3e84c45e5750965e46e"
+    },
+    {
+      "path": "build/output-delivery-followup/clang-tidy.log",
+      "sha256": "5da22d73122d20feda86f929a476243dcac0b3cddecf8acf63248912f9cd838b"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-0.log",
+      "sha256": "007d044ce3c774769f971387c1b20504c736cb329d909d0c7c8164a5df415807"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-1.log",
+      "sha256": "df47ac47d141c3edaf419e6aa1e3d81ed64e0d86c6d4ecd8e6ece55d879813f7"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-10.log",
+      "sha256": "f2b634401626105c0a39dd77d7d78a0d7083b50cfa9e153ea83b41aa949633d4"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-11.log",
+      "sha256": "4d3bef7a95f91810aa58ccee4f81790aa00f787597dc4ee4d739745225a242d8"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-12.log",
+      "sha256": "9e71c7aef511e610e18bb74ba2eec4a8e56dd80ec50528a80e0e467dcd6f7ca1"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-13.log",
+      "sha256": "bf17b4d15949376941574efeb72d20445b254bc00a0bbc6c6ff741d25597eba8"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-14.log",
+      "sha256": "395105d79626619bf2e666b149ca5d8ae969a263846e615e690db97022c174cd"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-15.log",
+      "sha256": "027742bf415ac01bf053ceff75d5ff9ff2124bf5c563b5e123f8dcf3e5a440b6"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-16.log",
+      "sha256": "a549358f44a6582f6aa30e53c42960e9b2c53b56f7f3304a9f4657a0a9621d08"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-17.log",
+      "sha256": "27c669d23c8cecebca444968ba3569bdce15be684a53bc9c51e15b04cc0ef9e2"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-18.log",
+      "sha256": "16582be9cca44b86bc0d7d946472f2767bd1ad00044a2bfe8b5ae7420d05fd5a"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-19.log",
+      "sha256": "796e2c80462e11650a493491e73193c042e81c35330d5e7de3314df4132c9efc"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-2.log",
+      "sha256": "4d3bef7a95f91810aa58ccee4f81790aa00f787597dc4ee4d739745225a242d8"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-3.log",
+      "sha256": "e96def95208c84ef661887068ac96649d4701732a3e09b78bb002b2d1f8daaa4"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-4.log",
+      "sha256": "c2fd2f93f4ce2c1f58bd1682c28fc22580d29011608168f52023cc96409952dd"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-5.log",
+      "sha256": "a44e4d6940495be4a369521b33b611c4d6f51de2d0b68a64fc4b19c96856edc4"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-6.log",
+      "sha256": "1ba87d10b54f6fe149c03fc9a44d0aa5ce9be2de59ce2ba137937ab0e81d086f"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-7.log",
+      "sha256": "b56670b4005ce3381d04f8d183b24d31fc87d5cdd585b8cf53fbb3f070c35e05"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-8.log",
+      "sha256": "4bb445081edab3d6bed2447af4773a44797af13f02e2809daa422c1ee5f6e92d"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-9.log",
+      "sha256": "a340f7ef8937f98f9fe11abaefe35503de925567e8fccf25c4699d0c2f7bd6f9"
+    },
+    {
+      "path": "build/output-delivery-followup/cli-repeat-progress.log",
+      "sha256": "ee0e3a97039ccb415089fde826c74be0df057c73053ebf6e0933a00bd52cfa27"
+    },
+    {
+      "path": "build/output-delivery-followup/completion-build.log",
+      "sha256": "03bbbeae1f536471f0b3f1c4cbb66cd47ed73635070a4f2be0bd209186af7140"
+    },
+    {
+      "path": "build/output-delivery-followup/completion-test.log",
+      "sha256": "fe2a711126c226330c23449a043a79050987ff47fb881382ab1d2a1647fb8585"
+    },
+    {
+      "path": "build/output-delivery-followup/core-build.log",
+      "sha256": "09182fc22ef065eaaeeb20baa12086207e0d08a27913207f269365be140d7322"
+    },
+    {
+      "path": "build/output-delivery-followup/cppcheck.log",
+      "sha256": "3fecd608e25d97370ee6c39733e5d7c5403468844937e1c2a679c161faf7fa6b"
+    },
+    {
+      "path": "build/output-delivery-followup/debug-build.log",
+      "sha256": "8c35b1682f73592d30612d7b0fabdb384fcfff35cb5a076cb48b85b1368aa794"
+    },
+    {
+      "path": "build/output-delivery-followup/debug-ctest.log",
+      "sha256": "3ad1a0e15b42c3e64c185d0f5d9ee60517a3746021dee0c823048e920159ad8d"
+    },
+    {
+      "path": "build/output-delivery-followup/display-build.log",
+      "sha256": "eadfa97e92715a5806c670d3f04e25dc8398ba9975c8a309754fec17aa8bbb84"
+    },
+    {
+      "path": "build/output-delivery-followup/display-integration.log",
+      "sha256": "e9b8bf64d5aed0db81ab2dd84cda0cfd4cfe8868eeee001276ad2e0acfe2ab26"
+    },
+    {
+      "path": "build/output-delivery-followup/display-unit.log",
+      "sha256": "8b18129f75fd49d4bafc5c95df2af7f1a89a4f0d4b21f565c53c680abdee1b46"
+    },
+    {
+      "path": "build/output-delivery-followup/export-measurement-progress.log",
+      "sha256": "72b30078c9576a784a7facbd4e602245aec250b55b6eb30f60e156b627973a52"
+    },
+    {
+      "path": "build/output-delivery-followup/final-analysis-progress.log",
+      "sha256": "fd2767de7703a2e363ce64470bac936e0fbbc829b5b39d76400bed5f41f3ab07"
+    },
+    {
+      "path": "build/output-delivery-followup/final-clang-analyzer.log",
+      "sha256": "dd3fae32add7956acfac95d5309a90dfb41c85f57f24b3e84c45e5750965e46e"
+    },
+    {
+      "path": "build/output-delivery-followup/final-clang-tidy.log",
+      "sha256": "3a3370676eeab0e8f1964a2d7f6cac1288f655261b5cb0ee4d5a7c2f48c98611"
+    },
+    {
+      "path": "build/output-delivery-followup/final-cppcheck.log",
+      "sha256": "85147d57bfae3c39e9a09e4d5e2e3b88cc883480b371e5f8cc9731fa14d64e9a"
+    },
+    {
+      "path": "build/output-delivery-followup/final-debug-build.log",
+      "sha256": "598fc7b2705ad4cbb06f4a3cab5e8fd120051fea3512badb6751c5cafc346526"
+    },
+    {
+      "path": "build/output-delivery-followup/final-debug-ctest.log",
+      "sha256": "730dd1d9ed99412469b07d67883055582f9e1dc673c8bc19428fbfecc55b81b8"
+    },
+    {
+      "path": "build/output-delivery-followup/final-focused-build.log",
+      "sha256": "0f06c6f9e227331705e73530497bbc32491ff8f88b825581aa31d3e7a16c6d6a"
+    },
+    {
+      "path": "build/output-delivery-followup/final-release-rebuild.log",
+      "sha256": "1fb1a0f93014e738e2675dc420aa505996d6e5f53989f7eb8fdbf179e38f9ff3"
+    },
+    {
+      "path": "build/output-delivery-followup/final-sanitize-build.log",
+      "sha256": "b51b772c1fbd6f4ba39b815226912571dcd90ca08db1950ace5e453cb3e7844d"
+    },
+    {
+      "path": "build/output-delivery-followup/final-sanitize-ctest.log",
+      "sha256": "6e16a1343eaaef0a72b80dce2798609b31e68fe70ead15389903f3fc4d52b9ca"
+    },
+    {
+      "path": "build/output-delivery-followup/final-sanitize-diagnostic-repeated.log",
+      "sha256": "c4042495f4c935e903fcd15a76c0e12f98d7319d7c0cd61f1c34767ad8579f6f"
+    },
+    {
+      "path": "build/output-delivery-followup/final-sanitize-fault-repeated.log",
+      "sha256": "9afe0310c0ba023111b1e2903bd7892aa9c566f74917b15f1b480333fe558772"
+    },
+    {
+      "path": "build/output-delivery-followup/final-selftest.log",
+      "sha256": "740d555865ff458e6ea3a80a11ab83ce36bd761be27466ba58af1b8f395df79b"
+    },
+    {
+      "path": "build/output-delivery-followup/final-validation-progress.log",
+      "sha256": "f788582cf2e26afe50e24b0e916bae5cfa78bc8050158d9f4254710b20aeed59"
+    },
+    {
+      "path": "build/output-delivery-followup/focused-build.log",
+      "sha256": "c450a40e9f572c5c8defcb8612b5ae15284ac3c1bfaff4576f5c8df4e1358697"
+    },
+    {
+      "path": "build/output-delivery-followup/focused-integration.log",
+      "sha256": "a8f568b54f9e2d2c4ce54c8834c4bf6485d90425bcd5b65a80fe927c764949d8"
+    },
+    {
+      "path": "build/output-delivery-followup/focused-unit.log",
+      "sha256": "dee0b67c2f2363f41395900d6cfa776d39d2dba5719313b9782c6d2f4d5785c9"
+    },
+    {
+      "path": "build/output-delivery-followup/helpers-build.log",
+      "sha256": "b0332b5a0f7e334482af40fd98cc9dbeff8d732212ec35d5030fd4977f439311"
+    },
+    {
+      "path": "build/output-delivery-followup/host-final-lasttest.log",
+      "sha256": "82bf85a488705e87ec4320ac458d82f7b19df09e359c6ea7de89bc001d8629f8"
+    },
+    {
+      "path": "build/output-delivery-followup/initial-lint.log",
+      "sha256": "053d1692966f59e59671196beebfd50dbf7c4a1d0eb7c5b4b37a996450970c52"
+    },
+    {
+      "path": "build/output-delivery-followup/lint.log",
+      "sha256": "3caddd0ee716d9c2d036b85759bc269aa47f8d138781af9edc6f35922a002b66"
+    },
+    {
+      "path": "build/output-delivery-followup/ownership-repeated.log",
+      "sha256": "3157ac62e8afa90e0cffb9b85a952c08b00fcf96180ee43b41e1b84254627d1a"
+    },
+    {
+      "path": "build/output-delivery-followup/pinned-dependencies.log",
+      "sha256": "c7321bbd9a63460d252ad4387ec1b29c82353b104c497af5a86de15d6616f3a2"
+    },
+    {
+      "path": "build/output-delivery-followup/preflight-build.log",
+      "sha256": "2c25408fe67a40d5467885b51894988c45538f8e9a5fd75a04395e953b21de27"
+    },
+    {
+      "path": "build/output-delivery-followup/regression-build.log",
+      "sha256": "df225868907d8ceea781508c044b1ef0d89715a1989de86d339762d8b8860197"
+    },
+    {
+      "path": "build/output-delivery-followup/release-build-progress.log",
+      "sha256": "c41edb851b52edf10ad02987f1f908e103d4c52dd9257ea58b74579f82e04e32"
+    },
+    {
+      "path": "build/output-delivery-followup/runner-tests.log",
+      "sha256": "ff3552dcf4dded67abb45753d7683bd1fab3b08176ed03092d302a4600f33dbd"
+    },
+    {
+      "path": "build/output-delivery-followup/sanitize-build.log",
+      "sha256": "2ba358137bc84d9bf42c0ff86ec90ae018927d43a7db3f7c6206a67cc66d53c3"
+    },
+    {
+      "path": "build/output-delivery-followup/sanitize-ctest.log",
+      "sha256": "ec0deb1c689116b19a3e1da8a001980a6b297e0e5a2ee92ae7ae474fc44b9ca1"
+    },
+    {
+      "path": "build/output-delivery-followup/sanitize-diagnostic-repeated.log",
+      "sha256": "5e108276473bd89e8a4c045121943effd4954753ca16d6bcd75f049bbdd6923e"
+    },
+    {
+      "path": "build/output-delivery-followup/sanitize-fault-repeated.log",
+      "sha256": "8120346498213935622b66599b8e1062886fee933944484dbaee6c4fa6e1cbe2"
+    },
+    {
+      "path": "build/output-delivery-followup/sanitize-final-lasttest.log",
+      "sha256": "777796d5e365056d7b9f2ad503c1c8f20b00c6e5eabbfbc62d488416ea81a0a1"
+    },
+    {
+      "path": "build/output-delivery-followup/selftest.log",
+      "sha256": "740d555865ff458e6ea3a80a11ab83ce36bd761be27466ba58af1b8f395df79b"
+    },
+    {
+      "path": "build/output-delivery-followup/semgrep.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "build/output-delivery-followup/validation-progress.log",
+      "sha256": "3187ccb6d8c792fc55384637dc48c9cd866d23380be3ff47ff6ad7b0da6d6c0e"
+    }
+  ]
+}

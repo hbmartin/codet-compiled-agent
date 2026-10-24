@@ -57,14 +57,15 @@ public:
     state.set_file_diagnostics(files);
   }
   void emit(const std::string &text) {
+    const auto shown = terminal_text(text);
     if (buffering)
-      cleanup.add(text);
+      cleanup.add(shown);
     else if (auto terminal = screen_.lock()) {
-      terminal->diagnostic(text);
+      terminal->diagnostic(shown);
       if (terminal->fullscreen())
-        live.add(text);
+        live.add(shown);
     } else
-      (void)writer_->write({text});
+      (void)writer_->write({shown});
   }
   void deliver_files() noexcept {
     if (auto terminal = screen_.lock(); terminal && terminal->fullscreen())

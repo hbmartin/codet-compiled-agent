@@ -1,5 +1,9 @@
+#include "codet/detail/cli_output.hpp"
 #include "codet/detail/native_terminal.hpp"
 #include "codet/diagnostics.hpp"
+#ifdef CODET_NATIVE_TERMINAL_METRICS
+#include "native_symbol.hpp"
+#endif
 #include "codet/output.hpp"
 #include "native_terminal_metrics.hpp"
 #include "process_helper.hpp"
@@ -59,6 +63,61 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc > 1 && std::string(argv[1]) == "--codet-native-symbol-helper") {
+#ifdef CODET_NATIVE_TERMINAL_METRICS
+      if (argc != 3 || ::dup2(std::stoi(argv[2]), STDERR_FILENO) < 0)
+        return 2;
+      (void)codet::test::native_symbol("codet_missing_native_symbol_fixture");
+#endif
+      return 3;
+    }
+    if (argc > 1 && std::string(argv[1]) == "--codet-active-job-control-helper") {
+      if (argc != 5)
+        return 2;
+      const int gate = std::stoi(argv[2]), notify = std::stoi(argv[3]);
+      const int terminal = std::stoi(argv[4]);
+      for (int target = 0; target != 3; ++target)
+        if (::dup2(terminal, target) < 0)
+          return 3;
+      char token;
+      if (!codet::test::read_token(gate, token))
+        return 4;
+      codet::detail::NativeTerminalResourceOps ops;
+      codet::detail::TerminalResources resources(ops);
+      resources.begin_active();
+      (void)::write(notify, "R", 1);
+      if (!codet::test::read_token(gate, token))
+        return 5;
+      sigset_t before{}, after{};
+      (void)::pthread_sigmask(SIG_SETMASK, nullptr, &before);
+      resources.end_active();
+      (void)::pthread_sigmask(SIG_SETMASK, nullptr, &after);
+      if (sigismember(&before, SIGTTOU) != sigismember(&after, SIGTTOU))
+        return 6;
+      (void)::write(notify, "E", 1);
+      return codet::test::read_token(gate, token) ? 0 : 7;
+    }
+    if (argc > 1 && std::string(argv[1]) == "--codet-required-stdout-helper") {
+      if (argc != 4)
+        return 2;
+      static char buffer[8192];
+      if (::setvbuf(stdout, buffer, _IOFBF, sizeof(buffer)) != 0)
+        return 3;
+      codet::detail::CliOutput output;
+      try {
+        output.required({"failed-required-record"});
+        return 4;
+      } catch (const codet::Error &) {
+      }
+      (void)::write(std::stoi(argv[2]), "F", 1);
+      char token;
+      if (!codet::test::read_token(std::stoi(argv[3]), token))
+        return 5;
+      output.secondary({"must-not-publish"});
+      codet::report_diagnostic({}, "final output failure");
+      (void)::fflush(stdout);
+      return output.status(0);
+    }
     if (argc > 1 && std::string(argv[1]) == "--codet-line-output-helper") {
       if (argc < 4) {
         std::fputs("line-output helper expects FD CLI_ARGS\n", stderr);

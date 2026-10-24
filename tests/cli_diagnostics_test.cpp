@@ -60,6 +60,33 @@ TEST(DiagnosticWriter, FailedTrailingNewlineIsRepairedBeforeTheNextRecord) {
   EXPECT_TRUE(writer.write({"second"}));
   EXPECT_EQ(buffer.bytes, "first\nsecond\n");
 }
+TEST(DiagnosticWriter, ReplacedDestinationsAndNewInvocationsDiscardStaleSeparators) {
+  struct Refusing : std::stringbuf {
+    bool refuse = true;
+    std::streamsize xsputn(const char *text, std::streamsize count) override {
+      return refuse ? 0 : std::stringbuf::xsputn(text, count);
+    }
+  } failed;
+  std::ostringstream next;
+  struct Restore {
+    std::streambuf *original;
+    ~Restore() {
+      std::cerr.rdbuf(original);
+      detail::recover_diagnostic_stream(std::cerr);
+      detail::reset_standard_diagnostics();
+    }
+  } restore{std::cerr.rdbuf(&failed)};
+  EXPECT_FALSE(detail::write_diagnostic(std::cerr, {"lost"}));
+  std::cerr.rdbuf(next.rdbuf());
+  EXPECT_TRUE(detail::write_diagnostic(std::cerr, {"fresh"}));
+  EXPECT_EQ(next.str(), "fresh\n");
+  std::cerr.rdbuf(&failed);
+  EXPECT_FALSE(detail::write_diagnostic(std::cerr, {"lost"}));
+  failed.refuse = false;
+  detail::reset_standard_diagnostics();
+  EXPECT_TRUE(detail::write_diagnostic(std::cerr, {"new invocation"}));
+  EXPECT_EQ(failed.str(), "new invocation\n");
+}
 TEST(DiagnosticWriter, HumanTextEscapesControlsWithoutChangingRawJsonSanitization) {
   const std::string text =
       std::string("raw\0\r\x1b]0;title\a\x7f", 16) + "\xc2\x9b\xe2\x80\xae\xe2\x80\xa8\xff";
@@ -70,6 +97,19 @@ TEST(DiagnosticWriter, HumanTextEscapesControlsWithoutChangingRawJsonSanitizatio
   EXPECT_EQ(detail::terminal_text(printable), printable);
   EXPECT_EQ(safe_text("\x1b\r\a"), "\x1b\r\a");
   EXPECT_EQ(safe_json(Json("\x1b")), "\x1b");
+}
+TEST(DiagnosticWriter, DiagnosticBudgetsAccountForEscapedHumanText) {
+  DiagnosticBuffer buffer(128);
+  const std::string controls(100, '\x1b');
+  buffer.add(controls);
+  std::ostringstream output;
+  buffer.flush(output);
+  EXPECT_LE(output.str().size(), 128u);
+  EXPECT_EQ(output.str().find('\x1b'), std::string::npos);
+  EXPECT_NE(output.str().find("\\x1B"), std::string::npos);
+  std::string received;
+  report_diagnostic([&](const auto &text) { received = text; }, "hook\x1b\r\xff");
+  EXPECT_EQ(received, "hook\\x1B\\x0D\\xFF");
 }
 TEST(DiagnosticWriter, HumanTextPreservesPrintableAsciiAndEscapesMalformedPrefixesByteForByte) {
   const auto escaped = [](const std::string &text) {

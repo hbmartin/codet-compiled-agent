@@ -218,7 +218,7 @@ Json safe_json(Json &&value) {
   return std::move(value);
 }
 void report_diagnostic(const DiagnosticSink &sink, const std::string &message) {
-  const auto text = bounded_text(message, size_t{1024} * 1024);
+  const auto text = bounded_text(detail::terminal_text(message), size_t{1024} * 1024);
   if (sink) {
     try {
       sink(text);
@@ -240,7 +240,8 @@ const char *FileNotice::label() const noexcept {
                    : "Tool result receipt candidate (publication unconfirmed): ";
 }
 namespace {
-bool stderr_separator = false, stdout_separator = false;
+// Fixed, trivially destructible fallback owners also serve late shutdown diagnostics.
+detail::DiagnosticState stderr_state, stdout_state;
 bool unsafe_unicode_control(uint32_t point) noexcept {
   return (point >= 0x80 && point <= 0x9f) || point == 0x61c || point == 0x200e || point == 0x200f ||
          (point >= 0x2028 && point <= 0x202e) || (point >= 0x2060 && point <= 0x2064) ||
@@ -303,6 +304,7 @@ std::string FileNotice::text() const {
   return result;
 }
 void emergency_file_diagnostic(const FileNotice &notice) noexcept {
+  stderr_state.bind(std::cerr.rdbuf());
   const auto write_all = [](const char *bytes, size_t size) noexcept {
     while (size) {
       const auto written = ::write(STDERR_FILENO, bytes, size);
@@ -315,17 +317,17 @@ void emergency_file_diagnostic(const FileNotice &notice) noexcept {
     }
     return true;
   };
-  if (stderr_separator) {
+  if (stderr_state.pending) {
     if (!write_all("\n", 1))
       return;
-    stderr_separator = false;
+    stderr_state.pending = false;
   }
   const auto *label = notice.label();
-  stderr_separator = true;
+  stderr_state.pending = true;
   if (!write_all(label, std::strlen(label)))
     return;
   if (escaped_file_path(notice.path, write_all) && write_all("\n", 1))
-    stderr_separator = false;
+    stderr_state.pending = false;
 }
 void deliver_file_diagnostic(const FileNotice &notice, const DiagnosticSink &sink) noexcept {
   if (sink)
@@ -351,11 +353,17 @@ bool detail::recover_diagnostic_stream(std::ostream &output) noexcept {
   }
 }
 detail::DiagnosticWriter::DiagnosticWriter(std::ostream &output) noexcept
-    : output_(output), pending_(&output == &std::cerr   ? stderr_separator
-                                : &output == &std::cout ? stdout_separator
-                                                        : separator_) {}
+    : output_(output), state_(&output == &std::cerr   ? stderr_state
+                              : &output == &std::cout ? stdout_state
+                                                      : local_),
+      file_(diagnostic_file(output)) {}
+void detail::reset_standard_diagnostics() noexcept {
+  stderr_state.reset(std::cerr.rdbuf());
+  stdout_state.reset(std::cout.rdbuf());
+}
 bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> parts, bool newline,
                                      bool flush) {
+  state_.bind(output_.rdbuf());
   struct Recovery {
     std::ostream &stream;
     bool &pending;
@@ -369,15 +377,14 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
         recover_diagnostic_stream(stream);
       }
     }
-  } recovery{output_, pending_, newline};
-  auto *file = diagnostic_file(output_);
-  if ((!output_ || (file && std::ferror(file))) && !recover_diagnostic_stream(output_))
+  } recovery{output_, state_.pending, newline};
+  if ((!output_ || (file_ && std::ferror(file_))) && !recover_diagnostic_stream(output_))
     output_.clear(output_.rdstate()); // Preserve configured exception-mask behavior.
-  if (pending_) {
+  if (state_.pending) {
     output_.put('\n');
     if (!output_)
       return false;
-    pending_ = false;
+    state_.pending = false;
   }
   for (auto part : parts) {
     while (!part.empty() && output_) {
