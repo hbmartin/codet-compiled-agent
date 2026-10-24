@@ -1196,6 +1196,18 @@ class CliTests(unittest.TestCase):
             for descriptor in (reader,writer,ready,release):
                 if descriptor is not None:os.close(descriptor)
 
+    def test_active_background_restoration_respects_foreground_job_control(self):
+        helper=pathlib.Path(__file__).with_name('terminal_cli_helper.py')
+        binary=str(pathlib.Path(BIN).with_name('codet_tests'))
+        result=subprocess.run([sys.executable,str(helper),'active-job-control',binary],
+            capture_output=True,text=True,env=self.env,timeout=15)
+        self.assertEqual(result.returncode,0,result.stderr)
+        outcome=json.loads(result.stdout)
+        self.assertTrue(outcome['stopped_for_job_control'])
+        self.assertTrue(outcome['foreground_unchanged'])
+        self.assertTrue(outcome['restored'])
+        self.assertEqual(outcome['exit'],0)
+
     def test_required_stdout_commands_reject_broken_pipes(self):
         for arguments in (['--help'],['--version'],['sessions'],['doctor']):
             reader,writer=os.pipe();os.close(reader)

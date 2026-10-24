@@ -60,6 +60,33 @@ TEST(DiagnosticWriter, FailedTrailingNewlineIsRepairedBeforeTheNextRecord) {
   EXPECT_TRUE(writer.write({"second"}));
   EXPECT_EQ(buffer.bytes, "first\nsecond\n");
 }
+TEST(DiagnosticWriter, ReplacedDestinationsAndNewInvocationsDiscardStaleSeparators) {
+  struct Refusing : std::stringbuf {
+    std::streamsize xsputn(const char *, std::streamsize) override {
+      return 0;
+    }
+  } failed;
+  std::ostringstream next;
+  struct Restore {
+    std::streambuf *original;
+    ~Restore() {
+      std::cerr.rdbuf(original);
+      detail::recover_diagnostic_stream(std::cerr);
+      detail::reset_standard_diagnostics();
+    }
+  } restore{std::cerr.rdbuf(&failed)};
+  EXPECT_FALSE(detail::write_diagnostic(std::cerr, {"lost"}));
+  std::cerr.rdbuf(next.rdbuf());
+  EXPECT_TRUE(detail::write_diagnostic(std::cerr, {"fresh"}));
+  EXPECT_EQ(next.str(), "fresh\n");
+  std::cerr.rdbuf(&failed);
+  EXPECT_FALSE(detail::write_diagnostic(std::cerr, {"lost"}));
+  detail::reset_standard_diagnostics();
+  std::cerr.rdbuf(next.rdbuf());
+  next.str("");
+  EXPECT_TRUE(detail::write_diagnostic(std::cerr, {"new invocation"}));
+  EXPECT_EQ(next.str(), "new invocation\n");
+}
 TEST(DiagnosticWriter, HumanTextEscapesControlsWithoutChangingRawJsonSanitization) {
   const std::string text =
       std::string("raw\0\r\x1b]0;title\a\x7f", 16) + "\xc2\x9b\xe2\x80\xae\xe2\x80\xa8\xff";

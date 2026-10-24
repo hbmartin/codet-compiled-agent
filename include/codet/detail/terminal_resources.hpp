@@ -15,6 +15,9 @@ public:
   virtual ~TerminalResourceOps() = default;
   virtual bool capture(termios &) noexcept = 0;
   virtual void restore(const termios &) noexcept = 0;
+  virtual void restore_active(const termios &settings) noexcept {
+    restore(settings);
+  }
   virtual bool apply(const termios &) noexcept = 0;
   virtual bool start_screen() = 0;
   virtual void stop_screen() noexcept = 0;
@@ -90,7 +93,7 @@ public:
   }
   void end_active() noexcept {
     if (!closed_ && saved_)
-      ops_.restore(original_);
+      ops_.restore_active(original_);
   }
   void close() noexcept {
     if (std::exchange(closed_, true))

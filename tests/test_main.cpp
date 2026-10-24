@@ -60,6 +60,32 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc > 1 && std::string(argv[1]) == "--codet-active-job-control-helper") {
+      if (argc != 5)
+        return 2;
+      const int gate = std::stoi(argv[2]), notify = std::stoi(argv[3]);
+      const int terminal = std::stoi(argv[4]);
+      for (int target = 0; target != 3; ++target)
+        if (::dup2(terminal, target) < 0)
+          return 3;
+      char token;
+      if (!codet::test::read_token(gate, token))
+        return 4;
+      codet::detail::NativeTerminalResourceOps ops;
+      codet::detail::TerminalResources resources(ops);
+      resources.begin_active();
+      (void)::write(notify, "R", 1);
+      if (!codet::test::read_token(gate, token))
+        return 5;
+      sigset_t before{}, after{};
+      (void)::pthread_sigmask(SIG_SETMASK, nullptr, &before);
+      resources.end_active();
+      (void)::pthread_sigmask(SIG_SETMASK, nullptr, &after);
+      if (sigismember(&before, SIGTTOU) != sigismember(&after, SIGTTOU))
+        return 6;
+      (void)::write(notify, "E", 1);
+      return codet::test::read_token(gate, token) ? 0 : 7;
+    }
     if (argc > 1 && std::string(argv[1]) == "--codet-required-stdout-helper") {
       if (argc != 4)
         return 2;
