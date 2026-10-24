@@ -62,8 +62,9 @@ TEST(DiagnosticWriter, FailedTrailingNewlineIsRepairedBeforeTheNextRecord) {
 }
 TEST(DiagnosticWriter, ReplacedDestinationsAndNewInvocationsDiscardStaleSeparators) {
   struct Refusing : std::stringbuf {
-    std::streamsize xsputn(const char *, std::streamsize) override {
-      return 0;
+    bool refuse = true;
+    std::streamsize xsputn(const char *text, std::streamsize count) override {
+      return refuse ? 0 : std::stringbuf::xsputn(text, count);
     }
   } failed;
   std::ostringstream next;
@@ -81,11 +82,10 @@ TEST(DiagnosticWriter, ReplacedDestinationsAndNewInvocationsDiscardStaleSeparato
   EXPECT_EQ(next.str(), "fresh\n");
   std::cerr.rdbuf(&failed);
   EXPECT_FALSE(detail::write_diagnostic(std::cerr, {"lost"}));
+  failed.refuse = false;
   detail::reset_standard_diagnostics();
-  std::cerr.rdbuf(next.rdbuf());
-  next.str("");
   EXPECT_TRUE(detail::write_diagnostic(std::cerr, {"new invocation"}));
-  EXPECT_EQ(next.str(), "new invocation\n");
+  EXPECT_EQ(failed.str(), "new invocation\n");
 }
 TEST(DiagnosticWriter, HumanTextEscapesControlsWithoutChangingRawJsonSanitization) {
   const std::string text =

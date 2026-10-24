@@ -122,7 +122,7 @@ public:
 // One bounded application buffer for a complete text export. Destruction never publishes it.
 class TextExport {
   CliOutput &output_;
-  std::array<char, 64 * 1024> bytes_;
+  std::array<char, 64 * 1024> bytes_{};
   size_t used_ = 0;
 
 public:
