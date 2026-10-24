@@ -94,11 +94,15 @@ TEST(CliOutput, NonblockingStdoutRecoversCppAndCStateAfterThePipeDrains) {
 }
 struct DescriptorProbe {
   std::string delivered;
-  int attempts = 0, interrupted = 0, fail = 0;
+  int attempts = 0, interrupted = 0, fail = 0, fail_after = -1;
   size_t chunk = 1000000;
   static ssize_t write(void *context, int, const void *data, size_t size) {
     auto &probe = *static_cast<DescriptorProbe *>(context);
     ++probe.attempts;
+    if (probe.fail_after >= 0 && probe.attempts > probe.fail_after) {
+      errno = EAGAIN;
+      return -1;
+    }
     if (probe.interrupted-- > 0) {
       errno = EINTR;
       return -1;
@@ -162,5 +166,20 @@ TEST(CliOutput, TextExportsBatchExactBytesAndDiscardUnpublishedTails) {
     discarded.append("must not flush from a destructor");
   }
   EXPECT_EQ(probe.attempts, 2);
+}
+TEST(CliOutput, PartialDescriptorRecordDoesNotReplayItsPrefixOrUnwrittenSuffix) {
+  DescriptorProbe probe;
+  probe.chunk = 2;
+  probe.fail_after = 1;
+  {
+    detail::CliOutput output(probe.writer());
+    EXPECT_THROW(output.required({"record"}), Error);
+    EXPECT_EQ(probe.delivered, "re");
+    probe.fail_after = -1;
+    output.secondary({"error record"});
+    EXPECT_THROW(output.required({"later"}), Error);
+  }
+  EXPECT_EQ(probe.attempts, 2);
+  EXPECT_EQ(probe.delivered, "re");
 }
 } // namespace

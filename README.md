@@ -103,10 +103,11 @@ Emergency output uses reversible ASCII byte escapes for the complete path.
 Delivery remains best effort: an unwritable or full nonblocking stderr can prevent the notice
 from being printed. Emergency output does not wait for the descriptor to become writable.
 
-Required headless stdout writes are checked, including flushing; delivery failure exits nonzero.
+Required headless stdout uses checked descriptor writes without stdio buffering; delivery failure exits nonzero.
 Line-mode sessions attempt later replies after an output failure and report a failed exit status
-if a reply was lost. Human-facing provider errors escape unsafe terminal controls, including in
-redirected stderr; structured provider errors retain their original body or base64 representation.
+if a reply was lost. Interactive displays, TTY text answers, and stderr diagnostics escape unsafe
+terminal controls. Redirected text, exports, requested output files, and structured provider-error
+data retain their data bytes.
 
 ## Documentation
 
