@@ -133,20 +133,24 @@ int main(int argc, char **argv) {
   allocations = allocated_bytes = descriptor_writes = descriptor_bytes = 0;
   measuring = true;
   const auto start = std::chrono::steady_clock::now();
-  const int status = cli_main(command, cancel);
+  const size_t iterations = large ? 3 : 50;
+  int status = 0;
+  for (size_t i = 0; i != iterations && status == 0; ++i)
+    status = cli_main(command, cancel);
   const auto milliseconds =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
   measuring = false;
   const auto count = allocations.load(), allocated = allocated_bytes.load();
   const auto calls = descriptor_writes.load(), delivered = descriptor_bytes.load();
   std::cout.rdbuf(original);
-  const auto expected = messages * (bytes + 8);
+  const auto expected = iterations * messages * (bytes + 8);
   if (status || (output.bytes != expected && delivered != expected))
     return 4;
   std::ofstream report(argv[2]);
   report << Json({{"case", large ? "large" : "small"},
                   {"regular_file", regular_file},
                   {"messages", messages},
+                  {"iterations", iterations},
                   {"milliseconds", milliseconds},
                   {"allocations", count},
                   {"allocated_bytes", allocated},
