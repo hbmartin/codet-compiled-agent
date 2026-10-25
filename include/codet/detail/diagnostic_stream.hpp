@@ -35,7 +35,7 @@ struct DiagnosticState {
 class DiagnosticWriter {
   std::ostream &output_;
   DiagnosticState local_;
-  DiagnosticState &state_;
+  DiagnosticState *state_;
   FILE *file_;
 
 public:
