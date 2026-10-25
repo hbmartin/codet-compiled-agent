@@ -69,19 +69,30 @@ def background_close(binary,mode):
     child=os.fork()
     if child==0:
         try:
+            os.close(gate_write);os.close(ready_read);os.close(master)
             os.setpgid(0,0);signal.signal(signal.SIGTTOU,signal.SIG_DFL)
             for fd in (gate_read,ready_write,slave):os.set_inheritable(fd,True)
             os.execv(binary,[binary,'--codet-background-close-helper',mode,str(gate_read),str(ready_write),str(slave)])
-        except BaseException:os._exit(127)
+        except BaseException as error:
+            os.write(2,('background helper exec failed: '+str(error)+'\n').encode())
+            os._exit(127)
+    os.close(gate_read);os.close(ready_write)
+    startup=bytearray()
     def token(expected):
+        nonlocal child
         deadline=time.monotonic()+5
         while time.monotonic()<deadline:
             ready=select.select([ready_read,master],[],[],.02)[0]
-            if master in ready:os.read(master,65536)
+            if master in ready:startup.extend(os.read(master,65536))
             if ready_read in ready:
-                if os.read(ready_read,1)!=expected:raise RuntimeError('unexpected cleanup token')
+                if os.read(ready_read,1)!=expected:
+                    raise RuntimeError('unexpected cleanup token: '+repr(bytes(startup)))
                 return
-        raise TimeoutError('background cleanup gate')
+            collected,status=os.waitpid(child,os.WNOHANG|os.WUNTRACED)
+            if collected:
+                if not os.WIFSTOPPED(status):child=None
+                raise RuntimeError('background helper stopped/exited before ready: '+str(status)+' '+repr(bytes(startup)))
+        raise TimeoutError('background cleanup gate: '+repr(bytes(startup)))
     try:
         try:os.setpgid(child,child)
         except PermissionError:pass
@@ -111,7 +122,7 @@ def background_close(binary,mode):
     finally:
         if child is not None:os.kill(child,signal.SIGKILL);os.waitpid(child,0)
         os.tcsetpgrp(slave,os.getpgrp());termios.tcsetattr(slave,termios.TCSANOW,before)
-        for fd in (master,slave,gate_read,gate_write,ready_read,ready_write):os.close(fd)
+        for fd in (master,slave,gate_write,ready_read):os.close(fd)
     return 0
 
 
