@@ -101,13 +101,26 @@ Preserved-file notices keep readable Unicode paths and selectively escape unsafe
 terminal controls. This display policy does not guarantee visually unique Unicode paths.
 Emergency output uses reversible ASCII byte escapes for the complete path.
 Delivery remains best effort: an unwritable or full nonblocking stderr can prevent the notice
-from being printed. Emergency output does not wait for the descriptor to become writable.
+from being printed. Emergency pipe/socket output does not wait for the descriptor to become writable.
 
 Required headless stdout uses checked descriptor writes without stdio buffering; delivery failure exits nonzero.
+Blocking pipes and sockets observe cancellation, including when stdout and stderr share a full
+pipe or socket. After cancellation, diagnostics and cleanup use immediate best effort. Blocking
+TTY output remains outside this bounded-cancellation guarantee. No inherited descriptor flags
+or socket options are changed. On macOS, sends also use Tiger-era XNU's `MSG_NBIO` flag because
+`MSG_DONTWAIT` alone does not prevent waiting for send-buffer space.
 Line-mode sessions attempt later replies after an output failure and report a failed exit status
 if a reply was lost. Interactive displays, TTY text answers and exports, and stderr diagnostics escape unsafe
 terminal controls. Redirected text answers and exports, requested output files, and structured provider-error
-data retain their data bytes.
+data retain their data bytes. Prose normalizes CRLF to LF. Approval targets and artifact/session
+identifiers instead display literal control bytes and backslashes as reversible `\xNN` escapes.
+
+Terminal cleanup checks foreground ownership before native teardown. If private stream
+redirection fails, pending private stdio output is purged and the entire native ownership bundle
+is quarantined until process exit. It is intentionally neither freed nor normally torn down;
+further native terminal acquisition in that process is rejected. This bounded process-lifetime
+retention prevents stale native pointers and delayed output from touching another foreground
+program. A warning is best effort and is omitted when stderr is a terminal.
 
 ## Documentation
 
