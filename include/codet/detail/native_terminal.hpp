@@ -58,6 +58,7 @@ class NativeTerminalResourceOps final : public TerminalResourceOps {
     EditLine *editor = nullptr;
     History *history = nullptr;
     FILE *streams[3]{};
+    char output_buffer[4096]{};
     int sink = -1;
     bool quarantined = false;
   };
@@ -107,7 +108,8 @@ class NativeTerminalResourceOps final : public TerminalResourceOps {
         ::close(descriptor);
         throw Error("Cannot open private terminal stream");
       }
-      if (std::setvbuf(owned.streams[i], nullptr, _IONBF, 0) != 0)
+      if (std::setvbuf(owned.streams[i], i == 1 ? owned.output_buffer : nullptr,
+                       i == 1 ? _IOFBF : _IONBF, i == 1 ? sizeof(owned.output_buffer) : 0) != 0)
         throw Error("Cannot prepare private terminal stream");
     }
   }
