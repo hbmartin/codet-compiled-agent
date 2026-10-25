@@ -63,6 +63,31 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc > 1 && std::string(argv[1]) == "--codet-closed-stderr-terminal-helper") {
+      if (argc != 4)
+        return 2;
+      const std::string mode(argv[2]);
+      if (mode != "line" && mode != "curses")
+        return 2;
+      const int terminal = std::stoi(argv[3]);
+      if (::dup2(terminal, STDIN_FILENO) < 0 || ::dup2(terminal, STDOUT_FILENO) < 0)
+        return 3;
+      ::close(STDERR_FILENO);
+      ::setenv("TERM", "xterm", 1);
+      {
+        codet::detail::NativeTerminalResourceOps ops;
+        codet::detail::TerminalResources resources(ops);
+        if (mode == "line")
+          resources.start_editor();
+        else
+          resources.start_screen();
+        if (::fcntl(STDERR_FILENO, F_GETFD) >= 0)
+          return 4;
+        resources.close();
+        resources.close();
+      }
+      return ::fcntl(STDERR_FILENO, F_GETFD) < 0 ? 0 : 5;
+    }
     if (argc > 1 && std::string(argv[1]) == "--codet-private-stream-failure-helper") {
       if (argc != 4)
         return 2;
@@ -156,16 +181,33 @@ int main(int argc, char **argv) {
         metrics.observe = true;
         metrics.detach_failure = mode == "detach-failure";
         metrics.query_failure = mode == "query-failure";
-        if (mode == "partial")
+        if (mode == "partial" || mode == "detach-failure")
           std::rethrow_exception(failure);
         resources.close();
         resources.close();
       } catch (...) {
-        if (mode != "partial" || std::current_exception() != failure)
+        if ((mode != "partial" && mode != "detach-failure") || std::current_exception() != failure)
           throw;
       }
       metrics.observe = false;
-      if (metrics.live_settings || descriptors() != before)
+      if (metrics.live_settings)
+        return 6;
+      if (mode == "detach-failure") {
+        // A failed detach quarantines FILE-owned descriptors: none can be reused or double-closed.
+        const int unrelated = ::open("/dev/null", O_RDWR);
+        if (unrelated < 0 || descriptors() <= before)
+          return 9;
+        bool rejected = false;
+        try {
+          codet::detail::NativeTerminalResourceOps next;
+          (void)next.start_editor();
+        } catch (const codet::Error &) {
+          rejected = true;
+        }
+        if (!rejected || ::fcntl(unrelated, F_GETFD) < 0)
+          return 10;
+        ::close(unrelated);
+      } else if (descriptors() != before)
         return 6;
       if (mode == "curses" &&
           (metrics.ends != 1 || metrics.deletes != 1 || !metrics.ended_before_delete))
