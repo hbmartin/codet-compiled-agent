@@ -169,6 +169,20 @@ TEST(CliOutput, TextExportsBatchExactBytesAndDiscardUnpublishedTails) {
   }
   EXPECT_EQ(probe.attempts, 2);
 }
+TEST(CliOutput, HumanExportsRenderAcrossStagingBoundariesWithoutChangingRawExports) {
+  const std::string raw = std::string(65534, 'x') + "\xe9\x9b\xaa\r\n\x1b\r\\x1B";
+  DescriptorProbe probe;
+  detail::CliOutput output(probe.writer());
+  detail::TextExport exported(output);
+  exported.append_human(raw);
+  exported.finish();
+  EXPECT_EQ(probe.delivered, std::string(65534, 'x') + "\xe9\x9b\xaa\n\\x1B\\x0D\\x1B");
+  EXPECT_EQ(probe.attempts, 2);
+  probe.delivered.clear();
+  exported.append(raw);
+  exported.finish();
+  EXPECT_EQ(probe.delivered, raw);
+}
 TEST(CliOutput, PartialDescriptorRecordDoesNotReplayItsPrefixOrUnwrittenSuffix) {
   DescriptorProbe probe;
   probe.chunk = 2;

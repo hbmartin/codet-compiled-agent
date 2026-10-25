@@ -200,5 +200,14 @@ public:
         finish();
     }
   }
+  void append_human(std::string_view text) {
+    while (!text.empty()) {
+      const auto next = terminal_text_into(text, bytes_.data() + used_, bytes_.size() - used_);
+      used_ += next.written;
+      text.remove_prefix(next.consumed);
+      if (!next.consumed || used_ == bytes_.size())
+        finish();
+    }
+  }
 };
 } // namespace codet::detail

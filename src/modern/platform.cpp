@@ -105,7 +105,7 @@ struct TextPoint {
   size_t consumed;
   bool valid;
 };
-TextPoint decode_text_point(const std::string &text, size_t offset) noexcept {
+TextPoint decode_text_point(std::string_view text, size_t offset) noexcept {
   const auto lead = static_cast<unsigned char>(text[offset]);
   if (lead < 0x80)
     return {lead, 1, true};
@@ -218,7 +218,13 @@ Json safe_json(Json &&value) {
   return std::move(value);
 }
 void report_diagnostic(const DiagnosticSink &sink, const std::string &message) {
-  const auto text = bounded_text(detail::terminal_text(message), size_t{1024} * 1024);
+  const auto rendered = detail::render_terminal_text(message, size_t{1024} * 1024);
+  detail::report_rendered_diagnostic(sink, {rendered.text});
+}
+void detail::report_rendered_diagnostic(const DiagnosticSink &sink, RenderedTextView message) {
+  const auto size = rendered_prefix(message.text, size_t{1024} * 1024);
+  const auto truncated = size == message.text.size() ? std::string{} : message.text.substr(0, size);
+  const auto &text = size == message.text.size() ? message.text : truncated;
   if (sink) {
     try {
       sink(text);
@@ -226,11 +232,11 @@ void report_diagnostic(const DiagnosticSink &sink, const std::string &message) {
     } catch (const std::bad_alloc &) {
       throw;
     } catch (...) { // A failed diagnostic renderer must not change a completed action.
-      (void)detail::write_diagnostic(std::cerr, {text});
+      (void)write_diagnostic(std::cerr, {text});
       return;
     }
   }
-  (void)detail::write_diagnostic(std::cerr, {text});
+  (void)write_diagnostic(std::cerr, {text});
 }
 const char *FileNotice::label() const noexcept {
   if (kind == FileNoticeKind::repair_backup)
@@ -419,33 +425,92 @@ void write_file_diagnostic(std::ostream &output, const std::string &text) {
   detail::DiagnosticWriter writer(output);
   writer.file(text);
 }
-std::string detail::terminal_text(const std::string &text) {
+namespace {
+bool hexadecimal(char value) noexcept {
+  return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f') ||
+         (value >= 'A' && value <= 'F');
+}
+bool escape_token(std::string_view text, size_t offset) noexcept {
+  return text.size() - offset >= 4 && text[offset] == '\\' && text[offset + 1] == 'x' &&
+         hexadecimal(text[offset + 2]) && hexadecimal(text[offset + 3]);
+}
+} // namespace
+size_t detail::rendered_prefix(std::string_view text, size_t limit) noexcept {
+  if (text.size() <= limit)
+    return text.size();
+  size_t offset = 0;
+  while (offset < text.size() && offset < limit) {
+    const auto width = (text[offset] == '\\' && escape_token(text, offset)) ? size_t{4}
+                       : static_cast<unsigned char>(text[offset]) < 0x80
+                           ? size_t{1}
+                           : decode_text_point(text, offset).consumed;
+    if (width > limit - offset)
+      break;
+    offset += width;
+  }
+  return offset;
+}
+detail::RenderProgress detail::terminal_text_into(std::string_view text, char *output,
+                                                  size_t limit) noexcept {
   constexpr char hex[] = "0123456789ABCDEF";
-  std::string result;
-  result.reserve(text.size());
-  for (size_t i = 0; i < text.size();) {
-    const auto lead = static_cast<unsigned char>(text[i]);
+  size_t offset = 0, used = 0;
+  while (offset < text.size() && used < limit) {
+    const auto lead = static_cast<unsigned char>(text[offset]);
     size_t consumed = 1;
     bool safe;
-    if (lead < 0x80)
+    if (lead < 0x80) {
+      if (lead == '\r' && text.size() - offset >= 2 && text[offset + 1] == '\n') {
+        output[used++] = '\n';
+        offset += 2;
+        continue;
+      }
       safe = lead == '\n' || lead == '\t' || (lead >= 0x20 && lead != 0x7f);
-    else {
-      const auto point = decode_text_point(text, i);
+      if (lead == '\\' && escape_token(text, offset))
+        consumed = 4;
+    } else {
+      const auto point = decode_text_point(text, offset);
       consumed = point.consumed;
       safe = point.valid && !unsafe_unicode_control(point.value);
     }
-    if (safe)
-      result.append(text, i, consumed);
-    else
+    if (safe) {
+      if (consumed > limit - used)
+        break;
+      std::memcpy(output + used, text.data() + offset, consumed);
+      used += consumed;
+      offset += consumed;
+    } else {
+      // Escape bytes individually; a bounded result can end only after a complete token.
       for (size_t j = 0; j < consumed; ++j) {
-        const auto byte = static_cast<unsigned char>(text[i + j]);
-        result += "\\x";
-        result += hex[byte >> 4u];
-        result += hex[byte & 15u];
+        if (limit - used < 4)
+          return {offset, used};
+        const auto byte = static_cast<unsigned char>(text[offset++]);
+        output[used++] = '\\';
+        output[used++] = 'x';
+        output[used++] = hex[byte >> 4u];
+        output[used++] = hex[byte & 15u];
       }
-    i += consumed;
+    }
   }
+  return {offset, used};
+}
+detail::RenderedText detail::render_terminal_text(std::string_view text, size_t limit) {
+  RenderedText result{{}, false};
+  result.text.reserve(std::min(text.size(), limit));
+  char buffer[512];
+  size_t offset = 0;
+  while (offset < text.size()) {
+    const auto room = std::min(sizeof(buffer), limit - result.text.size());
+    const auto next = terminal_text_into(text.substr(offset), buffer, room);
+    result.text.append(buffer, next.written);
+    offset += next.consumed;
+    if (!next.consumed)
+      break;
+  }
+  result.truncated = offset != text.size();
   return result;
+}
+std::string detail::terminal_text(const std::string &text) {
+  return render_terminal_text(text, std::numeric_limits<size_t>::max()).text;
 }
 
 namespace {

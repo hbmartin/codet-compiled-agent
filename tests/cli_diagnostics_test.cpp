@@ -111,6 +111,28 @@ TEST(DiagnosticWriter, DiagnosticBudgetsAccountForEscapedHumanText) {
   report_diagnostic([&](const auto &text) { received = text; }, "hook\x1b\r\xff");
   EXPECT_EQ(received, "hook\\x1B\\x0D\\xFF");
 }
+TEST(DiagnosticWriter, BoundedRenderingKeepsWholeEscapesAndNormalizesOnlyHumanCrLf) {
+  const std::string raw = "A\x1b\xe9\x9b\xaa\r\nB\rC\\x1B\xff";
+  const std::vector<std::string> tokens{"A",     "\\x1B", "\xe9\x9b\xaa", "\n",   "B",
+                                        "\\x0D", "C",     "\\x1B",        "\\xFF"};
+  std::string full;
+  for (const auto &token : tokens)
+    full += token;
+  EXPECT_EQ(detail::terminal_text(raw), full);
+  EXPECT_EQ(safe_text("a\r\nb\r"), "a\r\nb\r");
+  for (size_t limit = 0; limit <= full.size() + 1; ++limit) {
+    std::string expected;
+    for (const auto &token : tokens) {
+      if (token.size() > limit - expected.size())
+        break;
+      expected += token;
+    }
+    const auto rendered = detail::render_terminal_text(raw, limit);
+    EXPECT_EQ(rendered.text, expected) << limit;
+    EXPECT_EQ(rendered.truncated, expected != full) << limit;
+    EXPECT_EQ(full.substr(0, detail::rendered_prefix(full, limit)), expected) << limit;
+  }
+}
 TEST(DiagnosticWriter, HumanTextPreservesPrintableAsciiAndEscapesMalformedPrefixesByteForByte) {
   const auto escaped = [](const std::string &text) {
     constexpr char hex[] = "0123456789ABCDEF";

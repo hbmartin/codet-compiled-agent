@@ -40,6 +40,7 @@ struct ProcessTimeout : Error {
 };
 Json safe_json(const Json &);
 Json safe_json(Json &&);
+// report_diagnostic passes bounded, human-rendered text to this callback.
 using DiagnosticSink = std::function<void(const std::string &)>;
 void report_diagnostic(const DiagnosticSink &, const std::string &);
 std::string bounded_text(const std::string &, size_t);

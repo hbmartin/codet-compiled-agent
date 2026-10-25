@@ -1295,6 +1295,22 @@ class CliTests(unittest.TestCase):
             capture_output=True,env=self.env,timeout=15)
         self.assertEqual(exported.returncode,0,exported.stderr)
         self.assertIn(DISPLAY_CONTROLS.encode()+b'\n\n',exported.stdout)
+        master,slave=pty.openpty()
+        process=subprocess.Popen([BIN,'-C',str(self.workspace),'export',sessions[0]['id']],
+            stdin=subprocess.DEVNULL,stdout=slave,stderr=subprocess.PIPE,env=self.env)
+        received=b''
+        try:
+            deadline=time.monotonic()+7
+            while process.poll() is None and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+            while select.select([master],[],[],0)[0]:received+=os.read(master,65536)
+            self.assertIsNotNone(process.poll(),received)
+            self.assertEqual(process.returncode,0,process.stderr.read())
+            self.assertIn(DISPLAY_ESCAPED.encode(),received)
+            self.assertNotIn(b'unsafe:\x1b',received)
+        finally:
+            if process.poll() is None:process.kill();process.wait(timeout=5)
+            process.stderr.close();os.close(master);os.close(slave)
         result=self.run_cli('exec','-c','providers.openai.wire_api="responses"','fixture-display-controls')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn(DISPLAY_ESCAPED,result.stderr);self.assertNotIn('\x1b',result.stderr)
@@ -1312,7 +1328,8 @@ class CliTests(unittest.TestCase):
             while process.poll() is None and time.monotonic()<deadline:
                 if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
             while select.select([master],[],[],0)[0]:received+=os.read(master,65536)
-            self.assertEqual(process.poll(),0,process.stderr.read())
+            self.assertIsNotNone(process.poll(),received)
+            self.assertEqual(process.returncode,0,process.stderr.read())
             self.assertIn(DISPLAY_ESCAPED.encode(),received)
             self.assertNotIn(b'unsafe:\x1b',received)
         finally:

@@ -206,6 +206,19 @@ extern "C" int sqlite3_step(sqlite3_stmt *statement) {
   return result;
 }
 namespace {
+TEST(FileDiagnosticsFault, ExhaustedDiagnosticBudgetsDoNotAllocateForDiscardedInput) {
+  DiagnosticBuffer buffer(DiagnosticBuffer::notice().size() + 3);
+  ASSERT_TRUE(buffer.add("a"));
+  const std::string large(1024 * 1024, '\x1b');
+  fault::fired = false;
+  fault::countdown = 0;
+  const auto accepted = buffer.add(large);
+  const bool allocated = fault::fired;
+  fault::disable();
+  EXPECT_FALSE(accepted);
+  EXPECT_FALSE(allocated);
+  EXPECT_TRUE(buffer.omitted());
+}
 TEST(FileDiagnosticsFault, OwnershipTransferAndEmergencyFlushDoNotAllocate) {
   FileDiagnosticQueue queue;
   auto notice = std::make_unique<FileNotice>(std::string(4096, 'p'), FileNoticeKind::tool_result);
