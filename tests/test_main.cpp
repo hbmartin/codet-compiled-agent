@@ -162,6 +162,7 @@ int main(int argc, char **argv) {
       (void)::pthread_sigmask(SIG_SETMASK, nullptr, &prior);
       auto &metrics = codet::test::native_terminal_metrics;
       const auto failure = std::make_exception_ptr(std::bad_alloc());
+      metrics.observe_streams = true;
       try {
         codet::detail::NativeTerminalResourceOps ops;
         codet::detail::TerminalResources resources(ops);
@@ -175,9 +176,20 @@ int main(int argc, char **argv) {
           resources.start_history();
           (void)::el_set(resources.editor(), EL_PREP_TERM, 1);
         }
+        metrics.observe_streams = false;
         (void)::write(notify, "R", 1);
         if (!codet::test::read_token(gate, token))
           return 5;
+        if (mode == "detach-failure") {
+          if (metrics.stream_count != 3)
+            return 11;
+          // Retain test backing storage through normal process exit, just like the bundle.
+          auto *buffer = new char[4096];
+          if (std::setvbuf(metrics.streams[1], buffer, _IOFBF, 4096) != 0)
+            return 12;
+          (void)std::fputs("QUARANTINED OUTPUT MUST NEVER REACH THE FOREGROUND",
+                           metrics.streams[1]);
+        }
         metrics.observe = true;
         metrics.detach_failure = mode == "detach-failure";
         metrics.query_failure = mode == "query-failure";

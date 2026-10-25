@@ -69,3 +69,13 @@ extern "C" pid_t tcgetpgrp(int fd)
   }
   return original(fd);
 }
+
+extern "C" FILE *fdopen(int descriptor, const char *mode) {
+  using Open = FILE *(*)(int, const char *);
+  static const auto original = reinterpret_cast<Open>(codet::test::native_symbol("fdopen"));
+  auto *stream = original(descriptor, mode);
+  auto &metrics = codet::test::native_terminal_metrics;
+  if (stream && metrics.observe_streams && metrics.stream_count < 3)
+    metrics.streams[metrics.stream_count++] = stream;
+  return stream;
+}
