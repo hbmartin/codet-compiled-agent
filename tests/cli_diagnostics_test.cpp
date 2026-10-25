@@ -126,6 +126,39 @@ TEST(DiagnosticWriter, EmergencyDescriptorStateCannotLeakIntoACapturedStreamOrRe
   const auto delivered = testing::internal::GetCapturedStderr();
   EXPECT_EQ(delivered, "Uncommitted tool result preserved at /complete/path\n");
 }
+TEST(DiagnosticWriter, NativeDescriptorFailureKeepsConfiguredExceptionMasksAndRecovers) {
+  const int saved = ::dup(STDERR_FILENO);
+  ASSERT_GE(saved, 0);
+  bool threw = false, recovered = false, mask_preserved = false;
+  {
+    const auto mask = std::cerr.exceptions();
+    struct Restore {
+      int saved;
+      std::ios::iostate mask;
+      ~Restore() {
+        std::cerr.exceptions(std::ios::goodbit);
+        (void)::dup2(saved, STDERR_FILENO);
+        ::close(saved);
+        detail::recover_diagnostic_stream(std::cerr);
+        std::cerr.exceptions(mask);
+        detail::reset_standard_diagnostics();
+      }
+    } restore{saved, mask};
+    ::close(STDERR_FILENO);
+    std::cerr.exceptions(std::ios::badbit);
+    detail::DiagnosticWriter writer(std::cerr);
+    try {
+      (void)writer.write({"unwritable"});
+    } catch (const std::ios_base::failure &) {
+      threw = true;
+    }
+    recovered = std::cerr.good();
+    mask_preserved = std::cerr.exceptions() == std::ios::badbit;
+  }
+  EXPECT_TRUE(threw);
+  EXPECT_TRUE(recovered);
+  EXPECT_TRUE(mask_preserved);
+}
 TEST(DiagnosticWriter, PermissionChangesOnTheSameDescriptorIdentityKeepTheSeparator) {
   TempDirectory temporary;
   const auto path = temporary.root / "diagnostic";

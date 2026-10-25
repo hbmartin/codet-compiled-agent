@@ -410,15 +410,25 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
       (void)recover_diagnostic_stream(output_);
     DescriptorOutput descriptor(native, nullptr == io_ ? nullptr : io_->cancel);
     const auto mode = io_ ? OutputMode::diagnostic : OutputMode::immediate;
+    bool success = true;
     if (state_->pending) {
-      if (descriptor.result({"\n"}, false, mode) != OutputResult::success)
-        return false;
-      state_->pending = false;
+      success = descriptor.result({"\n"}, false, mode) == OutputResult::success;
+      if (success)
+        state_->pending = false;
     }
-    const bool success = descriptor.result(parts, newline, mode) == OutputResult::success;
-    state_->pending = !success && newline;
-    if (!success)
+    if (success) {
+      success = descriptor.result(parts, newline, mode) == OutputResult::success;
+      state_->pending = !success && newline;
+    }
+    if (!success) {
+      try {
+        output_.setstate(std::ios::badbit);
+      } catch (...) {
+        (void)recover_diagnostic_stream(output_);
+        throw;
+      }
       (void)recover_diagnostic_stream(output_);
+    }
     return success;
   }
 
