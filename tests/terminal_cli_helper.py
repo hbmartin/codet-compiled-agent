@@ -10,6 +10,14 @@ import termios
 import time
 
 
+def foreground_child(slave,child):
+    try:os.setpgid(child,child)
+    except PermissionError:
+        # The child also creates its group before exec; parent setpgid can then be rejected.
+        if os.getpgid(child)!=child:raise
+    os.tcsetpgrp(slave,child)
+
+
 def active_job_control(binary):
     master,slave=pty.openpty()
     gate_read,gate_write=os.pipe();ready_read,ready_write=os.pipe()
@@ -32,7 +40,7 @@ def active_job_control(binary):
         if not select.select([ready_read],[],[],5)[0]:raise TimeoutError('active helper gate timed out')
         if os.read(ready_read,1)!=expected:raise RuntimeError('unexpected active helper token')
     try:
-        os.setpgid(child,child);os.tcsetpgrp(slave,child);os.write(gate_write,b'G');token(b'R')
+        foreground_child(slave,child);os.write(gate_write,b'G');token(b'R')
         os.tcsetpgrp(slave,os.getpgrp())
         foreign=termios.tcgetattr(slave);foreign[3]&=~termios.ECHO;foreign[6][termios.VMIN]=7
         termios.tcsetattr(slave,termios.TCSANOW,foreign)
@@ -94,9 +102,7 @@ def background_close(binary,mode):
                 raise RuntimeError('background helper stopped/exited before ready: '+str(status)+' '+repr(bytes(startup)))
         raise TimeoutError('background cleanup gate: '+repr(bytes(startup)))
     try:
-        try:os.setpgid(child,child)
-        except PermissionError:pass
-        os.tcsetpgrp(slave,child);os.write(gate_write,b'G');token(b'R')
+        foreground_child(slave,child);os.write(gate_write,b'G');token(b'R')
         while select.select([master],[],[],0)[0]:os.read(master,65536)
         os.tcsetpgrp(slave,os.getpgrp())
         foreign=[*before[:6],list(before[6])];foreign[3]&=~termios.ECHO
