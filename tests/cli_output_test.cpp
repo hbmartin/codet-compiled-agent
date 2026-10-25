@@ -130,6 +130,16 @@ TEST(CliOutput, DescriptorWritesFinishShortWritesAndInterruptedCalls) {
   EXPECT_EQ(probe.delivered, "firstsecond\n");
   EXPECT_EQ(output.status(0), 0);
 }
+TEST(CliOutput, AnswerBoundaryEscapesOnlyTerminalDisplays) {
+  DescriptorProbe probe;
+  detail::CliOutput output(probe.writer());
+  const std::string text = "raw\x1b\r\n\xff";
+  output.answer(text, false);
+  EXPECT_EQ(probe.delivered, text + "\n");
+  probe.delivered.clear();
+  output.answer(text, true);
+  EXPECT_EQ(probe.delivered, "raw\\x1B\n\\xFF\n");
+}
 TEST(CliOutput, DescriptorFailuresLatchWithoutRetryingOrFlushingAtDestruction) {
   for (int error : {EAGAIN, EPIPE, 0}) {
     DescriptorProbe probe;

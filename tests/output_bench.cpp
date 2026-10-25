@@ -40,6 +40,15 @@ template <class Output> Output production_output(const codet::Cancellation &canc
   else
     return Output();
 }
+template <class Output>
+auto answer(Output &output, const std::string &text, bool terminal,
+            int) -> decltype(output.answer(text, terminal), void()) {
+  output.answer(text, terminal);
+}
+template <class Output> void answer(Output &output, const std::string &text, bool terminal, long) {
+  // Exact pre-follow-up production boundary; the new explicit boundary can borrow the string.
+  output.required({terminal ? codet::detail::terminal_text(text) : text});
+}
 } // namespace
 void *operator new(size_t size) {
   return allocate(size);
@@ -148,6 +157,7 @@ int main(int argc, char **argv) {
   }
   allocations = allocated = writes = bytes = waits = 0;
   size_t observed = 0;
+  volatile bool terminal = false;
   measuring = true;
   const auto started = std::chrono::steady_clock::now();
   if (mode == "answer") {
@@ -157,6 +167,8 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i != repetitions; ++i) {
       if (output)
         stdout_output.required({record});
+      else if (mode == "answer-boundary")
+        answer(stdout_output, input, terminal, 0);
       else if (mode == "budget-full")
         observed += full.add(input).has_value();
       else if (mode == "budget-partial") {

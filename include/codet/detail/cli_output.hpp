@@ -232,6 +232,12 @@ public:
         return;
       }
   }
+  void answer(const std::string &text, bool terminal) {
+    if (terminal)
+      required({terminal_text(text)});
+    else
+      required({text});
+  }
   template <class Build> void secondary_record(Build &&build) noexcept {
     if (!failed_ && !cancelled_)
       try {

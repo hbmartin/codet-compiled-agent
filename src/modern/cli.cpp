@@ -1060,10 +1060,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       if (terminal)
         terminal->say(answer);
       else if (o.format == "text") {
-        if (isatty(STDOUT_FILENO))
-          output.required({detail::terminal_text(answer)});
-        else
-          output.required({answer});
+        output.answer(answer, isatty(STDOUT_FILENO));
       } else if (o.format == "json")
         output.required({Json({{"session_id", session.id},
                                {"status", "success"},

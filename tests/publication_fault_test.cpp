@@ -3,6 +3,7 @@
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
+#include "codet/detail/cli_output.hpp"
 #include "codet/detail/terminal_resources.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/prompt.hpp"
@@ -206,6 +207,35 @@ extern "C" int sqlite3_step(sqlite3_stmt *statement) {
   return result;
 }
 namespace {
+TEST(FileDiagnosticsFault, RedirectedAnswersBorrowTheirBytesWithoutAllocation) {
+  const std::string answer(1024 * 1024, 'x');
+  struct Probe {
+    const void *first = nullptr;
+    size_t bytes = 0;
+    static ssize_t write(void *context, int, const void *data, size_t size) {
+      auto &self = *static_cast<Probe *>(context);
+      if (!self.first)
+        self.first = data;
+      self.bytes += size;
+      return static_cast<ssize_t>(size);
+    }
+  } probe;
+  detail::CliOutput output(detail::DescriptorOutput(123, Probe::write, &probe));
+  fault::fired = false;
+  fault::countdown = 0;
+  std::exception_ptr failure;
+  try {
+    output.answer(answer, false);
+  } catch (...) {
+    failure = std::current_exception();
+  }
+  const bool allocated = fault::fired;
+  fault::disable();
+  EXPECT_FALSE(failure);
+  EXPECT_FALSE(allocated);
+  EXPECT_EQ(probe.first, answer.data());
+  EXPECT_EQ(probe.bytes, answer.size() + 1);
+}
 TEST(FileDiagnosticsFault, ExhaustedDiagnosticBudgetsDoNotAllocateForDiscardedInput) {
   DiagnosticBuffer buffer(DiagnosticBuffer::notice().size() + 3);
   ASSERT_TRUE(buffer.add("a"));
