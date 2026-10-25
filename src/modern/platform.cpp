@@ -406,6 +406,8 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
       : &output_ == &std::cout && output_.rdbuf() == native_stdout_buffer ? STDOUT_FILENO
                                                                           : -1;
   if (native >= 0) {
+    if (!output_ || (file_ && std::ferror(file_)))
+      (void)recover_diagnostic_stream(output_);
     DescriptorOutput descriptor(native, nullptr == io_ ? nullptr : io_->cancel);
     const auto mode = io_ ? OutputMode::diagnostic : OutputMode::immediate;
     if (state_->pending) {

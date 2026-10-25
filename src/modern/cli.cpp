@@ -1268,7 +1268,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       session = std::move(fresh);
       last_usage.reset();
       current_owner = std::move(fresh_owner);
-      terminal->say("Started " + session.id);
+      terminal->say_literal("Started " + session.id);
       continue;
     }
     if (input->rfind("/name ", 0) == 0) {

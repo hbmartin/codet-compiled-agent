@@ -1716,6 +1716,28 @@ class CliTests(unittest.TestCase):
                         if process.poll() is None:process.kill();process.wait(timeout=5)
                         os.close(reader);os.close(writer)
 
+    def test_shared_full_socket_cancels_without_blocking_final_stderr(self):
+        import fcntl
+        import socket
+        for sig in (signal.SIGINT,signal.SIGTERM):
+            with self.subTest(signal=sig):
+                reader,writer=socket.socketpair()
+                writer.setblocking(False)
+                try:
+                    while True:writer.send(b'x'*4096)
+                except BlockingIOError:pass
+                writer.setblocking(True)
+                flags=fcntl.fcntl(writer.fileno(),fcntl.F_GETFL)
+                process=subprocess.Popen([BIN,'--help'],stdout=writer,stderr=writer,env=self.env)
+                try:
+                    with self.assertRaises(subprocess.TimeoutExpired):process.wait(timeout=.3)
+                    process.send_signal(sig)
+                    self.assertEqual(process.wait(timeout=5),130)
+                    self.assertEqual(fcntl.fcntl(writer.fileno(),fcntl.F_GETFL),flags)
+                finally:
+                    if process.poll() is None:process.kill();process.wait(timeout=5)
+                    reader.close();writer.close()
+
     def test_interrupt_has_exit_130_and_terminal_event(self):
         for sig in (signal.SIGINT, signal.SIGTERM):
             with self.subTest(signal=sig):

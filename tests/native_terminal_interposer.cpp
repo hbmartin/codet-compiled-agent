@@ -70,7 +70,11 @@ extern "C" pid_t tcgetpgrp(int fd)
   return original(fd);
 }
 
-extern "C" FILE *fdopen(int descriptor, const char *mode) {
+extern "C" FILE *fdopen(int descriptor, const char *mode)
+#ifdef __linux__
+    noexcept
+#endif
+{
   using Open = FILE *(*)(int, const char *);
   static const auto original = reinterpret_cast<Open>(codet::test::native_symbol("fdopen"));
   auto *stream = original(descriptor, mode);
