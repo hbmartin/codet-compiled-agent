@@ -331,4 +331,53 @@ TEST(CliOutput, DescriptorChunksRespectTheDarwinLimitWithoutReadingHugeStorage) 
   EXPECT_EQ(probe.largest, static_cast<size_t>(INT_MAX));
   EXPECT_EQ(probe.calls, 2u);
 }
+struct VectorProbe {
+  std::string delivered;
+  size_t chunk = 100000, calls = 0, vectors = 0;
+  int interrupted = 0, fail_after = -1;
+  static ssize_t write(void *context, int, const iovec *parts, int count) {
+    auto &self = *static_cast<VectorProbe *>(context);
+    ++self.calls;
+    self.vectors = std::max(self.vectors, static_cast<size_t>(count));
+    if (self.interrupted-- > 0) {
+      errno = EINTR;
+      return -1;
+    }
+    if (self.fail_after >= 0 && self.calls > static_cast<size_t>(self.fail_after)) {
+      errno = EAGAIN;
+      return -1;
+    }
+    size_t written = 0;
+    for (int i = 0; i < count && written < self.chunk; ++i) {
+      const auto size = std::min(parts[i].iov_len, self.chunk - written);
+      self.delivered.append(static_cast<const char *>(parts[i].iov_base), size);
+      written += size;
+    }
+    return static_cast<ssize_t>(written);
+  }
+};
+TEST(CliOutput, GatheredRecordsAdvanceAcrossVectorsAndInterruptedShortWrites) {
+  for (size_t chunk : {size_t{1}, size_t{3}, size_t{10000}}) {
+    VectorProbe probe;
+    probe.chunk = chunk;
+    probe.interrupted = 2;
+    detail::CliOutput output(detail::DescriptorOutput(123, VectorProbe::write, &probe));
+    output.required({"",  "one", "",   "two", "three", "4",  "5",  "6",  "7",  "8",
+                     "9", "10",  "11", "12",  "13",    "14", "15", "16", "17", ""});
+    EXPECT_EQ(probe.delivered, "onetwothree4567891011121314151617\n");
+    EXPECT_LE(probe.vectors, 16u);
+    EXPECT_EQ(output.status(0), 0);
+  }
+}
+TEST(CliOutput, FailedGatheredRecordsNeverReplayPartialPrefixesOrLaterRecords) {
+  VectorProbe probe;
+  probe.chunk = 4;
+  probe.fail_after = 1;
+  detail::CliOutput output(detail::DescriptorOutput(123, VectorProbe::write, &probe));
+  EXPECT_THROW(output.required({"abc", "def"}), Error);
+  EXPECT_EQ(probe.delivered, "abcd");
+  output.secondary({"later"});
+  EXPECT_THROW(output.required({"later"}), Error);
+  EXPECT_EQ(probe.calls, 2u);
+}
 } // namespace

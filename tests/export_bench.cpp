@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <new>
+#include <sys/uio.h>
 #include <unistd.h>
 namespace {
 bool measuring = false;
@@ -71,6 +72,19 @@ extern "C" ssize_t write(int fd, const void *bytes, size_t count) {
   if (!native)
     ::_exit(86);
   const auto written = native(fd, bytes, count);
+  if (measuring && fd == STDOUT_FILENO) {
+    ++descriptor_writes;
+    if (written > 0)
+      descriptor_bytes += static_cast<size_t>(written);
+  }
+  return written;
+}
+extern "C" ssize_t writev(int fd, const iovec *parts, int count) {
+  using Write = ssize_t (*)(int, const iovec *, int);
+  static const auto native = reinterpret_cast<Write>(::dlsym(RTLD_NEXT, "writev"));
+  if (!native)
+    ::_exit(86);
+  const auto written = native(fd, parts, count);
   if (measuring && fd == STDOUT_FILENO) {
     ++descriptor_writes;
     if (written > 0)

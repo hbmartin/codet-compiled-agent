@@ -11,6 +11,7 @@
 #include <limits>
 #include <poll.h>
 #include <sys/stat.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 namespace codet::detail {
@@ -18,16 +19,21 @@ namespace codet::detail {
 class DescriptorOutput {
 public:
   using Write = ssize_t (*)(void *, int, const void *, size_t);
+  using WriteVector = ssize_t (*)(void *, int, const iovec *, int);
 
 private:
   int descriptor_;
   void *context_;
   Write write_;
+  WriteVector vector_ = nullptr;
   const Cancellation *cancel_;
   size_t limit_ = INT_MAX;
   bool pipe_ = false, valid_ = true;
   static ssize_t native_write(void *, int descriptor, const void *bytes, size_t size) {
     return ::write(descriptor, bytes, size);
+  }
+  static ssize_t native_vector(void *, int descriptor, const iovec *parts, int count) {
+    return ::writev(descriptor, parts, count);
   }
   void check(bool reporting = false) const {
     if (cancel_ && !reporting)
@@ -65,6 +71,62 @@ private:
     }
     return true;
   }
+  bool gathered(std::initializer_list<std::string_view> parts, bool newline, bool reporting) {
+    struct Cursor {
+      const std::string_view *part = nullptr, *end = nullptr;
+      size_t offset = 0;
+      bool newline = false;
+      std::string_view view() noexcept {
+        while (part != end && offset == part->size()) {
+          ++part;
+          offset = 0;
+        }
+        return part != end ? std::string_view(part->data() + offset, part->size() - offset)
+               : newline   ? std::string_view("\n")
+                           : std::string_view{};
+      }
+      void advance(size_t count) noexcept {
+        while (count) {
+          const auto size = std::min(count, view().size());
+          if (part != end)
+            offset += size;
+          else
+            newline = false;
+          count -= size;
+        }
+      }
+    } cursor{parts.begin(), parts.end(), 0, newline};
+    while (!cursor.view().empty()) {
+      check(reporting);
+      if (!valid_ || !ready(reporting))
+        return false;
+      iovec batch[16]; // POSIX guarantees at least sixteen vectors.
+      size_t total = 0;
+      int count = 0;
+      auto next = cursor;
+      while (count != 16 && total < limit_) {
+        const auto piece = next.view();
+        if (piece.empty())
+          break;
+        const auto size = std::min(piece.size(), limit_ - total);
+        batch[count++] = {const_cast<char *>(piece.data()), size};
+        total += size;
+        next.advance(size);
+      }
+      // A single span gains nothing from a vector syscall, especially on small pipe chunks.
+      const auto written = count == 1 && write_
+                               ? write_(context_, descriptor_, batch[0].iov_base, batch[0].iov_len)
+                               : vector_(context_, descriptor_, batch, count);
+      const auto error = errno;
+      check(reporting);
+      if (written < 0 && error == EINTR && !reporting)
+        continue;
+      if (written <= 0 || static_cast<size_t>(written) > total)
+        return false;
+      cursor.advance(static_cast<size_t>(written));
+    }
+    return true;
+  }
 
 public:
   explicit DescriptorOutput(int descriptor, Write write = native_write, void *context = nullptr,
@@ -72,6 +134,7 @@ public:
       : descriptor_(descriptor), context_(context), write_(write), cancel_(cancel) {
     if (write_ != native_write)
       return;
+    vector_ = native_vector;
     struct stat status {};
     const auto flags = ::fcntl(descriptor_, F_GETFL);
     valid_ = flags >= 0 && ::fstat(descriptor_, &status) == 0;
@@ -84,10 +147,19 @@ public:
   }
   DescriptorOutput(int descriptor, const Cancellation &cancel) noexcept
       : DescriptorOutput(descriptor, native_write, nullptr, &cancel) {}
+  DescriptorOutput(int descriptor, WriteVector write, void *context,
+                   const Cancellation *cancel = nullptr) noexcept
+      : DescriptorOutput(descriptor, static_cast<Write>(nullptr), context, cancel) {
+    vector_ = write;
+  }
   bool write(std::initializer_list<std::string_view> parts, bool newline, bool secondary = false) {
     // A provider cancellation can still report its final event to an already-writable sink.
     const bool reporting = secondary && cancel_ && cancel_->requested.load();
     check(reporting);
+    if (write_ && parts.size() == 1 && !newline)
+      return bytes(*parts.begin(), reporting);
+    if (vector_)
+      return gathered(parts, newline, reporting);
     for (auto part : parts)
       if (!bytes(part, reporting))
         return false;
