@@ -168,7 +168,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             commands=['printf begun > begun; while test ! -f release; do sleep .02; done','printf completed > completed']
             delta={'tool_calls':[{'index':i,'id':'batch-'+str(i),'function':{'name':'exec_command','arguments':json.dumps({'cmd':command,'login':False})}} for i,command in enumerate(commands)]};reason='tool_calls'
         elif 'fixture-control-approval' in prompt and not completed:
-            delta={'tool_calls':[{'index':0,'id':'control-approval','function':{'name':'exec_command','arguments':json.dumps({'cmd':DISPLAY_CONTROLS,'login':False})}}]};reason='tool_calls'
+            delta={'tool_calls':[{'index':0,'id':'control-approval','function':{'name':'exec_command','arguments':json.dumps({'cmd':DISPLAY_CONTROLS+'\r\nnext\t'+chr(92)+'x0A','login':False})}}]};reason='tool_calls'
         elif 'fixture-command' in messages[last_user].get('content','') and not completed:
             delta={'tool_calls':[{'index':0,'id':'shell-'+str(last_user),'function':{'name':'exec_command','arguments':json.dumps({'cmd':'printf approved','login':False})}}]};reason='tool_calls'
         elif 'fixture-edit' in prompt and not completed:
@@ -1263,7 +1263,7 @@ class CliTests(unittest.TestCase):
                         stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
                     received=b''
                     try:
-                        expected=DISPLAY_ESCAPED.encode();deadline=time.monotonic()+7
+                        expected=(DISPLAY_ESCAPED+(r'\x0D\x0Anext\x09\x5Cx0A' if prompt=='fixture-control-approval' else '')).encode();deadline=time.monotonic()+7
                         while expected not in received and time.monotonic()<deadline:
                             if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
                         self.assertIn(expected,received)

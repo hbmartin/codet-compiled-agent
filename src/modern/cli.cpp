@@ -368,6 +368,10 @@ public:
     if (curses_)
       render();
   }
+  void say_literal(const std::string &text) {
+    const auto shown = detail::literal_text(text);
+    say_rendered({shown});
+  }
   void say(const std::string &text) {
     const auto shown = detail::terminal_text(text);
     say_rendered({shown});
@@ -536,15 +540,15 @@ public:
 };
 } // namespace
 int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
-  detail::reset_standard_diagnostics();
-  const auto o = parse(args);
-  detail::CliOutput output(io);
-  if (o.help) {
   detail::IoContext io(cancel);
   return detail::cli_main(args, cancel, io);
 }
 int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel, IoContext &io) {
   detail::DiagnosticWriter errors(std::cerr, &io);
+  detail::reset_standard_diagnostics();
+  const auto o = parse(args);
+  detail::CliOutput output(io);
+  if (o.help) {
     output.required({help}, false);
     return 0;
   }
@@ -771,16 +775,16 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       if (o.format == "text") {
         detail::TextExport exported(output);
         const bool human = isatty(STDOUT_FILENO);
+        const auto append = [&](const std::string &text) {
+          if (human)
+            exported.append_human(text);
+          else
+            exported.append(text);
+        };
         for (const auto &m : session.messages) {
-          if (human)
-            exported.append_human(m.role);
-          else
-            exported.append(m.role);
+          append(m.role);
           exported.append(": ");
-          if (human)
-            exported.append_human(m.text);
-          else
-            exported.append(m.text);
+          append(m.text);
           exported.append("\n\n");
         }
         exported.finish();
@@ -866,11 +870,11 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   };
   Agent agent(config, provider, tools, state, events, diagnostic);
   struct SessionEnd {
+    detail::DiagnosticWriter &errors;
     std::function<void()> end;
     ~SessionEnd() {
       try {
         end();
-    detail::DiagnosticWriter &errors;
       } catch (const std::exception &error) {
         (void)errors.write(
             {"SessionEnd hook cleanup failed: ", detail::terminal_text(error.what())});
@@ -929,8 +933,8 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
             if (type == "codet.diagnostic")
               diagnostics->emit_rendered({event.at("text").get_ref<const std::string &>()});
             else if (type == "codet.approval") {
-              terminal->say(event.at("tool").get<std::string>() + ": " +
-                            event.at("target").get<std::string>());
+              terminal->say_literal(event.at("tool").get<std::string>() + ": " +
+                                    event.at("target").get<std::string>());
               if (event.contains("context") && !event.at("context").empty())
                 terminal->say(safe_json(event.at("context")).dump());
               terminal->say("Approve? [y/N]");
@@ -952,7 +956,8 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
             } else if (type == "codet.user_message")
               terminal->say(event.at("message"));
             else if (type == "codet.artifact")
-              terminal->say("[Image: " + event.at("artifact").at("path").get<std::string>() + "]");
+              terminal->say_literal(
+                  "[Image: " + event.at("artifact").at("path").get<std::string>() + "]");
             else
               terminal->progress(event);
           },

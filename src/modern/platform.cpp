@@ -262,7 +262,8 @@ struct DescriptorDiagnosticState {
       status = ::fstat(descriptor, &current);
     } while (status < 0 && errno == EINTR);
     if (status < 0 || !known || current.st_dev != identity.st_dev ||
-        current.st_ino != identity.st_ino || current.st_mode != identity.st_mode ||
+        current.st_ino != identity.st_ino ||
+        (current.st_mode & S_IFMT) != (identity.st_mode & S_IFMT) ||
         current.st_rdev != identity.st_rdev)
       state.reset(nullptr);
     known = status == 0;
@@ -400,7 +401,6 @@ void detail::reset_standard_diagnostics() noexcept {
 bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> parts, bool newline,
                                      bool flush) {
   state_ = &diagnostic_state(output_, local_);
-  struct Recovery {
   const int native =
       &output_ == &std::cerr && output_.rdbuf() == native_stderr_buffer   ? STDERR_FILENO
       : &output_ == &std::cout && output_.rdbuf() == native_stdout_buffer ? STDOUT_FILENO
@@ -420,6 +420,7 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
     return success;
   }
 
+  struct Recovery {
     std::ostream &stream;
     bool &pending;
     bool newline, attempted = false, complete = false;
@@ -499,8 +500,8 @@ size_t detail::rendered_prefix(std::string_view text, size_t limit) noexcept {
   }
   return offset;
 }
-detail::RenderProgress detail::terminal_text_into(std::string_view text, char *output,
-                                                  size_t limit) noexcept {
+detail::RenderProgress detail::terminal_text_into(std::string_view text, char *output, size_t limit,
+                                                  RenderMode mode) noexcept {
   constexpr char hex[] = "0123456789ABCDEF";
   size_t offset = 0, used = 0;
   while (offset < text.size() && used < limit) {
@@ -508,13 +509,15 @@ detail::RenderProgress detail::terminal_text_into(std::string_view text, char *o
     size_t consumed = 1;
     bool safe;
     if (lead < 0x80) {
-      if (lead == '\r' && text.size() - offset >= 2 && text[offset + 1] == '\n') {
+      if (mode == RenderMode::prose && lead == '\r' && text.size() - offset >= 2 &&
+          text[offset + 1] == '\n') {
         output[used++] = '\n';
         offset += 2;
         continue;
       }
-      safe = lead == '\n' || lead == '\t' || (lead >= 0x20 && lead != 0x7f);
-      if (lead == '\\' && escape_token(text, offset))
+      safe = (mode == RenderMode::prose && (lead == '\n' || lead == '\t')) ||
+             (lead >= 0x20 && lead != 0x7f && (mode == RenderMode::prose || lead != '\\'));
+      if (mode == RenderMode::prose && lead == '\\' && escape_token(text, offset))
         consumed = 4;
     } else {
       const auto point = decode_text_point(text, offset);
@@ -542,14 +545,15 @@ detail::RenderProgress detail::terminal_text_into(std::string_view text, char *o
   }
   return {offset, used};
 }
-detail::RenderedText detail::render_terminal_text(std::string_view text, size_t limit) {
+detail::RenderedText detail::render_terminal_text(std::string_view text, size_t limit,
+                                                  RenderMode mode) {
   RenderedText result{{}, false};
   result.text.reserve(std::min(text.size(), limit));
   char buffer[512];
   size_t offset = 0;
   while (offset < text.size()) {
     const auto room = std::min(sizeof(buffer), limit - result.text.size());
-    const auto next = terminal_text_into(text.substr(offset), buffer, room);
+    const auto next = terminal_text_into(text.substr(offset), buffer, room, mode);
     result.text.append(buffer, next.written);
     offset += next.consumed;
     if (!next.consumed)
@@ -562,6 +566,9 @@ std::string detail::terminal_text(const std::string &text) {
   return render_terminal_text(text, std::numeric_limits<size_t>::max()).text;
 }
 
+std::string detail::literal_text(const std::string &text) {
+  return render_terminal_text(text, std::numeric_limits<size_t>::max(), RenderMode::literal).text;
+}
 namespace {
 void write_default_file_diagnostic(const std::string &text) {
   write_file_diagnostic(std::cerr, text);
