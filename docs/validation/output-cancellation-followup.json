@@ -1,0 +1,1880 @@
+{
+  "recorded_utc": "2026-10-25T16:05:17.357531+00:00",
+  "follow_up_to": 36,
+  "branch": "codex/output-cancellation-followup",
+  "baseline_commit": "dd65f13405b84987e0713fa57616e977df17c716",
+  "validated_source_commit": "c8cd8ae6a023dad41f739aa1dbaca9b1514bfe12",
+  "source_hashes": {
+    "CMakeLists.txt": "847d991b03ef97a03d077c83d080450e26e708a70882d014c80d9566883715ce",
+    "include/codet/core.hpp": "615b4fc190c7f8321b7e6834305234a95bd6c3a4b37e35851917b3fe8f7d8ce2",
+    "include/codet/detail/cli_diagnostics.hpp": "7d17cf4fd3c164943dbfd40e248f13285f344ab216ec8073bfc4097a567c3c8a",
+    "include/codet/detail/cli_output.hpp": "6d8e9775663dfdbe8ec5d30e9c689c963468d9824cc8fc1f50fe4551734ef74a",
+    "include/codet/detail/diagnostic_stream.hpp": "0b9802f67398ca1641d9d964eeb15a63e20ce9d172fbf82702ca2336361c6b0f",
+    "include/codet/detail/native_terminal.hpp": "de7ecb97f2f2391d2b0a68e02391ecd18d3a5a11255d15137f2e95fa6d42d015",
+    "include/codet/detail/terminal_resources.hpp": "3de15d72934e39d0c296459b75518e181b5cbf39c6f355c912b1102efd019bbf",
+    "include/codet/diagnostics.hpp": "a0a894b40b7ac5fe433a571a3e4f967b7cb70e6cd8961712dd657c7d864864cd",
+    "src/modern/cli.cpp": "49c19e1ebe99621b16f979f752f590b1a58b88b5f7cce7cae70ee691a6e501c8",
+    "src/modern/hooks.cpp": "5dab560355d69762dae5179f174bb4d67487186a6f288af26cbdd3646323c830",
+    "src/modern/platform.cpp": "d25509e687af669f1c791c1d37980d5b864302d94e9950a149e6cde42b395b11",
+    "tests/cli_diagnostics_test.cpp": "a9a0c3dce7b25374894b8d413abba1a0d5145db5e85d8b7a648b7ec744167070",
+    "tests/cli_integration.py": "2ef35952fe3e5f152a730cc2154541f1cbe61c514623280618ce15497fcc65af",
+    "tests/cli_output_test.cpp": "09dc40698e5c97386d2dc5f93456864be5a740700d666b44ae50141a61f4e3bf",
+    "tests/export_bench.cpp": "d688c69fae301c50c075221636334282a0e8b8fc8d5b135230e16938bd79ead5",
+    "tests/native_terminal_interposer.cpp": "afbe269b954e7c1e11365ebfbfd83b807d5d1f50d28e3885eb39146327020496",
+    "tests/native_terminal_metrics.hpp": "444bf09aa52d0c64e05f6755a29de92dd8e489c0c36af105a9bb48435ac580af",
+    "tests/output_bench.cpp": "c20388c2126ebbfecabf2bf50fb4369099cf3d5453eac8baf06f584346024d0f",
+    "tests/publication_fault_test.cpp": "2d324c6cbc8a93e0f818558c6496d762bc91fea1d0cd93e5a8c60ada724eecf8",
+    "tests/terminal_cli_helper.py": "2bf60441d4902eab72f865158b3c3c2b32465ef022d7b7e626e745c840960d8d",
+    "tests/terminal_resources_test.cpp": "327235ffbef7b1f658d830ff6d530eee44fb9dd69e114c8bc789990a78c47acb",
+    "tests/test_main.cpp": "c9a2effddb7eb11e879dbe6c838efbedd21d93cea7c6f6683c26122fa77fb80f"
+  },
+  "build_configuration": {
+    "host": [
+      "CMAKE_BUILD_TYPE:STRING=Debug",
+      "CMAKE_CXX_COMPILER:FILEPATH=/usr/bin/c++",
+      "CMAKE_CXX_FLAGS:STRING=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+      "CODET_SANITIZERS:BOOL=OFF"
+    ],
+    "sanitize": [
+      "CMAKE_BUILD_TYPE:STRING=Debug",
+      "CMAKE_CXX_COMPILER:FILEPATH=/usr/bin/c++",
+      "CMAKE_CXX_FLAGS:STRING=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+      "CODET_SANITIZERS:BOOL=ON"
+    ]
+  },
+  "behavior": [
+    "Blocking required stdout pipes poll at most 100 ms and write no more than runtime PIPE_BUF, with cancellation around every wait/write. Native writes elsewhere are capped at INT_MAX; nonblocking EAGAIN fails immediately.",
+    "Required-delivery cancellation latches status 130 and suppresses subsequent stdout records; delivery failure latches status 1. A provider cancellation may still emit its existing secondary failure event to an immediately writable destination without waiting.",
+    "Private duplicated terminal streams detach to a reserved sink before background or unknown-ownership cleanup. Final cleanup preserves foreground modes and input, native release order, and masks. ENOTTY PTYs retain existing restoration behavior.",
+    "Human rendering normalizes CRLF, escapes lone CR and the unchanged unsafe set, and stops on complete characters or escape tokens. Exhausted ordinary budgets skip input work. Trusted rendered paths avoid repeated encoding.",
+    "TTY text exports render through the 64 KiB staging buffer; redirected, structured and file payloads remain raw. Redirected answers borrow their existing storage.",
+    "Raw fd-2 and injected stream separators have separate fixed owners, rebound by descriptor identity or rdbuf and reset per invocation. Emergency delivery remains best effort without EAGAIN waiting.",
+    "Bounded stack writev gathering combines spans/newlines; scalar paths remain for single spans. Short vectors, cancellation, limits, no replay and original exceptions remain covered."
+  ],
+  "tests": {
+    "debug": {
+      "log": {
+        "path": "build/output-cancellation-followup/debug-lasttest.log",
+        "sha256": "d353c3d8cdfa4381707e850e7ce20849d890cf76913f3120d97e7b1e2ba1d85a"
+      },
+      "gtest_runs": [
+        62,
+        547
+      ],
+      "gtest_passes": [
+        62,
+        545
+      ],
+      "python_test_groups": [
+        76,
+        7,
+        6,
+        9,
+        17,
+        3
+      ],
+      "expected_skips": [
+        "NetworkOptIn.TlsHandshake",
+        "Contracts.NativeTigerDesktopAcceptance"
+      ]
+    },
+    "sanitize": {
+      "log": {
+        "path": "build/output-cancellation-followup/sanitize-lasttest.log",
+        "sha256": "79bf5e709c482030ef50d0f4f35700fa477118d80e11b79fa8545fa59fb52d61"
+      },
+      "gtest_runs": [
+        62,
+        547
+      ],
+      "gtest_passes": [
+        62,
+        545
+      ],
+      "python_test_groups": [
+        76,
+        7,
+        6,
+        9,
+        17,
+        3
+      ],
+      "expected_skips": [
+        "NetworkOptIn.TlsHandshake",
+        "Contracts.NativeTigerDesktopAcceptance"
+      ]
+    }
+  },
+  "checks": [
+    {
+      "name": "final-debug-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/host",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 0.131,
+      "log": "build/output-cancellation-followup/final-debug-build.log",
+      "sha256": "8c35b1682f73592d30612d7b0fabdb384fcfff35cb5a076cb48b85b1368aa794"
+    },
+    {
+      "name": "final-sanitize-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/sanitize",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 0.053,
+      "log": "build/output-cancellation-followup/final-sanitize-build.log",
+      "sha256": "8c35b1682f73592d30612d7b0fabdb384fcfff35cb5a076cb48b85b1368aa794"
+    },
+    {
+      "name": "final-debug-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/host",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 96.043,
+      "log": "build/output-cancellation-followup/final-debug-ctest.log",
+      "sha256": "6f3edfabcb68084a5da5634e8031d8e1ce92e30fed794d82514a1a83ad3fcb1f"
+    },
+    {
+      "name": "final-sanitize-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/sanitize",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 156.362,
+      "log": "build/output-cancellation-followup/final-sanitize-ctest.log",
+      "sha256": "bee3da34b5b4b69eba3ee96c10d6df318e96d2e4673b2756ad52dfc914e9fbd4"
+    },
+    {
+      "name": "repeated-diagnostics",
+      "command": [
+        "build/sanitize/codet_tests",
+        "--gtest_filter=FileDiagnostics.*:CliDiagnosticsTest.*:TerminalResources.*:DiagnosticWriter.*:CliOutput.*:Pr17.ConsumerFailuresSurviveEveryTransportExitWithoutAnotherRequest:Pr17.CompletedSessionSurvivesDeliveryFailureWithTheOriginalException",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 38.696,
+      "log": "build/output-cancellation-followup/repeated-diagnostics.log",
+      "sha256": "65f555229c6a6be1aeb16eab980e5abd0fc12b7c6273b41038901685126ec68b"
+    },
+    {
+      "name": "repeated-faults",
+      "command": [
+        "build/sanitize/codet_publication_fault_tests",
+        "--gtest_filter=FileDiagnosticsFault.*",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 3.981,
+      "log": "build/output-cancellation-followup/repeated-faults.log",
+      "sha256": "a73b89ecff7225e1120cc392c1d5094fd2c1d5b33ed182e7ec8dc115160ef294"
+    },
+    {
+      "name": "repeated-cli-0",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.738,
+      "log": "build/output-cancellation-followup/repeated-cli-0.log",
+      "sha256": "ef7023160ee3bb648964ffc68a53e38d291d247b5b9eccf502a39939833a91d5"
+    },
+    {
+      "name": "repeated-cli-1",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.686,
+      "log": "build/output-cancellation-followup/repeated-cli-1.log",
+      "sha256": "6fb393a976d787fc23243922412fd2d2015c2f53c7ff2d8e00add39d4104a629"
+    },
+    {
+      "name": "repeated-cli-2",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.728,
+      "log": "build/output-cancellation-followup/repeated-cli-2.log",
+      "sha256": "22af567a0f590d0f29ba356f00f3ec0edee973164cc1931a2dfd7710271cf6d0"
+    },
+    {
+      "name": "repeated-cli-3",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.734,
+      "log": "build/output-cancellation-followup/repeated-cli-3.log",
+      "sha256": "4f20df3ca75e48274605725b0b5c8da428585ec6307dbce9b99b8fccf33ab58d"
+    },
+    {
+      "name": "repeated-cli-4",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.704,
+      "log": "build/output-cancellation-followup/repeated-cli-4.log",
+      "sha256": "987b05c2a06dfca1363bbbf2988d7ce604f125fcb7d99a6c94878c4800fc1024"
+    },
+    {
+      "name": "repeated-cli-5",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.68,
+      "log": "build/output-cancellation-followup/repeated-cli-5.log",
+      "sha256": "5de56c8e93f144e5bffb778aa2521653df5cc479c34e6e26ebebdd8b0485a11d"
+    },
+    {
+      "name": "repeated-cli-6",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.74,
+      "log": "build/output-cancellation-followup/repeated-cli-6.log",
+      "sha256": "43c8a8d0b5ddf3b15bd66800dc2763c6bada30d973798b5396b2210b09729958"
+    },
+    {
+      "name": "repeated-cli-7",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.72,
+      "log": "build/output-cancellation-followup/repeated-cli-7.log",
+      "sha256": "e33539a8c815e3dbccc44f3b5a52c638cb5ab9420265eadc6a052d064a7f33bb"
+    },
+    {
+      "name": "repeated-cli-8",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.771,
+      "log": "build/output-cancellation-followup/repeated-cli-8.log",
+      "sha256": "668980e9dcb85e6e2b25f18ab0ef4ce2ad5733b3c6f20b1f7de6b5e25f55e435"
+    },
+    {
+      "name": "repeated-cli-9",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.68,
+      "log": "build/output-cancellation-followup/repeated-cli-9.log",
+      "sha256": "420267b90b305f890fe40f09ca1bcb02b2342e9a3e563909524091a1b0add4cf"
+    },
+    {
+      "name": "repeated-cli-10",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.75,
+      "log": "build/output-cancellation-followup/repeated-cli-10.log",
+      "sha256": "028ee2f43a2c31a40a28c630e2ceed5df3bb1668cb33fe3d93e5dc1463966483"
+    },
+    {
+      "name": "repeated-cli-11",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.714,
+      "log": "build/output-cancellation-followup/repeated-cli-11.log",
+      "sha256": "98df22b94a7dec24f01ca5e520ac816109b12a95fb417e6bb29a82ce2c910980"
+    },
+    {
+      "name": "repeated-cli-12",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.673,
+      "log": "build/output-cancellation-followup/repeated-cli-12.log",
+      "sha256": "6904629e21797559bef49299d82d361afed973dd23aae5803b5c143a78897211"
+    },
+    {
+      "name": "repeated-cli-13",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.708,
+      "log": "build/output-cancellation-followup/repeated-cli-13.log",
+      "sha256": "9ada7cc67c915d82091eb7c7ae052eaca3c774cf52803055264d6f3af0d555be"
+    },
+    {
+      "name": "repeated-cli-14",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.689,
+      "log": "build/output-cancellation-followup/repeated-cli-14.log",
+      "sha256": "a383e7e928e5a78b7cb3880a71ecddba4af1cc8e557ba64f15dff09ac4334818"
+    },
+    {
+      "name": "repeated-cli-15",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.669,
+      "log": "build/output-cancellation-followup/repeated-cli-15.log",
+      "sha256": "d2cd728e65c9ddaaa85f99d79d8d06a9477cf77d7c6778845b7703238f5c6ffb"
+    },
+    {
+      "name": "repeated-cli-16",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.674,
+      "log": "build/output-cancellation-followup/repeated-cli-16.log",
+      "sha256": "a1e5bc4de106e246749595d3f86bd18d2191a0251d1d0eb8ea1aed92aac4a443"
+    },
+    {
+      "name": "repeated-cli-17",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.689,
+      "log": "build/output-cancellation-followup/repeated-cli-17.log",
+      "sha256": "566ecc744b6f46197d8fd137d53e08b329da0f1ca2c35553357a1bc75fcf3369"
+    },
+    {
+      "name": "repeated-cli-18",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 2.655,
+      "log": "build/output-cancellation-followup/repeated-cli-18.log",
+      "sha256": "d61ef3fb53d7dedacb856ed7c430fc54e7125abf68fd17831e0e93a9cd114f1e"
+    },
+    {
+      "name": "repeated-cli-19",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 3.075,
+      "log": "build/output-cancellation-followup/repeated-cli-19.log",
+      "sha256": "7d5d206189a61a4127357517ecda02cc0ba172f6e7acdf9ebf14cbd0b0e243ef"
+    },
+    {
+      "name": "final-lint",
+      "command": [
+        "make",
+        "check-lint",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 1.555,
+      "log": "build/output-cancellation-followup/final-lint.log",
+      "sha256": "3caddd0ee716d9c2d036b85759bc269aa47f8d138781af9edc6f35922a002b66"
+    }
+  ],
+  "tool_checks": [
+    {
+      "name": "pinned-dependencies",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/fetch-deps.py",
+        "--offline"
+      ],
+      "exit": 0,
+      "seconds": 0.6550525409402326
+    },
+    {
+      "name": "lint",
+      "command": [
+        "make",
+        "check-lint",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 1.3027661250671372
+    },
+    {
+      "name": "runner-tests",
+      "command": [
+        "make",
+        "test-lint-runners",
+        "test-modern-analysis-runner",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "ANALYSIS_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 5.706234292010777
+    },
+    {
+      "name": "semgrep",
+      "command": [
+        "make",
+        "check-semgrep",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "SEMGREP=build/semgrep-venv/bin/pysemgrep"
+      ],
+      "exit": 0,
+      "seconds": 4.861808749963529
+    }
+  ],
+  "final_tool_checks": [
+    {
+      "name": "final-semgrep",
+      "command": [
+        "make",
+        "check-semgrep",
+        "CHECK_PYTHON=build/lint-venv/bin/python",
+        "SEMGREP=build/semgrep-venv/bin/pysemgrep"
+      ],
+      "exit": 0,
+      "log": "build/output-cancellation-followup/final-semgrep.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "final-runner-tests",
+      "command": [
+        "make",
+        "test-lint-runners",
+        "test-modern-analysis-runner",
+        "CHECK_PYTHON=build/lint-venv/bin/python",
+        "ANALYSIS_PYTHON=build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "log": "build/output-cancellation-followup/final-runner-tests.log",
+      "sha256": "1ff71c5efb23534f16302f7d640050b32db53ce23e664c6b369286cbabc1ee05"
+    }
+  ],
+  "static_analysis": [
+    {
+      "tool": "cppcheck",
+      "passed": true,
+      "completed": 25,
+      "expected": 25,
+      "versions": [
+        {
+          "command": [
+            "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck",
+            "--version"
+          ],
+          "directory": "/Volumes/Pro2T/codet-compiled-agent",
+          "exit_code": 0,
+          "stdout": "Cppcheck 2.22.0\n",
+          "stderr": "",
+          "failure": null,
+          "seconds": 0.009
+        }
+      ],
+      "findings": [],
+      "matches_recorded_main_findings": false,
+      "manifest": {
+        "path": "build/output-cancellation-followup/final-cppcheck-analysis/analysis/manifest.json",
+        "sha256": "365f7eabcc08114a06451a50e67440033b01e50e2917b05c84380a10dcd3fc74"
+      },
+      "canaries_passed": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "commands": {
+        "name": "cppcheck",
+        "command": [
+          "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+          "scripts/analyze-modern.py",
+          "--build-dir",
+          "/Volumes/Pro2T/codet-compiled-agent/build/output-cancellation-followup/final-cppcheck-analysis",
+          "--jobs",
+          "4",
+          "--timeout",
+          "300",
+          "--tool",
+          "cppcheck"
+        ],
+        "exit": 0,
+        "seconds": 55.14,
+        "log": "build/output-cancellation-followup/final-cppcheck.log"
+      }
+    },
+    {
+      "tool": "clang-tidy",
+      "passed": false,
+      "completed": 24,
+      "expected": 25,
+      "versions": [
+        {
+          "command": [
+            "/Volumes/Pro2T/codet-compiled-agent/build/tidy18/clang-tidy-sdk13",
+            "--version"
+          ],
+          "directory": "/Volumes/Pro2T/codet-compiled-agent",
+          "exit_code": 0,
+          "stdout": "LLVM (http://llvm.org/):\n  LLVM version 18.1.8\n  Optimized build.\n",
+          "stderr": "",
+          "failure": null,
+          "seconds": 0.032
+        }
+      ],
+      "findings": [
+        {
+          "file": "src/modern/images.cpp",
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'unsigned long' to 'double'"
+        },
+        {
+          "file": "src/modern/images.cpp",
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+        },
+        {
+          "file": "src/modern/images.cpp",
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+        },
+        {
+          "file": "src/modern/main.cpp",
+          "check": "bugprone-exception-escape",
+          "message": "an exception may be thrown in function 'main' which should not throw exceptions"
+        },
+        {
+          "file": "src/modern/platform.cpp",
+          "check": "clang-diagnostic-error",
+          "message": "implicit instantiation of undefined template 'std::basic_istringstream<char>'"
+        },
+        {
+          "file": "src/modern/state.cpp",
+          "check": "bugprone-exception-escape",
+          "message": "an exception may be thrown in function 'operator()' which should not throw exceptions"
+        }
+      ],
+      "matches_recorded_main_findings": true,
+      "manifest": {
+        "path": "build/output-cancellation-followup/final-clang-tidy-analysis/analysis/manifest.json",
+        "sha256": "25ea00b2b36487a2681e09bcda04cd7c5545bdeefeb71c2607b896788a91983d"
+      },
+      "canaries_passed": [],
+      "commands": {
+        "name": "clang-tidy",
+        "command": [
+          "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+          "scripts/analyze-modern.py",
+          "--build-dir",
+          "/Volumes/Pro2T/codet-compiled-agent/build/output-cancellation-followup/final-clang-tidy-analysis",
+          "--jobs",
+          "4",
+          "--timeout",
+          "300",
+          "--tool",
+          "clang-tidy"
+        ],
+        "exit": 1,
+        "seconds": 36.96,
+        "log": "build/output-cancellation-followup/final-clang-tidy.log"
+      }
+    },
+    {
+      "tool": "clang-analyzer",
+      "passed": false,
+      "completed": 25,
+      "expected": 25,
+      "versions": [
+        {
+          "command": [
+            "/usr/bin/c++",
+            "--version"
+          ],
+          "directory": "/Volumes/Pro2T/codet-compiled-agent",
+          "exit_code": 0,
+          "stdout": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n",
+          "stderr": "",
+          "failure": null,
+          "seconds": 0.019
+        },
+        {
+          "command": [
+            "/usr/bin/cc",
+            "--version"
+          ],
+          "directory": "/Volumes/Pro2T/codet-compiled-agent",
+          "exit_code": 0,
+          "stdout": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n",
+          "stderr": "",
+          "failure": null,
+          "seconds": 0.015
+        }
+      ],
+      "findings": [
+        {
+          "file": "src/modern/context.cpp",
+          "check": "core.DivideZero",
+          "message": "Division by zero"
+        }
+      ],
+      "matches_recorded_main_findings": true,
+      "manifest": {
+        "path": "build/output-cancellation-followup/final-clang-analyzer-analysis/analysis/manifest.json",
+        "sha256": "bf80e5eb6baac80bdade5def2f9382d2c8cc5eaa194492f181962314f4e5eb3c"
+      },
+      "canaries_passed": [],
+      "commands": {
+        "name": "clang-analyzer",
+        "command": [
+          "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+          "scripts/analyze-modern.py",
+          "--build-dir",
+          "/Volumes/Pro2T/codet-compiled-agent/build/output-cancellation-followup/final-clang-analyzer-analysis",
+          "--jobs",
+          "4",
+          "--timeout",
+          "300",
+          "--tool",
+          "clang-analyzer"
+        ],
+        "exit": 1,
+        "seconds": 55.07,
+        "log": "build/output-cancellation-followup/final-clang-analyzer.log"
+      }
+    }
+  ],
+  "analyzer_selfcheck": {
+    "name": "selftest",
+    "command": [
+      "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+      "scripts/analyze-modern.py",
+      "--build-dir",
+      "/Volumes/Pro2T/codet-compiled-agent/build/output-cancellation-followup/final-selftest-analysis",
+      "--jobs",
+      "4",
+      "--timeout",
+      "300",
+      "--selftest"
+    ],
+    "exit": 0,
+    "seconds": 1.46,
+    "log": "build/output-cancellation-followup/final-selftest.log"
+  },
+  "repeated": {
+    "repeated-diagnostics": {
+      "repetitions": 20,
+      "tests_per_repetition": 63,
+      "total": 1260,
+      "log": {
+        "path": "build/output-cancellation-followup/repeated-diagnostics.log",
+        "sha256": "65f555229c6a6be1aeb16eab980e5abd0fc12b7c6273b41038901685126ec68b"
+      }
+    },
+    "repeated-faults": {
+      "repetitions": 20,
+      "tests_per_repetition": 13,
+      "total": 260,
+      "log": {
+        "path": "build/output-cancellation-followup/repeated-faults.log",
+        "sha256": "a73b89ecff7225e1120cc392c1d5094fd2c1d5b33ed182e7ec8dc115160ef294"
+      }
+    },
+    "cli": {
+      "repetitions": 20,
+      "tests_per_repetition": 7,
+      "total": 140,
+      "logs": [
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-0.log",
+          "sha256": "ef7023160ee3bb648964ffc68a53e38d291d247b5b9eccf502a39939833a91d5"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-1.log",
+          "sha256": "6fb393a976d787fc23243922412fd2d2015c2f53c7ff2d8e00add39d4104a629"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-2.log",
+          "sha256": "22af567a0f590d0f29ba356f00f3ec0edee973164cc1931a2dfd7710271cf6d0"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-3.log",
+          "sha256": "4f20df3ca75e48274605725b0b5c8da428585ec6307dbce9b99b8fccf33ab58d"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-4.log",
+          "sha256": "987b05c2a06dfca1363bbbf2988d7ce604f125fcb7d99a6c94878c4800fc1024"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-5.log",
+          "sha256": "5de56c8e93f144e5bffb778aa2521653df5cc479c34e6e26ebebdd8b0485a11d"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-6.log",
+          "sha256": "43c8a8d0b5ddf3b15bd66800dc2763c6bada30d973798b5396b2210b09729958"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-7.log",
+          "sha256": "e33539a8c815e3dbccc44f3b5a52c638cb5ab9420265eadc6a052d064a7f33bb"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-8.log",
+          "sha256": "668980e9dcb85e6e2b25f18ab0ef4ce2ad5733b3c6f20b1f7de6b5e25f55e435"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-9.log",
+          "sha256": "420267b90b305f890fe40f09ca1bcb02b2342e9a3e563909524091a1b0add4cf"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-10.log",
+          "sha256": "028ee2f43a2c31a40a28c630e2ceed5df3bb1668cb33fe3d93e5dc1463966483"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-11.log",
+          "sha256": "98df22b94a7dec24f01ca5e520ac816109b12a95fb417e6bb29a82ce2c910980"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-12.log",
+          "sha256": "6904629e21797559bef49299d82d361afed973dd23aae5803b5c143a78897211"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-13.log",
+          "sha256": "9ada7cc67c915d82091eb7c7ae052eaca3c774cf52803055264d6f3af0d555be"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-14.log",
+          "sha256": "a383e7e928e5a78b7cb3880a71ecddba4af1cc8e557ba64f15dff09ac4334818"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-15.log",
+          "sha256": "d2cd728e65c9ddaaa85f99d79d8d06a9477cf77d7c6778845b7703238f5c6ffb"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-16.log",
+          "sha256": "a1e5bc4de106e246749595d3f86bd18d2191a0251d1d0eb8ea1aed92aac4a443"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-17.log",
+          "sha256": "566ecc744b6f46197d8fd137d53e08b329da0f1ca2c35553357a1bc75fcf3369"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-18.log",
+          "sha256": "d61ef3fb53d7dedacb856ed7c430fc54e7125abf68fd17831e0e93a9cd114f1e"
+        },
+        {
+          "path": "build/output-cancellation-followup/repeated-cli-19.log",
+          "sha256": "7d5d206189a61a4127357517ecda02cc0ba172f6e7acdf9ebf14cbd0b0e243ef"
+        }
+      ]
+    }
+  },
+  "additional_isolated_repetitions": [
+    {
+      "test": "Followup.OneShotExitSurvivesSignalAndReapFailures",
+      "repetitions": 30,
+      "passed": 30,
+      "log": {
+        "path": "build/output-cancellation-followup/oneshot-repeated.log",
+        "sha256": "ebc6f0f1325e76fe1b91c553a4431bd344c167911262f140ee6085a42f8d5be2"
+      }
+    },
+    {
+      "test": "background close-line PTY helper",
+      "repetitions": 100,
+      "passed": 100,
+      "log": {
+        "path": "build/output-cancellation-followup/background-investigation.log",
+        "sha256": "5c90356ae0fbd543e64e091fc5d9ca2750b7453a283df8a7350ec3f61ebfee29"
+      }
+    },
+    {
+      "test": "active-job-control PTY helper",
+      "repetitions": 100,
+      "passed": 100,
+      "log": {
+        "path": "build/output-cancellation-followup/active-group-investigation.log",
+        "sha256": "f6ef2f8d72fa0d6ba001d7f0eb96b34b27df269f9c104015255cc768fb5c8172"
+      }
+    }
+  ],
+  "initial_validation_notes": [
+    "The initial full Debug run exposed suppressed cancellation failure events. The reporting path was corrected to preserve the existing turn.failed event only when output is already writable; the original regression remains unchanged.",
+    "A later ASan run failed the unchanged Followup.OneShotExitSurvivesSignalAndReapFailures test with Child process setup failed. Thirty isolated repetitions passed, then the final full suite passed. No root cause or baseline reproduction is claimed.",
+    "One CLI repetition timed out waiting for the background cleanup helper readiness token in line mode. The PTY supervisor now closes unused gate ends, retains startup diagnostics, and detects early child exits/stops instead of reporting a blind timeout; the root cause remains unproven and original failure evidence is retained.",
+    "A subsequent repetition exposed a parent setpgid/child exec race in the active job-control supervisor. Parent setup now accepts PermissionError only after getpgid verifies the child already owns the expected process group. This changes fixture setup, not the job-control assertions or production code.",
+    "Initial PTY fixture assertions mixed integer and byte control characters and compared against libedit-mutated newline settings. The fixture now compares the kernel-normalized foreground settings and queued input at a deterministic handoff gate.",
+    "New Cppcheck initialization/parameter findings and Clang-Tidy noexcept/assignment findings were fixed without suppressions. An initial Cppcheck attempt overlapped offline dependency replacement; its incomplete-header result was discarded and the complete final run was isolated from provisioning.",
+    "The new redirected-answer allocation test initially missed its cli_output.hpp include. Both focused tests and the complete suites passed after adding it.",
+    "Unconditional vector gathering was removed from single-span output after measurements showed unnecessary work. Final gathering retains the scalar paths for single spans and single-vector batches."
+  ],
+  "performance": {
+    "runtime_pipe_buf": 512,
+    "benchmarked_production_commit": "77caa6e",
+    "builds": [
+      {
+        "build": "baseline",
+        "configure": [
+          "cmake",
+          "-S",
+          "/Volumes/Pro2T/codet-compiled-agent/build/output-cancellation-followup/base-src",
+          "-B",
+          "/Volumes/Pro2T/codet-compiled-agent/build/output-cancellation-followup/baseline-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+        ],
+        "harness_sha256": "c20388c2126ebbfecabf2bf50fb4369099cf3d5453eac8baf06f584346024d0f",
+        "export_harness_sha256": "d688c69fae301c50c075221636334282a0e8b8fc8d5b135230e16938bd79ead5"
+      },
+      {
+        "build": "changed",
+        "configure": [
+          "cmake",
+          "-S",
+          "/Volumes/Pro2T/codet-compiled-agent",
+          "-B",
+          "/Volumes/Pro2T/codet-compiled-agent/build/output-cancellation-followup/changed-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+        ],
+        "harness_sha256": "c20388c2126ebbfecabf2bf50fb4369099cf3d5453eac8baf06f584346024d0f",
+        "export_harness_sha256": "d688c69fae301c50c075221636334282a0e8b8fc8d5b135230e16938bd79ead5"
+      }
+    ],
+    "scalar_control_configure": [
+      "cmake",
+      "-S",
+      "/Volumes/Pro2T/codet-compiled-agent/build/output-cancellation-followup/ungathered-src",
+      "-B",
+      "/Volumes/Pro2T/codet-compiled-agent/build/output-cancellation-followup/ungathered-release",
+      "-G",
+      "Ninja",
+      "-DCMAKE_BUILD_TYPE=Release",
+      "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+      "-DCMAKE_C_COMPILER=/usr/bin/cc",
+      "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+      "-DCMAKE_OSX_ARCHITECTURES=arm64",
+      "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+      "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+    ],
+    "procedure": "Two sets, each one warm-up and five alternating measured runs, identical harnesses/compiler flags. No concurrent analyzers, tests or builds. Pipe drainer and loopback HTTP fixture are intrinsic benchmark helpers.",
+    "samples": 528,
+    "summaries": [
+      {
+        "set": 1,
+        "case": "answer",
+        "baseline_milliseconds": 28.983208,
+        "baseline_allocations": 6359,
+        "baseline_allocated_bytes": 39840212,
+        "baseline_writes": 2,
+        "baseline_bytes": 1048577,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 28.488542,
+        "changed_allocations": 6356,
+        "changed_allocated_bytes": 34636228,
+        "changed_writes": 1,
+        "changed_bytes": 1048577,
+        "changed_readiness": 0,
+        "time_change_percent": -1.706733084895229
+      },
+      {
+        "set": 1,
+        "case": "answer-boundary",
+        "baseline_milliseconds": 3.221709,
+        "baseline_allocations": 128,
+        "baseline_allocated_bytes": 134218752,
+        "baseline_writes": 256,
+        "baseline_bytes": 134217856,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 0.15,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 128,
+        "changed_bytes": 134217856,
+        "changed_readiness": 0,
+        "time_change_percent": -95.34408601149266
+      },
+      {
+        "set": 1,
+        "case": "budget-full",
+        "baseline_milliseconds": 657.690334,
+        "baseline_allocations": 256,
+        "baseline_allocated_bytes": 134224896,
+        "baseline_writes": 0,
+        "baseline_bytes": 0,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 0.000458,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 0,
+        "changed_bytes": 0,
+        "changed_readiness": 0,
+        "time_change_percent": -99.99993036236413
+      },
+      {
+        "set": 1,
+        "case": "budget-partial",
+        "baseline_milliseconds": 436.423542,
+        "baseline_allocations": 224,
+        "baseline_allocated_bytes": 369110016,
+        "baseline_writes": 0,
+        "baseline_bytes": 0,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 0.016375,
+        "changed_allocations": 96,
+        "changed_allocated_bytes": 14592,
+        "changed_writes": 0,
+        "changed_bytes": 0,
+        "changed_readiness": 0,
+        "time_change_percent": -99.99624791093419
+      },
+      {
+        "set": 1,
+        "case": "export-large",
+        "baseline_milliseconds": 108.155458,
+        "baseline_allocations": 500218,
+        "baseline_allocated_bytes": 150122680,
+        "baseline_stream_flushes": 0,
+        "baseline_descriptor_writes": 158,
+        "baseline_expected_bytes": 10320000,
+        "changed_milliseconds": 100.646042,
+        "changed_allocations": 500218,
+        "changed_allocated_bytes": 150122680,
+        "changed_stream_flushes": 0,
+        "changed_descriptor_writes": 158,
+        "changed_expected_bytes": 10320000,
+        "time_change_percent": -6.943168785804598
+      },
+      {
+        "set": 1,
+        "case": "export-large-file",
+        "baseline_milliseconds": 116.095709,
+        "baseline_allocations": 500218,
+        "baseline_allocated_bytes": 150122680,
+        "baseline_stream_flushes": 0,
+        "baseline_descriptor_writes": 158,
+        "baseline_expected_bytes": 10320000,
+        "changed_milliseconds": 98.061667,
+        "changed_allocations": 500218,
+        "changed_allocated_bytes": 150122680,
+        "changed_stream_flushes": 0,
+        "changed_descriptor_writes": 158,
+        "changed_expected_bytes": 10320000,
+        "time_change_percent": -15.53377136445241
+      },
+      {
+        "set": 1,
+        "case": "export-small",
+        "baseline_milliseconds": 1.411416,
+        "baseline_allocations": 4790,
+        "baseline_allocated_bytes": 629732,
+        "baseline_stream_flushes": 0,
+        "baseline_descriptor_writes": 1,
+        "baseline_expected_bytes": 26400,
+        "changed_milliseconds": 1.401667,
+        "changed_allocations": 4790,
+        "changed_allocated_bytes": 629732,
+        "changed_stream_flushes": 0,
+        "changed_descriptor_writes": 1,
+        "changed_expected_bytes": 26400,
+        "time_change_percent": -0.6907247756862578
+      },
+      {
+        "set": 1,
+        "case": "export-small-file",
+        "baseline_milliseconds": 1.444292,
+        "baseline_allocations": 4790,
+        "baseline_allocated_bytes": 629732,
+        "baseline_stream_flushes": 0,
+        "baseline_descriptor_writes": 1,
+        "baseline_expected_bytes": 26400,
+        "changed_milliseconds": 1.423334,
+        "changed_allocations": 4790,
+        "changed_allocated_bytes": 629732,
+        "changed_stream_flushes": 0,
+        "changed_descriptor_writes": 1,
+        "changed_expected_bytes": 26400,
+        "time_change_percent": -1.4510916075142544
+      },
+      {
+        "set": 1,
+        "case": "jsonl-large",
+        "baseline_milliseconds": 3.7645,
+        "baseline_allocations": 0,
+        "baseline_allocated_bytes": 0,
+        "baseline_writes": 4000,
+        "baseline_bytes": 131096000,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 2.083833,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 2000,
+        "changed_bytes": 131096000,
+        "changed_readiness": 0,
+        "time_change_percent": -44.645158719617484
+      },
+      {
+        "set": 1,
+        "case": "jsonl-small",
+        "baseline_milliseconds": 39.505834,
+        "baseline_allocations": 0,
+        "baseline_allocated_bytes": 0,
+        "baseline_writes": 40000,
+        "baseline_bytes": 2240000,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 20.925333,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 20000,
+        "changed_bytes": 2240000,
+        "changed_readiness": 0,
+        "time_change_percent": -47.03229654637845
+      },
+      {
+        "set": 1,
+        "case": "pipe-large",
+        "baseline_milliseconds": 24.2635,
+        "baseline_allocations": 0,
+        "baseline_allocated_bytes": 0,
+        "baseline_writes": 4000,
+        "baseline_bytes": 131096000,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 313.329459,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 258000,
+        "changed_bytes": 131096000,
+        "changed_readiness": 258000,
+        "time_change_percent": 1191.3613411090732
+      },
+      {
+        "set": 1,
+        "case": "pipe-small",
+        "baseline_milliseconds": 16.925583,
+        "baseline_allocations": 0,
+        "baseline_allocated_bytes": 0,
+        "baseline_writes": 40000,
+        "baseline_bytes": 2240000,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 24.403375,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 20000,
+        "changed_bytes": 2240000,
+        "changed_readiness": 20000,
+        "time_change_percent": 44.180410210980625
+      },
+      {
+        "set": 1,
+        "case": "render-ascii",
+        "baseline_milliseconds": 658.439708,
+        "baseline_allocations": 128,
+        "baseline_allocated_bytes": 134218752,
+        "baseline_writes": 0,
+        "baseline_bytes": 0,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 429.450959,
+        "changed_allocations": 128,
+        "changed_allocated_bytes": 134218752,
+        "changed_writes": 0,
+        "changed_bytes": 0,
+        "changed_readiness": 0,
+        "time_change_percent": -34.77748170679889
+      },
+      {
+        "set": 1,
+        "case": "render-utf8",
+        "baseline_milliseconds": 562.92825,
+        "baseline_allocations": 128,
+        "baseline_allocated_bytes": 134219776,
+        "baseline_writes": 0,
+        "baseline_bytes": 0,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 407.723709,
+        "changed_allocations": 128,
+        "changed_allocated_bytes": 134219776,
+        "changed_writes": 0,
+        "changed_bytes": 0,
+        "changed_readiness": 0,
+        "time_change_percent": -27.570927733685423
+      },
+      {
+        "set": 2,
+        "case": "answer",
+        "baseline_milliseconds": 32.733,
+        "baseline_allocations": 6359,
+        "baseline_allocated_bytes": 39840212,
+        "baseline_writes": 2,
+        "baseline_bytes": 1048577,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 30.04925,
+        "changed_allocations": 6358,
+        "changed_allocated_bytes": 38791628,
+        "changed_writes": 1,
+        "changed_bytes": 1048577,
+        "changed_readiness": 0,
+        "time_change_percent": -8.198912412550019
+      },
+      {
+        "set": 2,
+        "case": "answer-boundary",
+        "baseline_milliseconds": 3.009125,
+        "baseline_allocations": 128,
+        "baseline_allocated_bytes": 134218752,
+        "baseline_writes": 256,
+        "baseline_bytes": 134217856,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 0.153208,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 128,
+        "changed_bytes": 134217856,
+        "changed_readiness": 0,
+        "time_change_percent": -94.90855315083289
+      },
+      {
+        "set": 2,
+        "case": "budget-full",
+        "baseline_milliseconds": 660.498833,
+        "baseline_allocations": 256,
+        "baseline_allocated_bytes": 134224896,
+        "baseline_writes": 0,
+        "baseline_bytes": 0,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 0.000375,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 0,
+        "changed_bytes": 0,
+        "changed_readiness": 0,
+        "time_change_percent": -99.99994322472936
+      },
+      {
+        "set": 2,
+        "case": "budget-partial",
+        "baseline_milliseconds": 436.543666,
+        "baseline_allocations": 224,
+        "baseline_allocated_bytes": 369110016,
+        "baseline_writes": 0,
+        "baseline_bytes": 0,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 0.01325,
+        "changed_allocations": 96,
+        "changed_allocated_bytes": 14592,
+        "changed_writes": 0,
+        "changed_bytes": 0,
+        "changed_readiness": 0,
+        "time_change_percent": -99.99696479389533
+      },
+      {
+        "set": 2,
+        "case": "export-large",
+        "baseline_milliseconds": 97.338291,
+        "baseline_allocations": 500218,
+        "baseline_allocated_bytes": 150122680,
+        "baseline_stream_flushes": 0,
+        "baseline_descriptor_writes": 158,
+        "baseline_expected_bytes": 10320000,
+        "changed_milliseconds": 98.129375,
+        "changed_allocations": 500218,
+        "changed_allocated_bytes": 150122680,
+        "changed_stream_flushes": 0,
+        "changed_descriptor_writes": 158,
+        "changed_expected_bytes": 10320000,
+        "time_change_percent": 0.812716138605718
+      },
+      {
+        "set": 2,
+        "case": "export-large-file",
+        "baseline_milliseconds": 111.39625,
+        "baseline_allocations": 500218,
+        "baseline_allocated_bytes": 150122680,
+        "baseline_stream_flushes": 0,
+        "baseline_descriptor_writes": 158,
+        "baseline_expected_bytes": 10320000,
+        "changed_milliseconds": 99.541791,
+        "changed_allocations": 500218,
+        "changed_allocated_bytes": 150122680,
+        "changed_stream_flushes": 0,
+        "changed_descriptor_writes": 158,
+        "changed_expected_bytes": 10320000,
+        "time_change_percent": -10.64170382755254
+      },
+      {
+        "set": 2,
+        "case": "export-small",
+        "baseline_milliseconds": 1.447166,
+        "baseline_allocations": 4790,
+        "baseline_allocated_bytes": 629732,
+        "baseline_stream_flushes": 0,
+        "baseline_descriptor_writes": 1,
+        "baseline_expected_bytes": 26400,
+        "changed_milliseconds": 1.469167,
+        "changed_allocations": 4790,
+        "changed_allocated_bytes": 629732,
+        "changed_stream_flushes": 0,
+        "changed_descriptor_writes": 1,
+        "changed_expected_bytes": 26400,
+        "time_change_percent": 1.5202817092164977
+      },
+      {
+        "set": 2,
+        "case": "export-small-file",
+        "baseline_milliseconds": 1.631291,
+        "baseline_allocations": 4790,
+        "baseline_allocated_bytes": 629732,
+        "baseline_stream_flushes": 0,
+        "baseline_descriptor_writes": 1,
+        "baseline_expected_bytes": 26400,
+        "changed_milliseconds": 1.515792,
+        "changed_allocations": 4790,
+        "changed_allocated_bytes": 629732,
+        "changed_stream_flushes": 0,
+        "changed_descriptor_writes": 1,
+        "changed_expected_bytes": 26400,
+        "time_change_percent": -7.080220512465285
+      },
+      {
+        "set": 2,
+        "case": "jsonl-large",
+        "baseline_milliseconds": 3.810625,
+        "baseline_allocations": 0,
+        "baseline_allocated_bytes": 0,
+        "baseline_writes": 4000,
+        "baseline_bytes": 131096000,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 2.056208,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 2000,
+        "changed_bytes": 131096000,
+        "changed_readiness": 0,
+        "time_change_percent": -46.040137772675095
+      },
+      {
+        "set": 2,
+        "case": "jsonl-small",
+        "baseline_milliseconds": 37.742417,
+        "baseline_allocations": 0,
+        "baseline_allocated_bytes": 0,
+        "baseline_writes": 40000,
+        "baseline_bytes": 2240000,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 20.358917,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 20000,
+        "changed_bytes": 2240000,
+        "changed_readiness": 0,
+        "time_change_percent": -46.0582585370725
+      },
+      {
+        "set": 2,
+        "case": "pipe-large",
+        "baseline_milliseconds": 17.787708,
+        "baseline_allocations": 0,
+        "baseline_allocated_bytes": 0,
+        "baseline_writes": 4000,
+        "baseline_bytes": 131096000,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 278.704458,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 258000,
+        "changed_bytes": 131096000,
+        "changed_readiness": 258000,
+        "time_change_percent": 1466.837380060433
+      },
+      {
+        "set": 2,
+        "case": "pipe-small",
+        "baseline_milliseconds": 15.650333,
+        "baseline_allocations": 0,
+        "baseline_allocated_bytes": 0,
+        "baseline_writes": 40000,
+        "baseline_bytes": 2240000,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 24.678917,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 20000,
+        "changed_bytes": 2240000,
+        "changed_readiness": 20000,
+        "time_change_percent": 57.68940507527858
+      },
+      {
+        "set": 2,
+        "case": "render-ascii",
+        "baseline_milliseconds": 662.315583,
+        "baseline_allocations": 128,
+        "baseline_allocated_bytes": 134218752,
+        "baseline_writes": 0,
+        "baseline_bytes": 0,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 417.616459,
+        "changed_allocations": 128,
+        "changed_allocated_bytes": 134218752,
+        "changed_writes": 0,
+        "changed_bytes": 0,
+        "changed_readiness": 0,
+        "time_change_percent": -36.94600131430094
+      },
+      {
+        "set": 2,
+        "case": "render-utf8",
+        "baseline_milliseconds": 572.592,
+        "baseline_allocations": 128,
+        "baseline_allocated_bytes": 134219776,
+        "baseline_writes": 0,
+        "baseline_bytes": 0,
+        "baseline_readiness": 0,
+        "changed_milliseconds": 407.150458,
+        "changed_allocations": 128,
+        "changed_allocated_bytes": 134219776,
+        "changed_writes": 0,
+        "changed_bytes": 0,
+        "changed_readiness": 0,
+        "time_change_percent": -28.893442800458256
+      }
+    ],
+    "gathering_control_summaries": [
+      {
+        "set": 1,
+        "case": "export-large",
+        "ungathered_milliseconds": 95.413958,
+        "ungathered_allocations": 500218,
+        "ungathered_allocated_bytes": 150122680,
+        "ungathered_descriptor_writes": 158,
+        "ungathered_expected_bytes": 10320000,
+        "changed_milliseconds": 94.969625,
+        "changed_allocations": 500218,
+        "changed_allocated_bytes": 150122680,
+        "changed_descriptor_writes": 158,
+        "changed_expected_bytes": 10320000,
+        "time_change_percent": -0.4656897264444293
+      },
+      {
+        "set": 1,
+        "case": "export-large-file",
+        "ungathered_milliseconds": 98.404459,
+        "ungathered_allocations": 500218,
+        "ungathered_allocated_bytes": 150122680,
+        "ungathered_descriptor_writes": 158,
+        "ungathered_expected_bytes": 10320000,
+        "changed_milliseconds": 97.437834,
+        "changed_allocations": 500218,
+        "changed_allocated_bytes": 150122680,
+        "changed_descriptor_writes": 158,
+        "changed_expected_bytes": 10320000,
+        "time_change_percent": -0.9822979668025034
+      },
+      {
+        "set": 1,
+        "case": "export-small",
+        "ungathered_milliseconds": 1.383334,
+        "ungathered_allocations": 4790,
+        "ungathered_allocated_bytes": 629732,
+        "ungathered_descriptor_writes": 1,
+        "ungathered_expected_bytes": 26400,
+        "changed_milliseconds": 1.386667,
+        "changed_allocations": 4790,
+        "changed_allocated_bytes": 629732,
+        "changed_descriptor_writes": 1,
+        "changed_expected_bytes": 26400,
+        "time_change_percent": 0.24093964292064562
+      },
+      {
+        "set": 1,
+        "case": "export-small-file",
+        "ungathered_milliseconds": 1.371709,
+        "ungathered_allocations": 4790,
+        "ungathered_allocated_bytes": 629732,
+        "ungathered_descriptor_writes": 1,
+        "ungathered_expected_bytes": 26400,
+        "changed_milliseconds": 1.383375,
+        "changed_allocations": 4790,
+        "changed_allocated_bytes": 629732,
+        "changed_descriptor_writes": 1,
+        "changed_expected_bytes": 26400,
+        "time_change_percent": 0.8504719295419072
+      },
+      {
+        "set": 1,
+        "case": "jsonl-large",
+        "ungathered_milliseconds": 4.077792,
+        "ungathered_allocations": 0,
+        "ungathered_allocated_bytes": 0,
+        "ungathered_writes": 4000,
+        "ungathered_bytes": 131096000,
+        "ungathered_readiness": 0,
+        "changed_milliseconds": 2.18075,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 2000,
+        "changed_bytes": 131096000,
+        "changed_readiness": 0,
+        "time_change_percent": -46.521303685916294
+      },
+      {
+        "set": 1,
+        "case": "jsonl-small",
+        "ungathered_milliseconds": 40.167417,
+        "ungathered_allocations": 0,
+        "ungathered_allocated_bytes": 0,
+        "ungathered_writes": 40000,
+        "ungathered_bytes": 2240000,
+        "ungathered_readiness": 0,
+        "changed_milliseconds": 21.980125,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 20000,
+        "changed_bytes": 2240000,
+        "changed_readiness": 0,
+        "time_change_percent": -45.278719316205965
+      },
+      {
+        "set": 1,
+        "case": "pipe-large",
+        "ungathered_milliseconds": 309.948417,
+        "ungathered_allocations": 0,
+        "ungathered_allocated_bytes": 0,
+        "ungathered_writes": 260000,
+        "ungathered_bytes": 131096000,
+        "ungathered_readiness": 260000,
+        "changed_milliseconds": 313.144042,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 258000,
+        "changed_bytes": 131096000,
+        "changed_readiness": 258000,
+        "time_change_percent": 1.0310183323181787
+      },
+      {
+        "set": 1,
+        "case": "pipe-small",
+        "ungathered_milliseconds": 42.753667,
+        "ungathered_allocations": 0,
+        "ungathered_allocated_bytes": 0,
+        "ungathered_writes": 40000,
+        "ungathered_bytes": 2240000,
+        "ungathered_readiness": 40000,
+        "changed_milliseconds": 24.3005,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 20000,
+        "changed_bytes": 2240000,
+        "changed_readiness": 20000,
+        "time_change_percent": -43.161600617790285
+      },
+      {
+        "set": 2,
+        "case": "export-large",
+        "ungathered_milliseconds": 95.178916,
+        "ungathered_allocations": 500218,
+        "ungathered_allocated_bytes": 150122680,
+        "ungathered_descriptor_writes": 158,
+        "ungathered_expected_bytes": 10320000,
+        "changed_milliseconds": 94.803167,
+        "changed_allocations": 500218,
+        "changed_allocated_bytes": 150122680,
+        "changed_descriptor_writes": 158,
+        "changed_expected_bytes": 10320000,
+        "time_change_percent": -0.394781760279761
+      },
+      {
+        "set": 2,
+        "case": "export-large-file",
+        "ungathered_milliseconds": 98.136833,
+        "ungathered_allocations": 500218,
+        "ungathered_allocated_bytes": 150122680,
+        "ungathered_descriptor_writes": 158,
+        "ungathered_expected_bytes": 10320000,
+        "changed_milliseconds": 97.553709,
+        "changed_allocations": 500218,
+        "changed_allocated_bytes": 150122680,
+        "changed_descriptor_writes": 158,
+        "changed_expected_bytes": 10320000,
+        "time_change_percent": -0.5941948422158672
+      },
+      {
+        "set": 2,
+        "case": "export-small",
+        "ungathered_milliseconds": 1.406666,
+        "ungathered_allocations": 4790,
+        "ungathered_allocated_bytes": 629732,
+        "ungathered_descriptor_writes": 1,
+        "ungathered_expected_bytes": 26400,
+        "changed_milliseconds": 1.378,
+        "changed_allocations": 4790,
+        "changed_allocated_bytes": 629732,
+        "changed_descriptor_writes": 1,
+        "changed_expected_bytes": 26400,
+        "time_change_percent": -2.0378682643925505
+      },
+      {
+        "set": 2,
+        "case": "export-small-file",
+        "ungathered_milliseconds": 1.361875,
+        "ungathered_allocations": 4790,
+        "ungathered_allocated_bytes": 629732,
+        "ungathered_descriptor_writes": 1,
+        "ungathered_expected_bytes": 26400,
+        "changed_milliseconds": 1.363875,
+        "changed_allocations": 4790,
+        "changed_allocated_bytes": 629732,
+        "changed_descriptor_writes": 1,
+        "changed_expected_bytes": 26400,
+        "time_change_percent": 0.1468563561266567
+      },
+      {
+        "set": 2,
+        "case": "jsonl-large",
+        "ungathered_milliseconds": 3.859667,
+        "ungathered_allocations": 0,
+        "ungathered_allocated_bytes": 0,
+        "ungathered_writes": 4000,
+        "ungathered_bytes": 131096000,
+        "ungathered_readiness": 0,
+        "changed_milliseconds": 2.275458,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 2000,
+        "changed_bytes": 131096000,
+        "changed_readiness": 0,
+        "time_change_percent": -41.04522488598109
+      },
+      {
+        "set": 2,
+        "case": "jsonl-small",
+        "ungathered_milliseconds": 40.427,
+        "ungathered_allocations": 0,
+        "ungathered_allocated_bytes": 0,
+        "ungathered_writes": 40000,
+        "ungathered_bytes": 2240000,
+        "ungathered_readiness": 0,
+        "changed_milliseconds": 21.850125,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 20000,
+        "changed_bytes": 2240000,
+        "changed_readiness": 0,
+        "time_change_percent": -45.951653597843034
+      },
+      {
+        "set": 2,
+        "case": "pipe-large",
+        "ungathered_milliseconds": 307.648666,
+        "ungathered_allocations": 0,
+        "ungathered_allocated_bytes": 0,
+        "ungathered_writes": 260000,
+        "ungathered_bytes": 131096000,
+        "ungathered_readiness": 260000,
+        "changed_milliseconds": 310.663417,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 258000,
+        "changed_bytes": 131096000,
+        "changed_readiness": 258000,
+        "time_change_percent": 0.9799330642961346
+      },
+      {
+        "set": 2,
+        "case": "pipe-small",
+        "ungathered_milliseconds": 41.997083,
+        "ungathered_allocations": 0,
+        "ungathered_allocated_bytes": 0,
+        "ungathered_writes": 40000,
+        "ungathered_bytes": 2240000,
+        "ungathered_readiness": 40000,
+        "changed_milliseconds": 24.343583,
+        "changed_allocations": 0,
+        "changed_allocated_bytes": 0,
+        "changed_writes": 20000,
+        "changed_bytes": 2240000,
+        "changed_readiness": 20000,
+        "time_change_percent": -42.03506229230255
+      }
+    ],
+    "raw_samples": "output-cancellation-followup-samples.csv",
+    "comparison_csv": "output-cancellation-followup-performance.csv",
+    "gathering_csv": "output-cancellation-followup-gathering.csv",
+    "process_inventory": {
+      "path": "build/output-cancellation-followup/measurement-process-inventory.txt",
+      "sha256": "d93fcec8aa45cd9cb8af76c09b8341603bb4f445cf8e959bdf2d032432734bb8"
+    },
+    "notes": [
+      "Whole-change blocking-pipe timing includes additional readiness operations and runtime PIPE_BUF chunking. Darwin PIPE_BUF is 512 bytes, causing a substantial throughput cost; these operations provide bounded cancellation checks. No throughput improvement is claimed for blocking pipes.",
+      "The deterministic answer-boundary case and allocation-fault/pointer-identity regression establish removal of the redirected answer copy. Full HTTP answer allocation totals vary with curl chunking and reallocation; they are contextual end-to-end measurements, not copy-removal proof.",
+      "Regular-file and /dev/null exports measure complete CLI execution including SQLite loading. Isolated scalar/gathering controls hold correctness policy constant. No general export latency improvement is claimed.",
+      "Write counters intercept native write/writev calls; readiness counts intercept poll. Stream flush observations are distinct. Allocations and byte counts cover measured C++ new operations, not all C library allocations.",
+      "Isolated small regular-file export medians increased by 0.85% and 0.15%; paired samples have mixed directions (paired median changes approximately +0.02% and -1.06%) and overlapping spreads. Large regular-file medians decreased in both sets. This is treated as measurement noise rather than a repeatable file-export slowdown; all raw samples and unchanged operation/allocation counts are published.",
+      "No timing-based CI threshold is added."
+    ]
+  },
+  "sanitizer_equivalence": {
+    "canonical_and_repair_region_unchanged_after_decoder_signature_normalization": true,
+    "sha256": "50cd2a8b3ad74369114f41693ac8d2eb892f1d9a590d6685e9fb6e9603c44bf1",
+    "ascii_assembly_inspection": [
+      "O2 ASCII repair/path branches bypass decoder; decoder is inlined in O2.",
+      "O3 decoder calls remain only on non-ASCII repair/path branches."
+    ]
+  },
+  "limitations": [
+    "Local validation is macOS arm64 with Apple Clang 21.0.0. Linux and native Tiger runtime acceptance were not executed locally.",
+    "Existing local build warning exceptions are -Wno-error=implicit-int-float-conversion and -Wno-error=unused-result, unchanged from the baseline builds.",
+    "Clang-Tidy 18.1.8 uses the existing SDK13 wrapper; one translation unit remains incomplete and six recorded-main findings remain. Clang Analyzer reports the same existing context.cpp division-by-zero finding. Those analysis gates are not clean; no checks or suppressions were weakened.",
+    "The legacy default benchmark has the previously recorded Glob failure and is not used for a new performance claim.",
+    "Descriptor readiness cannot reserve pipe capacity against unrelated competing writers. No descriptor flags or global stdio buffering are changed.",
+    "Emergency descriptor output is one best-effort attempt; it does not wait for EAGAIN or guarantee delivery. Partial output duplicates and conservative separators remain accepted."
+  ],
+  "artifacts": [
+    {
+      "path": "build/output-cancellation-followup/initial-process-group-race.log",
+      "sha256": "567df92ff9aebc60bd624bbbb1c4035615c312f9d813a516413a530f02ee17da"
+    },
+    {
+      "path": "build/output-cancellation-followup/initial-background-gate-failure.log",
+      "sha256": "e1180e7922a9c99850152f0a456aee7f1026c8c7f63d9104a236d8004bad0c08"
+    },
+    {
+      "path": "build/output-cancellation-followup/intermittent-final-sanitize-ctest.log",
+      "sha256": "112010ee7d696db15f238d142bf6f1aaa2bcb8c6b10907aeff2198d40fdf2954"
+    },
+    {
+      "path": "build/output-cancellation-followup/intermittent-sanitize-lasttest.log",
+      "sha256": "ae5340d6d197c91725e15707d19649af4be323b42638f3bbb3563e7be94e7309"
+    }
+  ],
+  "initial_failure_excerpts": [
+    {
+      "path": "build/output-cancellation-followup/initial-background-gate-failure.log",
+      "text": ".F.....\n======================================================================\nFAIL: test_background_close_preserves_foreground_modes_and_queued_input (__main__.CliTests.test_background_close_preserves_foreground_modes_and_queued_input) (mode='line')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/Volumes/Pro2T/codet-compiled-agent/tests/cli_integration.py\", line 1665, in test_background_close_preserves_foreground_modes_and_queued_input\n    self.assertEqual(result.returncode,0,result.stderr)\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 1 != 0 : Traceback (most recent call last):\n  File \"/Volumes/Pro2T/codet-compiled-agent/tests/terminal_cli_helper.py\", line 184, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Volumes/Pro2T/codet-compiled-agent/tests/terminal_cli_helper.py\", line 124, in main\n    if mode.startswith(\"close-\"):return background_close(binary,mode.removeprefix(\"close-\"))\n                                        ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Volumes/Pro2T/codet-compiled-agent/tests/terminal_cli_helper.py\", line 88, in background_close\n    os.tcsetpgrp(slave,child);os.write(gate_write,b'G');token(b'R')\n                                                        ~~~~~^^^^^^\n  File \"/Volumes/Pro2T/codet-compiled-agent/tests/terminal_cli_helper.py\", line 84, in token\n    raise TimeoutError('background cleanup gate')\nTimeoutError: background cleanup gate\n\n\n----------------------------------------------------------------------\nRan 7 tests in 7.402s\n\nFAILED (failures=1)\n"
+    },
+    {
+      "path": "build/output-cancellation-followup/initial-process-group-race.log",
+      "text": "...F...\n======================================================================\nFAIL: test_active_background_restoration_respects_foreground_job_control (__main__.CliTests.test_active_background_restoration_respects_foreground_job_control)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/Volumes/Pro2T/codet-compiled-agent/tests/cli_integration.py\", line 1202, in test_active_background_restoration_respects_foreground_job_control\n    self.assertEqual(result.returncode,0,result.stderr)\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 1 != 0 : Traceback (most recent call last):\n  File \"/Volumes/Pro2T/codet-compiled-agent/tests/terminal_cli_helper.py\", line 195, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Volumes/Pro2T/codet-compiled-agent/tests/terminal_cli_helper.py\", line 134, in main\n    if mode == \"active-job-control\":return active_job_control(binary)\n                                           ~~~~~~~~~~~~~~~~~~^^^^^^^^\n  File \"/Volumes/Pro2T/codet-compiled-agent/tests/terminal_cli_helper.py\", line 35, in active_job_control\n    os.setpgid(child,child);os.tcsetpgrp(slave,child);os.write(gate_write,b'G');token(b'R')\n    ~~~~~~~~~~^^^^^^^^^^^^^\nPermissionError: [Errno 1] Operation not permitted\n\n\n----------------------------------------------------------------------\nRan 7 tests in 2.554s\n\nFAILED (failures=1)\n"
+    },
+    {
+      "path": "build/output-cancellation-followup/intermittent-sanitize-lasttest.log",
+      "excerpt": "[ RUN      ] Followup.OneShotExitSurvivesSignalAndReapFailures\nunknown file: Failure\nC++ exception with description \"Child process setup failed\" thrown in the test body.\n\n[  FAILED  ] Followup.OneShotExitSurvivesSignalAndReapFailures (120 ms)\n"
+    }
+  ]
+}

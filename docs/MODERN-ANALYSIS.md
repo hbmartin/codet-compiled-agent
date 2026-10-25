@@ -243,3 +243,63 @@ for the larger diagnostic state. Stream flushes and intercepted descriptor calls
 observations, not a count of every hidden libc syscall. These are local timing observations, with
 no timing-based CI threshold. Canonical JSON and ASCII text-repair implementation bytes are
 unchanged. Linux and native Tiger runtime acceptance remain untested locally.
+
+## Output cancellation follow-up validation
+
+The follow-up to #36 starts from fetched main `dd65f13`. The
+[validation record](validation/output-cancellation-followup.json) includes exact source hashes,
+commands, test counts, analyzer findings, and initial failed runs. Debug and ASan/UBSan each pass
+all nine CTest groups: 547 unit tests (545 passed and two expected skips), 62 publication-fault
+tests, and 76 CLI integration tests. Twenty repetitions cover 1,260 focused unit executions,
+260 fault executions, and 140 CLI executions, for **1,660** total. Pinned lint, Semgrep's locked
+frontend, runner checks, and analyzer self-checks pass. Cppcheck completes 25/25 sources with no
+findings. The same six Clang-Tidy findings (24/25 sources complete with the SDK13 wrapper) and
+one Clang Analyzer finding remain; those gates are not clean.
+
+An intermediate sanitizer run failed the unchanged one-shot child-setup test; thirty isolated
+repetitions and the final full suite passed. One earlier CLI repetition timed out at the new
+background helper's startup gate. The supervisor now closes unused pipe ends and reports early
+child exits/stops with captured startup output. A subsequent repetition exposed a parent
+`setpgid()`/child exec race in the active job-control fixture; the supervisor now verifies the
+expected group before accepting that race. One hundred isolated line-mode helper runs, one
+hundred active job-control runs, and the final repetitions passed. The initial startup timeout
+and one-shot setup failure have no proven root cause; all failure logs are retained. No
+assertions were weakened.
+
+Two Release comparison sets each use one warm-up and five alternating measured runs, identical
+harnesses and compiler settings, with no concurrent builds, tests, or analyzers. The
+[whole-change medians](validation/output-cancellation-followup-performance.csv),
+[isolated scalar/gathering medians](validation/output-cancellation-followup-gathering.csv), and
+[all 528 warm-up/measured samples](validation/output-cancellation-followup-samples.csv) include
+timing, allocations, allocated bytes, native write calls, and readiness calls. Export cases
+exercise both `/dev/null` and regular files. The loopback response fixture and pipe drainer are
+intrinsic benchmark helpers.
+
+| Case | Set 1 baseline → changed | Set 2 baseline → changed | Work |
+| --- | ---: | ---: | --- |
+| 20,000 small JSONL records | 39.506 → 20.925 ms | 37.742 → 20.359 ms | 40,000 → 20,000 writes; zero allocations |
+| 128 redirected 1 MiB answer boundaries | 3.222 → 0.150 ms | 3.009 → 0.153 ms | 128 → 0 allocations; 134,218,752 → 0 allocated bytes |
+| 128 exhausted-buffer inputs of 1 MiB | 657.690 → <0.001 ms | 660.499 → <0.001 ms | 256 → 0 allocations; input is neither scanned nor copied |
+| 2,000 large blocking-pipe records | 24.264 → 313.329 ms | 17.788 → 278.704 ms | 4,000 → 258,000 writes, plus 258,000 readiness calls |
+
+The blocking-pipe cost is substantial: Darwin's runtime `PIPE_BUF` is 512 bytes. Smaller atomic
+chunks and readiness checks provide bounded cancellation opportunities; no pipe throughput
+improvement is claimed. Small blocking-pipe medians increase by 44% and 58%. Full HTTP-answer
+allocation totals vary with curl chunking and buffer growth. The deterministic answer-boundary
+measurement and allocation-fault/pointer-identity test establish removal of the redirected-answer
+copy without relying on HTTP allocation counts.
+
+Gathering is retained for multiple useful spans: its isolated JSONL medians improve by 41–47%
+in both sets, with half the native write calls and unchanged allocations. Scalar paths remain for
+single spans and single-vector batches. Large blocking-pipe gathering medians are about 1% slower
+than scalar output with identical cancellation policy. Large regular-file export medians are
+0.98% and 0.59% lower. Small regular-file medians are 0.85% and 0.15% higher, within overlapping
+sample spreads and with mixed paired directions; paired median changes are approximately +0.02%
+and −1.06%. This is treated as noise rather than a repeatable file-export slowdown. Operation and
+allocation counts remain identical. No general export speedup or timing-based CI gate is claimed.
+
+Canonical sanitization and text-repair code is unchanged apart from the shared decoder's
+`string_view` parameter. Optimized assembly retains ASCII decoder bypasses. Local validation is
+macOS arm64; Linux and native Tiger runtime acceptance remain untested. Existing local compiler
+warning exceptions, SDK limitations, and the legacy default benchmark's `Glob` failure are
+recorded separately.
