@@ -1692,6 +1692,30 @@ class CliTests(unittest.TestCase):
                     if process.poll() is None:process.kill();process.wait(timeout=5)
                     process.stderr.close();os.close(read);os.close(write)
 
+    def test_shared_full_stdout_stderr_cancels_without_draining_cleanup(self):
+        import fcntl
+        for arguments in (['--help'],['-C',str(self.workspace),'exec','--ephemeral',
+                '--output-format=jsonl','-c','hooks.SessionEnd=[{command="printf cleanup",on_error="warn"}]','fixture']):
+            for sig in (signal.SIGINT,signal.SIGTERM):
+                with self.subTest(arguments=arguments,signal=sig):
+                    reader,writer=os.pipe()
+                    flags=fcntl.fcntl(writer,fcntl.F_GETFL)
+                    fcntl.fcntl(writer,fcntl.F_SETFL,flags|os.O_NONBLOCK)
+                    try:
+                        while True:os.write(writer,b'x'*4096)
+                    except BlockingIOError:pass
+                    fcntl.fcntl(writer,fcntl.F_SETFL,flags)
+                    process=subprocess.Popen([BIN,*arguments],stdin=subprocess.DEVNULL,
+                        stdout=writer,stderr=writer,env=self.env)
+                    try:
+                        with self.assertRaises(subprocess.TimeoutExpired):process.wait(timeout=.3)
+                        process.send_signal(sig)
+                        self.assertEqual(process.wait(timeout=5),130)
+                        self.assertEqual(fcntl.fcntl(writer,fcntl.F_GETFL)&os.O_NONBLOCK,0)
+                    finally:
+                        if process.poll() is None:process.kill();process.wait(timeout=5)
+                        os.close(reader);os.close(writer)
+
     def test_interrupt_has_exit_130_and_terminal_event(self):
         for sig in (signal.SIGINT, signal.SIGTERM):
             with self.subTest(signal=sig):

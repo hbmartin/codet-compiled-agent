@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 #include <sstream>
 #include <sys/mman.h>
+#include <sys/socket.h>
 using namespace codet;
 namespace {
 struct OutputStream : std::stringbuf {
@@ -389,5 +390,70 @@ TEST(CliOutput, FailedGatheredRecordsNeverReplayPartialPrefixesOrLaterRecords) {
   output.secondary({"later"});
   EXPECT_THROW(output.required({"later"}), Error);
   EXPECT_EQ(probe.calls, 2u);
+}
+
+TEST(CliOutput, FullSocketCancellationAndImmediateDiagnosticsNeverNeedThePeerToDrain) {
+  for (bool nonblocking : {false, true}) {
+    int pair[2];
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
+    struct Close {
+      int *fds;
+      ~Close() {
+        ::close(fds[0]);
+        ::close(fds[1]);
+      }
+    } close{pair};
+    const auto flags = ::fcntl(pair[0], F_GETFL);
+    ASSERT_EQ(::fcntl(pair[0], F_SETFL, flags | O_NONBLOCK), 0);
+    char bytes[4096]{};
+    while (::write(pair[0], bytes, sizeof(bytes)) > 0) {
+    }
+    ASSERT_EQ(errno, EAGAIN);
+    ASSERT_EQ(::fcntl(pair[0], F_SETFL, flags | (nonblocking ? O_NONBLOCK : 0)), 0);
+    const auto installed_flags = ::fcntl(pair[0], F_GETFL);
+    int send_buffer = 0;
+    socklen_t option_size = sizeof(send_buffer);
+    ASSERT_EQ(::getsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &send_buffer, &option_size), 0);
+    Cancellation cancel;
+    detail::DescriptorOutput native(pair[0], cancel);
+    auto waiting = std::async(std::launch::async, [&] {
+      return native.result({"required"}, true, detail::OutputMode::required);
+    });
+    if (!nonblocking)
+      EXPECT_EQ(waiting.wait_for(std::chrono::milliseconds(150)), std::future_status::timeout);
+    else
+      EXPECT_EQ(waiting.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    cancel.requested = true;
+    const auto finished = waiting.wait_for(std::chrono::seconds(2));
+    if (finished != std::future_status::ready)
+      ::shutdown(pair[1], SHUT_RDWR);
+    ASSERT_EQ(finished, std::future_status::ready);
+    const auto result = waiting.get();
+    EXPECT_EQ(result,
+              nonblocking ? detail::OutputResult::failure : detail::OutputResult::cancelled);
+    EXPECT_EQ(native.result({"final error"}, true, detail::OutputMode::diagnostic),
+              detail::OutputResult::failure);
+    EXPECT_EQ(native.result({"notice"}, true, detail::OutputMode::immediate),
+              detail::OutputResult::failure);
+    EXPECT_EQ(::fcntl(pair[0], F_GETFL), installed_flags);
+    int after_buffer = 0;
+    ASSERT_EQ(::getsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &after_buffer, &option_size), 0);
+    EXPECT_EQ(after_buffer, send_buffer);
+  }
+}
+TEST(CliOutput, SocketReadinessRacesAndPeerClosureRetainDeliveryStatus) {
+  int pair[2];
+  ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
+  Cancellation cancel;
+  detail::DescriptorOutput native(pair[0], cancel);
+  EXPECT_EQ(native.result({"one", "two"}, true, detail::OutputMode::required),
+            detail::OutputResult::success);
+  char bytes[16]{};
+  ASSERT_EQ(::read(pair[1], bytes, sizeof(bytes)), 7);
+  EXPECT_EQ(std::string(bytes, 7), "onetwo\n");
+  ::close(pair[1]);
+  EXPECT_EQ(native.result({"closed"}, false, detail::OutputMode::required),
+            detail::OutputResult::failure);
+  ::close(pair[0]);
 }
 } // namespace

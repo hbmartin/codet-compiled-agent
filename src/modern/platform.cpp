@@ -1,4 +1,5 @@
 #include "codet/core.hpp"
+#include "codet/detail/native_output.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/output.hpp"
 #include "codet/process_control.hpp"
@@ -348,17 +349,10 @@ std::string FileNotice::text() const {
 }
 void emergency_file_diagnostic(const FileNotice &notice) noexcept {
   auto &state = stderr_descriptor_state.bind(STDERR_FILENO);
-  const auto write_all = [](const char *bytes, size_t size) noexcept {
-    while (size) {
-      const auto written = ::write(STDERR_FILENO, bytes, size);
-      if (written < 0 && errno == EINTR)
-        continue;
-      if (written <= 0)
-        return false;
-      bytes += written;
-      size -= static_cast<size_t>(written);
-    }
-    return true;
+  detail::DescriptorOutput descriptor(STDERR_FILENO);
+  const auto write_all = [&](const char *bytes, size_t size) noexcept {
+    return descriptor.result({std::string_view(bytes, size)}, false,
+                             detail::OutputMode::immediate) == detail::OutputResult::success;
   };
   if (state.pending) {
     if (!write_all("\n", 1))
@@ -395,8 +389,8 @@ bool detail::recover_diagnostic_stream(std::ostream &output) noexcept {
     return false;
   }
 }
-detail::DiagnosticWriter::DiagnosticWriter(std::ostream &output) noexcept
-    : output_(output), state_(&local_), file_(diagnostic_file(output)) {}
+detail::DiagnosticWriter::DiagnosticWriter(std::ostream &output, IoContext *io) noexcept
+    : output_(output), state_(&local_), file_(diagnostic_file(output)), io_(io) {}
 void detail::reset_standard_diagnostics() noexcept {
   stderr_stream_state.reset(std::cerr.rdbuf());
   stdout_stream_state.reset(std::cout.rdbuf());
@@ -407,6 +401,25 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
                                      bool flush) {
   state_ = &diagnostic_state(output_, local_);
   struct Recovery {
+  const int native =
+      &output_ == &std::cerr && output_.rdbuf() == native_stderr_buffer   ? STDERR_FILENO
+      : &output_ == &std::cout && output_.rdbuf() == native_stdout_buffer ? STDOUT_FILENO
+                                                                          : -1;
+  if (native >= 0) {
+    DescriptorOutput descriptor(native, nullptr == io_ ? nullptr : io_->cancel);
+    const auto mode = io_ ? OutputMode::diagnostic : OutputMode::immediate;
+    if (state_->pending) {
+      if (descriptor.result({"\n"}, false, mode) != OutputResult::success)
+        return false;
+      state_->pending = false;
+    }
+    const bool success = descriptor.result(parts, newline, mode) == OutputResult::success;
+    state_->pending = !success && newline;
+    if (!success)
+      (void)recover_diagnostic_stream(output_);
+    return success;
+  }
+
     std::ostream &stream;
     bool &pending;
     bool newline, attempted = false, complete = false;

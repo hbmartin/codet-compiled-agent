@@ -1,5 +1,6 @@
 #include "codet/core.hpp"
 #include "codet/detail/diagnostic_stream.hpp"
+#include "codet/detail/native_output.hpp"
 #include <clocale>
 #include <csignal>
 #include <iostream>
@@ -24,20 +25,19 @@ int main(int argc, char **argv) {
   std::vector<std::string> args;
   for (int i = 1; i < argc; ++i)
     args.emplace_back(argv[i]);
+  codet::detail::IoContext io(c);
+  codet::detail::DiagnosticWriter errors(std::cerr, &io);
   try {
-    return codet::cli_main(args, c);
+    return codet::detail::cli_main(args, c, io);
   } catch (const codet::ProviderError &e) {
-    (void)codet::detail::write_diagnostic(std::cerr,
-                                          {"codet: ", codet::detail::terminal_text(e.what())});
-    (void)codet::detail::write_diagnostic(std::cerr, {codet::detail::terminal_text(e.body)});
+    (void)errors.write({"codet: ", codet::detail::terminal_text(e.what())});
+    (void)errors.write({codet::detail::terminal_text(e.body)});
     return e.code;
   } catch (const codet::Error &e) {
-    (void)codet::detail::write_diagnostic(std::cerr,
-                                          {"codet: ", codet::detail::terminal_text(e.what())});
+    (void)errors.write({"codet: ", codet::detail::terminal_text(e.what())});
     return e.code;
   } catch (const std::exception &e) {
-    (void)codet::detail::write_diagnostic(std::cerr,
-                                          {"codet: ", codet::detail::terminal_text(e.what())});
+    (void)errors.write({"codet: ", codet::detail::terminal_text(e.what())});
     return 1;
   }
 }
