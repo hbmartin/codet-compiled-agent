@@ -3,6 +3,9 @@
 #include "codet/detail/diagnostic_stream.hpp"
 #include <ostream>
 namespace codet {
+namespace detail {
+void report_rendered_diagnostic(const DiagnosticSink &, RenderedTextView);
+}
 enum class FileNoticeKind : uint8_t { repair_backup, tool_result };
 // Allocate before publishing a file; delivery transfers its held path without allocation.
 struct FileNotice {
@@ -64,32 +67,41 @@ class DiagnosticBuffer {
   size_t limit_, used_ = 0;
   bool omitted_ = false;
   std::vector<std::string> messages_;
-
-public:
-  explicit DiagnosticBuffer(size_t limit) : limit_(limit) {}
-  static std::string notice() {
-    return "[Additional diagnostics omitted or truncated]";
+  static constexpr std::string_view omission = "[Additional diagnostics omitted or truncated]";
+  size_t payload() const noexcept {
+    return limit_ - std::min(limit_, omission.size() + 1);
   }
-  std::optional<std::string> add(const std::string &text) {
-    const auto reserve = std::min(limit_, notice().size() + 1);
-    const auto payload = limit_ - reserve;
-    auto clean = detail::terminal_text(text);
-    if (used_ >= payload) {
-      omitted_ = true;
-      return {};
-    }
-    const auto room = payload - used_ - 1;
-    if (clean.size() > room) {
-      clean = bounded_text(clean, room);
-      omitted_ = true;
-    }
+  std::optional<std::string> keep(std::string &&clean, bool truncated) {
+    omitted_ |= truncated;
     if (clean.empty()) {
       omitted_ = true;
       return {};
     }
     used_ += clean.size() + 1;
     messages_.push_back(clean);
-    return clean;
+    return std::move(clean);
+  }
+
+public:
+  explicit DiagnosticBuffer(size_t limit) : limit_(limit) {}
+  static std::string notice() {
+    return std::string(omission);
+  }
+  std::optional<std::string> add(const std::string &text) {
+    if (used_ >= payload()) {
+      omitted_ = true;
+      return {};
+    }
+    auto clean = detail::render_terminal_text(text, payload() - used_ - 1);
+    return keep(std::move(clean.text), clean.truncated);
+  }
+  std::optional<std::string> add_rendered(detail::RenderedTextView text) {
+    if (used_ >= payload()) {
+      omitted_ = true;
+      return {};
+    }
+    const auto size = detail::rendered_prefix(text.text, payload() - used_ - 1);
+    return keep(text.text.substr(0, size), size != text.text.size());
   }
   bool omitted() const {
     return omitted_;

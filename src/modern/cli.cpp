@@ -350,10 +350,14 @@ public:
     return curses_;
   }
   void diagnostic(const std::string &text) override {
+    const auto shown = detail::terminal_text(text);
+    diagnostic_rendered({shown});
+  }
+  void diagnostic_rendered(detail::RenderedTextView text) override {
     if (curses_)
-      say(text);
+      say_rendered(text);
     else
-      (void)detail::write_diagnostic(std::cerr, {detail::terminal_text(text)});
+      (void)detail::write_diagnostic(std::cerr, {text.text});
   }
   void set_mode(const std::string &mode) {
     status_ = "Permissions: " + mode + "; no OS shell sandbox";
@@ -363,15 +367,18 @@ public:
   }
   void say(const std::string &text) {
     const auto shown = detail::terminal_text(text);
+    say_rendered({shown});
+  }
+  void say_rendered(detail::RenderedTextView text) {
     if (curses_) {
-      for (const auto &l : split(shown))
+      for (const auto &l : split(text.text))
         transcript_.push_back(l);
       if (transcript_.size() > 1000)
         transcript_.erase(transcript_.begin(),
                           transcript_.begin() + static_cast<long>(transcript_.size() - 1000));
       render();
     } else
-      (void)output_.display({shown});
+      (void)output_.display({text.text});
   }
   static std::vector<std::string> split(const std::string &text) {
     std::vector<std::string> ls;
@@ -528,7 +535,7 @@ public:
 int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   detail::reset_standard_diagnostics();
   const auto o = parse(args);
-  detail::CliOutput output;
+  detail::CliOutput output(cancel);
   if (o.help) {
     output.required({help}, false);
     return 0;
@@ -552,7 +559,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     if (interaction && std::this_thread::get_id() != terminal_thread)
       interaction->post({{"type", "codet.diagnostic"}, {"text", text}});
     else
-      diagnostics->emit(text);
+      diagnostics->emit_rendered({text});
   };
   std::string home = env("CODET_HOME");
   if (home.empty()) {
@@ -755,10 +762,17 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     if (o.command == "export") {
       if (o.format == "text") {
         detail::TextExport exported(output);
+        const bool human = isatty(STDOUT_FILENO);
         for (const auto &m : session.messages) {
-          exported.append(m.role);
+          if (human)
+            exported.append_human(m.role);
+          else
+            exported.append(m.role);
           exported.append(": ");
-          exported.append(m.text);
+          if (human)
+            exported.append_human(m.text);
+          else
+            exported.append(m.text);
           exported.append("\n\n");
         }
         exported.finish();
@@ -904,7 +918,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
           [&](const Json &event) {
             const auto type = event.value("type", "");
             if (type == "codet.diagnostic")
-              diagnostics->emit(event.at("text"));
+              diagnostics->emit_rendered({event.at("text").get_ref<const std::string &>()});
             else if (type == "codet.approval") {
               terminal->say(event.at("tool").get<std::string>() + ": " +
                             event.at("target").get<std::string>());
@@ -1045,9 +1059,9 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
         files.atomic_write(fs::absolute(o.output), answer + "\n", true);
       if (terminal)
         terminal->say(answer);
-      else if (o.format == "text")
-        output.required({isatty(STDOUT_FILENO) ? detail::terminal_text(answer) : answer});
-      else if (o.format == "json")
+      else if (o.format == "text") {
+        output.answer(answer, isatty(STDOUT_FILENO));
+      } else if (o.format == "json")
         output.required({Json({{"session_id", session.id},
                                {"status", "success"},
                                {"result", result.text},

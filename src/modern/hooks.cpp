@@ -36,7 +36,7 @@ HookOutcome Tools::run_hooks(const std::string &event, const Json &input,
     if (auto accepted = collector.add(hook_diagnostic(event, level, text))) {
       out.diagnostics.push_back(*accepted);
       if (!external)
-        report_diagnostic(diagnostics_, *accepted);
+        detail::report_rendered_diagnostic(diagnostics_, {*accepted});
     }
   };
   if (!config_.hooks.contains(event))

@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <new>
+#include <sys/uio.h>
 #include <unistd.h>
 namespace {
 bool measuring = false;
@@ -78,9 +79,24 @@ extern "C" ssize_t write(int fd, const void *bytes, size_t count) {
   }
   return written;
 }
+extern "C" ssize_t writev(int fd, const iovec *parts, int count) {
+  using Write = ssize_t (*)(int, const iovec *, int);
+  static const auto native = reinterpret_cast<Write>(::dlsym(RTLD_NEXT, "writev"));
+  if (!native)
+    ::_exit(86);
+  const auto written = native(fd, parts, count);
+  if (measuring && fd == STDOUT_FILENO) {
+    ++descriptor_writes;
+    if (written > 0)
+      descriptor_bytes += static_cast<size_t>(written);
+  }
+  return written;
+}
 int main(int argc, char **argv) {
   using namespace codet;
-  if (argc != 3 || (std::string(argv[1]) != "small" && std::string(argv[1]) != "large"))
+  if ((argc != 3 && argc != 4) ||
+      (std::string(argv[1]) != "small" && std::string(argv[1]) != "large") ||
+      (argc == 4 && std::string(argv[3]) != "file"))
     return 2;
   const bool large = std::string(argv[1]) == "large";
   const size_t messages = large ? 10000 : 100, bytes = large ? 1024 : 256;
@@ -103,7 +119,10 @@ int main(int argc, char **argv) {
     store.save(session);
     id = session.id;
   }
-  const int sink = ::open("/dev/null", O_WRONLY);
+  const bool regular_file = argc == 4;
+  const auto destination = regular_file ? temporary.root / "output.txt" : fs::path("/dev/null");
+  const int sink =
+      ::open(destination.c_str(), regular_file ? O_WRONLY | O_CREAT | O_TRUNC : O_WRONLY, 0600);
   if (sink < 0 || ::dup2(sink, STDOUT_FILENO) < 0)
     return 3;
   ::close(sink);
@@ -126,6 +145,7 @@ int main(int argc, char **argv) {
     return 4;
   std::ofstream report(argv[2]);
   report << Json({{"case", large ? "large" : "small"},
+                  {"regular_file", regular_file},
                   {"messages", messages},
                   {"milliseconds", milliseconds},
                   {"allocations", count},

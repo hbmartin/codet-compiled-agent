@@ -63,6 +63,120 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc > 1 && std::string(argv[1]) == "--codet-private-stream-failure-helper") {
+      if (argc != 4)
+        return 2;
+      const int allowance = std::stoi(argv[2]), terminal = std::stoi(argv[3]);
+      if (allowance < 0 || allowance > 3)
+        return 2;
+      for (int target = 0; target != 3; ++target)
+        if (::dup2(terminal, target) < 0)
+          return 3;
+      if (terminal > 2)
+        ::close(terminal);
+      int highest = 2, before = 0;
+      for (int fd = 0; fd != 512; ++fd)
+        if (::fcntl(fd, F_GETFD) >= 0) {
+          highest = fd;
+          ++before;
+        }
+      rlimit original{};
+      if (::getrlimit(RLIMIT_NOFILE, &original))
+        return 4;
+      auto limited = original;
+      limited.rlim_cur = static_cast<rlim_t>(highest + 1 + allowance);
+      if (::setrlimit(RLIMIT_NOFILE, &limited))
+        return 4;
+      struct RestoreLimit {
+        rlimit original;
+        ~RestoreLimit() {
+          (void)::setrlimit(RLIMIT_NOFILE, &original);
+        }
+      } restore{original};
+      bool failed = false;
+      {
+        codet::detail::NativeTerminalResourceOps ops;
+        codet::detail::TerminalResources resources(ops);
+        try {
+          resources.start_editor();
+        } catch (const codet::Error &) {
+          failed = true;
+        }
+      }
+      if (!failed)
+        return 5;
+      int after = 0;
+      for (int fd = 0; fd != 512; ++fd)
+        after += ::fcntl(fd, F_GETFD) >= 0;
+      return before == after ? 0 : 6;
+    }
+    if (argc > 1 && std::string(argv[1]) == "--codet-background-close-helper") {
+      if (argc != 6)
+        return 2;
+      const std::string mode(argv[2]);
+      if (mode != "line" && mode != "curses" && mode != "partial" && mode != "detach-failure" &&
+          mode != "query-failure")
+        return 2;
+      const int gate = std::stoi(argv[3]), notify = std::stoi(argv[4]);
+      const int terminal = std::stoi(argv[5]);
+      for (int target = 0; target != 3; ++target)
+        if (::dup2(terminal, target) < 0)
+          return 3;
+      char token;
+      if (!codet::test::read_token(gate, token))
+        return 4;
+      const auto descriptors = [] {
+        int count = 0;
+        for (int fd = 0; fd != 512; ++fd)
+          count += ::fcntl(fd, F_GETFD) >= 0;
+        return count;
+      };
+      const auto before = descriptors();
+      ::setenv("TERM", "xterm", 1);
+      sigset_t prior{}, after{};
+      (void)::pthread_sigmask(SIG_SETMASK, nullptr, &prior);
+      auto &metrics = codet::test::native_terminal_metrics;
+      const auto failure = std::make_exception_ptr(std::bad_alloc());
+      try {
+        codet::detail::NativeTerminalResourceOps ops;
+        codet::detail::TerminalResources resources(ops);
+        if (mode == "curses") {
+          resources.start_screen();
+          (void)::cbreak();
+          (void)::noecho();
+          (void)::refresh();
+        } else {
+          resources.start_editor();
+          resources.start_history();
+          (void)::el_set(resources.editor(), EL_PREP_TERM, 1);
+        }
+        (void)::write(notify, "R", 1);
+        if (!codet::test::read_token(gate, token))
+          return 5;
+        metrics.observe = true;
+        metrics.detach_failure = mode == "detach-failure";
+        metrics.query_failure = mode == "query-failure";
+        if (mode == "partial")
+          std::rethrow_exception(failure);
+        resources.close();
+        resources.close();
+      } catch (...) {
+        if (mode != "partial" || std::current_exception() != failure)
+          throw;
+      }
+      metrics.observe = false;
+      if (metrics.live_settings || descriptors() != before)
+        return 6;
+      if (mode == "curses" &&
+          (metrics.ends != 1 || metrics.deletes != 1 || !metrics.ended_before_delete))
+        return 7;
+      (void)::pthread_sigmask(SIG_SETMASK, nullptr, &after);
+      for (int signal = 1; signal < NSIG; ++signal)
+        if (sigismember(&prior, signal) != sigismember(&after, signal))
+          return 8;
+      (void)::write(notify, "E", 1);
+      return 0;
+    }
     if (argc > 1 && std::string(argv[1]) == "--codet-native-symbol-helper") {
 #ifdef CODET_NATIVE_TERMINAL_METRICS
       if (argc != 3 || ::dup2(std::stoi(argv[2]), STDERR_FILENO) < 0)

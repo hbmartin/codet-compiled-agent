@@ -105,8 +105,8 @@ from being printed. Emergency output does not wait for the descriptor to become 
 
 Required headless stdout uses checked descriptor writes without stdio buffering; delivery failure exits nonzero.
 Line-mode sessions attempt later replies after an output failure and report a failed exit status
-if a reply was lost. Interactive displays, TTY text answers, and stderr diagnostics escape unsafe
-terminal controls. Redirected text, exports, requested output files, and structured provider-error
+if a reply was lost. Interactive displays, TTY text answers and exports, and stderr diagnostics escape unsafe
+terminal controls. Redirected text answers and exports, requested output files, and structured provider-error
 data retain their data bytes.
 
 ## Documentation

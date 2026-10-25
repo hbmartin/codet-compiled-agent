@@ -8,6 +8,9 @@ public:
   virtual ~CliDiagnosticSurface() = default;
   virtual bool fullscreen() const = 0;
   virtual void diagnostic(const std::string &) = 0;
+  virtual void diagnostic_rendered(RenderedTextView text) {
+    diagnostic(text.text);
+  }
 };
 
 class CliDiagnostics {
@@ -43,7 +46,7 @@ public:
             [writer = writer_](const auto &text) { writer->file(text); })),
         file_sink_([this](const std::string &text) {
           if (auto terminal = screen_.lock(); terminal && terminal->fullscreen())
-            terminal->diagnostic(text);
+            terminal->diagnostic_rendered({text});
           else
             writer_->file(text);
         }) {}
@@ -57,15 +60,22 @@ public:
     state.set_file_diagnostics(files);
   }
   void emit(const std::string &text) {
+    if (buffering) {
+      cleanup.add(text);
+      return;
+    }
     const auto shown = terminal_text(text);
+    emit_rendered({shown});
+  }
+  void emit_rendered(RenderedTextView text) {
     if (buffering)
-      cleanup.add(shown);
+      cleanup.add_rendered(text);
     else if (auto terminal = screen_.lock()) {
-      terminal->diagnostic(shown);
+      terminal->diagnostic_rendered(text);
       if (terminal->fullscreen())
-        live.add(shown);
+        live.add_rendered(text);
     } else
-      (void)writer_->write({shown});
+      (void)writer_->write({text.text});
   }
   void deliver_files() noexcept {
     if (auto terminal = screen_.lock(); terminal && terminal->fullscreen())

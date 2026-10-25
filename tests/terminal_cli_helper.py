@@ -10,6 +10,14 @@ import termios
 import time
 
 
+def foreground_child(slave,child):
+    try:os.setpgid(child,child)
+    except PermissionError:
+        # The child also creates its group before exec; parent setpgid can then be rejected.
+        if os.getpgid(child)!=child:raise
+    os.tcsetpgrp(slave,child)
+
+
 def active_job_control(binary):
     master,slave=pty.openpty()
     gate_read,gate_write=os.pipe();ready_read,ready_write=os.pipe()
@@ -32,7 +40,7 @@ def active_job_control(binary):
         if not select.select([ready_read],[],[],5)[0]:raise TimeoutError('active helper gate timed out')
         if os.read(ready_read,1)!=expected:raise RuntimeError('unexpected active helper token')
     try:
-        os.setpgid(child,child);os.tcsetpgrp(slave,child);os.write(gate_write,b'G');token(b'R')
+        foreground_child(slave,child);os.write(gate_write,b'G');token(b'R')
         os.tcsetpgrp(slave,os.getpgrp())
         foreign=termios.tcgetattr(slave);foreign[3]&=~termios.ECHO;foreign[6][termios.VMIN]=7
         termios.tcsetattr(slave,termios.TCSANOW,foreign)
@@ -58,12 +66,79 @@ def active_job_control(binary):
     return 0
 
 
+def background_close(binary,mode):
+    master,slave=pty.openpty()
+    gate_read,gate_write=os.pipe();ready_read,ready_write=os.pipe()
+    os.setsid();fcntl.ioctl(slave,termios.TIOCSCTTY,0)
+    os.tcsetpgrp(slave,os.getpgrp())
+    signal.signal(signal.SIGHUP,signal.SIG_IGN)
+    signal.signal(signal.SIGTTOU,signal.SIG_IGN)
+    before=termios.tcgetattr(slave)
+    child=os.fork()
+    if child==0:
+        try:
+            os.close(gate_write);os.close(ready_read);os.close(master)
+            os.setpgid(0,0);signal.signal(signal.SIGTTOU,signal.SIG_DFL)
+            for fd in (gate_read,ready_write,slave):os.set_inheritable(fd,True)
+            os.execv(binary,[binary,'--codet-background-close-helper',mode,str(gate_read),str(ready_write),str(slave)])
+        except BaseException as error:
+            os.write(2,('background helper exec failed: '+str(error)+'\n').encode())
+            os._exit(127)
+    os.close(gate_read);os.close(ready_write)
+    startup=bytearray()
+    def token(expected):
+        nonlocal child
+        deadline=time.monotonic()+5
+        while time.monotonic()<deadline:
+            ready=select.select([ready_read,master],[],[],.02)[0]
+            if master in ready:startup.extend(os.read(master,65536))
+            if ready_read in ready:
+                if os.read(ready_read,1)!=expected:
+                    raise RuntimeError('unexpected cleanup token: '+repr(bytes(startup)))
+                return
+            collected,status=os.waitpid(child,os.WNOHANG|os.WUNTRACED)
+            if collected:
+                if not os.WIFSTOPPED(status):child=None
+                raise RuntimeError('background helper stopped/exited before ready: '+str(status)+' '+repr(bytes(startup)))
+        raise TimeoutError('background cleanup gate: '+repr(bytes(startup)))
+    try:
+        foreground_child(slave,child);os.write(gate_write,b'G');token(b'R')
+        while select.select([master],[],[],0)[0]:os.read(master,65536)
+        os.tcsetpgrp(slave,os.getpgrp())
+        foreign=[*before[:6],list(before[6])];foreign[3]&=~termios.ECHO
+        foreign[6][termios.VMIN]=7
+        termios.tcsetattr(slave,termios.TCSANOW,foreign)
+        foreign=termios.tcgetattr(slave)
+        os.write(master,b'typed-ahead\n')
+        os.write(gate_write,b'E')
+        deadline=time.monotonic()+5;status=None;output=b''
+        while time.monotonic()<deadline:
+            collected,value=os.waitpid(child,os.WNOHANG|os.WUNTRACED)
+            if collected:status=value;break
+            if select.select([master],[],[],.02)[0]:output+=os.read(master,65536)
+        if status is None:raise TimeoutError('background close did not exit')
+        if os.WIFSTOPPED(status):raise RuntimeError('background cleanup stopped')
+        child=None
+        while select.select([master],[],[],0)[0]:output+=os.read(master,65536)
+        after=termios.tcgetattr(slave)
+        pending=getattr(termios,'PENDIN',0);foreign[3]&=~pending;after[3]&=~pending
+        queued=os.read(slave,1024) if select.select([slave],[],[],1)[0] else b''
+        print(json.dumps(dict(exit=os.waitstatus_to_exitcode(status),foreground_unchanged=after==foreign,
+            queued_preserved=queued==b'typed-ahead\n',cleanup_bytes=output.decode(errors='backslashreplace'))))
+    finally:
+        if child is not None:os.kill(child,signal.SIGKILL);os.waitpid(child,0)
+        os.tcsetpgrp(slave,os.getpgrp());termios.tcsetattr(slave,termios.TCSANOW,before)
+        for fd in (master,slave,gate_write,ready_read):os.close(fd)
+    return 0
+
+
 def main():
-    if len(sys.argv) != 3 or sys.argv[1] not in ("unknown-term", "background-term", "background-config", "background-partial", "active-job-control"):
+    if len(sys.argv) != 3 or sys.argv[1] not in ("unknown-term", "background-term", "background-config", "background-partial", "active-job-control", "close-line", "close-curses", "close-detach-failure", "close-partial", "close-query-failure"):
         print("terminal helper expects MODE CODET", file=sys.stderr)
         return 2
     mode, binary = sys.argv[1:]
     if mode == "active-job-control":return active_job_control(binary)
+    if mode.startswith("close-"):return background_close(binary,mode.removeprefix("close-"))
     master, slave = pty.openpty()
     os.setsid()
     fcntl.ioctl(slave, termios.TIOCSCTTY, 0)

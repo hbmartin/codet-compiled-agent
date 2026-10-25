@@ -266,10 +266,8 @@ class CliTests(unittest.TestCase):
         value=self.terminal_startup('background-term')
         self.assertEqual(value['exit'],1,value)
         self.assertIn('codet: Cannot initialize terminal',value['output'])
-    def test_background_partial_acquisition_restores_changed_modes(self):
-        value=self.terminal_startup('background-partial',str(pathlib.Path(BIN).with_name('codet_tests')))
-        self.assertEqual(value['exit'],0,value)
-        self.assertIn('startup exception preserved after restoration',value['output'])
+    def test_background_partial_acquisition_preserves_foreground_owner(self):
+        self.test_background_close_preserves_foreground_modes_and_queued_input(modes=('partial',))
     def test_teardown_stop_interrupts_fixture_delays(self):
         import http.client
         for prompt in ('fixture-wait','fixture-idle-stream'):
@@ -1297,6 +1295,22 @@ class CliTests(unittest.TestCase):
             capture_output=True,env=self.env,timeout=15)
         self.assertEqual(exported.returncode,0,exported.stderr)
         self.assertIn(DISPLAY_CONTROLS.encode()+b'\n\n',exported.stdout)
+        master,slave=pty.openpty()
+        process=subprocess.Popen([BIN,'-C',str(self.workspace),'export',sessions[0]['id']],
+            stdin=subprocess.DEVNULL,stdout=slave,stderr=subprocess.PIPE,env=self.env)
+        received=b''
+        try:
+            deadline=time.monotonic()+7
+            while process.poll() is None and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
+            while select.select([master],[],[],0)[0]:received+=os.read(master,65536)
+            self.assertIsNotNone(process.poll(),received)
+            self.assertEqual(process.returncode,0,process.stderr.read())
+            self.assertIn(DISPLAY_ESCAPED.encode(),received)
+            self.assertNotIn(b'unsafe:\x1b',received)
+        finally:
+            if process.poll() is None:process.kill();process.wait(timeout=5)
+            process.stderr.close();os.close(master);os.close(slave)
         result=self.run_cli('exec','-c','providers.openai.wire_api="responses"','fixture-display-controls')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn(DISPLAY_ESCAPED,result.stderr);self.assertNotIn('\x1b',result.stderr)
@@ -1314,7 +1328,8 @@ class CliTests(unittest.TestCase):
             while process.poll() is None and time.monotonic()<deadline:
                 if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
             while select.select([master],[],[],0)[0]:received+=os.read(master,65536)
-            self.assertEqual(process.poll(),0,process.stderr.read())
+            self.assertIsNotNone(process.poll(),received)
+            self.assertEqual(process.returncode,0,process.stderr.read())
             self.assertIn(DISPLAY_ESCAPED.encode(),received)
             self.assertNotIn(b'unsafe:\x1b',received)
         finally:
@@ -1640,6 +1655,42 @@ class CliTests(unittest.TestCase):
         users=[m['content'] for m in prompt if m['role']=='user']
         self.assertTrue(any('retain positional context' in m and 'retain piped context' in m for m in users))
         self.assertTrue(any('Explicit memory consolidation:' in m for m in users))
+
+    def test_background_close_preserves_foreground_modes_and_queued_input(self,modes=('line','curses','detach-failure','query-failure')):
+        helper=pathlib.Path(__file__).with_name('terminal_cli_helper.py')
+        binary=str(pathlib.Path(BIN).with_name('codet_tests'))
+        for mode in modes:
+            with self.subTest(mode=mode):
+                result=subprocess.run([sys.executable,str(helper),'close-'+mode,binary],capture_output=True,text=True,timeout=10)
+                self.assertEqual(result.returncode,0,result.stderr)
+                value=json.loads(result.stdout)
+                self.assertEqual(value['exit'],0,value)
+                self.assertTrue(value['foreground_unchanged'],value)
+                self.assertTrue(value['queued_preserved'],value)
+                self.assertEqual(value['cleanup_bytes'],'',value)
+
+    def test_full_blocking_stdout_honors_signals_without_draining(self):
+        import fcntl
+        for sig in (signal.SIGINT,signal.SIGTERM):
+            with self.subTest(signal=sig):
+                read,write=os.pipe()
+                flags=fcntl.fcntl(write,fcntl.F_GETFL)
+                fcntl.fcntl(write,fcntl.F_SETFL,flags|os.O_NONBLOCK)
+                try:
+                    while True:os.write(write,b'x'*4096)
+                except BlockingIOError:pass
+                fcntl.fcntl(write,fcntl.F_SETFL,flags)
+                process=subprocess.Popen([BIN,'--help'],stdout=write,stderr=subprocess.PIPE,env=self.env)
+                try:
+                    # A full pipe is the gate: no required output can complete before the signal.
+                    with self.assertRaises(subprocess.TimeoutExpired):process.wait(timeout=.15)
+                    process.send_signal(sig)
+                    self.assertEqual(process.wait(timeout=5),130)
+                    self.assertIn(b'Interrupted',process.stderr.read())
+                    self.assertEqual(fcntl.fcntl(write,fcntl.F_GETFL)&os.O_NONBLOCK,0)
+                finally:
+                    if process.poll() is None:process.kill();process.wait(timeout=5)
+                    process.stderr.close();os.close(read);os.close(write)
 
     def test_interrupt_has_exit_130_and_terminal_event(self):
         for sig in (signal.SIGINT, signal.SIGTERM):

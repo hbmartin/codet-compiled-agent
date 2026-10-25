@@ -14,6 +14,8 @@ class TerminalResourceOps {
 public:
   virtual ~TerminalResourceOps() = default;
   virtual bool capture(termios &) noexcept = 0;
+  virtual void begin_cleanup() noexcept {}
+  virtual void end_cleanup() noexcept {}
   virtual void restore(const termios &) noexcept = 0;
   virtual void restore_active(const termios &settings) noexcept {
     restore(settings);
@@ -98,6 +100,8 @@ public:
   void close() noexcept {
     if (std::exchange(closed_, true))
       return;
+    if (attempted_)
+      ops_.begin_cleanup();
     if (std::exchange(screen_, false))
       ops_.stop_screen();
     if (auto *held = std::exchange(editor_, nullptr))
@@ -106,6 +110,7 @@ public:
       ops_.stop_history(held);
     if (std::exchange(saved_, false))
       ops_.restore(original_);
+    ops_.end_cleanup();
   }
   ~TerminalResources() {
     close();

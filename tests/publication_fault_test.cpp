@@ -3,6 +3,7 @@
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
+#include "codet/detail/cli_output.hpp"
 #include "codet/detail/terminal_resources.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/prompt.hpp"
@@ -206,6 +207,68 @@ extern "C" int sqlite3_step(sqlite3_stmt *statement) {
   return result;
 }
 namespace {
+TEST(FileDiagnosticsFault, RedirectedAnswersBorrowTheirBytesWithoutAllocation) {
+  const std::string answer(1024 * 1024, 'x');
+  struct Probe {
+    const void *first = nullptr;
+    size_t bytes = 0;
+    static ssize_t write(void *context, int, const void *data, size_t size) {
+      auto &self = *static_cast<Probe *>(context);
+      if (!self.first)
+        self.first = data;
+      self.bytes += size;
+      return static_cast<ssize_t>(size);
+    }
+  } probe;
+  detail::CliOutput output(detail::DescriptorOutput(123, Probe::write, &probe));
+  fault::fired = false;
+  fault::countdown = 0;
+  std::exception_ptr failure;
+  try {
+    output.answer(answer, false);
+  } catch (...) {
+    failure = std::current_exception();
+  }
+  const bool allocated = fault::fired;
+  fault::disable();
+  EXPECT_FALSE(failure);
+  EXPECT_FALSE(allocated);
+  EXPECT_EQ(probe.first, answer.data());
+  EXPECT_EQ(probe.bytes, answer.size() + 1);
+}
+TEST(FileDiagnosticsFault, ExhaustedDiagnosticBudgetsDoNotAllocateForDiscardedInput) {
+  DiagnosticBuffer buffer(DiagnosticBuffer::notice().size() + 3);
+  ASSERT_TRUE(buffer.add("a"));
+  const std::string large(1024 * 1024, '\x1b');
+  fault::fired = false;
+  fault::countdown = 0;
+  const auto accepted = buffer.add(large);
+  const bool allocated = fault::fired;
+  fault::disable();
+  EXPECT_FALSE(accepted);
+  EXPECT_FALSE(allocated);
+  EXPECT_TRUE(buffer.omitted());
+}
+TEST(FileDiagnosticsFault, SmallBudgetsBoundEscapingAllocationsAndRenderedCallbacksDoNotCopy) {
+  const std::string large(1024 * 1024, '\x1b');
+  DiagnosticBuffer buffer(256);
+  fault::largest_allocation = 0;
+  fault::measure_allocations = true;
+  const auto accepted = buffer.add(large);
+  fault::measure_allocations = false;
+  EXPECT_TRUE(accepted);
+  EXPECT_LE(fault::largest_allocation, 512u);
+  const std::string rendered(65536, 'x');
+  const char *received = nullptr;
+  const DiagnosticSink sink = [&](const auto &text) { received = text.data(); };
+  fault::fired = false;
+  fault::countdown = 0;
+  detail::report_rendered_diagnostic(sink, {rendered});
+  const bool allocated = fault::fired;
+  fault::disable();
+  EXPECT_FALSE(allocated);
+  EXPECT_EQ(received, rendered.data());
+}
 TEST(FileDiagnosticsFault, OwnershipTransferAndEmergencyFlushDoNotAllocate) {
   FileDiagnosticQueue queue;
   auto notice = std::make_unique<FileNotice>(std::string(4096, 'p'), FileNoticeKind::tool_result);

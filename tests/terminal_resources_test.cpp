@@ -234,4 +234,25 @@ TEST(TerminalResources, StartupExceptionsRestoreRealPtyModesBeforeReporting) {
           << phase;
   }
 }
+TEST(TerminalResources, EveryPartialPrivateStreamAcquisitionReleasesItsDescriptors) {
+  int master = -1, slave = -1;
+  ASSERT_EQ(::openpty(&master, &slave, nullptr, nullptr, nullptr), 0);
+  struct Close {
+    int master, slave;
+    ~Close() {
+      ::close(master);
+      ::close(slave);
+    }
+  } close{master, slave};
+  for (int allowance = 0; allowance != 4; ++allowance) {
+    const auto child = test::start_helper(
+        {"--codet-private-stream-failure-helper", std::to_string(allowance), std::to_string(slave)},
+        {master});
+    ASSERT_GT(child, 0);
+    int status = 0;
+    ASSERT_TRUE(test::wait_helper(child, status));
+    ASSERT_TRUE(WIFEXITED(status));
+    EXPECT_EQ(WEXITSTATUS(status), 0) << allowance;
+  }
+}
 } // namespace

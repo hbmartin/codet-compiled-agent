@@ -1,6 +1,7 @@
 #include "codet/detail/cli_diagnostics.hpp"
 #include "process_helper.hpp"
 #include "temp.hpp"
+#include <fcntl.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest-spi.h>
 #include <gtest/gtest.h>
@@ -87,6 +88,42 @@ TEST(DiagnosticWriter, ReplacedDestinationsAndNewInvocationsDiscardStaleSeparato
   EXPECT_TRUE(detail::write_diagnostic(std::cerr, {"new invocation"}));
   EXPECT_EQ(failed.str(), "new invocation\n");
 }
+TEST(DiagnosticWriter, EmergencyDescriptorStateCannotLeakIntoACapturedStreamOrReboundFd) {
+  int descriptors[2];
+  ASSERT_EQ(::pipe(descriptors), 0);
+  const int saved = ::dup(STDERR_FILENO);
+  ASSERT_GE(saved, 0);
+  std::ostringstream captured;
+  struct Restore {
+    int saved, read, write;
+    std::streambuf *buffer;
+    ~Restore() {
+      (void)::dup2(saved, STDERR_FILENO);
+      ::close(saved);
+      ::close(read);
+      ::close(write);
+      std::cerr.rdbuf(buffer);
+      detail::recover_diagnostic_stream(std::cerr);
+      detail::reset_standard_diagnostics();
+    }
+  } restore{saved, descriptors[0], descriptors[1], std::cerr.rdbuf(captured.rdbuf())};
+  ASSERT_EQ(::fcntl(descriptors[1], F_SETFL, O_NONBLOCK), 0);
+  char bytes[4096]{};
+  while (::write(descriptors[1], bytes, sizeof(bytes)) > 0) {
+  }
+  ASSERT_EQ(errno, EAGAIN);
+  ASSERT_EQ(::dup2(descriptors[1], STDERR_FILENO), STDERR_FILENO);
+  FileNotice notice("/complete/path", FileNoticeKind::tool_result);
+  notice.confirmed = true;
+  emergency_file_diagnostic(notice);
+  EXPECT_TRUE(detail::write_diagnostic(std::cerr, {"captured"}));
+  EXPECT_EQ(captured.str(), "captured\n");
+  ASSERT_EQ(::dup2(saved, STDERR_FILENO), STDERR_FILENO);
+  testing::internal::CaptureStderr();
+  emergency_file_diagnostic(notice);
+  const auto delivered = testing::internal::GetCapturedStderr();
+  EXPECT_EQ(delivered, "Uncommitted tool result preserved at /complete/path\n");
+}
 TEST(DiagnosticWriter, HumanTextEscapesControlsWithoutChangingRawJsonSanitization) {
   const std::string text =
       std::string("raw\0\r\x1b]0;title\a\x7f", 16) + "\xc2\x9b\xe2\x80\xae\xe2\x80\xa8\xff";
@@ -110,6 +147,28 @@ TEST(DiagnosticWriter, DiagnosticBudgetsAccountForEscapedHumanText) {
   std::string received;
   report_diagnostic([&](const auto &text) { received = text; }, "hook\x1b\r\xff");
   EXPECT_EQ(received, "hook\\x1B\\x0D\\xFF");
+}
+TEST(DiagnosticWriter, BoundedRenderingKeepsWholeEscapesAndNormalizesOnlyHumanCrLf) {
+  const std::string raw = "A\x1b\xe9\x9b\xaa\r\nB\rC\\x1B\xff";
+  const std::vector<std::string> tokens{"A",     "\\x1B", "\xe9\x9b\xaa", "\n",   "B",
+                                        "\\x0D", "C",     "\\x1B",        "\\xFF"};
+  std::string full;
+  for (const auto &token : tokens)
+    full += token;
+  EXPECT_EQ(detail::terminal_text(raw), full);
+  EXPECT_EQ(safe_text("a\r\nb\r"), "a\r\nb\r");
+  for (size_t limit = 0; limit <= full.size() + 1; ++limit) {
+    std::string expected;
+    for (const auto &token : tokens) {
+      if (token.size() > limit - expected.size())
+        break;
+      expected += token;
+    }
+    const auto rendered = detail::render_terminal_text(raw, limit);
+    EXPECT_EQ(rendered.text, expected) << limit;
+    EXPECT_EQ(rendered.truncated, expected != full) << limit;
+    EXPECT_EQ(full.substr(0, detail::rendered_prefix(full, limit)), expected) << limit;
+  }
 }
 TEST(DiagnosticWriter, HumanTextPreservesPrintableAsciiAndEscapesMalformedPrefixesByteForByte) {
   const auto escaped = [](const std::string &text) {

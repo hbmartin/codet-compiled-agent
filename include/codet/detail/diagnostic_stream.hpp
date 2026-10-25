@@ -6,6 +6,20 @@
 #include <string_view>
 
 namespace codet::detail {
+// Internal trust boundary: the referenced text has already been rendered for humans.
+struct RenderedTextView {
+  const std::string &text;
+};
+struct RenderedText {
+  std::string text;
+  bool truncated = false;
+};
+struct RenderProgress {
+  size_t consumed = 0, written = 0;
+};
+RenderProgress terminal_text_into(std::string_view, char *, size_t) noexcept;
+RenderedText render_terminal_text(std::string_view, size_t);
+size_t rendered_prefix(std::string_view, size_t) noexcept;
 struct DiagnosticState {
   std::streambuf *buffer = nullptr;
   bool pending = false;
@@ -21,7 +35,7 @@ struct DiagnosticState {
 class DiagnosticWriter {
   std::ostream &output_;
   DiagnosticState local_;
-  DiagnosticState &state_;
+  DiagnosticState *state_;
   FILE *file_;
 
 public:
