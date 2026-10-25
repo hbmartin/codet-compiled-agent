@@ -4,6 +4,7 @@
 #include <curses.h>
 #include <dlfcn.h>
 #include <termios.h>
+#include <unistd.h>
 namespace codet::test {
 NativeTerminalMetrics native_terminal_metrics;
 }
@@ -32,7 +33,20 @@ extern "C" int tcsetattr(int fd, int action, const termios *settings)
 {
   using Set = int (*)(int, int, const termios *);
   static const auto original = reinterpret_cast<Set>(codet::test::native_symbol("tcsetattr"));
-  if (codet::test::native_terminal_metrics.observe)
+  if (codet::test::native_terminal_metrics.observe) {
     ++codet::test::native_terminal_metrics.settings;
+    if (::isatty(fd))
+      ++codet::test::native_terminal_metrics.live_settings;
+  }
   return original(fd, action, settings);
+}
+extern "C" int dup2(int from, int to) {
+  using Duplicate = int (*)(int, int);
+  static const auto original = reinterpret_cast<Duplicate>(codet::test::native_symbol("dup2"));
+  if (codet::test::native_terminal_metrics.observe &&
+      codet::test::native_terminal_metrics.detach_failure) {
+    errno = EBADF;
+    return -1;
+  }
+  return original(from, to);
 }

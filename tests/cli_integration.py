@@ -266,10 +266,8 @@ class CliTests(unittest.TestCase):
         value=self.terminal_startup('background-term')
         self.assertEqual(value['exit'],1,value)
         self.assertIn('codet: Cannot initialize terminal',value['output'])
-    def test_background_partial_acquisition_restores_changed_modes(self):
-        value=self.terminal_startup('background-partial',str(pathlib.Path(BIN).with_name('codet_tests')))
-        self.assertEqual(value['exit'],0,value)
-        self.assertIn('startup exception preserved after restoration',value['output'])
+    def test_background_partial_acquisition_preserves_foreground_owner(self):
+        self.test_background_close_preserves_foreground_modes_and_queued_input(modes=('partial',))
     def test_teardown_stop_interrupts_fixture_delays(self):
         import http.client
         for prompt in ('fixture-wait','fixture-idle-stream'):
@@ -1640,6 +1638,19 @@ class CliTests(unittest.TestCase):
         users=[m['content'] for m in prompt if m['role']=='user']
         self.assertTrue(any('retain positional context' in m and 'retain piped context' in m for m in users))
         self.assertTrue(any('Explicit memory consolidation:' in m for m in users))
+
+    def test_background_close_preserves_foreground_modes_and_queued_input(self,modes=('line','curses','detach-failure')):
+        helper=pathlib.Path(__file__).with_name('terminal_cli_helper.py')
+        binary=str(pathlib.Path(BIN).with_name('codet_tests'))
+        for mode in modes:
+            with self.subTest(mode=mode):
+                result=subprocess.run([sys.executable,str(helper),'close-'+mode,binary],capture_output=True,text=True,timeout=10)
+                self.assertEqual(result.returncode,0,result.stderr)
+                value=json.loads(result.stdout)
+                self.assertEqual(value['exit'],0,value)
+                self.assertTrue(value['foreground_unchanged'],value)
+                self.assertTrue(value['queued_preserved'],value)
+                self.assertEqual(value['cleanup_bytes'],'',value)
 
     def test_full_blocking_stdout_honors_signals_without_draining(self):
         import fcntl
