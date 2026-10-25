@@ -40,7 +40,11 @@ extern "C" int tcsetattr(int fd, int action, const termios *settings)
   }
   return original(fd, action, settings);
 }
-extern "C" int dup2(int from, int to) {
+extern "C" int dup2(int from, int to)
+#ifdef __linux__
+    noexcept
+#endif
+{
   using Duplicate = int (*)(int, int);
   static const auto original = reinterpret_cast<Duplicate>(codet::test::native_symbol("dup2"));
   if (codet::test::native_terminal_metrics.observe &&
@@ -49,4 +53,19 @@ extern "C" int dup2(int from, int to) {
     return -1;
   }
   return original(from, to);
+}
+extern "C" pid_t tcgetpgrp(int fd)
+#ifdef __linux__
+    noexcept
+#endif
+{
+  using Foreground = pid_t (*)(int);
+  static const auto original =
+      reinterpret_cast<Foreground>(codet::test::native_symbol("tcgetpgrp"));
+  if (codet::test::native_terminal_metrics.observe &&
+      codet::test::native_terminal_metrics.query_failure) {
+    errno = EIO;
+    return -1;
+  }
+  return original(fd);
 }

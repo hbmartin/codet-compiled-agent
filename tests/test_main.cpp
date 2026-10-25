@@ -67,6 +67,9 @@ int main(int argc, char **argv) {
       if (argc != 6)
         return 2;
       const std::string mode(argv[2]);
+      if (mode != "line" && mode != "curses" && mode != "partial" && mode != "detach-failure" &&
+          mode != "query-failure")
+        return 2;
       const int gate = std::stoi(argv[3]), notify = std::stoi(argv[4]);
       const int terminal = std::stoi(argv[5]);
       for (int target = 0; target != 3; ++target)
@@ -105,6 +108,7 @@ int main(int argc, char **argv) {
           return 5;
         metrics.observe = true;
         metrics.detach_failure = mode == "detach-failure";
+        metrics.query_failure = mode == "query-failure";
         if (mode == "partial")
           std::rethrow_exception(failure);
         resources.close();

@@ -219,6 +219,26 @@ TEST(FileDiagnosticsFault, ExhaustedDiagnosticBudgetsDoNotAllocateForDiscardedIn
   EXPECT_FALSE(allocated);
   EXPECT_TRUE(buffer.omitted());
 }
+TEST(FileDiagnosticsFault, SmallBudgetsBoundEscapingAllocationsAndRenderedCallbacksDoNotCopy) {
+  const std::string large(1024 * 1024, '\x1b');
+  DiagnosticBuffer buffer(256);
+  fault::largest_allocation = 0;
+  fault::measure_allocations = true;
+  const auto accepted = buffer.add(large);
+  fault::measure_allocations = false;
+  EXPECT_TRUE(accepted);
+  EXPECT_LE(fault::largest_allocation, 512u);
+  const std::string rendered(65536, 'x');
+  const char *received = nullptr;
+  const DiagnosticSink sink = [&](const auto &text) { received = text.data(); };
+  fault::fired = false;
+  fault::countdown = 0;
+  detail::report_rendered_diagnostic(sink, {rendered});
+  const bool allocated = fault::fired;
+  fault::disable();
+  EXPECT_FALSE(allocated);
+  EXPECT_EQ(received, rendered.data());
+}
 TEST(FileDiagnosticsFault, OwnershipTransferAndEmergencyFlushDoNotAllocate) {
   FileDiagnosticQueue queue;
   auto notice = std::make_unique<FileNotice>(std::string(4096, 'p'), FileNoticeKind::tool_result);

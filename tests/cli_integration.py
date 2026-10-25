@@ -1656,7 +1656,7 @@ class CliTests(unittest.TestCase):
         self.assertTrue(any('retain positional context' in m and 'retain piped context' in m for m in users))
         self.assertTrue(any('Explicit memory consolidation:' in m for m in users))
 
-    def test_background_close_preserves_foreground_modes_and_queued_input(self,modes=('line','curses','detach-failure')):
+    def test_background_close_preserves_foreground_modes_and_queued_input(self,modes=('line','curses','detach-failure','query-failure')):
         helper=pathlib.Path(__file__).with_name('terminal_cli_helper.py')
         binary=str(pathlib.Path(BIN).with_name('codet_tests'))
         for mode in modes:
