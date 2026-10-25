@@ -140,7 +140,7 @@ int main(int argc, char **argv) {
         return 2;
       const std::string mode(argv[2]);
       if (mode != "line" && mode != "curses" && mode != "partial" && mode != "detach-failure" &&
-          mode != "query-failure")
+          mode != "query-failure" && mode != "detach-failure-curses")
         return 2;
       const int gate = std::stoi(argv[3]), notify = std::stoi(argv[4]);
       const int terminal = std::stoi(argv[5]);
@@ -166,7 +166,7 @@ int main(int argc, char **argv) {
       try {
         codet::detail::NativeTerminalResourceOps ops;
         codet::detail::TerminalResources resources(ops);
-        if (mode == "curses") {
+        if (mode == "curses" || mode == "detach-failure-curses") {
           resources.start_screen();
           (void)::cbreak();
           (void)::noecho();
@@ -180,8 +180,8 @@ int main(int argc, char **argv) {
         (void)::write(notify, "R", 1);
         if (!codet::test::read_token(gate, token))
           return 5;
-        if (mode == "detach-failure") {
-          if (metrics.stream_count != 3)
+        if (mode.rfind("detach-failure", 0) == 0) {
+          if (metrics.stream_count != (mode == "detach-failure-curses" ? 2u : 3u))
             return 11;
           // Retain test backing storage through normal process exit, just like the bundle.
           auto *buffer = new char[4096];
@@ -191,20 +191,21 @@ int main(int argc, char **argv) {
                            metrics.streams[1]);
         }
         metrics.observe = true;
-        metrics.detach_failure = mode == "detach-failure";
+        metrics.detach_failure = mode.rfind("detach-failure", 0) == 0;
         metrics.query_failure = mode == "query-failure";
-        if (mode == "partial" || mode == "detach-failure")
+        if (mode == "partial" || mode.rfind("detach-failure", 0) == 0)
           std::rethrow_exception(failure);
         resources.close();
         resources.close();
       } catch (...) {
-        if ((mode != "partial" && mode != "detach-failure") || std::current_exception() != failure)
+        if ((mode != "partial" && mode.rfind("detach-failure", 0) != 0) ||
+            std::current_exception() != failure)
           throw;
       }
       metrics.observe = false;
       if (metrics.live_settings)
         return 6;
-      if (mode == "detach-failure") {
+      if (mode.rfind("detach-failure", 0) == 0) {
         // A failed detach quarantines FILE-owned descriptors: none can be reused or double-closed.
         const int unrelated = ::open("/dev/null", O_RDWR);
         if (unrelated < 0 || descriptors() <= before)
@@ -221,6 +222,8 @@ int main(int argc, char **argv) {
         ::close(unrelated);
       } else if (descriptors() != before)
         return 6;
+      if (mode == "detach-failure-curses" && (metrics.ends || metrics.deletes))
+        return 13;
       if (mode == "curses" &&
           (metrics.ends != 1 || metrics.deletes != 1 || !metrics.ended_before_delete))
         return 7;

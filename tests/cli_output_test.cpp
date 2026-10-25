@@ -1,4 +1,5 @@
 #include "codet/detail/cli_output.hpp"
+#include "native_io_metrics.hpp"
 #include "process_helper.hpp"
 #include <future>
 #include <gtest/gtest.h>
@@ -455,5 +456,32 @@ TEST(CliOutput, SocketReadinessRacesAndPeerClosureRetainDeliveryStatus) {
   EXPECT_EQ(native.result({"closed"}, false, detail::OutputMode::required),
             detail::OutputResult::failure);
   ::close(pair[0]);
+}
+TEST(CliOutput, InterruptedSocketSendsAndReadinessRacesAdvanceOnlyDeliveredBytes) {
+  int pair[2];
+  ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
+  struct Close {
+    int *fds;
+    ~Close() {
+      ::close(fds[0]);
+      ::close(fds[1]);
+    }
+  } close{pair};
+  Cancellation cancel;
+  detail::DescriptorOutput output(pair[0], cancel);
+  auto &metrics = test::native_io_metrics;
+  metrics = {true, 2, 3, 0, 0, 2};
+  struct Reset {
+    ~Reset() {
+      test::native_io_metrics = {};
+    }
+  } reset;
+  EXPECT_EQ(output.result({"abc", "def", "g"}, true, detail::OutputMode::required),
+            detail::OutputResult::success);
+  EXPECT_EQ(metrics.waits, 3u);
+  EXPECT_EQ(metrics.sends, 11u);
+  char bytes[16]{};
+  ASSERT_EQ(::read(pair[1], bytes, sizeof(bytes)), 8);
+  EXPECT_EQ(std::string(bytes, 8), "abcdefg\n");
 }
 } // namespace

@@ -29,7 +29,7 @@ public:
   explicit CliOutput(const Cancellation &cancel) noexcept
       : writer_(std::cout), descriptor_(STDOUT_FILENO, cancel), native_required_(true) {}
   explicit CliOutput(IoContext &io) noexcept
-      : writer_(std::cout, &io), descriptor_(STDOUT_FILENO, &*io.cancel), native_required_(true) {}
+      : writer_(std::cout, &io), descriptor_(STDOUT_FILENO, io.cancel), native_required_(true) {}
   explicit CliOutput(std::ostream &stream) noexcept : writer_(stream), native_required_(false) {}
   explicit CliOutput(DescriptorOutput descriptor) noexcept
       : writer_(std::cout), descriptor_(descriptor), native_required_(true) {}
