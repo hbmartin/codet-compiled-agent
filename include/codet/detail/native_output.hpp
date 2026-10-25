@@ -10,8 +10,8 @@
 #include <sys/uio.h>
 #include <unistd.h>
 namespace codet::detail {
-enum class OutputMode { required, diagnostic, immediate };
-enum class OutputResult { success, cancelled, failure };
+enum class OutputMode : uint8_t { required, diagnostic, immediate };
+enum class OutputResult : uint8_t { success, cancelled, failure };
 // Owned by one invocation and borrowed by output/diagnostic controllers, including final catches.
 struct IoContext {
   const Cancellation *cancel = nullptr;

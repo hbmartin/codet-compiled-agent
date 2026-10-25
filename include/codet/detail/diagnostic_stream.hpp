@@ -20,7 +20,7 @@ struct RenderedText {
 struct RenderProgress {
   size_t consumed = 0, written = 0;
 };
-enum class RenderMode { prose, literal };
+enum class RenderMode : uint8_t { prose, literal };
 RenderProgress terminal_text_into(std::string_view, char *, size_t,
                                   RenderMode = RenderMode::prose) noexcept;
 RenderedText render_terminal_text(std::string_view, size_t, RenderMode = RenderMode::prose);

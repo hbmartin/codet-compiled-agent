@@ -145,8 +145,11 @@ int main(int argc, char **argv) {
     ::close(sink);
   }
   const bool large = mode.find("large") != std::string::npos;
+  const bool amplified = mode.find("amplified") != std::string::npos;
+  const bool diagnostic = mode.rfind("diagnostics", 0) == 0;
   const bool output = mode.rfind("jsonl-", 0) == 0 || (piped && !editor);
-  const size_t repetitions = output                     ? (large ? 2000 : 20000)
+  const size_t repetitions = amplified                  ? 200000
+                             : output                   ? (large ? 2000 : 20000)
                              : editor                   ? 20000
                              : mode == "budget-partial" ? 32
                                                         : 128;
@@ -174,7 +177,7 @@ int main(int argc, char **argv) {
   Cancellation cancel;
   auto stdout_output = production_output<detail::CliOutput>(cancel);
   detail::CliOutput uncancelled_output;
-  if (mode == "diagnostics" && ::dup2(STDOUT_FILENO, STDERR_FILENO) < 0)
+  if (diagnostic && ::dup2(STDOUT_FILENO, STDERR_FILENO) < 0)
     return 3;
   detail::DiagnosticWriter diagnostics(std::cerr);
   TempDirectory temporary;
@@ -211,7 +214,7 @@ int main(int argc, char **argv) {
         uncancelled_output.required({record});
       else if (output)
         stdout_output.required({record});
-      else if (mode == "diagnostics")
+      else if (diagnostic)
         observed += diagnostics.write({"ordinary diagnostic"});
       else if (mode == "stat-positive") {
         struct stat status {};
@@ -248,7 +251,7 @@ int main(int argc, char **argv) {
                   {"allocations", measured_allocations},
                   {"allocated_bytes", measured_bytes},
                   {"writes", calls},
-                  {"direct_native_write_counter", !editor && mode != "diagnostics"},
+                  {"direct_native_write_counter", !editor && !diagnostic},
                   {"bytes", delivered},
                   {"readiness", readiness},
                   {"fstat", stats.load()},
