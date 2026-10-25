@@ -69,8 +69,12 @@ class NativeTerminalResourceOps final : public TerminalResourceOps {
       const auto descriptor = ::dup(i);
       if (descriptor < 0)
         throw Error("Cannot duplicate terminal stream");
-      if (::fcntl(descriptor, F_SETFD, FD_CLOEXEC) < 0 ||
-          !(streams_[i] = ::fdopen(descriptor, i == 0 ? "r" : "w"))) {
+      if (::fcntl(descriptor, F_SETFD, FD_CLOEXEC) < 0) {
+        ::close(descriptor);
+        throw Error("Cannot prepare private terminal descriptor");
+      }
+      streams_[i] = ::fdopen(descriptor, i == 0 ? "r" : "w");
+      if (!streams_[i]) {
         ::close(descriptor);
         throw Error("Cannot open private terminal stream");
       }

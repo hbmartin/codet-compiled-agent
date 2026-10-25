@@ -63,6 +63,53 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc > 1 && std::string(argv[1]) == "--codet-private-stream-failure-helper") {
+      if (argc != 4)
+        return 2;
+      const int allowance = std::stoi(argv[2]), terminal = std::stoi(argv[3]);
+      if (allowance < 0 || allowance > 3)
+        return 2;
+      for (int target = 0; target != 3; ++target)
+        if (::dup2(terminal, target) < 0)
+          return 3;
+      if (terminal > 2)
+        ::close(terminal);
+      int highest = 2, before = 0;
+      for (int fd = 0; fd != 512; ++fd)
+        if (::fcntl(fd, F_GETFD) >= 0) {
+          highest = fd;
+          ++before;
+        }
+      rlimit original{};
+      if (::getrlimit(RLIMIT_NOFILE, &original))
+        return 4;
+      auto limited = original;
+      limited.rlim_cur = static_cast<rlim_t>(highest + 1 + allowance);
+      if (::setrlimit(RLIMIT_NOFILE, &limited))
+        return 4;
+      struct RestoreLimit {
+        rlimit original;
+        ~RestoreLimit() {
+          (void)::setrlimit(RLIMIT_NOFILE, &original);
+        }
+      } restore{original};
+      bool failed = false;
+      {
+        codet::detail::NativeTerminalResourceOps ops;
+        codet::detail::TerminalResources resources(ops);
+        try {
+          resources.start_editor();
+        } catch (const codet::Error &) {
+          failed = true;
+        }
+      }
+      if (!failed)
+        return 5;
+      int after = 0;
+      for (int fd = 0; fd != 512; ++fd)
+        after += ::fcntl(fd, F_GETFD) >= 0;
+      return before == after ? 0 : 6;
+    }
     if (argc > 1 && std::string(argv[1]) == "--codet-background-close-helper") {
       if (argc != 6)
         return 2;

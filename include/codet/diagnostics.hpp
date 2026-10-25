@@ -71,7 +71,7 @@ class DiagnosticBuffer {
   size_t payload() const noexcept {
     return limit_ - std::min(limit_, omission.size() + 1);
   }
-  std::optional<std::string> keep(std::string clean, bool truncated) {
+  std::optional<std::string> keep(std::string &&clean, bool truncated) {
     omitted_ |= truncated;
     if (clean.empty()) {
       omitted_ = true;
@@ -79,7 +79,7 @@ class DiagnosticBuffer {
     }
     used_ += clean.size() + 1;
     messages_.push_back(clean);
-    return clean;
+    return std::move(clean);
   }
 
 public:

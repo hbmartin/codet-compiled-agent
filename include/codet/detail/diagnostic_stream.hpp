@@ -12,10 +12,10 @@ struct RenderedTextView {
 };
 struct RenderedText {
   std::string text;
-  bool truncated;
+  bool truncated = false;
 };
 struct RenderProgress {
-  size_t consumed, written;
+  size_t consumed = 0, written = 0;
 };
 RenderProgress terminal_text_into(std::string_view, char *, size_t) noexcept;
 RenderedText render_terminal_text(std::string_view, size_t);
