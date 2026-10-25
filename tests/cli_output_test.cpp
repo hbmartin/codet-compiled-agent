@@ -277,6 +277,32 @@ TEST(CliOutput, FullBlockingPipeObservesCancellationSetByAnotherThread) {
   EXPECT_FALSE(output.failed());
   EXPECT_EQ(::fcntl(close.write, F_GETFL) & O_NONBLOCK, 0);
 }
+TEST(CliOutput, ProviderCancellationCanReportOnceToAReadyPipeWithoutCancellingDelivery) {
+  int descriptors[2];
+  ASSERT_EQ(::pipe(descriptors), 0);
+  struct Close {
+    int read, write;
+    ~Close() {
+      ::close(read);
+      ::close(write);
+    }
+  } close{descriptors[0], descriptors[1]};
+  Cancellation cancel;
+  cancel.requested = true;
+  detail::CliOutput output(detail::DescriptorOutput(close.write, cancel));
+  output.secondary({"turn.failed"});
+  pollfd ready{close.read, POLLIN, 0};
+  ASSERT_EQ(::poll(&ready, 1, 1000), 1);
+  char text[64]{};
+  const auto size = ::read(close.read, text, sizeof(text));
+  ASSERT_GT(size, 0);
+  EXPECT_EQ(std::string(text, static_cast<size_t>(size)), "turn.failed\n");
+  EXPECT_FALSE(output.failed());
+  EXPECT_EQ(output.status(130), 130);
+  EXPECT_THROW(output.required({"not a secondary event"}), Error);
+  output.secondary({"must not retry cancelled delivery"});
+  EXPECT_EQ(::poll(&ready, 1, 0), 0);
+}
 TEST(CliOutput, DescriptorChunksRespectTheDarwinLimitWithoutReadingHugeStorage) {
   const size_t size = static_cast<size_t>(INT_MAX) + 17;
   void *storage = ::mmap(nullptr, size, PROT_READ, MAP_PRIVATE | MAP_ANON, -1, 0);

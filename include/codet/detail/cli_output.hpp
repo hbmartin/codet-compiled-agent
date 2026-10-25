@@ -29,35 +29,35 @@ private:
   static ssize_t native_write(void *, int descriptor, const void *bytes, size_t size) {
     return ::write(descriptor, bytes, size);
   }
-  void check() const {
-    if (cancel_)
+  void check(bool reporting = false) const {
+    if (cancel_ && !reporting)
       cancel_->check();
   }
-  bool ready() const {
+  bool ready(bool reporting) const {
     if (!pipe_)
       return true;
     for (;;) {
-      check();
+      check(reporting);
       pollfd descriptor{descriptor_, POLLOUT, 0};
-      const auto result = ::poll(&descriptor, 1, 100);
+      const auto result = ::poll(&descriptor, 1, reporting ? 0 : 100);
       const auto error = errno;
-      check();
+      check(reporting);
       if (result > 0)
         return (descriptor.revents & POLLNVAL) == 0;
-      if (result < 0 && error != EINTR)
+      if (reporting || (result < 0 && error != EINTR))
         return false;
     }
   }
-  bool bytes(std::string_view part) {
+  bool bytes(std::string_view part, bool reporting) {
     while (!part.empty()) {
-      check();
-      if (!valid_ || !ready())
+      check(reporting);
+      if (!valid_ || !ready(reporting))
         return false;
       const auto size = std::min(part.size(), limit_);
       const auto written = write_(context_, descriptor_, part.data(), size);
       const auto error = errno;
-      check();
-      if (written < 0 && error == EINTR)
+      check(reporting);
+      if (written < 0 && error == EINTR && !reporting)
         continue;
       if (written <= 0)
         return false;
@@ -84,12 +84,14 @@ public:
   }
   DescriptorOutput(int descriptor, const Cancellation &cancel) noexcept
       : DescriptorOutput(descriptor, native_write, nullptr, &cancel) {}
-  bool write(std::initializer_list<std::string_view> parts, bool newline) {
-    check();
+  bool write(std::initializer_list<std::string_view> parts, bool newline, bool secondary = false) {
+    // A provider cancellation can still report its final event to an already-writable sink.
+    const bool reporting = secondary && cancel_ && cancel_->requested.load();
+    check(reporting);
     for (auto part : parts)
-      if (!bytes(part))
+      if (!bytes(part, reporting))
         return false;
-    return !newline || bytes("\n");
+    return !newline || bytes("\n", reporting);
   }
 };
 // Required headless records fail closed; line-mode display may attempt later records.
@@ -126,13 +128,14 @@ public:
       throw;
     }
   }
-  void required(std::initializer_list<std::string_view> parts, bool newline = true) {
+  void required(std::initializer_list<std::string_view> parts, bool newline = true,
+                bool reporting = false) {
     if (cancelled_)
       throw Error("Interrupted", 130);
     if (failed_)
       throw Error("Cannot write standard output");
     try {
-      if (native_required_ ? descriptor_.write(parts, newline)
+      if (native_required_ ? descriptor_.write(parts, newline, reporting)
                            : writer_.write(parts, newline, true))
         return;
     } catch (const Error &error) {
@@ -151,7 +154,7 @@ public:
   void secondary(std::initializer_list<std::string_view> parts) noexcept {
     if (!failed_ && !cancelled_)
       try {
-        required(parts);
+        required(parts, true, true);
       } catch (...) {
         // Reporting a previous operation failure must preserve that failure.
         return;
