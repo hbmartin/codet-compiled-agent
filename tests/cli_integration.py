@@ -1641,6 +1641,29 @@ class CliTests(unittest.TestCase):
         self.assertTrue(any('retain positional context' in m and 'retain piped context' in m for m in users))
         self.assertTrue(any('Explicit memory consolidation:' in m for m in users))
 
+    def test_full_blocking_stdout_honors_signals_without_draining(self):
+        import fcntl
+        for sig in (signal.SIGINT,signal.SIGTERM):
+            with self.subTest(signal=sig):
+                read,write=os.pipe()
+                flags=fcntl.fcntl(write,fcntl.F_GETFL)
+                fcntl.fcntl(write,fcntl.F_SETFL,flags|os.O_NONBLOCK)
+                try:
+                    while True:os.write(write,b'x'*4096)
+                except BlockingIOError:pass
+                fcntl.fcntl(write,fcntl.F_SETFL,flags)
+                process=subprocess.Popen([BIN,'--help'],stdout=write,stderr=subprocess.PIPE,env=self.env)
+                try:
+                    # A full pipe is the gate: no required output can complete before the signal.
+                    with self.assertRaises(subprocess.TimeoutExpired):process.wait(timeout=.15)
+                    process.send_signal(sig)
+                    self.assertEqual(process.wait(timeout=5),130)
+                    self.assertIn(b'Interrupted',process.stderr.read())
+                    self.assertEqual(fcntl.fcntl(write,fcntl.F_GETFL)&os.O_NONBLOCK,0)
+                finally:
+                    if process.poll() is None:process.kill();process.wait(timeout=5)
+                    process.stderr.close();os.close(read);os.close(write)
+
     def test_interrupt_has_exit_130_and_terminal_event(self):
         for sig in (signal.SIGINT, signal.SIGTERM):
             with self.subTest(signal=sig):

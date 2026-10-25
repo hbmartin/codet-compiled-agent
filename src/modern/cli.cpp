@@ -528,7 +528,7 @@ public:
 int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   detail::reset_standard_diagnostics();
   const auto o = parse(args);
-  detail::CliOutput output;
+  detail::CliOutput output(cancel);
   if (o.help) {
     output.required({help}, false);
     return 0;

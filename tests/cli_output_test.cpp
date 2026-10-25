@@ -1,7 +1,9 @@
 #include "codet/detail/cli_output.hpp"
 #include "process_helper.hpp"
+#include <future>
 #include <gtest/gtest.h>
 #include <sstream>
+#include <sys/mman.h>
 using namespace codet;
 namespace {
 struct OutputStream : std::stringbuf {
@@ -181,5 +183,112 @@ TEST(CliOutput, PartialDescriptorRecordDoesNotReplayItsPrefixOrUnwrittenSuffix) 
   }
   EXPECT_EQ(probe.attempts, 2);
   EXPECT_EQ(probe.delivered, "re");
+}
+TEST(CliOutput, CancelledInterruptedAndPartialWritesDoNotBecomeDeliveryFailures) {
+  for (bool interrupted : {false, true}) {
+    struct Probe {
+      Cancellation cancel;
+      bool interrupted;
+      int calls = 0;
+      static ssize_t write(void *context, int, const void *, size_t) {
+        auto &self = *static_cast<Probe *>(context);
+        ++self.calls;
+        self.cancel.requested = true;
+        errno = EINTR;
+        return self.interrupted ? -1 : 1;
+      }
+    } probe;
+    probe.interrupted = interrupted;
+    detail::CliOutput output(detail::DescriptorOutput(123, Probe::write, &probe, &probe.cancel));
+    try {
+      output.required({"required"});
+      FAIL();
+    } catch (const Error &error) {
+      EXPECT_EQ(error.code, 130);
+    }
+    EXPECT_FALSE(output.failed());
+    EXPECT_EQ(output.status(0), 130);
+    EXPECT_EQ(output.status(2), 2);
+    probe.cancel.requested = false;
+    bool built = false;
+    output.secondary_record([&] {
+      built = true;
+      return "secondary";
+    });
+    EXPECT_THROW(output.required({"later"}), Error);
+    EXPECT_FALSE(built);
+    EXPECT_EQ(probe.calls, 1);
+  }
+}
+TEST(CliOutput, FullBlockingPipeObservesCancellationSetByAnotherThread) {
+  int descriptors[2];
+  ASSERT_EQ(::pipe(descriptors), 0);
+  struct Close {
+    int read, write;
+    ~Close() {
+      ::close(read);
+      ::close(write);
+    }
+  } close{descriptors[0], descriptors[1]};
+  const auto flags = ::fcntl(close.write, F_GETFL);
+  ASSERT_GE(flags, 0);
+  ASSERT_EQ(::fcntl(close.write, F_SETFL, flags | O_NONBLOCK), 0);
+  char bytes[4096]{};
+  while (::write(close.write, bytes, sizeof(bytes)) > 0) {
+  }
+  ASSERT_EQ(errno, EAGAIN);
+  ASSERT_EQ(::fcntl(close.write, F_SETFL, flags), 0);
+  Cancellation cancel;
+  detail::CliOutput output(detail::DescriptorOutput(close.write, cancel));
+  std::promise<void> started;
+  auto waiting = std::async(std::launch::async, [&] {
+    started.set_value();
+    try {
+      output.required({"never delivered"});
+      return 0;
+    } catch (const Error &error) {
+      return error.code;
+    }
+  });
+  started.get_future().wait();
+  EXPECT_EQ(waiting.wait_for(std::chrono::milliseconds(150)), std::future_status::timeout);
+  cancel.requested = true;
+  const auto completed = waiting.wait_for(std::chrono::seconds(2));
+  if (completed != std::future_status::ready) {
+    ::close(close.read);
+    close.read = -1;
+  }
+  EXPECT_EQ(completed, std::future_status::ready);
+  EXPECT_EQ(waiting.get(), 130);
+  EXPECT_FALSE(output.failed());
+  EXPECT_EQ(::fcntl(close.write, F_GETFL) & O_NONBLOCK, 0);
+}
+TEST(CliOutput, DescriptorChunksRespectTheDarwinLimitWithoutReadingHugeStorage) {
+  const size_t size = static_cast<size_t>(INT_MAX) + 17;
+  void *storage = ::mmap(nullptr, size, PROT_READ, MAP_PRIVATE | MAP_ANON, -1, 0);
+  if (storage == MAP_FAILED)
+    GTEST_SKIP() << "Cannot reserve the oversized virtual test view";
+  struct Mapping {
+    void *data;
+    size_t size;
+    ~Mapping() {
+      ::munmap(data, size);
+    }
+  } mapping{storage, size};
+  struct Probe {
+    size_t bytes = 0, largest = 0, calls = 0;
+    static ssize_t write(void *context, int, const void *, size_t count) {
+      auto &self = *static_cast<Probe *>(context);
+      self.bytes += count;
+      self.largest = std::max(self.largest, count);
+      ++self.calls;
+      return static_cast<ssize_t>(count);
+    }
+  } probe;
+  EXPECT_TRUE(detail::DescriptorOutput(123, Probe::write, &probe)
+                  .write({std::string_view(static_cast<const char *>(storage), size)}, false));
+  EXPECT_EQ(probe.bytes, size);
+  EXPECT_EQ(probe.largest, static_cast<size_t>(INT_MAX));
+  EXPECT_EQ(probe.calls, 2u);
 }
 } // namespace

@@ -4,9 +4,13 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <climits>
 #include <cstring>
+#include <fcntl.h>
 #include <iostream>
 #include <limits>
+#include <poll.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace codet::detail {
@@ -19,15 +23,41 @@ private:
   int descriptor_;
   void *context_;
   Write write_;
+  const Cancellation *cancel_;
+  size_t limit_ = INT_MAX;
+  bool pipe_ = false, valid_ = true;
   static ssize_t native_write(void *, int descriptor, const void *bytes, size_t size) {
     return ::write(descriptor, bytes, size);
   }
+  void check() const {
+    if (cancel_)
+      cancel_->check();
+  }
+  bool ready() const {
+    if (!pipe_)
+      return true;
+    for (;;) {
+      check();
+      pollfd descriptor{descriptor_, POLLOUT, 0};
+      const auto result = ::poll(&descriptor, 1, 100);
+      const auto error = errno;
+      check();
+      if (result > 0)
+        return (descriptor.revents & POLLNVAL) == 0;
+      if (result < 0 && error != EINTR)
+        return false;
+    }
+  }
   bool bytes(std::string_view part) {
     while (!part.empty()) {
-      const auto size =
-          std::min(part.size(), static_cast<size_t>(std::numeric_limits<ssize_t>::max()));
+      check();
+      if (!valid_ || !ready())
+        return false;
+      const auto size = std::min(part.size(), limit_);
       const auto written = write_(context_, descriptor_, part.data(), size);
-      if (written < 0 && errno == EINTR)
+      const auto error = errno;
+      check();
+      if (written < 0 && error == EINTR)
         continue;
       if (written <= 0)
         return false;
@@ -37,10 +67,25 @@ private:
   }
 
 public:
-  explicit DescriptorOutput(int descriptor, Write write = native_write,
-                            void *context = nullptr) noexcept
-      : descriptor_(descriptor), context_(context), write_(write) {}
+  explicit DescriptorOutput(int descriptor, Write write = native_write, void *context = nullptr,
+                            const Cancellation *cancel = nullptr) noexcept
+      : descriptor_(descriptor), context_(context), write_(write), cancel_(cancel) {
+    if (write_ != native_write)
+      return;
+    struct stat status {};
+    const auto flags = ::fcntl(descriptor_, F_GETFL);
+    valid_ = flags >= 0 && ::fstat(descriptor_, &status) == 0;
+    pipe_ = valid_ && S_ISFIFO(status.st_mode) && !(flags & O_NONBLOCK);
+    if (pipe_) {
+      const auto bound = ::fpathconf(descriptor_, _PC_PIPE_BUF);
+      limit_ = std::min(static_cast<size_t>(INT_MAX),
+                        bound > 0 ? static_cast<size_t>(bound) : size_t{512});
+    }
+  }
+  DescriptorOutput(int descriptor, const Cancellation &cancel) noexcept
+      : DescriptorOutput(descriptor, native_write, nullptr, &cancel) {}
   bool write(std::initializer_list<std::string_view> parts, bool newline) {
+    check();
     for (auto part : parts)
       if (!bytes(part))
         return false;
@@ -53,9 +98,12 @@ class CliOutput {
   DescriptorOutput descriptor_{STDOUT_FILENO};
   bool native_required_;
   bool failed_ = false;
+  bool cancelled_ = false;
 
 public:
   CliOutput() noexcept : writer_(std::cout), native_required_(true) {}
+  explicit CliOutput(const Cancellation &cancel) noexcept
+      : writer_(std::cout), descriptor_(STDOUT_FILENO, cancel), native_required_(true) {}
   explicit CliOutput(std::ostream &stream) noexcept : writer_(stream), native_required_(false) {}
   explicit CliOutput(DescriptorOutput descriptor) noexcept
       : writer_(std::cout), descriptor_(descriptor), native_required_(true) {}
@@ -63,7 +111,7 @@ public:
     return failed_;
   }
   int status(int prior) const noexcept {
-    return prior ? prior : failed_ ? 1 : 0;
+    return prior ? prior : cancelled_ ? 130 : failed_ ? 1 : 0;
   }
   bool display(std::initializer_list<std::string_view> parts, bool newline = true) {
     try {
@@ -79,12 +127,20 @@ public:
     }
   }
   void required(std::initializer_list<std::string_view> parts, bool newline = true) {
+    if (cancelled_)
+      throw Error("Interrupted", 130);
     if (failed_)
       throw Error("Cannot write standard output");
     try {
       if (native_required_ ? descriptor_.write(parts, newline)
                            : writer_.write(parts, newline, true))
         return;
+    } catch (const Error &error) {
+      if (error.code == 130)
+        cancelled_ = true;
+      else
+        failed_ = true;
+      throw;
     } catch (...) {
       failed_ = true;
       throw;
@@ -93,16 +149,16 @@ public:
     throw Error("Cannot write standard output");
   }
   void secondary(std::initializer_list<std::string_view> parts) noexcept {
-    if (!failed_)
+    if (!failed_ && !cancelled_)
       try {
         required(parts);
       } catch (...) {
         // Reporting a previous operation failure must preserve that failure.
-        failed_ = true;
+        return;
       }
   }
   template <class Build> void secondary_record(Build &&build) noexcept {
-    if (!failed_)
+    if (!failed_ && !cancelled_)
       try {
         const auto record = build();
         secondary({record});
