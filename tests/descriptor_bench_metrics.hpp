@@ -75,10 +75,24 @@ extern "C" int fcntl(int descriptor, int command, ...)
 #endif
     result = native(descriptor, command, va_arg(arguments, int));
     break;
-  default:
-    // Locking and platform commands used by these harnesses take pointer arguments.
+  case F_GETLK:
+  case F_SETLK:
+  case F_SETLKW:
+#ifdef F_GETPATH
+  case F_GETPATH:
+#endif
+#ifdef F_OFD_GETLK
+  case F_OFD_GETLK:
+  case F_OFD_SETLK:
+  case F_OFD_SETLKW:
+#endif
     result = native(descriptor, command, va_arg(arguments, void *));
     break;
+  default:
+    // Never guess a variadic argument type for an unobserved platform command.
+    va_end(arguments);
+    (void)::write(STDERR_FILENO, "Unsupported benchmark fcntl command\n", 36);
+    ::_exit(86);
   }
   va_end(arguments);
   return result;
