@@ -1,5 +1,5 @@
 #pragma once
-#include "codet/core.hpp"
+#include <cstdint>
 #include <cstdio>
 #include <initializer_list>
 #include <iosfwd>
@@ -8,7 +8,6 @@
 
 namespace codet::detail {
 struct IoContext;
-int cli_main(const std::vector<std::string> &, Cancellation &, IoContext &);
 // Internal trust boundary: the referenced text has already been rendered for humans.
 struct RenderedTextView {
   const std::string &text;
@@ -58,4 +57,6 @@ bool recover_diagnostic_stream(std::ostream &) noexcept;
 void reset_standard_diagnostics() noexcept;
 bool write_diagnostic(std::ostream &, std::initializer_list<std::string_view>, bool newline = true,
                       bool flush = false);
+// Fixed spans only; raw fd 2, shared descriptor separators, no allocation or exception masks.
+bool immediate_stderr(std::initializer_list<std::string_view>, bool newline = true) noexcept;
 } // namespace codet::detail

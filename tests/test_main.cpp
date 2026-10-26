@@ -5,6 +5,7 @@
 #include "native_symbol.hpp"
 #endif
 #include "codet/output.hpp"
+#include "native_io_metrics.hpp"
 #include "native_terminal_metrics.hpp"
 #include "process_helper.hpp"
 #include "temp.hpp"
@@ -63,6 +64,32 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+#ifdef CODET_NATIVE_TERMINAL_METRICS
+    if (argc > 1 && std::string(argv[1]) == "--codet-quarantine-warning-helper") {
+      if (argc != 3 || ::dup2(std::stoi(argv[2]), STDERR_FILENO) < 0)
+        return 2;
+      ::setenv("TERM", "codet-invalid-quarantine-fixture", 1);
+      codet::detail::NativeTerminalResourceOps ops;
+      if (ops.start_screen())
+        return 3;
+      codet::detail::reset_standard_diagnostics();
+      if (::write(STDERR_FILENO, "fi", 2) != 2)
+        return 4;
+      auto &io = codet::test::native_io_metrics;
+      io.interrupt_fd = STDERR_FILENO;
+      io.vectors_interrupted = 9;
+      const bool failed = !codet::detail::write_diagnostic(std::cerr, {"rst"});
+      io = {};
+      if (!failed)
+        return 5;
+      auto &terminal = codet::test::native_terminal_metrics;
+      terminal.observe = terminal.detach_failure = terminal.query_failure = true;
+      ops.begin_cleanup();
+      ops.end_cleanup();
+      terminal.observe = false;
+      return codet::detail::write_diagnostic(std::cerr, {"later"}) ? 0 : 6;
+    }
+#endif
     if (argc > 1 && std::string(argv[1]) == "--codet-closed-stderr-terminal-helper") {
       if (argc != 4)
         return 2;
@@ -183,12 +210,17 @@ int main(int argc, char **argv) {
         if (mode.rfind("detach-failure", 0) == 0) {
           if (metrics.stream_count != (mode == "detach-failure-curses" ? 2u : 3u))
             return 11;
-          // Retain test backing storage through normal process exit, just like the bundle.
-          auto *buffer = new char[4096];
-          if (std::setvbuf(metrics.streams[1], buffer, _IOFBF, 4096) != 0)
-            return 12;
+          // Exercise the production bundle's pre-acquisition 4 KiB buffer through process exit.
           (void)std::fputs("QUARANTINED OUTPUT MUST NEVER REACH THE FOREGROUND",
                            metrics.streams[1]);
+#ifdef __linux__
+          const auto pending = ::__fpending(metrics.streams[1]);
+#else
+          const auto pending =
+              static_cast<size_t>(metrics.streams[1]->_p - metrics.streams[1]->_bf._base);
+#endif
+          if (pending < std::strlen("QUARANTINED OUTPUT MUST NEVER REACH THE FOREGROUND"))
+            return 12;
         }
         metrics.observe = true;
         metrics.detach_failure = mode.rfind("detach-failure", 0) == 0;

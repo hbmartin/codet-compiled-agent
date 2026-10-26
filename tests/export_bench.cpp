@@ -1,5 +1,6 @@
 // Host-only end-to-end export measurement; use this identical harness in both builds.
 #include "codet/core.hpp"
+#include "descriptor_bench_metrics.hpp"
 #include "temp.hpp"
 #include <atomic>
 #include <cstdlib>
@@ -131,7 +132,9 @@ int main(int argc, char **argv) {
   Cancellation cancel;
   const std::vector<std::string> command{"-C", work.string(), "export", id};
   allocations = allocated_bytes = descriptor_writes = descriptor_bytes = 0;
-  measuring = true;
+  test::descriptor_bench::stats = test::descriptor_bench::flags = test::descriptor_bench::bounds =
+      0;
+  measuring = test::descriptor_bench::observing = true;
   const auto start = std::chrono::steady_clock::now();
   const size_t iterations = large ? 3 : 50;
   int status = 0;
@@ -139,7 +142,7 @@ int main(int argc, char **argv) {
     status = cli_main(command, cancel);
   const auto milliseconds =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-  measuring = false;
+  measuring = test::descriptor_bench::observing = false;
   const auto count = allocations.load(), allocated = allocated_bytes.load();
   const auto calls = descriptor_writes.load(), delivered = descriptor_bytes.load();
   std::cout.rdbuf(original);
@@ -159,6 +162,9 @@ int main(int argc, char **argv) {
                   {"stream_bytes", output.bytes},
                   {"descriptor_writes", calls},
                   {"descriptor_bytes", delivered},
+                  {"fstat", test::descriptor_bench::stats.load()},
+                  {"fcntl", test::descriptor_bench::flags.load()},
+                  {"fpathconf", test::descriptor_bench::bounds.load()},
                   {"expected_bytes", expected}})
                 .dump()
          << '\n';

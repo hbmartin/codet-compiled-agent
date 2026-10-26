@@ -1,4 +1,5 @@
 #pragma once
+#include "codet/detail/diagnostic_stream.hpp"
 #include "codet/detail/native_output.hpp"
 #include "codet/detail/terminal_resources.hpp"
 #include <memory>
@@ -90,8 +91,13 @@ class NativeTerminalResourceOps final : public TerminalResourceOps {
       const int opened = ::open("/dev/null", O_RDWR);
       if (opened < 0)
         throw Error("Cannot reserve terminal cleanup sink");
-      owned.sink = duplicate(opened);
-      ::close(opened);
+      if (opened <= STDERR_FILENO) {
+        owned.sink = duplicate(opened);
+        ::close(opened);
+      } else if (::fcntl(opened, F_SETFD, FD_CLOEXEC) == 0)
+        owned.sink = opened;
+      else
+        ::close(opened);
       if (owned.sink < 0)
         throw Error("Cannot reserve terminal cleanup sink");
     }
@@ -143,9 +149,6 @@ public:
     }
     end_cleanup();
   }
-  bool quarantined() const noexcept {
-    return held_ ? held_->quarantined : quarantine_ != nullptr;
-  }
   void begin_cleanup() noexcept override {
     if (std::exchange(cleanup_, true))
       return;
@@ -170,9 +173,7 @@ public:
       held_->quarantined = true;
       // Do not write a warning into another foreground program's terminal.
       if (!::isatty(STDERR_FILENO)) {
-        DescriptorOutput warning(STDERR_FILENO);
-        (void)warning.result({"codet: terminal cleanup quarantined after failed detachment"}, true,
-                             OutputMode::immediate);
+        (void)immediate_stderr({"codet: terminal cleanup quarantined after failed detachment"});
       }
     }
   }

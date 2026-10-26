@@ -1,5 +1,8 @@
+#include "codet/detail/cli.hpp"
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
+#include "codet/detail/approval_review.hpp"
+#include "codet/detail/cleanup_diagnostics.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
 #include "codet/detail/cli_output.hpp"
 #include "codet/detail/native_terminal.hpp"
@@ -245,6 +248,7 @@ class Terminal final : public detail::CliDiagnosticSurface {
   bool curses_ = false;
   HistEvent history_event_{};
   std::vector<std::string> transcript_;
+  std::optional<detail::ApprovalReview> approval_;
   std::string input_, status_, progress_;
   std::string prompt_;
   std::map<std::string, int> bindings_{{"submit", 10}, {"quit", 4}, {"backspace", 127}};
@@ -290,6 +294,44 @@ class Terminal final : public detail::CliDiagnosticSurface {
     erase();
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
+    if (approval_) {
+      if (approval_->reshape(rows, cols))
+        input_.clear();
+      const auto draw = [&](int row, std::string_view text) {
+        if (!text.empty() && mvaddnstr(row, 0, text.data(), static_cast<int>(text.size())) == ERR)
+          throw Error("Cannot render approval review");
+      };
+      if (!approval_->usable()) {
+        if (rows > 0 && cols > 1)
+          draw(0, std::string_view("Resize to review; approval disabled")
+                      .substr(0, static_cast<size_t>(cols - 1)));
+      } else {
+        const auto heading = "Approval review " + std::to_string(approval_->page() + 1) + "/" +
+                             std::to_string(approval_->pages());
+        draw(0, std::string_view(heading).substr(0, static_cast<size_t>(cols - 1)));
+        for (size_t i = 0; i < approval_->capacity(); ++i)
+          draw(static_cast<int>(i) + 1, approval_->line(i));
+        const std::string_view navigation = "Space/PgDn: next  PgUp: back  /quit: exit";
+        draw(rows - 3, navigation.substr(0, static_cast<size_t>(cols - 1)));
+        const std::string_view prompt =
+            approval_->approved_review() ? "Approve? [y/N]" : "Read all pages; n denies";
+        draw(rows - 2, prompt.substr(0, static_cast<size_t>(cols - 1)));
+        const auto entered = "codet> " + input_;
+        draw(rows - 1, std::string_view(entered).substr(0, static_cast<size_t>(cols - 1)));
+      }
+      if (::refresh() == ERR)
+        throw Error("Cannot refresh approval review");
+      const bool previously_reviewed = approval_->approved_review();
+      approval_->displayed();
+      if (!previously_reviewed && approval_->approved_review()) {
+        if (move(rows - 2, 0) == ERR || clrtoeol() == ERR)
+          throw Error("Cannot render approval prompt");
+        draw(rows - 2, "Approve? [y/N]");
+        if (::refresh() == ERR)
+          throw Error("Cannot refresh approval review");
+      }
+      return;
+    }
     if (rows < 4 || cols < 8) {
       refresh();
       return;
@@ -304,6 +346,37 @@ class Terminal final : public detail::CliDiagnosticSurface {
   }
 
 public:
+  void begin_approval(const Json &event) {
+    const auto target =
+        event.at("tool").get<std::string>() + ": " + event.at("target").get<std::string>();
+    if (!curses_) {
+      say_literal(target);
+      if (event.contains("context") && !event.at("context").empty())
+        say(safe_json(event.at("context")).dump());
+      say("Approve? [y/N]");
+      return;
+    }
+    auto document = detail::literal_text(target);
+    if (event.contains("context") && !event.at("context").empty())
+      document += "\nContext:\n" + detail::terminal_text(safe_json(event.at("context")).dump());
+    approval_.emplace(event.value("codet_session_id", ""), event.value("codet_turn", uint64_t{0}),
+                      event.at("request_id").get<std::string>(), std::move(document));
+    input_.clear();
+    render();
+  }
+  bool approval_reviewed(const Json &event) const {
+    return !curses_ ||
+           (approval_ &&
+            approval_->request == event.at("request_id").get_ref<const std::string &>() &&
+            approval_->session == event.at("codet_session_id").get_ref<const std::string &>() &&
+            approval_->turn == event.at("codet_turn").get<uint64_t>() &&
+            approval_->approved_review());
+  }
+  void end_approval() {
+    approval_.reset();
+    input_.clear();
+    render();
+  }
   Terminal(const Config &c, const std::string &color, detail::CliOutput &output,
            detail::DiagnosticWriter &errors)
       : output_(output), errors_(errors) {
@@ -457,6 +530,7 @@ public:
     if (!curses_ && resources_.saved())
       resources_.end_active();
     input_.clear();
+    approval_.reset();
     render();
   }
   std::optional<std::string> active_input(bool &closed) {
@@ -481,6 +555,15 @@ public:
       render();
       return {};
     }
+    if (approval_ && (ch == KEY_NPAGE || ch == KEY_PPAGE || (ch == ' ' && input_.empty()))) {
+      input_.clear();
+      if (ch == KEY_PPAGE)
+        approval_->previous();
+      else
+        approval_->next();
+      render();
+      return {};
+    }
     if (ch == bindings_["quit"]) {
       closed = true;
       return {};
@@ -488,6 +571,10 @@ public:
     if (ch == bindings_["submit"] || ch == KEY_ENTER || ch == '\r') {
       auto text = input_;
       input_.clear();
+      if (approval_ && (text == "y" || text == "yes") && !approval_->approved_review()) {
+        render();
+        return {};
+      }
       if (!curses_)
         output_.echo({"\n"});
       else
@@ -876,10 +963,13 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       try {
         end();
       } catch (const std::exception &error) {
-        (void)errors.write(
-            {"SessionEnd hook cleanup failed: ", detail::terminal_text(error.what())});
+        detail::secondary_diagnostic([&] {
+          (void)errors.write(
+              {"SessionEnd hook cleanup failed: ", detail::terminal_text(error.what())});
+        });
       } catch (...) {
-        (void)errors.write({"SessionEnd hook cleanup failed: unknown exception"});
+        detail::secondary_diagnostic(
+            [&] { (void)errors.write({"SessionEnd hook cleanup failed: unknown exception"}); });
       }
     }
   } session_end{errors, [&, started_id = session.id] {
@@ -933,11 +1023,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
             if (type == "codet.diagnostic")
               diagnostics->emit_rendered({event.at("text").get_ref<const std::string &>()});
             else if (type == "codet.approval") {
-              terminal->say_literal(event.at("tool").get<std::string>() + ": " +
-                                    event.at("target").get<std::string>());
-              if (event.contains("context") && !event.at("context").empty())
-                terminal->say(safe_json(event.at("context")).dump());
-              terminal->say("Approve? [y/N]");
+              terminal->begin_approval(event);
               pending = event;
             } else if (type == "codet.question") {
               terminal->say(event.at("question"));
@@ -971,10 +1057,17 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       });
       while (work.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
         deliver();
+        if (pending && !interaction->request_active(pending->at("request_id"))) {
+          pending.reset();
+          terminal->end_approval();
+        }
         bool closed = false;
         const auto line = terminal->active_input(closed);
-        if (closed)
+        if (closed) {
+          if (pending && pending->value("type", "") == "codet.approval")
+            quit_requested = true;
           cancel.requested = true;
+        }
         if (line) {
           if (*line == "/quit" || *line == "/exit") {
             quit_requested = true;
@@ -983,6 +1076,9 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
                      *line == "/compact") {
             terminal->say("Use /model, /status and /compact after the active turn completes.");
           } else if (pending) {
+            if (pending->value("type", "") == "codet.approval" &&
+                (*line == "y" || *line == "yes") && !terminal->approval_reviewed(*pending))
+              continue;
             if (!interaction->answer(pending->at("request_id"), *line)) {
               try {
                 interaction->submit(*line);
@@ -991,6 +1087,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
               }
             }
             pending.reset();
+            terminal->end_approval();
           } else if (line->rfind("/permissions", 0) == 0)
             terminal->say("Change permission modes after the active turn completes.");
           else if (*line == "/new") {
@@ -1009,25 +1106,13 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       terminal->end_active();
       return work.get();
     } catch (...) {
-      const auto failure = std::current_exception();
-      cancel.requested = true;
-      while (work.valid() &&
-             work.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready) {
-      }
-      pending.reset();
-      try {
-        terminal->end_active();
-      } catch (...) {
-        (void)errors.write({"Terminal restoration also failed"});
-      }
-      try {
-        deliver(true);
-      } catch (...) {
-        (void)errors.write({"Worker events could not be drained during cleanup"});
-      }
-      if (!quit_requested)
-        cancel.requested = false;
-      std::rethrow_exception(failure);
+      detail::recover_turn(
+          std::current_exception(), cancel, quit_requested, work,
+          [&] {
+            pending.reset();
+            terminal->end_active();
+          },
+          [&] { deliver(true); }, [&](std::string_view message) { (void)errors.write({message}); });
     }
   };
   std::deque<std::string> followups;

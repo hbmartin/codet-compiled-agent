@@ -1,4 +1,7 @@
+#include "codet/detail/approval_review.hpp"
+#include "codet/detail/cleanup_diagnostics.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
+#include "native_io_metrics.hpp"
 #include "process_helper.hpp"
 #include "temp.hpp"
 #include <cstring>
@@ -8,10 +11,63 @@
 #include <gtest/gtest-spi.h>
 #include <gtest/gtest.h>
 #include <sstream>
+#include <thread>
 
 using namespace codet;
 using namespace testing;
 namespace {
+TEST(ApprovalReview, EveryPageMustRenderAndResizeRestartsReview) {
+  detail::ApprovalReview review("session", 3, "request", std::string(3000, 'a') + "suffix");
+  EXPECT_TRUE(review.reshape(8, 40));
+  ASSERT_GT(review.pages(), 2u);
+  EXPECT_FALSE(review.approved_review());
+  review.next();
+  EXPECT_EQ(review.page(), 0u);
+  while (review.page() + 1 < review.pages()) {
+    review.displayed();
+    EXPECT_FALSE(review.approved_review());
+    review.next();
+  }
+  EXPECT_FALSE(review.approved_review());
+  review.displayed();
+  EXPECT_TRUE(review.approved_review());
+  review.previous();
+  EXPECT_TRUE(review.approved_review());
+  EXPECT_FALSE(review.reshape(8, 40));
+  EXPECT_TRUE(review.approved_review());
+  EXPECT_TRUE(review.reshape(8, 30));
+  EXPECT_EQ(review.page(), 0u);
+  EXPECT_FALSE(review.approved_review());
+  EXPECT_TRUE(review.reshape(3, 5));
+  EXPECT_FALSE(review.usable());
+  review.displayed();
+  EXPECT_FALSE(review.approved_review());
+}
+TEST(ApprovalReview, WrappingRetainsCompleteUnicodeAndEscapeTokensBeyondTranscriptLimits) {
+  std::string source;
+  for (size_t i = 0; i != 1100; ++i)
+    source += "雪\\x0A ";
+  const auto document = detail::literal_text(source + "\r\n\t\xff");
+  for (int columns : {20, 40, 80}) {
+    detail::ApprovalReview review("session", 1, "request", document);
+    review.reshape(6, columns);
+    std::string reconstructed;
+    for (;;) {
+      for (size_t i = 0; i < review.capacity(); ++i) {
+        const auto row = review.line(i);
+        EXPECT_EQ(safe_text(std::string(row)), row);
+        EXPECT_EQ(row.size(),
+                  detail::rendered_prefix(document.substr(reconstructed.size()), row.size()));
+        reconstructed += row;
+      }
+      review.displayed();
+      if (review.approved_review())
+        break;
+      review.next();
+    }
+    EXPECT_EQ(reconstructed, document);
+  }
+}
 struct PartialDiagnosticStream : std::streambuf {
   std::string bytes;
   bool partial = true, fail_newline = false;
@@ -29,6 +85,182 @@ struct PartialDiagnosticStream : std::streambuf {
     return character;
   }
 };
+TEST(DiagnosticWriter, TurnCleanupKeepsOriginalFailureAfterQuiescenceAndResetsCancellation) {
+  for (bool quitting : {false, true}) {
+    PartialDiagnosticStream buffer;
+    std::ostream stream(&buffer);
+    stream.exceptions(std::ios::badbit | std::ios::failbit);
+    detail::DiagnosticWriter writer(stream);
+    Cancellation cancel;
+    std::atomic<bool> finished{false};
+    auto worker = std::async(std::launch::async, [&] {
+      while (!cancel.requested)
+        std::this_thread::yield();
+      finished = true;
+    });
+    const auto original = std::make_exception_ptr(std::runtime_error("original failure"));
+    unsigned reports = 0;
+    try {
+      detail::recover_turn(
+          original, cancel, quitting, worker,
+          [&] {
+            EXPECT_TRUE(finished);
+            throw std::bad_alloc();
+          },
+          [&] { throw std::runtime_error("drain failure"); },
+          [&](std::string_view text) {
+            if (++reports == 1)
+              (void)writer.write({text});
+            else
+              throw std::bad_alloc(); // Formatting is secondary too.
+          });
+    } catch (...) {
+      EXPECT_EQ(std::current_exception(), original);
+    }
+    EXPECT_TRUE(finished);
+    EXPECT_EQ(reports, 2u);
+    EXPECT_EQ(cancel.requested.load(), quitting);
+    if (!quitting)
+      EXPECT_NO_THROW(cancel.check());
+    worker.get();
+  }
+}
+#ifdef CODET_NATIVE_TERMINAL_METRICS
+TEST(DiagnosticWriter, EmergencyChunksShareEightInterruptionRetriesWithInspectionAndSeparator) {
+  FileNotice notice("/" + std::string(4097, 'a') + "\xff", FileNoticeKind::tool_result);
+  notice.confirmed = true;
+  const auto expected = notice.text() + "\n";
+  for (bool exhausted : {false, true}) {
+    detail::reset_standard_diagnostics();
+    testing::internal::CaptureStderr();
+    auto &metrics = test::native_io_metrics;
+    metrics.interrupt_fd = STDERR_FILENO;
+    metrics.stats_interrupted = 4;
+    metrics.writes_interrupted = exhausted ? 5 : 4;
+    emergency_file_diagnostic(notice);
+    const auto writes = metrics.writes;
+    metrics = {};
+    const auto output = testing::internal::GetCapturedStderr();
+    if (exhausted) {
+      EXPECT_TRUE(output.empty());
+      EXPECT_EQ(writes, 5u);
+    } else {
+      EXPECT_EQ(output, expected);
+      EXPECT_GT(writes, 8u); // Positive progress through every path chunk does not spend retries.
+    }
+  }
+  detail::reset_standard_diagnostics();
+  testing::internal::CaptureStderr();
+  auto &metrics = test::native_io_metrics;
+  metrics.interrupt_fd = STDERR_FILENO;
+  metrics.stats_interrupted = 9;
+  EXPECT_FALSE(detail::immediate_stderr({"must not be written"}));
+  EXPECT_EQ(metrics.inspections, 9u);
+  EXPECT_EQ(metrics.writes, 0u);
+  EXPECT_EQ(metrics.vectors, 0u);
+  metrics = {};
+  EXPECT_EQ(testing::internal::GetCapturedStderr(), "");
+  detail::reset_standard_diagnostics();
+}
+TEST(DiagnosticWriter, ImmediateVectorOutputRetriesInterruptedCallsAndStopsAtItsBudget) {
+  for (unsigned interruptions : {1u, 8u, 9u}) {
+    detail::reset_standard_diagnostics();
+    testing::internal::CaptureStderr();
+    auto &metrics = test::native_io_metrics;
+    metrics.interrupt_fd = STDERR_FILENO;
+    metrics.vectors_interrupted = interruptions;
+    EXPECT_EQ(detail::immediate_stderr({"first", "second"}), interruptions <= 8);
+    EXPECT_EQ(metrics.vectors, std::min(interruptions + 1, 9u));
+    metrics = {};
+    EXPECT_EQ(testing::internal::GetCapturedStderr(), interruptions <= 8 ? "firstsecond\n" : "");
+  }
+  detail::reset_standard_diagnostics();
+}
+TEST(DiagnosticWriter, InterruptedIdentityInspectionCannotEraseAnAlreadyOwedSeparator) {
+  detail::reset_standard_diagnostics();
+  testing::internal::CaptureStderr();
+  EXPECT_EQ(::write(STDERR_FILENO, "fi", 2), 2);
+  auto &metrics = test::native_io_metrics;
+  metrics.interrupt_fd = STDERR_FILENO;
+  metrics.vectors_interrupted = 9;
+  EXPECT_FALSE(detail::write_diagnostic(std::cerr, {"rst"}));
+  metrics.stats_interrupted = 9;
+  EXPECT_FALSE(detail::immediate_stderr({"inspection fails before delivery"}));
+  metrics = {};
+  EXPECT_TRUE(detail::write_diagnostic(std::cerr, {"later"}));
+  EXPECT_EQ(testing::internal::GetCapturedStderr(), "fi\nlater\n");
+  detail::reset_standard_diagnostics();
+}
+TEST(DiagnosticWriter, ImmediatePipeInspectionReadinessAndWritesShareOneRetryBudget) {
+  int descriptors[2];
+  ASSERT_EQ(::pipe(descriptors), 0);
+  const int saved = ::dup(STDERR_FILENO);
+  ASSERT_GE(saved, 0);
+  struct Restore {
+    int saved, read, write;
+    ~Restore() {
+      test::native_io_metrics = {};
+      (void)::dup2(saved, STDERR_FILENO);
+      ::close(saved);
+      ::close(read);
+      ::close(write);
+      detail::reset_standard_diagnostics();
+    }
+  } restore{saved, descriptors[0], descriptors[1]};
+  ASSERT_EQ(::dup2(descriptors[1], STDERR_FILENO), STDERR_FILENO);
+  detail::reset_standard_diagnostics();
+  auto &metrics = test::native_io_metrics;
+  metrics.interrupt_fd = STDERR_FILENO;
+  metrics.stats_interrupted = metrics.bounds_interrupted = metrics.polls_interrupted =
+      metrics.vectors_interrupted = 2;
+  EXPECT_TRUE(detail::immediate_stderr({"checked pipe"}));
+  EXPECT_EQ(metrics.vectors, 3u);
+  metrics = {};
+  char bytes[64]{};
+  ASSERT_EQ(::read(descriptors[0], bytes, sizeof(bytes)), 13);
+  EXPECT_EQ(std::string(bytes, 13), "checked pipe\n");
+}
+TEST(DiagnosticWriter, InspectionRefreshesFlagsAndCachesPipeBoundsOnlyForTheCurrentDestination) {
+  int first[2], second[2];
+  ASSERT_EQ(::pipe(first), 0);
+  ASSERT_EQ(::pipe(second), 0);
+  const int saved = ::dup(STDERR_FILENO);
+  ASSERT_GE(saved, 0);
+  struct Restore {
+    int saved, first[2], second[2];
+    ~Restore() {
+      test::native_io_metrics = {};
+      (void)::dup2(saved, STDERR_FILENO);
+      ::close(saved);
+      for (int fd : first)
+        ::close(fd);
+      for (int fd : second)
+        ::close(fd);
+      detail::reset_standard_diagnostics();
+    }
+  } restore{saved, {first[0], first[1]}, {second[0], second[1]}};
+  ASSERT_EQ(::dup2(first[1], STDERR_FILENO), STDERR_FILENO);
+  detail::reset_standard_diagnostics();
+  auto &metrics = test::native_io_metrics;
+  metrics.interrupt_fd = STDERR_FILENO;
+  detail::DiagnosticWriter writer(std::cerr);
+  EXPECT_TRUE(writer.write({"first"}));
+  EXPECT_EQ(metrics.inspections, 1u);
+  EXPECT_EQ(metrics.bound_queries, 1u);
+  const int flags = ::fcntl(STDERR_FILENO, F_GETFL);
+  ASSERT_GE(flags, 0);
+  ASSERT_EQ(::fcntl(STDERR_FILENO, F_SETFL, flags | O_NONBLOCK), 0);
+  EXPECT_TRUE(writer.write({"nonblocking"}));
+  ASSERT_EQ(::fcntl(STDERR_FILENO, F_SETFL, flags), 0);
+  EXPECT_TRUE(writer.write({"blocking again"}));
+  EXPECT_EQ(metrics.inspections, 3u);
+  EXPECT_EQ(metrics.bound_queries, 1u);
+  ASSERT_EQ(::dup2(second[1], STDERR_FILENO), STDERR_FILENO);
+  EXPECT_TRUE(writer.write({"new destination"}));
+  EXPECT_EQ(metrics.inspections, 4u);
+  EXPECT_EQ(metrics.bound_queries, 2u);
+}
+#endif
 TEST(DiagnosticWriter, PartialRecordsRetainASeparatorAcrossFailedAttempts) {
   for (bool mask : {false, true}) {
     PartialDiagnosticStream buffer;

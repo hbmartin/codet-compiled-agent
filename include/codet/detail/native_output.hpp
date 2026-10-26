@@ -17,6 +17,52 @@ struct IoContext {
   const Cancellation *cancel = nullptr;
   explicit IoContext(const Cancellation &value) noexcept : cancel(&value) {}
 };
+// One logical delivery owns its interruption budget, including inspection and streamed chunks.
+class OutputAttempt {
+  const Cancellation *cancel_;
+  OutputMode mode_;
+  unsigned retries_ = 8;
+  bool exhausted_ = false;
+
+public:
+  OutputAttempt(const Cancellation *cancel, OutputMode mode) noexcept
+      : cancel_(cancel), mode_(mode) {}
+  bool cancelled() const noexcept {
+    return mode_ == OutputMode::required && cancel_ && cancel_->requested.load();
+  }
+  bool immediate() const noexcept {
+    return mode_ == OutputMode::immediate ||
+           (mode_ == OutputMode::diagnostic && (!cancel_ || cancel_->requested.load()));
+  }
+  bool uncancellable_required() const noexcept {
+    return mode_ == OutputMode::required && !cancel_;
+  }
+  bool interrupted() noexcept {
+    if (cancelled())
+      return false;
+    if (!immediate())
+      return true;
+    if (!retries_) {
+      exhausted_ = true;
+      return false;
+    }
+    --retries_;
+    return true;
+  }
+  template <class Operation> auto inspect(Operation operation) noexcept {
+    if (exhausted_) {
+      errno = EINTR;
+      return static_cast<decltype(operation())>(-1);
+    }
+    auto result = operation();
+    while (result < 0 && errno == EINTR && interrupted())
+      result = operation();
+    return result;
+  }
+  bool exhausted() const noexcept {
+    return exhausted_;
+  }
+};
 // Borrow the descriptor; never retain bytes for a later flush or alter its flags.
 class DescriptorOutput {
 public:
@@ -32,13 +78,38 @@ private:
   size_t limit_ = INT_MAX;
   bool pipe_ = false, socket_ = false, nonblocking_ = false, valid_ = true;
   size_t pipe_limit_ = 512;
-  OutputMode mode_ = OutputMode::required;
+  OutputAttempt *attempt_ = nullptr;
   bool cancelled() const noexcept {
-    return cancel_ && cancel_->requested.load() && mode_ == OutputMode::required;
+    return attempt_->cancelled();
   }
   bool immediate() const noexcept {
-    return mode_ == OutputMode::immediate ||
-           (mode_ == OutputMode::diagnostic && (!cancel_ || cancel_->requested.load()));
+    return attempt_->immediate();
+  }
+  void classify(OutputAttempt *inspection, const struct stat *identity = nullptr,
+                size_t *cached_bound = nullptr, bool supplied = false) noexcept {
+    struct stat status {};
+    const auto inspect = [&](auto operation) {
+      return inspection ? inspection->inspect(operation) : operation();
+    };
+    const auto flags = inspect([&] { return ::fcntl(descriptor_, F_GETFL); });
+    valid_ = flags >= 0 && (supplied ? identity != nullptr
+                                     : inspect([&] { return ::fstat(descriptor_, &status); }) == 0);
+    if (identity)
+      status = *identity;
+    nonblocking_ = valid_ && (flags & O_NONBLOCK);
+    pipe_ = valid_ && S_ISFIFO(status.st_mode) && !nonblocking_;
+    socket_ = valid_ && S_ISSOCK(status.st_mode);
+    if (pipe_) {
+      if (cached_bound && *cached_bound)
+        pipe_limit_ = *cached_bound;
+      else {
+        const auto bound = inspect([&] { return ::fpathconf(descriptor_, _PC_PIPE_BUF); });
+        pipe_limit_ = std::min(static_cast<size_t>(INT_MAX),
+                               bound > 0 ? static_cast<size_t>(bound) : size_t{512});
+        if (cached_bound && bound > 0)
+          *cached_bound = pipe_limit_;
+      }
+    }
   }
   static ssize_t native_write(void *, int descriptor, const void *bytes, size_t size) {
     return ::write(descriptor, bytes, size);
@@ -46,11 +117,11 @@ private:
   static ssize_t native_vector(void *, int descriptor, const iovec *parts, int count) {
     return ::writev(descriptor, parts, count);
   }
-  bool ready() const noexcept {
-    if (!pipe_ || (mode_ == OutputMode::required && !cancel_))
+  bool ready(bool socket_wait = false) noexcept {
+    if (!socket_wait && (!pipe_ || attempt_->uncancellable_required()))
       return true;
     for (;;) {
-      if (cancelled())
+      if (cancelled() || (socket_wait && immediate()))
         return false;
       pollfd descriptor{descriptor_, POLLOUT, 0};
       const auto result = ::poll(&descriptor, 1, immediate() ? 0 : 100);
@@ -59,23 +130,16 @@ private:
         return false;
       if (result > 0)
         return (descriptor.revents & (POLLNVAL | POLLERR | POLLHUP)) == 0;
-      if (immediate() || (result < 0 && error != EINTR))
+      if (result < 0 && error == EINTR && attempt_->interrupted())
+        continue;
+      if (immediate() || result < 0)
         return false;
     }
   }
-  bool socket_ready() const noexcept {
-    for (;;) {
-      if (cancelled() || immediate())
-        return false;
-      pollfd descriptor{descriptor_, POLLOUT, 0};
-      const auto result = ::poll(&descriptor, 1, 100);
-      if (cancelled())
-        return false;
-      if (result > 0)
-        return (descriptor.revents & (POLLNVAL | POLLERR | POLLHUP)) == 0;
-      if (result < 0 && errno != EINTR)
-        return false;
-    }
+  bool retry(int error) noexcept {
+    if (error == EINTR)
+      return attempt_->interrupted();
+    return (error == EAGAIN || error == EWOULDBLOCK) && socket_ && !nonblocking_ && ready(true);
   }
   ssize_t send(const iovec *parts, int count) noexcept {
     if (socket_) {
@@ -106,10 +170,7 @@ private:
       const auto error = errno;
       if (cancelled())
         return false;
-      if (written < 0 && error == EINTR && !immediate())
-        continue;
-      if (written < 0 && (error == EAGAIN || error == EWOULDBLOCK) && socket_ && !nonblocking_ &&
-          socket_ready())
+      if (written < 0 && retry(error))
         continue;
       if (written <= 0)
         return false;
@@ -165,10 +226,7 @@ private:
       const auto error = errno;
       if (cancelled())
         return false;
-      if (written < 0 && error == EINTR && !immediate())
-        continue;
-      if (written < 0 && (error == EAGAIN || error == EWOULDBLOCK) && socket_ && !nonblocking_ &&
-          socket_ready())
+      if (written < 0 && retry(error))
         continue;
       if (written <= 0 || static_cast<size_t>(written) > total)
         return false;
@@ -179,25 +237,25 @@ private:
 
 public:
   explicit DescriptorOutput(int descriptor, Write write = native_write, void *context = nullptr,
-                            const Cancellation *cancel = nullptr) noexcept
+                            const Cancellation *cancel = nullptr,
+                            OutputAttempt *inspection = nullptr) noexcept
       : descriptor_(descriptor), context_(context), write_(write), cancel_(cancel) {
     if (write_ != native_write)
       return;
     vector_ = native_vector;
-    struct stat status {};
-    const auto flags = ::fcntl(descriptor_, F_GETFL);
-    valid_ = flags >= 0 && ::fstat(descriptor_, &status) == 0;
-    nonblocking_ = valid_ && (flags & O_NONBLOCK);
-    pipe_ = valid_ && S_ISFIFO(status.st_mode) && !nonblocking_;
-    socket_ = valid_ && S_ISSOCK(status.st_mode);
-    if (pipe_) {
-      const auto bound = ::fpathconf(descriptor_, _PC_PIPE_BUF);
-      pipe_limit_ = std::min(static_cast<size_t>(INT_MAX),
-                             bound > 0 ? static_cast<size_t>(bound) : size_t{512});
-    }
+    classify(inspection);
   }
   DescriptorOutput(int descriptor, const Cancellation *cancel) noexcept
       : DescriptorOutput(descriptor, native_write, nullptr, cancel) {}
+  DescriptorOutput(int descriptor, OutputAttempt &attempt) noexcept
+      : DescriptorOutput(descriptor, native_write, nullptr, nullptr, &attempt) {}
+  DescriptorOutput(int descriptor, OutputAttempt &attempt, const struct stat *identity,
+                   size_t &cached_bound) noexcept
+      : DescriptorOutput(descriptor, static_cast<Write>(nullptr), nullptr, nullptr) {
+    write_ = native_write;
+    vector_ = native_vector;
+    classify(&attempt, identity, &cached_bound, true);
+  }
   DescriptorOutput(int descriptor, const Cancellation &cancel) noexcept
       : DescriptorOutput(descriptor, native_write, nullptr, &cancel) {}
   DescriptorOutput(int descriptor, WriteVector write, void *context,
@@ -205,6 +263,8 @@ public:
       : DescriptorOutput(descriptor, static_cast<Write>(nullptr), context, cancel) {
     vector_ = write;
   }
+
+private:
   bool perform(std::initializer_list<std::string_view> parts, bool newline) {
     if (cancelled())
       return false;
@@ -217,14 +277,22 @@ public:
         return false;
     return !newline || bytes("\n");
   }
+
+public:
+  OutputResult result(std::initializer_list<std::string_view> parts, bool newline,
+                      OutputAttempt &attempt) noexcept {
+    attempt_ = &attempt;
+    limit_ = pipe_ && !attempt.uncancellable_required() ? pipe_limit_ : size_t{INT_MAX};
+    const bool success = !attempt.exhausted() && perform(parts, newline);
+    attempt_ = nullptr;
+    return attempt.cancelled() ? OutputResult::cancelled
+           : success           ? OutputResult::success
+                               : OutputResult::failure;
+  }
   OutputResult result(std::initializer_list<std::string_view> parts, bool newline,
                       OutputMode mode) noexcept {
-    mode_ = mode;
-    limit_ = pipe_ && (cancel_ || mode != OutputMode::required) ? pipe_limit_ : size_t{INT_MAX};
-    const bool success = perform(parts, newline);
-    return cancelled() ? OutputResult::cancelled
-           : success   ? OutputResult::success
-                       : OutputResult::failure;
+    OutputAttempt attempt(cancel_, mode);
+    return result(parts, newline, attempt);
   }
   bool write(std::initializer_list<std::string_view> parts, bool newline, bool secondary = false) {
     const auto status =

@@ -11,10 +11,8 @@ import time
 
 
 def foreground_child(slave,child):
-    try:os.setpgid(child,child)
-    except PermissionError:
-        # The child also creates its group before exec; parent setpgid can then be rejected.
-        if os.getpgid(child)!=child:raise
+    # The child waits on its launch gate: group setup cannot race another setpgid or exec.
+    os.setpgid(child,child)
     os.tcsetpgrp(slave,child)
 
 
@@ -29,18 +27,19 @@ def active_job_control(binary):
     child=os.fork()
     if child==0:
         try:
-            os.setpgid(0,0)
+            os.close(gate_write);os.close(ready_read);os.close(master)
             signal.signal(signal.SIGTTOU,signal.SIG_DFL)
             for descriptor in (gate_read,ready_write,slave):os.set_inheritable(descriptor,True)
+            if os.read(gate_read,1)!=b'P':raise RuntimeError('active helper launch gate closed')
             os.execv(binary,[binary,'--codet-active-job-control-helper',str(gate_read),str(ready_write),str(slave)])
         except BaseException as error:
-            os.write(2,('active helper exec failed: '+str(error)+'\n').encode())
+            os.write(2,('active helper setup/exec failed at line '+str(error.__traceback__.tb_lineno)+': '+str(error)+'; pid='+str(os.getpid())+' pgid='+str(os.getpgrp())+' sid='+str(os.getsid(0))+'\n').encode())
             os._exit(127)
     def token(expected):
         if not select.select([ready_read],[],[],5)[0]:raise TimeoutError('active helper gate timed out')
         if os.read(ready_read,1)!=expected:raise RuntimeError('unexpected active helper token')
     try:
-        foreground_child(slave,child);os.write(gate_write,b'G');token(b'R')
+        foreground_child(slave,child);os.write(gate_write,b'PG');token(b'R')
         os.tcsetpgrp(slave,os.getpgrp())
         foreign=termios.tcgetattr(slave);foreign[3]&=~termios.ECHO;foreign[6][termios.VMIN]=7
         termios.tcsetattr(slave,termios.TCSANOW,foreign)
@@ -78,11 +77,12 @@ def background_close(binary,mode):
     if child==0:
         try:
             os.close(gate_write);os.close(ready_read);os.close(master)
-            os.setpgid(0,0);signal.signal(signal.SIGTTOU,signal.SIG_DFL)
+            signal.signal(signal.SIGTTOU,signal.SIG_DFL)
             for fd in (gate_read,ready_write,slave):os.set_inheritable(fd,True)
+            if os.read(gate_read,1)!=b'P':raise RuntimeError('background helper launch gate closed')
             os.execv(binary,[binary,'--codet-background-close-helper',mode,str(gate_read),str(ready_write),str(slave)])
         except BaseException as error:
-            os.write(2,('background helper exec failed: '+str(error)+'\n').encode())
+            os.write(2,('background helper setup/exec failed at line '+str(error.__traceback__.tb_lineno)+': '+str(error)+'\n').encode())
             os._exit(127)
     os.close(gate_read);os.close(ready_write)
     startup=bytearray()
@@ -102,7 +102,7 @@ def background_close(binary,mode):
                 raise RuntimeError('background helper stopped/exited before ready: '+str(status)+' '+repr(bytes(startup)))
         raise TimeoutError('background cleanup gate: '+repr(bytes(startup)))
     try:
-        foreground_child(slave,child);os.write(gate_write,b'G');token(b'R')
+        foreground_child(slave,child);os.write(gate_write,b'PG');token(b'R')
         while select.select([master],[],[],0)[0]:os.read(master,65536)
         os.tcsetpgrp(slave,os.getpgrp())
         foreign=[*before[:6],list(before[6])];foreign[3]&=~termios.ECHO

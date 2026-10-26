@@ -109,11 +109,19 @@ pipe or socket. After cancellation, diagnostics and cleanup use immediate best e
 TTY output remains outside this bounded-cancellation guarantee. No inherited descriptor flags
 or socket options are changed. On macOS, sends also use Tiger-era XNU's `MSG_NBIO` flag because
 `MSG_DONTWAIT` alone does not prevent waiting for send-buffer space.
+Standalone diagnostic writers and generic fallbacks without an invocation I/O context also use
+immediate best effort. Immediate delivery allows eight EINTR retries across the entire diagnostic
+or emergency notice, including descriptor inspection, separators, path chunks, and the final newline;
+it never waits for EAGAIN to clear.
 Line-mode sessions attempt later replies after an output failure and report a failed exit status
 if a reply was lost. Interactive displays, TTY text answers and exports, and stderr diagnostics escape unsafe
 terminal controls. Redirected text answers and exports, requested output files, and structured provider-error
 data retain their data bytes. Prose normalizes CRLF to LF. Approval targets and artifact/session
 identifiers instead display literal control bytes and backslashes as reversible `\xNN` escapes.
+Fullscreen approvals use a separate paged review of the complete escaped target and context.
+Space or PageDown advances, and PageUp returns. Approval is enabled after every page has been
+displayed and requires a fresh `y` or `yes` followed by Enter. Resizing restarts review; denial,
+quit, and cancellation remain available throughout.
 
 Terminal cleanup checks foreground ownership before native teardown. If private stream
 redirection fails, pending private stdio output is purged and the entire native ownership bundle
