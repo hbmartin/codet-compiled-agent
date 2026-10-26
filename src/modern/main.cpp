@@ -1,4 +1,5 @@
 #include "codet/core.hpp"
+#include "codet/detail/cli.hpp"
 #include "codet/detail/diagnostic_stream.hpp"
 #include "codet/detail/native_output.hpp"
 #include <clocale>

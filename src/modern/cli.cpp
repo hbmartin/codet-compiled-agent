@@ -1,3 +1,4 @@
+#include "codet/detail/cli.hpp"
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/detail/approval_review.hpp"

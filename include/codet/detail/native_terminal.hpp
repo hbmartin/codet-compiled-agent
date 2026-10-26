@@ -91,8 +91,13 @@ class NativeTerminalResourceOps final : public TerminalResourceOps {
       const int opened = ::open("/dev/null", O_RDWR);
       if (opened < 0)
         throw Error("Cannot reserve terminal cleanup sink");
-      owned.sink = duplicate(opened);
-      ::close(opened);
+      if (opened <= STDERR_FILENO) {
+        owned.sink = duplicate(opened);
+        ::close(opened);
+      } else if (::fcntl(opened, F_SETFD, FD_CLOEXEC) == 0)
+        owned.sink = opened;
+      else
+        ::close(opened);
       if (owned.sink < 0)
         throw Error("Cannot reserve terminal cleanup sink");
     }
@@ -143,9 +148,6 @@ public:
         stop_history(held_->history);
     }
     end_cleanup();
-  }
-  bool quarantined() const noexcept {
-    return held_ ? held_->quarantined : quarantine_ != nullptr;
   }
   void begin_cleanup() noexcept override {
     if (std::exchange(cleanup_, true))

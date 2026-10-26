@@ -102,6 +102,7 @@ if(CODET_BUILD_TESTS)
   configure_file(tests/core_contract.hpp.in generated/core_contract.hpp @ONLY)
   target_include_directories(codet_tests PRIVATE "${CMAKE_BINARY_DIR}/generated" ${CURSES_INCLUDE_DIRS} ${EDIT_INCLUDE_DIR})
   codet_first_party(codet_tests)
+  target_sources(codet_tests PRIVATE tests/diagnostic_header_test.cpp)
   target_link_libraries(codet_tests PRIVATE codet_core codet_text GTest::gmock)
   # No discovery-time execution: the same build must work for PPC cross builds.
   add_executable(codet_persistence_bench EXCLUDE_FROM_ALL tests/persistence_bench.cpp)

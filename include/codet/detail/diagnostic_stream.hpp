@@ -1,5 +1,5 @@
 #pragma once
-#include "codet/core.hpp"
+#include <cstdint>
 #include <cstdio>
 #include <initializer_list>
 #include <iosfwd>
@@ -8,7 +8,6 @@
 
 namespace codet::detail {
 struct IoContext;
-int cli_main(const std::vector<std::string> &, Cancellation &, IoContext &);
 // Internal trust boundary: the referenced text has already been rendered for humans.
 struct RenderedTextView {
   const std::string &text;

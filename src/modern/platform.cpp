@@ -272,17 +272,21 @@ struct DescriptorDiagnosticState {
     state.reset(nullptr);
   }
 } stderr_descriptor_state, stdout_descriptor_state;
-detail::DiagnosticState &diagnostic_state(std::ostream &output, detail::DiagnosticState &local,
-                                          detail::OutputAttempt &attempt) noexcept {
+struct DiagnosticDestination {
+  detail::DiagnosticState &state;
+  int native;
+};
+DiagnosticDestination diagnostic_destination(std::ostream &output, detail::DiagnosticState &local,
+                                             detail::OutputAttempt &attempt) noexcept {
   if (&output == &std::cerr && output.rdbuf() == native_stderr_buffer)
-    return stderr_descriptor_state.bind(STDERR_FILENO, attempt);
+    return {stderr_descriptor_state.bind(STDERR_FILENO, attempt), STDERR_FILENO};
   if (&output == &std::cout && output.rdbuf() == native_stdout_buffer)
-    return stdout_descriptor_state.bind(STDOUT_FILENO, attempt);
+    return {stdout_descriptor_state.bind(STDOUT_FILENO, attempt), STDOUT_FILENO};
   auto &state = &output == &std::cerr   ? stderr_stream_state
                 : &output == &std::cout ? stdout_stream_state
                                         : local;
   state.bind(output.rdbuf());
-  return state;
+  return {state, -1};
 }
 bool unsafe_unicode_control(uint32_t point) noexcept {
   return (point >= 0x80 && point <= 0x9f) || point == 0x61c || point == 0x200e || point == 0x200f ||
@@ -432,11 +436,9 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
                                      bool flush) {
   const auto mode = io_ ? OutputMode::diagnostic : OutputMode::immediate;
   OutputAttempt attempt(io_ ? io_->cancel : nullptr, mode);
-  state_ = &diagnostic_state(output_, local_, attempt);
-  const int native =
-      &output_ == &std::cerr && output_.rdbuf() == native_stderr_buffer   ? STDERR_FILENO
-      : &output_ == &std::cout && output_.rdbuf() == native_stdout_buffer ? STDOUT_FILENO
-                                                                          : -1;
+  const auto destination = diagnostic_destination(output_, local_, attempt);
+  state_ = &destination.state;
+  const int native = destination.native;
   if (native >= 0) {
     if (!output_ || (file_ && std::ferror(file_)))
       (void)recover_diagnostic_stream(output_);
