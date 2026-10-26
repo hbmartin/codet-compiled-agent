@@ -362,3 +362,83 @@ the same six recorded findings and one SDK13-incomplete translation unit; Clang 
 the existing `context.cpp` division-by-zero finding. No checks or suppressions were weakened.
 Linux and native Tiger runtime checks were not performed locally; the Tiger compiler and SDK
 are unavailable on this host.
+
+## Approval review and exception-safe diagnostics follow-up
+
+The [validation record](validation/approval-diagnostics-followup.json) starts from fetched main
+`59395a0f583544c489817824b11be843d97ff3eb`. The original 80-column PTY probe displayed
+“Approve?” without the command suffix. Fullscreen approval now owns a complete, separately
+retained document with token-safe wrapping and sequential page review. Resizing restarts review;
+confirmation requires a fresh answer after every page has been displayed. Tests cover narrow
+screens, control bytes, Unicode, denial, EOF, cancellation, and a usable subsequent turn.
+
+Cleanup reporting preserves the original exception, even when formatting or a stream exception
+mask makes the secondary report fail. Worker quiescence precedes cancellation reset and terminal
+restoration. Emergency notices and quarantine warnings share descriptor separator state and one
+stack-owned interruption budget: eight EINTR retries across inspection, separator, path chunks,
+and newline. EAGAIN remains immediate failure. Standalone writers without an invocation context
+remain immediate best effort; active diagnostics retain interruptible pipe/socket waiting.
+
+The quarantine regression uses the production 4 KiB buffer, verifies pending sentinel bytes,
+and exercises normal process exit. It no longer calls `setvbuf` after native I/O or substitutes
+separate backing storage. A fresh-process test checks quarantine-warning ordering after a failed
+partial diagnostic. The shared diagnostic header has a compile regression against importing JSON. Host-only fault
+shim tests are excluded from cross builds; a host compile without the interposer definition proves
+that this test source carries no unresolved host-interposer dependency. This is not a Tiger check.
+
+[Release medians](validation/approval-diagnostics-followup-performance.csv) and
+[all warm-up/measured samples](validation/approval-diagnostics-followup-performance-samples.csv)
+compare fetched main, correctness-only commit `6623174`, and the final optimized production code
+at `be9214c`. All three use identical harnesses and compiler settings. Each set has one warm-up
+and five alternating measured runs; the set is repeated without concurrent analyzers or tests.
+Production source hashes match the measured descriptor implementation. Later changes affect only
+the test launcher and this evidence.
+
+| Workload | Baseline medians, sets 1 / 2 | Correctness-only medians | Optimized medians |
+| --- | --- | --- | --- |
+| 200,000 active native diagnostics | 639.657 / 530.412 ms | 626.258 / 533.026 ms | 423.507 / 384.060 ms |
+| 200,000 standalone diagnostics | 608.184 / 533.182 ms | 622.755 / 537.772 ms | 431.128 / 387.178 ms |
+| 200,000 pipe diagnostics | 561.184 / 532.241 ms | 571.757 / 531.440 ms | 439.795 / 392.369 ms |
+| 50 small regular-file exports | 55.090 / 54.405 ms | 55.177 / 54.443 ms | 55.348 / 53.860 ms |
+| Three large regular-file exports | 269.532 / 267.406 ms | 272.163 / 273.716 ms | 271.542 / 272.677 ms |
+| 20,000 private editor refreshes | 80.853 / 80.805 ms | 82.159 / 81.264 ms | 81.390 / 80.445 ms |
+
+Descriptor-inspection consolidation is retained. Each diagnostic still checks destination identity
+and current flags; the identity stat also supplies classification. The loops use zero C++
+allocations, halve `fstat` calls from 400,000 to 200,000, and reduce pipe-bound queries from
+200,000 to one for an unchanged destination. Descriptor replacement invalidates the cache;
+permission changes preserve it. Readiness/write work is unchanged. Positive controls validate
+write, `fstat`, `fcntl`, and `fpathconf` counters. No lazy identity checking is included.
+
+Export timing varies across overlapping samples. The optimized large-file medians are 0.23%
+and 0.38% below the correctness-only build, while they are 0.75% and 1.97% above fetched main.
+The corresponding correctness-only medians are 0.98% and 2.36% above fetched main. Qualification
+compares the optional optimization with correctness-only: it adds no repeatable export or editor
+slowdown. The full comparison and sample variability are retained; no general export speedup or
+timing-based CI threshold is claimed.
+Counters observe C++ `new` and direct native calls; libc/libedit internal writes and C allocations
+are not fully intercepted. Unsupported variadic benchmark commands fail explicitly.
+
+Both complete Debug and ASan/UBSan CTest suites pass: 564 unit tests with two expected opt-in
+skips, 62 publication-fault tests, and 81 CLI integration tests. After the test-launch setup
+change, complete integration suites are rerun in both builds. Twenty repetition batches cover
+1,580 focused unit checks, 260 fault checks, and 180 CLI/PTY checks. Pinned dependencies are
+verified/extracted offline; pinned lint, Semgrep, runner checks, and analyzer self-checks pass.
+Cppcheck is clean. Clang-Tidy retains the same six findings and SDK13-incomplete translation unit;
+Clang Analyzer retains the existing `context.cpp` division warning. No suppressions or checks
+were weakened.
+
+Failure evidence includes an early test/binary mismatch, corrected lint captures, and resolved
+new analyzer warnings. Rare EPERM failures occurred before existing native helpers became ready;
+400 direct background and 400 direct active probes did not reproduce them. The test launcher
+now uses parent-owned process-group setup and an explicit pre-exec gate, retaining all real
+job-control assertions. Final gated checks are reported separately from earlier failed batches. A later separator
+regression exhausts inspection retries after a partial diagnostic: the previous production library
+fails its negative control, while the final implementation preserves the owed newline and refuses
+to classify from stale metadata. All full suites and repetitions were rerun after that fix.
+
+Blocking TTY output remains outside bounded cancellation. Emergency output is best effort,
+including after exhausting the interruption budget. Unicode policies, raw data outputs, storage,
+journal authority, retained-notice ownership, and process-lifetime quarantine remain unchanged.
+Linux and native Tiger runtime/toolchain checks are unavailable locally. Python 3.15 reports
+existing SQLite fixture ResourceWarnings; the final suites pass.
