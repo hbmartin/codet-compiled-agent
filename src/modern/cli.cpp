@@ -364,8 +364,13 @@ public:
     input_.clear();
     render();
   }
-  bool approval_reviewed(const std::string &request) const noexcept {
-    return !curses_ || (approval_ && approval_->request == request && approval_->approved_review());
+  bool approval_reviewed(const Json &event) const {
+    return !curses_ ||
+           (approval_ &&
+            approval_->request == event.at("request_id").get_ref<const std::string &>() &&
+            approval_->session == event.at("codet_session_id").get_ref<const std::string &>() &&
+            approval_->turn == event.at("codet_turn").get<uint64_t>() &&
+            approval_->approved_review());
   }
   void end_approval() {
     approval_.reset();
@@ -1058,8 +1063,11 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
         }
         bool closed = false;
         const auto line = terminal->active_input(closed);
-        if (closed)
+        if (closed) {
+          if (pending && pending->value("type", "") == "codet.approval")
+            quit_requested = true;
           cancel.requested = true;
+        }
         if (line) {
           if (*line == "/quit" || *line == "/exit") {
             quit_requested = true;
@@ -1069,8 +1077,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
             terminal->say("Use /model, /status and /compact after the active turn completes.");
           } else if (pending) {
             if (pending->value("type", "") == "codet.approval" &&
-                (*line == "y" || *line == "yes") &&
-                !terminal->approval_reviewed(pending->at("request_id")))
+                (*line == "y" || *line == "yes") && !terminal->approval_reviewed(*pending))
               continue;
             if (!interaction->answer(pending->at("request_id"), *line)) {
               try {

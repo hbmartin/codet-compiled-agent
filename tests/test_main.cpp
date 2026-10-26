@@ -5,6 +5,7 @@
 #include "native_symbol.hpp"
 #endif
 #include "codet/output.hpp"
+#include "native_io_metrics.hpp"
 #include "native_terminal_metrics.hpp"
 #include "process_helper.hpp"
 #include "temp.hpp"
@@ -63,6 +64,32 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+#ifdef CODET_NATIVE_TERMINAL_METRICS
+    if (argc > 1 && std::string(argv[1]) == "--codet-quarantine-warning-helper") {
+      if (argc != 3 || ::dup2(std::stoi(argv[2]), STDERR_FILENO) < 0)
+        return 2;
+      ::setenv("TERM", "codet-invalid-quarantine-fixture", 1);
+      codet::detail::NativeTerminalResourceOps ops;
+      if (ops.start_screen())
+        return 3;
+      codet::detail::reset_standard_diagnostics();
+      if (::write(STDERR_FILENO, "fi", 2) != 2)
+        return 4;
+      auto &io = codet::test::native_io_metrics;
+      io.interrupt_fd = STDERR_FILENO;
+      io.vectors_interrupted = 9;
+      const bool failed = !codet::detail::write_diagnostic(std::cerr, {"rst"});
+      io = {};
+      if (!failed)
+        return 5;
+      auto &terminal = codet::test::native_terminal_metrics;
+      terminal.observe = terminal.detach_failure = terminal.query_failure = true;
+      ops.begin_cleanup();
+      ops.end_cleanup();
+      terminal.observe = false;
+      return codet::detail::write_diagnostic(std::cerr, {"later"}) ? 0 : 6;
+    }
+#endif
     if (argc > 1 && std::string(argv[1]) == "--codet-closed-stderr-terminal-helper") {
       if (argc != 4)
         return 2;

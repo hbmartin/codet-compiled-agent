@@ -1367,6 +1367,40 @@ class CliTests(unittest.TestCase):
                     if process.poll() is None:process.kill();process.wait(timeout=5)
                     os.close(master);os.close(slave)
 
+    def test_curses_pending_review_can_quit_or_cancel_without_granting_permission(self):
+        import fcntl
+        import pty
+        import select
+        import struct
+        import termios
+        for action in ('quit','eof','signal'):
+            with self.subTest(action=action):
+                master,slave=pty.openpty()
+                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',8,40,0,0))
+                process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','curses','fixture-paged-approval'],
+                    stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+                received=bytearray()
+                def collect(predicate,master=master,received=received):
+                    deadline=time.monotonic()+7
+                    while not predicate() and time.monotonic()<deadline:
+                        if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+                    self.assertTrue(predicate(),bytes(received))
+                try:
+                    collect(lambda received=received:b'Approval review' in received)
+                    if action=='signal':
+                        process.send_signal(signal.SIGINT)
+                        collect(lambda received=received:b'Interrupted' in received)
+                        os.write(master,b'fixture-recovered-output\n')
+                        collect(lambda received=received:b'recovered reply' in received)
+                        os.write(master,b'/quit\n')
+                    else:os.write(master,b'/quit\n' if action=='quit' else b'\x04')
+                    collect(lambda process=process:process.poll() is not None)
+                    self.assertEqual(process.returncode,0,bytes(received))
+                    self.assertFalse((self.workspace/'reviewed-marker').exists())
+                finally:
+                    if process.poll() is None:process.kill();process.wait(timeout=5)
+                    os.close(master);os.close(slave)
+
     def test_display_escaping_preserves_data_outputs_and_bounds_hook_replay(self):
         import pty
         import select

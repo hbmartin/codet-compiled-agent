@@ -73,6 +73,25 @@ TEST(TerminalResources, ValidationBeforeAcquisitionDoesNotTouchTheTerminal) {
   EXPECT_STREQ(ops.calls, "");
 }
 #ifdef CODET_NATIVE_TERMINAL_METRICS
+TEST(TerminalResources, QuarantineWarningSharesThePartialDiagnosticSeparator) {
+  int descriptors[2];
+  ASSERT_EQ(::pipe(descriptors), 0);
+  const auto child = test::start_helper(
+      {"--codet-quarantine-warning-helper", std::to_string(descriptors[1])}, {descriptors[0]});
+  ::close(descriptors[1]);
+  ASSERT_GT(child, 0);
+  int status = 0;
+  const bool finished = test::wait_helper(child, status);
+  char message[512]{};
+  const auto count = ::read(descriptors[0], message, sizeof(message));
+  ::close(descriptors[0]);
+  ASSERT_TRUE(finished);
+  ASSERT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
+  ASSERT_GT(count, 0);
+  EXPECT_EQ(std::string(message, static_cast<size_t>(count)),
+            "fi\ncodet: terminal cleanup quarantined after failed detachment\nlater\n");
+}
 TEST(TerminalResources, MissingNativeSymbolReportsASetupFailureInAFreshProcess) {
   int descriptors[2];
   ASSERT_EQ(::pipe(descriptors), 0);

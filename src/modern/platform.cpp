@@ -278,7 +278,7 @@ struct DescriptorDiagnosticState {
 } stderr_descriptor_state, stdout_descriptor_state;
 struct DiagnosticDestination {
   detail::DiagnosticState &state;
-  int native;
+  int native = -1;
   DescriptorDiagnosticState *owner = nullptr;
 };
 DiagnosticDestination diagnostic_destination(std::ostream &output, detail::DiagnosticState &local,
