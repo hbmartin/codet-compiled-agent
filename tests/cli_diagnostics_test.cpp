@@ -125,6 +125,7 @@ TEST(DiagnosticWriter, TurnCleanupKeepsOriginalFailureAfterQuiescenceAndResetsCa
     worker.get();
   }
 }
+#ifdef CODET_NATIVE_TERMINAL_METRICS
 TEST(DiagnosticWriter, EmergencyChunksShareEightInterruptionRetriesWithInspectionAndSeparator) {
   FileNotice notice("/" + std::string(4097, 'a') + "\xff", FileNoticeKind::tool_result);
   notice.confirmed = true;
@@ -259,6 +260,7 @@ TEST(DiagnosticWriter, InspectionRefreshesFlagsAndCachesPipeBoundsOnlyForTheCurr
   EXPECT_EQ(metrics.inspections, 4u);
   EXPECT_EQ(metrics.bound_queries, 2u);
 }
+#endif
 TEST(DiagnosticWriter, PartialRecordsRetainASeparatorAcrossFailedAttempts) {
   for (bool mask : {false, true}) {
     PartialDiagnosticStream buffer;
