@@ -82,7 +82,7 @@ def background_close(binary,mode):
             for fd in (gate_read,ready_write,slave):os.set_inheritable(fd,True)
             os.execv(binary,[binary,'--codet-background-close-helper',mode,str(gate_read),str(ready_write),str(slave)])
         except BaseException as error:
-            os.write(2,('background helper exec failed: '+str(error)+'\n').encode())
+            os.write(2,('background helper setup/exec failed at line '+str(error.__traceback__.tb_lineno)+': '+str(error)+'\n').encode())
             os._exit(127)
     os.close(gate_read);os.close(ready_write)
     startup=bytearray()

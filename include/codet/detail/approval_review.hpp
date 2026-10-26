@@ -93,7 +93,7 @@ public:
     const auto row = page_ * capacity() + index;
     if (row >= lines_.size())
       return {};
-    return std::string_view(document_).substr(lines_[row].offset, lines_[row].size);
+    return {document_.data() + lines_[row].offset, lines_[row].size};
   }
   // Called only after the whole page has rendered successfully.
   void displayed() noexcept {

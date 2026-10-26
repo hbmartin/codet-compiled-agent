@@ -25,10 +25,11 @@ template <class Report> void secondary_diagnostic(Report report) noexcept {
     report();
   } catch (...) {
     // Secondary diagnostics must never replace the operation exception or terminate cleanup.
+    return;
   }
 }
 template <class Result, class Restore, class Drain, class Report>
-[[noreturn]] void recover_turn(std::exception_ptr failure, Cancellation &cancel,
+[[noreturn]] void recover_turn(const std::exception_ptr &failure, Cancellation &cancel,
                                const bool &quitting, std::future<Result> &worker, Restore restore,
                                Drain drain, Report report) {
   TurnCancellationReset reset(cancel, quitting);
