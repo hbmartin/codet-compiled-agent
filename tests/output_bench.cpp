@@ -8,6 +8,7 @@
 #include <pty.h>
 #endif
 #include "codet/diagnostics.hpp"
+#include "descriptor_bench_metrics.hpp"
 #include "temp.hpp"
 #include <atomic>
 #include <cstdlib>
@@ -22,7 +23,7 @@
 #include <unistd.h>
 namespace {
 bool measuring = false;
-std::atomic<size_t> allocations{0}, allocated{0}, writes{0}, bytes{0}, waits{0}, stats{0};
+std::atomic<size_t> allocations{0}, allocated{0}, writes{0}, bytes{0}, waits{0};
 void *allocate(size_t size) {
   if (auto *memory = std::malloc(size ? size : 1)) {
     if (measuring) {
@@ -96,19 +97,9 @@ extern "C" ssize_t writev(int fd, const iovec *data, int count) {
 }
 extern "C" int poll(pollfd *fds, nfds_t count, int timeout) {
   static const auto native = resolve<int (*)(pollfd *, nfds_t, int)>("poll");
-  if (measuring && count == 1 && fds[0].fd == STDOUT_FILENO && (fds[0].events & POLLOUT))
+  if (measuring && count == 1 && (fds[0].fd == STDOUT_FILENO || fds[0].fd == STDERR_FILENO) && (fds[0].events & POLLOUT))
     ++waits;
   return native(fds, count, timeout);
-}
-extern "C" int fstat(int fd, struct stat *status)
-#ifdef __linux__
-    noexcept
-#endif
-{
-  static const auto native = resolve<int (*)(int, struct stat *)>("fstat");
-  if (measuring)
-    ++stats;
-  return native(fd, status);
 }
 int main(int argc, char **argv) {
   using namespace codet;
@@ -116,7 +107,9 @@ int main(int argc, char **argv) {
     return 2;
   const std::string mode(argv[1]);
   const bool editor = mode == "editor";
-  const bool piped = mode.rfind("pipe-", 0) == 0 || editor;
+  const bool diagnostic = mode.rfind("diagnostics", 0) == 0;
+  const bool piped = mode.rfind("pipe-", 0) == 0 || editor ||
+                     (diagnostic && mode.find("pipe") != std::string::npos);
   pid_t drainer = -1;
   if (piped) {
     int pipe[2];
@@ -146,8 +139,7 @@ int main(int argc, char **argv) {
   }
   const bool large = mode.find("large") != std::string::npos;
   const bool amplified = mode.find("amplified") != std::string::npos;
-  const bool diagnostic = mode.rfind("diagnostics", 0) == 0;
-  const bool output = mode.rfind("jsonl-", 0) == 0 || (piped && !editor);
+  const bool output = mode.rfind("jsonl-", 0) == 0 || (piped && !editor && !diagnostic);
   const size_t repetitions = amplified                  ? 200000
                              : output                   ? (large ? 2000 : 20000)
                              : editor                   ? 20000
@@ -179,7 +171,9 @@ int main(int argc, char **argv) {
   detail::CliOutput uncancelled_output;
   if (diagnostic && ::dup2(STDOUT_FILENO, STDERR_FILENO) < 0)
     return 3;
-  detail::DiagnosticWriter diagnostics(std::cerr);
+  detail::IoContext io(cancel);
+  detail::DiagnosticWriter diagnostics(std::cerr,
+                                      mode.find("standalone") == std::string::npos ? &io : nullptr);
   TempDirectory temporary;
   std::vector<std::string> command;
   if (mode == "answer") {
@@ -196,10 +190,12 @@ int main(int argc, char **argv) {
     config.close();
     command = {"-C", (temporary.root / "work").string(), "exec", "benchmark answer"};
   }
-  allocations = allocated = writes = bytes = waits = stats = 0;
+  allocations = allocated = writes = bytes = waits = 0;
+  test::descriptor_bench::stats = test::descriptor_bench::flags = test::descriptor_bench::bounds =
+      0;
   size_t observed = 0;
   volatile bool terminal = false;
-  measuring = true;
+  measuring = test::descriptor_bench::observing = true;
   const auto started = std::chrono::steady_clock::now();
   if (mode == "answer") {
     if (cli_main(command, cancel))
@@ -219,7 +215,11 @@ int main(int argc, char **argv) {
       else if (mode == "stat-positive") {
         struct stat status {};
         observed += ::fstat(STDOUT_FILENO, &status) == 0;
-      } else if (mode == "answer-boundary")
+      } else if (mode == "flags-positive")
+        observed += ::fcntl(STDOUT_FILENO, F_GETFL) >= 0;
+      else if (mode == "bounds-positive")
+        observed += ::fpathconf(STDOUT_FILENO, _PC_PIPE_BUF) >= 0;
+      else if (mode == "answer-boundary")
         answer(stdout_output, input, terminal, 0);
       else if (mode == "budget-full")
         observed += full.add(input).has_value();
@@ -231,12 +231,14 @@ int main(int argc, char **argv) {
     }
   const auto elapsed =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
-  measuring = false;
+  measuring = test::descriptor_bench::observing = false;
   resources.close();
   if (piped) {
     if (editor)
       ::close(STDIN_FILENO);
     ::close(STDOUT_FILENO);
+    if (diagnostic)
+      ::close(STDERR_FILENO);
     int status;
     if (::waitpid(drainer, &status, 0) < 0 || status)
       return 5;
@@ -254,7 +256,9 @@ int main(int argc, char **argv) {
                   {"direct_native_write_counter", !editor && !diagnostic},
                   {"bytes", delivered},
                   {"readiness", readiness},
-                  {"fstat", stats.load()},
+                  {"fstat", test::descriptor_bench::stats.load()},
+                  {"fcntl", test::descriptor_bench::flags.load()},
+                  {"fpathconf", test::descriptor_bench::bounds.load()},
                   {"observed", observed}})
                 .dump()
          << '\n';
