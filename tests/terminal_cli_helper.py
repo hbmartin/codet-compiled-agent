@@ -133,7 +133,7 @@ def background_close(binary,mode):
 
 
 def main():
-    if len(sys.argv) != 3 or sys.argv[1] not in ("unknown-term", "background-term", "background-config", "background-partial", "active-job-control", "close-line", "close-curses", "close-detach-failure", "close-partial", "close-query-failure"):
+    if len(sys.argv) != 3 or sys.argv[1] not in ("unknown-term", "background-term", "background-config", "background-partial", "active-job-control", "close-line", "close-curses", "close-detach-failure", "close-detach-failure-curses", "close-partial", "close-query-failure"):
         print("terminal helper expects MODE CODET", file=sys.stderr)
         return 2
     mode, binary = sys.argv[1:]

@@ -40,8 +40,8 @@ public:
   bool buffering = false;
   DiagnosticBuffer live{65536}, cleanup{65536};
   std::shared_ptr<FileDiagnosticQueue> files = std::make_shared<FileDiagnosticQueue>();
-  explicit CliDiagnostics(std::ostream &output = std::cerr)
-      : writer_(std::make_shared<DiagnosticWriter>(output)),
+  explicit CliDiagnostics(std::ostream &output = std::cerr, IoContext *io = nullptr)
+      : writer_(std::make_shared<DiagnosticWriter>(output, io)),
         immediate_(std::make_shared<Immediate>(
             [writer = writer_](const auto &text) { writer->file(text); })),
         file_sink_([this](const std::string &text) {

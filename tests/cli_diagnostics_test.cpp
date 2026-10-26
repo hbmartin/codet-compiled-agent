@@ -1,7 +1,9 @@
 #include "codet/detail/cli_diagnostics.hpp"
 #include "process_helper.hpp"
 #include "temp.hpp"
+#include <cstring>
 #include <fcntl.h>
+#include <fstream>
 #include <gmock/gmock.h>
 #include <gtest/gtest-spi.h>
 #include <gtest/gtest.h>
@@ -124,6 +126,69 @@ TEST(DiagnosticWriter, EmergencyDescriptorStateCannotLeakIntoACapturedStreamOrRe
   const auto delivered = testing::internal::GetCapturedStderr();
   EXPECT_EQ(delivered, "Uncommitted tool result preserved at /complete/path\n");
 }
+TEST(DiagnosticWriter, NativeDescriptorFailureKeepsConfiguredExceptionMasksAndRecovers) {
+  const int saved = ::dup(STDERR_FILENO);
+  ASSERT_GE(saved, 0);
+  bool threw = false, recovered = false, mask_preserved = false;
+  {
+    const auto mask = std::cerr.exceptions();
+    struct Restore {
+      int saved;
+      std::ios::iostate mask;
+      ~Restore() {
+        std::cerr.exceptions(std::ios::goodbit);
+        (void)::dup2(saved, STDERR_FILENO);
+        ::close(saved);
+        detail::recover_diagnostic_stream(std::cerr);
+        std::cerr.exceptions(mask);
+        detail::reset_standard_diagnostics();
+      }
+    } restore{saved, mask};
+    ::close(STDERR_FILENO);
+    std::cerr.exceptions(std::ios::badbit);
+    detail::DiagnosticWriter writer(std::cerr);
+    try {
+      (void)writer.write({"unwritable"});
+    } catch (const std::ios_base::failure &) {
+      threw = true;
+    }
+    recovered = std::cerr.good();
+    mask_preserved = std::cerr.exceptions() == std::ios::badbit;
+  }
+  EXPECT_TRUE(threw);
+  EXPECT_TRUE(recovered);
+  EXPECT_TRUE(mask_preserved);
+}
+TEST(DiagnosticWriter, PermissionChangesOnTheSameDescriptorIdentityKeepTheSeparator) {
+  TempDirectory temporary;
+  const auto path = temporary.root / "diagnostic";
+  { std::ofstream create(path); }
+  const int saved = ::dup(STDERR_FILENO);
+  ASSERT_GE(saved, 0);
+  struct Restore {
+    int descriptor;
+    ~Restore() {
+      (void)::dup2(descriptor, STDERR_FILENO);
+      ::close(descriptor);
+      detail::reset_standard_diagnostics();
+      detail::recover_diagnostic_stream(std::cerr);
+    }
+  } restore{saved};
+  const int read_only = ::open(path.c_str(), O_RDONLY);
+  ASSERT_GE(read_only, 0);
+  ASSERT_EQ(::dup2(read_only, STDERR_FILENO), STDERR_FILENO);
+  ::close(read_only);
+  detail::DiagnosticWriter writer(std::cerr);
+  EXPECT_FALSE(writer.write({"indeterminate"}));
+  ASSERT_EQ(::chmod(path.c_str(), 0640), 0);
+  const int writable = ::open(path.c_str(), O_WRONLY | O_APPEND);
+  ASSERT_GE(writable, 0);
+  ASSERT_EQ(::dup2(writable, STDERR_FILENO), STDERR_FILENO);
+  ::close(writable);
+  EXPECT_TRUE(writer.write({"later"}));
+  std::ifstream read(path);
+  EXPECT_EQ(std::string(std::istreambuf_iterator<char>(read), {}), "\nlater\n");
+}
 TEST(DiagnosticWriter, HumanTextEscapesControlsWithoutChangingRawJsonSanitization) {
   const std::string text =
       std::string("raw\0\r\x1b]0;title\a\x7f", 16) + "\xc2\x9b\xe2\x80\xae\xe2\x80\xa8\xff";
@@ -168,6 +233,17 @@ TEST(DiagnosticWriter, BoundedRenderingKeepsWholeEscapesAndNormalizesOnlyHumanCr
     EXPECT_EQ(rendered.text, expected) << limit;
     EXPECT_EQ(rendered.truncated, expected != full) << limit;
     EXPECT_EQ(full.substr(0, detail::rendered_prefix(full, limit)), expected) << limit;
+  }
+}
+TEST(DiagnosticWriter, LiteralIdentifiersDistinguishControlsAndEscapeLookingBytes) {
+  const std::string raw = "command\r\nnext\t\\x0A 雪";
+  EXPECT_EQ(detail::terminal_text(raw), "command\nnext\t\\x0A 雪");
+  const auto expected = "command\\x0D\\x0Anext\\x09\\x5Cx0A 雪";
+  EXPECT_EQ(detail::literal_text(raw), expected);
+  for (size_t limit = 0; limit <= std::strlen(expected); ++limit) {
+    const auto bounded = detail::render_terminal_text(raw, limit, detail::RenderMode::literal);
+    EXPECT_EQ(bounded.text,
+              std::string(expected).substr(0, detail::rendered_prefix(expected, limit)));
   }
 }
 TEST(DiagnosticWriter, HumanTextPreservesPrintableAsciiAndEscapesMalformedPrefixesByteForByte) {

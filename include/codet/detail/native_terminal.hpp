@@ -1,5 +1,10 @@
 #pragma once
+#include "codet/detail/native_output.hpp"
 #include "codet/detail/terminal_resources.hpp"
+#include <memory>
+#ifdef __linux__
+#include <stdio_ext.h>
+#endif
 #include <cerrno>
 #include <cstdio>
 #include <curses.h>
@@ -48,39 +53,72 @@ inline bool same_terminal_settings(const termios &left, const termios &right) no
 }
 // Include only at native terminal call sites: curses intentionally exposes macros here.
 class NativeTerminalResourceOps final : public TerminalResourceOps {
-  SCREEN *screen_ = nullptr;
-  FILE *streams_[3]{};
-  int sink_ = -1;
+  struct Bundle {
+    SCREEN *screen = nullptr;
+    EditLine *editor = nullptr;
+    History *history = nullptr;
+    FILE *streams[3]{};
+    char output_buffer[4096]{};
+    int sink = -1;
+    bool quarantined = false;
+  };
+  // Deliberately no destructor registration: native libraries may retain pointers into this bundle.
+  inline static Bundle *quarantine_ = nullptr;
+  std::unique_ptr<Bundle> held_;
   bool cleanup_ = false, detached_ = false;
   int input() const noexcept {
-    return streams_[0] ? ::fileno(streams_[0]) : STDIN_FILENO;
+    return held_ && held_->streams[0] ? ::fileno(held_->streams[0]) : STDIN_FILENO;
   }
-  void streams() {
-    if (cleanup_)
-      throw Error("Native terminal resources are closed");
-    if (streams_[0] && streams_[1] && streams_[2])
-      return;
-    if (sink_ >= 0)
-      throw Error("Private terminal stream initialization failed");
-    sink_ = ::open("/dev/null", O_RDWR);
-    if (sink_ < 0 || ::fcntl(sink_, F_SETFD, FD_CLOEXEC) < 0)
-      throw Error("Cannot reserve terminal cleanup sink");
-    for (int i = 0; i != 3; ++i) {
-      const auto descriptor = ::dup(i);
+  Bundle &bundle() {
+    if (cleanup_ || quarantine_)
+      throw Error("Native terminal resources are closed or quarantined");
+    if (!held_)
+      held_ = std::make_unique<Bundle>();
+    return *held_;
+  }
+  static int duplicate(int source) noexcept {
+    const int descriptor = ::fcntl(source, F_DUPFD, 3);
+    if (descriptor >= 0 && ::fcntl(descriptor, F_SETFD, FD_CLOEXEC) < 0) {
+      ::close(descriptor);
+      return -1;
+    }
+    return descriptor;
+  }
+  void streams(bool error_stream) {
+    auto &owned = bundle();
+    if (owned.sink < 0) {
+      const int opened = ::open("/dev/null", O_RDWR);
+      if (opened < 0)
+        throw Error("Cannot reserve terminal cleanup sink");
+      owned.sink = duplicate(opened);
+      ::close(opened);
+      if (owned.sink < 0)
+        throw Error("Cannot reserve terminal cleanup sink");
+    }
+    for (int i = 0; i != (error_stream ? 3 : 2); ++i) {
+      if (owned.streams[i])
+        continue;
+      int descriptor = duplicate(i);
+      if (descriptor < 0 && i == 2 && errno == EBADF)
+        descriptor = duplicate(owned.sink);
       if (descriptor < 0)
         throw Error("Cannot duplicate terminal stream");
-      if (::fcntl(descriptor, F_SETFD, FD_CLOEXEC) < 0) {
-        ::close(descriptor);
-        throw Error("Cannot prepare private terminal descriptor");
-      }
-      streams_[i] = ::fdopen(descriptor, i == 0 ? "r" : "w");
-      if (!streams_[i]) {
+      owned.streams[i] = ::fdopen(descriptor, i == 0 ? "r" : "w");
+      if (!owned.streams[i]) {
         ::close(descriptor);
         throw Error("Cannot open private terminal stream");
       }
-      if (std::setvbuf(streams_[i], nullptr, _IONBF, 0) != 0)
+      if (std::setvbuf(owned.streams[i], i == 1 ? owned.output_buffer : nullptr,
+                       i == 1 ? _IOFBF : _IONBF, i == 1 ? sizeof(owned.output_buffer) : 0) != 0)
         throw Error("Cannot prepare private terminal stream");
     }
+  }
+  static void purge(FILE *stream) noexcept {
+#ifdef __linux__
+    ::__fpurge(stream);
+#else
+    (void)::fpurge(stream);
+#endif
   }
   static bool foreign(int descriptor) noexcept {
     pid_t group;
@@ -96,33 +134,61 @@ public:
   NativeTerminalResourceOps(const NativeTerminalResourceOps &) = delete;
   NativeTerminalResourceOps &operator=(const NativeTerminalResourceOps &) = delete;
   ~NativeTerminalResourceOps() override {
+    if (held_) {
+      stop_screen();
+      if (held_->editor)
+        stop_editor(held_->editor);
+      if (held_->history)
+        stop_history(held_->history);
+    }
     end_cleanup();
+  }
+  bool quarantined() const noexcept {
+    return held_ ? held_->quarantined : quarantine_ != nullptr;
   }
   void begin_cleanup() noexcept override {
     if (std::exchange(cleanup_, true))
       return;
-    detached_ = foreign(input()) || (streams_[1] && foreign(::fileno(streams_[1])));
-    if (!detached_)
+    detached_ =
+        foreign(input()) || (held_ && held_->streams[1] && foreign(::fileno(held_->streams[1])));
+    if (!detached_ || !held_)
       return;
-    // Only private descriptors are detached. Native destructors can still free every handle.
-    for (auto *stream : streams_) {
+    bool failed = false;
+    for (auto *stream : held_->streams) {
       if (!stream)
         continue;
-      const auto descriptor = ::fileno(stream);
       int result;
       do {
-        result = ::dup2(sink_, descriptor);
+        result = ::dup2(held_->sink, ::fileno(stream));
       } while (result < 0 && errno == EINTR);
-      if (result < 0)
-        ::close(descriptor); // A failed detach must never fall back to the live terminal.
+      failed |= result < 0;
+    }
+    if (failed) {
+      for (auto *stream : held_->streams)
+        if (stream)
+          purge(stream);
+      held_->quarantined = true;
+      // Do not write a warning into another foreground program's terminal.
+      if (!::isatty(STDERR_FILENO)) {
+        DescriptorOutput warning(STDERR_FILENO);
+        (void)warning.result({"codet: terminal cleanup quarantined after failed detachment"}, true,
+                             OutputMode::immediate);
+      }
     }
   }
   void end_cleanup() noexcept override {
-    for (auto &stream : streams_)
-      if (auto *held = std::exchange(stream, nullptr))
-        (void)std::fclose(held);
-    if (sink_ >= 0)
-      ::close(std::exchange(sink_, -1));
+    if (!held_)
+      return;
+    if (held_->quarantined) {
+      quarantine_ = held_.release();
+      return;
+    }
+    for (auto &stream : held_->streams)
+      if (auto *owned = std::exchange(stream, nullptr))
+        (void)std::fclose(owned);
+    if (held_->sink >= 0)
+      ::close(std::exchange(held_->sink, -1));
+    held_.reset();
   }
   bool capture(termios &settings) noexcept override {
     return ::tcgetattr(input(), &settings) == 0;
@@ -148,38 +214,51 @@ public:
     (void)apply(settings);
   }
   bool start_screen() override {
-    if (screen_)
+    if (held_ && held_->screen)
       throw Error("Native terminal screen already initialized");
-    streams();
-    screen_ = ::newterm(nullptr, streams_[1], streams_[0]);
-    if (!screen_)
+    streams(false);
+    held_->screen = ::newterm(nullptr, held_->streams[1], held_->streams[0]);
+    if (!held_->screen)
       return false;
-    (void)::set_term(screen_);
+    (void)::set_term(held_->screen);
     return true;
   }
   void stop_screen() noexcept override {
     begin_cleanup();
-    if (auto *held = std::exchange(screen_, nullptr)) {
-      TerminalCleanupSignals signals;
-      (void)::set_term(held);
-      (void)::endwin();
-      ::delscreen(held);
-    }
+    if (held_ && !held_->quarantined)
+      if (auto *held = std::exchange(held_->screen, nullptr)) {
+        TerminalCleanupSignals signals;
+        (void)::set_term(held);
+        (void)::endwin();
+        ::delscreen(held);
+      }
   }
   EditLine *start_editor() override {
-    streams();
-    return ::el_init("codet", streams_[0], streams_[1], streams_[2]);
+    streams(true);
+    if (held_->editor)
+      throw Error("Native terminal editor already initialized");
+    return held_->editor =
+               ::el_init("codet", held_->streams[0], held_->streams[1], held_->streams[2]);
   }
   void stop_editor(EditLine *editor) noexcept override {
     begin_cleanup();
-    TerminalCleanupSignals signals;
-    ::el_end(editor);
+    if (held_ && !held_->quarantined) {
+      TerminalCleanupSignals signals;
+      ::el_end(editor);
+      held_->editor = nullptr;
+    }
   }
   History *start_history() override {
-    return ::history_init();
+    auto &owned = bundle();
+    if (owned.history)
+      throw Error("Native terminal history already initialized");
+    return owned.history = ::history_init();
   }
   void stop_history(History *entries) noexcept override {
-    ::history_end(entries);
+    if (held_ && !held_->quarantined) {
+      ::history_end(entries);
+      held_->history = nullptr;
+    }
   }
 };
 } // namespace codet::detail

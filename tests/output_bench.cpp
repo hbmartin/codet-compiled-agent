@@ -1,6 +1,12 @@
 // Host-only measurements; compile this identical harness against both compared source trees.
 #include "codet/core.hpp"
 #include "codet/detail/cli_output.hpp"
+#include "codet/detail/native_terminal.hpp"
+#ifdef __APPLE__
+#include <util.h>
+#else
+#include <pty.h>
+#endif
 #include "codet/diagnostics.hpp"
 #include "temp.hpp"
 #include <atomic>
@@ -16,7 +22,7 @@
 #include <unistd.h>
 namespace {
 bool measuring = false;
-std::atomic<size_t> allocations{0}, allocated{0}, writes{0}, bytes{0}, waits{0};
+std::atomic<size_t> allocations{0}, allocated{0}, writes{0}, bytes{0}, waits{0}, stats{0};
 void *allocate(size_t size) {
   if (auto *memory = std::malloc(size ? size : 1)) {
     if (measuring) {
@@ -71,7 +77,7 @@ void operator delete[](void *memory, size_t) noexcept {
 extern "C" ssize_t write(int fd, const void *data, size_t size) {
   static const auto native = resolve<ssize_t (*)(int, const void *, size_t)>("write");
   const auto result = native(fd, data, size);
-  if (measuring && fd == STDOUT_FILENO) {
+  if (measuring && (fd == STDOUT_FILENO || fd == STDERR_FILENO)) {
     ++writes;
     if (result > 0)
       bytes += static_cast<size_t>(result);
@@ -81,7 +87,7 @@ extern "C" ssize_t write(int fd, const void *data, size_t size) {
 extern "C" ssize_t writev(int fd, const iovec *data, int count) {
   static const auto native = resolve<ssize_t (*)(int, const iovec *, int)>("writev");
   const auto result = native(fd, data, count);
-  if (measuring && fd == STDOUT_FILENO) {
+  if (measuring && (fd == STDOUT_FILENO || fd == STDERR_FILENO)) {
     ++writes;
     if (result > 0)
       bytes += static_cast<size_t>(result);
@@ -94,16 +100,27 @@ extern "C" int poll(pollfd *fds, nfds_t count, int timeout) {
     ++waits;
   return native(fds, count, timeout);
 }
+extern "C" int fstat(int fd, struct stat *status)
+#ifdef __linux__
+    noexcept
+#endif
+{
+  static const auto native = resolve<int (*)(int, struct stat *)>("fstat");
+  if (measuring)
+    ++stats;
+  return native(fd, status);
+}
 int main(int argc, char **argv) {
   using namespace codet;
   if (argc < 3)
     return 2;
   const std::string mode(argv[1]);
-  const bool piped = mode.rfind("pipe-", 0) == 0;
+  const bool editor = mode == "editor";
+  const bool piped = mode.rfind("pipe-", 0) == 0 || editor;
   pid_t drainer = -1;
   if (piped) {
     int pipe[2];
-    if (::pipe(pipe))
+    if (editor ? ::openpty(&pipe[0], &pipe[1], nullptr, nullptr, nullptr) : ::pipe(pipe))
       return 3;
     drainer = ::fork();
     if (drainer < 0)
@@ -116,6 +133,8 @@ int main(int argc, char **argv) {
       ::_exit(0);
     }
     ::close(pipe[0]);
+    if (editor && ::dup2(pipe[1], STDIN_FILENO) < 0)
+      return 3;
     if (::dup2(pipe[1], STDOUT_FILENO) < 0)
       return 3;
     ::close(pipe[1]);
@@ -126,8 +145,14 @@ int main(int argc, char **argv) {
     ::close(sink);
   }
   const bool large = mode.find("large") != std::string::npos;
-  const bool output = mode.rfind("jsonl-", 0) == 0 || piped;
-  const size_t repetitions = output ? (large ? 2000 : 20000) : mode == "budget-partial" ? 32 : 128;
+  const bool amplified = mode.find("amplified") != std::string::npos;
+  const bool diagnostic = mode.rfind("diagnostics", 0) == 0;
+  const bool output = mode.rfind("jsonl-", 0) == 0 || (piped && !editor);
+  const size_t repetitions = amplified                  ? 200000
+                             : output                   ? (large ? 2000 : 20000)
+                             : editor                   ? 20000
+                             : mode == "budget-partial" ? 32
+                                                        : 128;
   const std::string record = "{\"text\":\"" + std::string(large ? 65536 : 100, 'x') + "\"}";
   std::string input(1024 * 1024, mode == "budget-partial" ? '\x1b' : 'x');
   if (mode == "render-utf8") {
@@ -137,8 +162,24 @@ int main(int argc, char **argv) {
   }
   DiagnosticBuffer full(DiagnosticBuffer::notice().size() + 3);
   full.add("a");
+  detail::NativeTerminalResourceOps native;
+  detail::TerminalResources resources(native);
+  if (editor) {
+    ::setenv("TERM", "xterm", 1);
+    resources.start_editor();
+    (void)::el_set(resources.editor(), EL_SIGNAL, 0);
+    (void)::el_set(resources.editor(), EL_EDITOR, "emacs");
+    (void)::el_set(
+        resources.editor(), EL_PROMPT, +[](EditLine *) -> const char * {
+          return "a representative private libedit prompt with Unicode 雪> ";
+        });
+  }
   Cancellation cancel;
   auto stdout_output = production_output<detail::CliOutput>(cancel);
+  detail::CliOutput uncancelled_output;
+  if (diagnostic && ::dup2(STDOUT_FILENO, STDERR_FILENO) < 0)
+    return 3;
+  detail::DiagnosticWriter diagnostics(std::cerr);
   TempDirectory temporary;
   std::vector<std::string> command;
   if (mode == "answer") {
@@ -155,7 +196,7 @@ int main(int argc, char **argv) {
     config.close();
     command = {"-C", (temporary.root / "work").string(), "exec", "benchmark answer"};
   }
-  allocations = allocated = writes = bytes = waits = 0;
+  allocations = allocated = writes = bytes = waits = stats = 0;
   size_t observed = 0;
   volatile bool terminal = false;
   measuring = true;
@@ -165,9 +206,20 @@ int main(int argc, char **argv) {
       return 4;
   } else
     for (size_t i = 0; i != repetitions; ++i) {
-      if (output)
+      if (editor)
+        observed += ::el_set(resources.editor(), EL_REFRESH) == 0;
+      else if (mode == "write-positive")
+        observed += ::write(STDOUT_FILENO, "x", 1) == 1;
+      else if (mode.find("nocancel") != std::string::npos)
+        uncancelled_output.required({record});
+      else if (output)
         stdout_output.required({record});
-      else if (mode == "answer-boundary")
+      else if (diagnostic)
+        observed += diagnostics.write({"ordinary diagnostic"});
+      else if (mode == "stat-positive") {
+        struct stat status {};
+        observed += ::fstat(STDOUT_FILENO, &status) == 0;
+      } else if (mode == "answer-boundary")
         answer(stdout_output, input, terminal, 0);
       else if (mode == "budget-full")
         observed += full.add(input).has_value();
@@ -180,7 +232,10 @@ int main(int argc, char **argv) {
   const auto elapsed =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
   measuring = false;
+  resources.close();
   if (piped) {
+    if (editor)
+      ::close(STDIN_FILENO);
     ::close(STDOUT_FILENO);
     int status;
     if (::waitpid(drainer, &status, 0) < 0 || status)
@@ -196,8 +251,10 @@ int main(int argc, char **argv) {
                   {"allocations", measured_allocations},
                   {"allocated_bytes", measured_bytes},
                   {"writes", calls},
+                  {"direct_native_write_counter", !editor && !diagnostic},
                   {"bytes", delivered},
                   {"readiness", readiness},
+                  {"fstat", stats.load()},
                   {"observed", observed}})
                 .dump()
          << '\n';

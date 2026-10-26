@@ -168,7 +168,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             commands=['printf begun > begun; while test ! -f release; do sleep .02; done','printf completed > completed']
             delta={'tool_calls':[{'index':i,'id':'batch-'+str(i),'function':{'name':'exec_command','arguments':json.dumps({'cmd':command,'login':False})}} for i,command in enumerate(commands)]};reason='tool_calls'
         elif 'fixture-control-approval' in prompt and not completed:
-            delta={'tool_calls':[{'index':0,'id':'control-approval','function':{'name':'exec_command','arguments':json.dumps({'cmd':DISPLAY_CONTROLS,'login':False})}}]};reason='tool_calls'
+            delta={'tool_calls':[{'index':0,'id':'control-approval','function':{'name':'exec_command','arguments':json.dumps({'cmd':DISPLAY_CONTROLS+'\r\nnext\t'+chr(92)+'x0A','login':False})}}]};reason='tool_calls'
         elif 'fixture-command' in messages[last_user].get('content','') and not completed:
             delta={'tool_calls':[{'index':0,'id':'shell-'+str(last_user),'function':{'name':'exec_command','arguments':json.dumps({'cmd':'printf approved','login':False})}}]};reason='tool_calls'
         elif 'fixture-edit' in prompt and not completed:
@@ -1263,7 +1263,7 @@ class CliTests(unittest.TestCase):
                         stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
                     received=b''
                     try:
-                        expected=DISPLAY_ESCAPED.encode();deadline=time.monotonic()+7
+                        expected=(DISPLAY_ESCAPED+(r'\x0D\x0Anext\x09\x5Cx0A' if prompt=='fixture-control-approval' else '')).encode();deadline=time.monotonic()+7
                         while expected not in received and time.monotonic()<deadline:
                             if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
                         self.assertIn(expected,received)
@@ -1656,7 +1656,7 @@ class CliTests(unittest.TestCase):
         self.assertTrue(any('retain positional context' in m and 'retain piped context' in m for m in users))
         self.assertTrue(any('Explicit memory consolidation:' in m for m in users))
 
-    def test_background_close_preserves_foreground_modes_and_queued_input(self,modes=('line','curses','detach-failure','query-failure')):
+    def test_background_close_preserves_foreground_modes_and_queued_input(self,modes=('line','curses','detach-failure','detach-failure-curses','query-failure')):
         helper=pathlib.Path(__file__).with_name('terminal_cli_helper.py')
         binary=str(pathlib.Path(BIN).with_name('codet_tests'))
         for mode in modes:
@@ -1691,6 +1691,52 @@ class CliTests(unittest.TestCase):
                 finally:
                     if process.poll() is None:process.kill();process.wait(timeout=5)
                     process.stderr.close();os.close(read);os.close(write)
+
+    def test_shared_full_stdout_stderr_cancels_without_draining_cleanup(self):
+        import fcntl
+        for arguments in (['--help'],['-C',str(self.workspace),'exec','--ephemeral',
+                '--output-format=jsonl','-c','hooks.SessionEnd=[{command="printf cleanup",on_error="warn"}]','fixture']):
+            for sig in (signal.SIGINT,signal.SIGTERM):
+                with self.subTest(arguments=arguments,signal=sig):
+                    reader,writer=os.pipe()
+                    flags=fcntl.fcntl(writer,fcntl.F_GETFL)
+                    fcntl.fcntl(writer,fcntl.F_SETFL,flags|os.O_NONBLOCK)
+                    try:
+                        while True:os.write(writer,b'x'*4096)
+                    except BlockingIOError:pass
+                    fcntl.fcntl(writer,fcntl.F_SETFL,flags)
+                    process=subprocess.Popen([BIN,*arguments],stdin=subprocess.DEVNULL,
+                        stdout=writer,stderr=writer,env=self.env)
+                    try:
+                        with self.assertRaises(subprocess.TimeoutExpired):process.wait(timeout=.3)
+                        process.send_signal(sig)
+                        self.assertEqual(process.wait(timeout=5),130)
+                        self.assertEqual(fcntl.fcntl(writer,fcntl.F_GETFL)&os.O_NONBLOCK,0)
+                    finally:
+                        if process.poll() is None:process.kill();process.wait(timeout=5)
+                        os.close(reader);os.close(writer)
+
+    def test_shared_full_socket_cancels_without_blocking_final_stderr(self):
+        import fcntl
+        import socket
+        for sig in (signal.SIGINT,signal.SIGTERM):
+            with self.subTest(signal=sig):
+                reader,writer=socket.socketpair()
+                writer.setblocking(False)
+                try:
+                    while True:writer.send(b'x'*4096)
+                except BlockingIOError:pass
+                writer.setblocking(True)
+                flags=fcntl.fcntl(writer.fileno(),fcntl.F_GETFL)
+                process=subprocess.Popen([BIN,'--help'],stdout=writer,stderr=writer,env=self.env)
+                try:
+                    with self.assertRaises(subprocess.TimeoutExpired):process.wait(timeout=.3)
+                    process.send_signal(sig)
+                    self.assertEqual(process.wait(timeout=5),130)
+                    self.assertEqual(fcntl.fcntl(writer.fileno(),fcntl.F_GETFL),flags)
+                finally:
+                    if process.poll() is None:process.kill();process.wait(timeout=5)
+                    reader.close();writer.close()
 
     def test_interrupt_has_exit_130_and_terminal_event(self):
         for sig in (signal.SIGINT, signal.SIGTERM):

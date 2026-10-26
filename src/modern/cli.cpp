@@ -240,6 +240,7 @@ Options parse(const std::vector<std::string> &args) {
 }
 class Terminal final : public detail::CliDiagnosticSurface {
   detail::CliOutput &output_;
+  detail::DiagnosticWriter &errors_;
   detail::NativeTerminalResourceOps native_resources_;
   bool curses_ = false;
   HistEvent history_event_{};
@@ -303,7 +304,9 @@ class Terminal final : public detail::CliDiagnosticSurface {
   }
 
 public:
-  Terminal(const Config &c, const std::string &color, detail::CliOutput &output) : output_(output) {
+  Terminal(const Config &c, const std::string &color, detail::CliOutput &output,
+           detail::DiagnosticWriter &errors)
+      : output_(output), errors_(errors) {
     curses_ =
         (c.ui == "curses" || (c.ui == "auto" && env("TERM") != "dumb" && !env("TERM").empty()));
     for (auto it = c.keybindings.begin(); it != c.keybindings.end(); ++it) {
@@ -342,7 +345,7 @@ public:
         el_set(resources_.editor(), EL_HIST, history, resources_.entries());
       }
       set_mode(c.permission_mode);
-      (void)detail::write_diagnostic(std::cerr, {status_});
+      (void)errors_.write({status_});
     }
   }
   ~Terminal() override = default;
@@ -357,13 +360,17 @@ public:
     if (curses_)
       say_rendered(text);
     else
-      (void)detail::write_diagnostic(std::cerr, {text.text});
+      (void)errors_.write({text.text});
   }
   void set_mode(const std::string &mode) {
     status_ = "Permissions: " + mode + "; no OS shell sandbox";
     prompt_ = "codet> [" + mode + "] ";
     if (curses_)
       render();
+  }
+  void say_literal(const std::string &text) {
+    const auto shown = detail::literal_text(text);
+    say_rendered({shown});
   }
   void say(const std::string &text) {
     const auto shown = detail::terminal_text(text);
@@ -533,9 +540,14 @@ public:
 };
 } // namespace
 int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
+  detail::IoContext io(cancel);
+  return detail::cli_main(args, cancel, io);
+}
+int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel, IoContext &io) {
+  detail::DiagnosticWriter errors(std::cerr, &io);
   detail::reset_standard_diagnostics();
   const auto o = parse(args);
-  detail::CliOutput output(cancel);
+  detail::CliOutput output(io);
   if (o.help) {
     output.required({help}, false);
     return 0;
@@ -554,7 +566,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   const auto terminal_thread = std::this_thread::get_id();
   // Keep session ownership until background-process destruction has finished.
   std::shared_ptr<void> lifecycle_owner, current_owner;
-  auto diagnostics = std::make_shared<detail::CliDiagnostics>();
+  auto diagnostics = std::make_shared<detail::CliDiagnostics>(std::cerr, &io);
   DiagnosticSink diagnostic = [&, diagnostics](const std::string &text) {
     if (interaction && std::this_thread::get_id() != terminal_thread)
       interaction->post({{"type", "codet.diagnostic"}, {"text", text}});
@@ -615,7 +627,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       credentials.save_key(config.provider == "codex" ? "openai" : config.provider, key);
     } else
       throw Error("Native sign-in is deferred. Use login --import FILE or --with-api-key", 2);
-    (void)detail::write_diagnostic(std::cerr, {"Credentials stored privately in Codet state"});
+    (void)errors.write({"Credentials stored privately in Codet state"});
     return 0;
   }
   if (o.command == "doctor") {
@@ -754,7 +766,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
     else {
       if (o.exec || !isatty(STDIN_FILENO))
         throw Error("Select a session id or --last", 2);
-      (void)detail::write_diagnostic(std::cerr, {state.list().dump(2), "\nSession id: "}, false);
+      (void)errors.write({state.list().dump(2), "\nSession id: "}, false);
       std::string id;
       std::getline(std::cin, id);
       session = state.load(id, o.command == "export");
@@ -763,16 +775,16 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       if (o.format == "text") {
         detail::TextExport exported(output);
         const bool human = isatty(STDOUT_FILENO);
+        const auto append = [&](const std::string &text) {
+          if (human)
+            exported.append_human(text);
+          else
+            exported.append(text);
+        };
         for (const auto &m : session.messages) {
-          if (human)
-            exported.append_human(m.role);
-          else
-            exported.append(m.role);
+          append(m.role);
           exported.append(": ");
-          if (human)
-            exported.append_human(m.text);
-          else
-            exported.append(m.text);
+          append(m.text);
           exported.append("\n\n");
         }
         exported.finish();
@@ -818,7 +830,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   diagnostics->cleanup = DiagnosticBuffer(config.tool_output_limit);
   detail::TerminalDiagnosticsScope<Terminal> restore_diagnostics{terminal, diagnostics, state};
   if (interactive) {
-    restore_diagnostics.activate(std::make_shared<Terminal>(config, o.color, output));
+    restore_diagnostics.activate(std::make_shared<Terminal>(config, o.color, output, errors));
     terminal->set_mode(config.permission_mode);
   }
   interaction = terminal ? std::make_shared<Interaction>() : std::shared_ptr<Interaction>{};
@@ -852,39 +864,40 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
                !event["item"].value("final_result", false) &&
                (event["item"].value("phase", "") == "commentary" ||
                 event["item"].value("phase", "") == "partial_answer"))
-      (void)detail::write_diagnostic(std::cerr,
-                                     {detail::terminal_text(event["item"].value("text", ""))});
+      (void)errors.write({detail::terminal_text(event["item"].value("text", ""))});
     else if (event.value("type", "") == "item.started" && event["item"].contains("tool"))
-      (void)detail::write_diagnostic(std::cerr,
-                                     {"[", detail::terminal_text(event["item"]["tool"]), "]"});
+      (void)errors.write({"[", detail::terminal_text(event["item"]["tool"]), "]"});
   };
   Agent agent(config, provider, tools, state, events, diagnostic);
   struct SessionEnd {
+    detail::DiagnosticWriter &errors;
     std::function<void()> end;
     ~SessionEnd() {
       try {
         end();
       } catch (const std::exception &error) {
-        (void)detail::write_diagnostic(
-            std::cerr, {"SessionEnd hook cleanup failed: ", detail::terminal_text(error.what())});
+        (void)errors.write(
+            {"SessionEnd hook cleanup failed: ", detail::terminal_text(error.what())});
       } catch (...) {
-        (void)detail::write_diagnostic(std::cerr,
-                                       {"SessionEnd hook cleanup failed: unknown exception"});
+        (void)errors.write({"SessionEnd hook cleanup failed: unknown exception"});
       }
     }
-  } session_end{[&, started_id = session.id] {
-    diagnostics->buffering = true;
-    detail::TerminalDiagnosticsScope<Terminal> restore{terminal, diagnostics, state};
-    try {
-      Cancellation cleanup_cancel;
-      tools.run_hooks("SessionEnd", {{"hook_event_name", "SessionEnd"}, {"session_id", started_id}},
-                      cleanup_cancel, 10000, &diagnostics->cleanup);
-    } catch (const std::exception &error) {
-      report_diagnostic(diagnostic, "SessionEnd hook cleanup failed: " + std::string(error.what()));
-    } catch (...) {
-      report_diagnostic(diagnostic, "SessionEnd hook cleanup failed: unknown exception");
-    }
-  }};
+  } session_end{errors, [&, started_id = session.id] {
+                  diagnostics->buffering = true;
+                  detail::TerminalDiagnosticsScope<Terminal> restore{terminal, diagnostics, state};
+                  try {
+                    Cancellation cleanup_cancel;
+                    tools.run_hooks("SessionEnd",
+                                    {{"hook_event_name", "SessionEnd"}, {"session_id", started_id}},
+                                    cleanup_cancel, 10000, &diagnostics->cleanup);
+                  } catch (const std::exception &error) {
+                    report_diagnostic(diagnostic, "SessionEnd hook cleanup failed: " +
+                                                      std::string(error.what()));
+                  } catch (...) {
+                    report_diagnostic(diagnostic,
+                                      "SessionEnd hook cleanup failed: unknown exception");
+                  }
+                }};
   const auto started = tools.run_hooks("SessionStart",
                                        {{"hook_event_name", "SessionStart"},
                                         {"session_id", session.id},
@@ -920,8 +933,8 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
             if (type == "codet.diagnostic")
               diagnostics->emit_rendered({event.at("text").get_ref<const std::string &>()});
             else if (type == "codet.approval") {
-              terminal->say(event.at("tool").get<std::string>() + ": " +
-                            event.at("target").get<std::string>());
+              terminal->say_literal(event.at("tool").get<std::string>() + ": " +
+                                    event.at("target").get<std::string>());
               if (event.contains("context") && !event.at("context").empty())
                 terminal->say(safe_json(event.at("context")).dump());
               terminal->say("Approve? [y/N]");
@@ -943,7 +956,8 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
             } else if (type == "codet.user_message")
               terminal->say(event.at("message"));
             else if (type == "codet.artifact")
-              terminal->say("[Image: " + event.at("artifact").at("path").get<std::string>() + "]");
+              terminal->say_literal(
+                  "[Image: " + event.at("artifact").at("path").get<std::string>() + "]");
             else
               terminal->progress(event);
           },
@@ -1004,12 +1018,12 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       try {
         terminal->end_active();
       } catch (...) {
-        std::fputs("Terminal restoration also failed\n", stderr);
+        (void)errors.write({"Terminal restoration also failed"});
       }
       try {
         deliver(true);
       } catch (...) {
-        std::fputs("Worker events could not be drained during cleanup\n", stderr);
+        (void)errors.write({"Worker events could not be drained during cleanup"});
       }
       if (!quit_requested)
         cancel.requested = false;
@@ -1254,7 +1268,7 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
       session = std::move(fresh);
       last_usage.reset();
       current_owner = std::move(fresh_owner);
-      terminal->say("Started " + session.id);
+      terminal->say_literal("Started " + session.id);
       continue;
     }
     if (input->rfind("/name ", 0) == 0) {

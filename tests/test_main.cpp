@@ -63,6 +63,31 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc > 1 && std::string(argv[1]) == "--codet-closed-stderr-terminal-helper") {
+      if (argc != 4)
+        return 2;
+      const std::string mode(argv[2]);
+      if (mode != "line" && mode != "curses")
+        return 2;
+      const int terminal = std::stoi(argv[3]);
+      if (::dup2(terminal, STDIN_FILENO) < 0 || ::dup2(terminal, STDOUT_FILENO) < 0)
+        return 3;
+      ::close(STDERR_FILENO);
+      ::setenv("TERM", "xterm", 1);
+      {
+        codet::detail::NativeTerminalResourceOps ops;
+        codet::detail::TerminalResources resources(ops);
+        if (mode == "line")
+          resources.start_editor();
+        else
+          resources.start_screen();
+        if (::fcntl(STDERR_FILENO, F_GETFD) >= 0)
+          return 4;
+        resources.close();
+        resources.close();
+      }
+      return ::fcntl(STDERR_FILENO, F_GETFD) < 0 ? 0 : 5;
+    }
     if (argc > 1 && std::string(argv[1]) == "--codet-private-stream-failure-helper") {
       if (argc != 4)
         return 2;
@@ -115,7 +140,7 @@ int main(int argc, char **argv) {
         return 2;
       const std::string mode(argv[2]);
       if (mode != "line" && mode != "curses" && mode != "partial" && mode != "detach-failure" &&
-          mode != "query-failure")
+          mode != "query-failure" && mode != "detach-failure-curses")
         return 2;
       const int gate = std::stoi(argv[3]), notify = std::stoi(argv[4]);
       const int terminal = std::stoi(argv[5]);
@@ -137,10 +162,11 @@ int main(int argc, char **argv) {
       (void)::pthread_sigmask(SIG_SETMASK, nullptr, &prior);
       auto &metrics = codet::test::native_terminal_metrics;
       const auto failure = std::make_exception_ptr(std::bad_alloc());
+      metrics.observe_streams = true;
       try {
         codet::detail::NativeTerminalResourceOps ops;
         codet::detail::TerminalResources resources(ops);
-        if (mode == "curses") {
+        if (mode == "curses" || mode == "detach-failure-curses") {
           resources.start_screen();
           (void)::cbreak();
           (void)::noecho();
@@ -150,23 +176,54 @@ int main(int argc, char **argv) {
           resources.start_history();
           (void)::el_set(resources.editor(), EL_PREP_TERM, 1);
         }
+        metrics.observe_streams = false;
         (void)::write(notify, "R", 1);
         if (!codet::test::read_token(gate, token))
           return 5;
+        if (mode.rfind("detach-failure", 0) == 0) {
+          if (metrics.stream_count != (mode == "detach-failure-curses" ? 2u : 3u))
+            return 11;
+          // Retain test backing storage through normal process exit, just like the bundle.
+          auto *buffer = new char[4096];
+          if (std::setvbuf(metrics.streams[1], buffer, _IOFBF, 4096) != 0)
+            return 12;
+          (void)std::fputs("QUARANTINED OUTPUT MUST NEVER REACH THE FOREGROUND",
+                           metrics.streams[1]);
+        }
         metrics.observe = true;
-        metrics.detach_failure = mode == "detach-failure";
+        metrics.detach_failure = mode.rfind("detach-failure", 0) == 0;
         metrics.query_failure = mode == "query-failure";
-        if (mode == "partial")
+        if (mode == "partial" || mode.rfind("detach-failure", 0) == 0)
           std::rethrow_exception(failure);
         resources.close();
         resources.close();
       } catch (...) {
-        if (mode != "partial" || std::current_exception() != failure)
+        if ((mode != "partial" && mode.rfind("detach-failure", 0) != 0) ||
+            std::current_exception() != failure)
           throw;
       }
       metrics.observe = false;
-      if (metrics.live_settings || descriptors() != before)
+      if (metrics.live_settings)
         return 6;
+      if (mode.rfind("detach-failure", 0) == 0) {
+        // A failed detach quarantines FILE-owned descriptors: none can be reused or double-closed.
+        const int unrelated = ::open("/dev/null", O_RDWR);
+        if (unrelated < 0 || descriptors() <= before)
+          return 9;
+        bool rejected = false;
+        try {
+          codet::detail::NativeTerminalResourceOps next;
+          (void)next.start_editor();
+        } catch (const codet::Error &) {
+          rejected = true;
+        }
+        if (!rejected || ::fcntl(unrelated, F_GETFD) < 0)
+          return 10;
+        ::close(unrelated);
+      } else if (descriptors() != before)
+        return 6;
+      if (mode == "detach-failure-curses" && (metrics.ends || metrics.deletes))
+        return 13;
       if (mode == "curses" &&
           (metrics.ends != 1 || metrics.deletes != 1 || !metrics.ended_before_delete))
         return 7;

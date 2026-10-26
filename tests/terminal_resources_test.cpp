@@ -4,6 +4,7 @@
 #endif
 #include "process_helper.hpp"
 #include <cstring>
+#include <future>
 #include <gtest/gtest.h>
 #include <poll.h>
 #ifdef __APPLE__
@@ -253,6 +254,42 @@ TEST(TerminalResources, EveryPartialPrivateStreamAcquisitionReleasesItsDescripto
     ASSERT_TRUE(test::wait_helper(child, status));
     ASSERT_TRUE(WIFEXITED(status));
     EXPECT_EQ(WEXITSTATUS(status), 0) << allowance;
+  }
+}
+TEST(TerminalResources, ClosedStderrNeedsNoStandardDescriptorReservation) {
+  int master = -1, slave = -1;
+  ASSERT_EQ(::openpty(&master, &slave, nullptr, nullptr, nullptr), 0);
+  struct Close {
+    int master, slave;
+    ~Close() {
+      ::close(master);
+      ::close(slave);
+    }
+  } close{master, slave};
+  std::atomic<bool> done{false};
+  auto drainer = std::async(std::launch::async, [&] {
+    while (!done) {
+      pollfd ready{master, POLLIN, 0};
+      if (::poll(&ready, 1, 20) > 0) {
+        char bytes[4096];
+        (void)::read(master, bytes, sizeof(bytes));
+      }
+    }
+  });
+  struct Stop {
+    std::atomic<bool> &done;
+    ~Stop() {
+      done = true;
+    }
+  } stop{done};
+  for (const auto *mode : {"line", "curses"}) {
+    const auto child = test::start_helper(
+        {"--codet-closed-stderr-terminal-helper", mode, std::to_string(slave)}, {master});
+    ASSERT_GT(child, 0);
+    int status = 0;
+    ASSERT_TRUE(test::wait_helper(child, status));
+    ASSERT_TRUE(WIFEXITED(status));
+    EXPECT_EQ(WEXITSTATUS(status), 0) << mode;
   }
 }
 } // namespace

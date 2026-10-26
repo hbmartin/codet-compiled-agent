@@ -1,0 +1,4003 @@
+{
+  "baseline": {
+    "baseline": "f79754155f6a3fd7a72dd412570880a28799aadc",
+    "branch": "codex/diagnostic-shutdown-followup",
+    "machine": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+    "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n",
+    "go_pin": "1.27.2",
+    "tiger_compiler_available": false,
+    "tiger_sdk_available": false
+  },
+  "source_commit": "800bfe11b6c742081a849c5f96a39e89013fae1d",
+  "source_hashes": {
+    "CMakeLists.txt": "cb9031dab9902417c10b7fbd0cc8f258f29c2420c07829643d637a8e99502fae",
+    "README.md": "b2fc630ec3f3f7503421e31a7dd26a58373ff5e5cb5ec27f6fc8e08508547e49",
+    "docs/MODERN-ANALYSIS.md": "5570d8ed9dc7a909f35626d21eb6a3274c10c079e6ab66e0293be2d4580d20bf",
+    "include/codet/detail/cli_diagnostics.hpp": "57cdea35e293310cb77406b9a683dad9781aaad04c8baa0abf1735c0954611f2",
+    "include/codet/detail/cli_output.hpp": "3759f8da1ed70813137fb140593af484f1988225b32852539e31dc46b9cc70c7",
+    "include/codet/detail/diagnostic_stream.hpp": "d34d81e30b684e2b0f9e1b51053ea18746b447aa253228101dd301bf9e5c1dc5",
+    "include/codet/detail/native_output.hpp": "f723b6d59e9df583a584fe91af0e8f997a068e8432f372e8cfada2030b90cc31",
+    "include/codet/detail/native_terminal.hpp": "32dbbe8184ab0ab2e90901bc0e22e302b52e52fedb509189ecf0e35de6667e06",
+    "src/modern/cli.cpp": "d6e926dac815983d86ceee1ad95f190b7bf57a390a2c2947445027270b669e5b",
+    "src/modern/main.cpp": "b0fe294066021288244e6ef3c77dbdb4ade861e57874055073ebc64ed4a6e54e",
+    "src/modern/platform.cpp": "122824da122ad9a13f3a9ea27509a956ea4faf813ea69ab53d4d47295908e8f4",
+    "tests/cli_diagnostics_test.cpp": "d5ae732be6b0506b7eb6523b434f32ee9ce70475c50290f609eeb802f074270c",
+    "tests/cli_integration.py": "40e56d9d4dc675660de2c3efbf5af017f3e312bef7238ff068d542f4b7c8e528",
+    "tests/cli_output_test.cpp": "d672117421dd3c7cc1ac65eff0fa4567ae0036951b7bd06ab42f2c6b9c5ea541",
+    "tests/export_bench.cpp": "955447291f336445b1023ba5a89e74e4a4c7db24c8cf078c8baa5825010c89d9",
+    "tests/native_io_interposer.cpp": "a3e48e3d74133ed4c70ee9d0bcfcd44577a9f44ccc20ea91482e0cb67f518920",
+    "tests/native_io_metrics.hpp": "6b0b2541cff9e5526fd7d14e96567a213529cf4cefb231bfb79b880f9cc0bc5a",
+    "tests/native_terminal_interposer.cpp": "cd53b6cb611acc9faa67036ffdda0415401671d872b53e34b85a0b9bc1b8981a",
+    "tests/native_terminal_metrics.hpp": "47dea96107c07bbf468a2631f90d5c368fe7dd4734b70eab7a91e312c22c5cfb",
+    "tests/output_bench.cpp": "11abd0b4e1abb386418668574975ff97998e2a3e86e3b6d6bc5e1008707463cd",
+    "tests/terminal_cli_helper.py": "261142874b65931d39e2e7312a68629d8330176e5cd5ffc9905339e29122d25d",
+    "tests/terminal_resources_test.cpp": "aa30f5b24dee8612ec516fc95e7ce6ad2faa2aac89e1a7a41897478b67ae04a6",
+    "tests/test_main.cpp": "28f4283c050a497c5c6adf3adcdf3c5fd2ec168db683e21340276360c8d836c8"
+  },
+  "checks": [
+    {
+      "name": "final-debug-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/host",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 8.61,
+      "log": "build/diagnostic-shutdown-followup/final-debug-build.log"
+    },
+    {
+      "name": "final-sanitize-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/sanitize",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 13.852,
+      "log": "build/diagnostic-shutdown-followup/final-sanitize-build.log"
+    },
+    {
+      "name": "final-debug-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/host",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 108.907,
+      "log": "build/diagnostic-shutdown-followup/final-debug-ctest.log"
+    },
+    {
+      "name": "final-sanitize-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/sanitize",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 153.832,
+      "log": "build/diagnostic-shutdown-followup/final-sanitize-ctest.log"
+    },
+    {
+      "name": "repeated-diagnostics",
+      "command": [
+        "build/sanitize/codet_tests",
+        "--gtest_filter=FileDiagnostics.*:CliDiagnosticsTest.*:TerminalResources.*:DiagnosticWriter.*:CliOutput.*:Pr17.ConsumerFailuresSurviveEveryTransportExitWithoutAnotherRequest:Pr17.CompletedSessionSurvivesDeliveryFailureWithTheOriginalException",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 45.146,
+      "log": "build/diagnostic-shutdown-followup/repeated-diagnostics.log"
+    },
+    {
+      "name": "repeated-faults",
+      "command": [
+        "build/sanitize/codet_publication_fault_tests",
+        "--gtest_filter=FileDiagnosticsFault.*",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 3.558,
+      "log": "build/diagnostic-shutdown-followup/repeated-faults.log"
+    },
+    {
+      "name": "repeated-cli-0",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 5.838,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-0.log"
+    },
+    {
+      "name": "repeated-cli-1",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 6.153,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-1.log"
+    },
+    {
+      "name": "repeated-cli-2",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 5.832,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-2.log"
+    },
+    {
+      "name": "repeated-cli-3",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 5.949,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-3.log"
+    },
+    {
+      "name": "repeated-cli-4",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 5.851,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-4.log"
+    },
+    {
+      "name": "repeated-cli-5",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 5.849,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-5.log"
+    },
+    {
+      "name": "repeated-cli-6",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 5.894,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-6.log"
+    },
+    {
+      "name": "repeated-cli-7",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 5.885,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-7.log"
+    },
+    {
+      "name": "repeated-cli-8",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 6.153,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-8.log"
+    },
+    {
+      "name": "repeated-cli-9",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 5.913,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-9.log"
+    },
+    {
+      "name": "repeated-cli-10",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 5.86,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-10.log"
+    },
+    {
+      "name": "repeated-cli-11",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 6.046,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-11.log"
+    },
+    {
+      "name": "repeated-cli-12",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 6.344,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-12.log"
+    },
+    {
+      "name": "repeated-cli-13",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 7.02,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-13.log"
+    },
+    {
+      "name": "repeated-cli-14",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 6.271,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-14.log"
+    },
+    {
+      "name": "repeated-cli-15",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 5.878,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-15.log"
+    },
+    {
+      "name": "repeated-cli-16",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 5.816,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-16.log"
+    },
+    {
+      "name": "repeated-cli-17",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 5.761,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-17.log"
+    },
+    {
+      "name": "repeated-cli-18",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 5.869,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-18.log"
+    },
+    {
+      "name": "repeated-cli-19",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_full_blocking_stdout_honors_signals_without_draining",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control",
+        "CliTests.test_display_escaping_preserves_data_outputs_and_bounds_hook_replay",
+        "CliTests.test_terminal_modes_restore_terminal",
+        "CliTests.test_interrupt_has_exit_130_and_terminal_event"
+      ],
+      "exit": 0,
+      "seconds": 5.832,
+      "log": "build/diagnostic-shutdown-followup/repeated-cli-19.log"
+    },
+    {
+      "name": "final-lint",
+      "command": [
+        "make",
+        "check-lint",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 1.228,
+      "log": "build/diagnostic-shutdown-followup/final-lint.log"
+    }
+  ],
+  "tools": [
+    {
+      "name": "lint",
+      "command": [
+        "make",
+        "check-lint",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 1.397188917035237
+    },
+    {
+      "name": "runner-tests",
+      "command": [
+        "make",
+        "test-lint-runners",
+        "test-modern-analysis-runner",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "ANALYSIS_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 6.9020386670017615
+    },
+    {
+      "name": "semgrep",
+      "command": [
+        "make",
+        "check-semgrep",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "SEMGREP=build/semgrep-venv/bin/pysemgrep"
+      ],
+      "exit": 0,
+      "seconds": 6.581291666952893
+    }
+  ],
+  "provisioning": {
+    "exit": 0,
+    "mode": "offline pinned cache"
+  },
+  "test_counts": {
+    "debug": {
+      "gtest_runs": [
+        62,
+        554
+      ],
+      "python_runs": [
+        78,
+        7,
+        6,
+        9,
+        17,
+        3
+      ],
+      "sha256": "b3ea75a61939b00a56eb88cc7ba07bfa18a3c1f099706c02ecde4e45a12542d5"
+    },
+    "asan_ubsan": {
+      "gtest_runs": [
+        62,
+        554
+      ],
+      "python_runs": [
+        78,
+        7,
+        6,
+        9,
+        17,
+        3
+      ],
+      "sha256": "ea0ea6fe9920730c0e950fed0a51784b14de8732c77e2e119ef4983de09dccec"
+    },
+    "repeated_unit": {
+      "gtest_runs": [
+        70,
+        70,
+        70,
+        70,
+        70,
+        70,
+        70,
+        70,
+        70,
+        70,
+        70,
+        70,
+        70,
+        70,
+        70,
+        70,
+        70,
+        70,
+        70,
+        70
+      ],
+      "python_runs": [],
+      "sha256": "5cf175a38c854b9d57caf66efabbf64b732d1c70fb3f107e459502e783fab443"
+    },
+    "repeated_fault": {
+      "gtest_runs": [
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13
+      ],
+      "python_runs": [],
+      "sha256": "1d709d78e0949fc14e71fc768775a9a924e0c2e6b5910b6394fac670ac389a35"
+    },
+    "repeated_cli": [
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "ab18a505ec576f417b216495a12e501211d261a170d404c3337732555409c073"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "cc7dbf0e9e34345ed6706b1034d347b78a57fd35ba9b282f77c99003d23ed57c"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "5f793882f75772435b835f32f7a2b0ef8f602aed945356f5d062b0c1a346ddb5"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "e6decbbde14892065c606201121cbf0dd17bf6e849c75f7c024e37f28b05539c"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "709c7e5ee6f0db622cba60d6b5e8c157c95240f281202d863a920e2131bd9fc6"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "45e4650f467c295d9562768deaa4f5b8537d573f89e10a6a5b03564c7b0ff8f6"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "fdbe28e809f11dd4f1666b5d77e5f877c4dd7e41860527efb2ac0926c701e7b7"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "6162ff91f884fda3a327c437a54549e27e507080e32d5cc48813bd53b3ec9d37"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "a2501123f159feee65297745f55ed9686337635a0265f0af68ab7254b09409fd"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "8624ca88290ef008231c7bfb923ddd6f90902ffc4fbd0370adcd849db57900fc"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "2f8f9423ba6399e5abe4ed734155717f9b3080e2373c1f78a9fb669a4966afff"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "65612563ce46c26cb1cf4710de51fccd672e4d8c93ec3353283a6dd6129d2572"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "068191e8aa8848e15ebf78790f53265178e460633655ad18e3ce6c1d4ccfeb59"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "2759373598a8affdaa206d09a239861f83f01309e2182eea68f5b215d2a8088f"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "a59312674700c5f2aca64221b82c13c311dcdd35d75e9017a6f51a4f550476e9"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "d8e010b257fb0e8b48a00b7a25a9ec2dd4a3ed5bc38d820d5cc8de07d8cf9b2f"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "c131599ca5ae22c2548a6d254dff0d72b3c0c0f2d845ed3dc4bf5704bf7a6454"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "6263daf22781b7d05415cc0b1dee6e55fa98803097cc70a0ec1a532bd546e863"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "95d002a0e70b8e78576cb888d60abe4c9e7c631bd56ea4460eea3f9794e06311"
+      },
+      {
+        "gtest_runs": [],
+        "python_runs": [
+          10
+        ],
+        "sha256": "89a44d66a8631a665ff8f8b08cbf97c036fb24a10fbb7010d6dd65bf51612d9d"
+      }
+    ]
+  },
+  "analysis_baseline_comparison": {
+    "clang_tidy_same_diagnostic_multiset": true,
+    "additional": []
+  },
+  "analysis_checks": [
+    {
+      "name": "cppcheck",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/final-cppcheck-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--tool",
+        "cppcheck"
+      ],
+      "exit": 0,
+      "seconds": 75.2,
+      "log": "build/diagnostic-shutdown-followup/final-cppcheck.log"
+    },
+    {
+      "name": "clang-tidy",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/final-clang-tidy-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--tool",
+        "clang-tidy"
+      ],
+      "exit": 1,
+      "seconds": 36.6,
+      "log": "build/diagnostic-shutdown-followup/final-clang-tidy.log"
+    },
+    {
+      "name": "clang-analyzer",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/final-clang-analyzer-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--tool",
+        "clang-analyzer"
+      ],
+      "exit": 1,
+      "seconds": 54.0,
+      "log": "build/diagnostic-shutdown-followup/final-clang-analyzer.log"
+    },
+    {
+      "name": "selftest",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/final-selftest-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--selftest"
+      ],
+      "exit": 0,
+      "seconds": 1.84,
+      "log": "build/diagnostic-shutdown-followup/final-selftest.log"
+    }
+  ],
+  "analysis": {
+    "cppcheck": {
+      "completed": 25,
+      "expected": 25,
+      "findings": 0,
+      "details": [],
+      "manifest_sha256": "def5d534a80310d8656ef5e09fe74e7df1786669336741117062f521227df54c",
+      "versions": [
+        {
+          "command": [
+            "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck",
+            "--version"
+          ],
+          "directory": "/Volumes/Pro2T/codet-compiled-agent",
+          "exit_code": 0,
+          "stdout": "Cppcheck 2.22.0\n",
+          "stderr": "",
+          "failure": null,
+          "seconds": 0.01
+        }
+      ]
+    },
+    "clang-tidy": {
+      "completed": 24,
+      "expected": 25,
+      "findings": 6,
+      "details": [
+        {
+          "translation_unit": "images.cpp",
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'unsigned long' to 'double'",
+          "file": "/Volumes/Pro2T/codet-compiled-agent/src/modern/images.cpp",
+          "offset": 2861,
+          "native_diagnostic": null
+        },
+        {
+          "translation_unit": "images.cpp",
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'",
+          "file": "/Volumes/Pro2T/codet-compiled-agent/src/modern/images.cpp",
+          "offset": 2946,
+          "native_diagnostic": null
+        },
+        {
+          "translation_unit": "images.cpp",
+          "check": "bugprone-narrowing-conversions",
+          "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'",
+          "file": "/Volumes/Pro2T/codet-compiled-agent/src/modern/images.cpp",
+          "offset": 3022,
+          "native_diagnostic": null
+        },
+        {
+          "translation_unit": "main.cpp",
+          "check": "bugprone-exception-escape",
+          "message": "an exception may be thrown in function 'main' which should not throw exceptions",
+          "file": "/Volumes/Pro2T/codet-compiled-agent/src/modern/main.cpp",
+          "offset": 333,
+          "native_diagnostic": null
+        },
+        {
+          "translation_unit": "platform.cpp",
+          "check": "clang-diagnostic-error",
+          "message": "implicit instantiation of undefined template 'std::basic_istringstream<char>'",
+          "file": "/Volumes/Pro2T/codet-compiled-agent/src/modern/platform.cpp",
+          "offset": 1576,
+          "native_diagnostic": null
+        },
+        {
+          "translation_unit": "state.cpp",
+          "check": "bugprone-exception-escape",
+          "message": "an exception may be thrown in function 'operator()' which should not throw exceptions",
+          "file": "/Volumes/Pro2T/codet-compiled-agent/src/modern/state.cpp",
+          "offset": 122188,
+          "native_diagnostic": null
+        }
+      ],
+      "manifest_sha256": "9a23fa3e7723f7e515b235b942e759180a1f5e86fb18b78e802a0e00cf1b40d3",
+      "versions": [
+        {
+          "command": [
+            "/Volumes/Pro2T/codet-compiled-agent/build/tidy18/clang-tidy-sdk13",
+            "--version"
+          ],
+          "directory": "/Volumes/Pro2T/codet-compiled-agent",
+          "exit_code": 0,
+          "stdout": "LLVM (http://llvm.org/):\n  LLVM version 18.1.8\n  Optimized build.\n",
+          "stderr": "",
+          "failure": null,
+          "seconds": 0.034
+        }
+      ]
+    },
+    "clang-analyzer": {
+      "completed": 25,
+      "expected": 25,
+      "findings": 1,
+      "details": [
+        {
+          "translation_unit": "context.cpp",
+          "check": null,
+          "message": null,
+          "file": null,
+          "offset": null,
+          "native_diagnostic": {
+            "path": [
+              {
+                "kind": "control",
+                "edges": [
+                  {
+                    "start": [
+                      {
+                        "line": 222,
+                        "col": 3,
+                        "file": 0
+                      },
+                      {
+                        "line": 222,
+                        "col": 20,
+                        "file": 0
+                      }
+                    ],
+                    "end": [
+                      {
+                        "line": 225,
+                        "col": 3,
+                        "file": 0
+                      },
+                      {
+                        "line": 225,
+                        "col": 4,
+                        "file": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "control",
+                "edges": [
+                  {
+                    "start": [
+                      {
+                        "line": 225,
+                        "col": 3,
+                        "file": 0
+                      },
+                      {
+                        "line": 225,
+                        "col": 4,
+                        "file": 0
+                      }
+                    ],
+                    "end": [
+                      {
+                        "line": 225,
+                        "col": 7,
+                        "file": 0
+                      },
+                      {
+                        "line": 225,
+                        "col": 10,
+                        "file": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "event",
+                "location": {
+                  "line": 225,
+                  "col": 7,
+                  "file": 0
+                },
+                "ranges": [
+                  [
+                    {
+                      "line": 225,
+                      "col": 7,
+                      "file": 0
+                    },
+                    {
+                      "line": 225,
+                      "col": 29,
+                      "file": 0
+                    }
+                  ]
+                ],
+                "depth": 0,
+                "extended_message": "Assuming 'available' is < field 'total'",
+                "message": "Assuming 'available' is < field 'total'"
+              },
+              {
+                "kind": "control",
+                "edges": [
+                  {
+                    "start": [
+                      {
+                        "line": 225,
+                        "col": 7,
+                        "file": 0
+                      },
+                      {
+                        "line": 225,
+                        "col": 10,
+                        "file": 0
+                      }
+                    ],
+                    "end": [
+                      {
+                        "line": 231,
+                        "col": 3,
+                        "file": 0
+                      },
+                      {
+                        "line": 231,
+                        "col": 5,
+                        "file": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "control",
+                "edges": [
+                  {
+                    "start": [
+                      {
+                        "line": 231,
+                        "col": 3,
+                        "file": 0
+                      },
+                      {
+                        "line": 231,
+                        "col": 5,
+                        "file": 0
+                      }
+                    ],
+                    "end": [
+                      {
+                        "line": 233,
+                        "col": 3,
+                        "file": 0
+                      },
+                      {
+                        "line": 233,
+                        "col": 8,
+                        "file": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "event",
+                "location": {
+                  "line": 233,
+                  "col": 3,
+                  "file": 0
+                },
+                "ranges": [
+                  [
+                    {
+                      "line": 233,
+                      "col": 3,
+                      "file": 0
+                    },
+                    {
+                      "line": 233,
+                      "col": 14,
+                      "file": 0
+                    }
+                  ]
+                ],
+                "depth": 0,
+                "extended_message": "'count' initialized to 0",
+                "message": "'count' initialized to 0"
+              },
+              {
+                "kind": "control",
+                "edges": [
+                  {
+                    "start": [
+                      {
+                        "line": 233,
+                        "col": 3,
+                        "file": 0
+                      },
+                      {
+                        "line": 233,
+                        "col": 8,
+                        "file": 0
+                      }
+                    ],
+                    "end": [
+                      {
+                        "line": 239,
+                        "col": 3,
+                        "file": 0
+                      },
+                      {
+                        "line": 239,
+                        "col": 5,
+                        "file": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "control",
+                "edges": [
+                  {
+                    "start": [
+                      {
+                        "line": 239,
+                        "col": 3,
+                        "file": 0
+                      },
+                      {
+                        "line": 239,
+                        "col": 5,
+                        "file": 0
+                      }
+                    ],
+                    "end": [
+                      {
+                        "line": 239,
+                        "col": 22,
+                        "file": 0
+                      },
+                      {
+                        "line": 239,
+                        "col": 22,
+                        "file": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "event",
+                "location": {
+                  "line": 239,
+                  "col": 22,
+                  "file": 0
+                },
+                "ranges": [
+                  [
+                    {
+                      "line": 239,
+                      "col": 22,
+                      "file": 0
+                    },
+                    {
+                      "line": 239,
+                      "col": 40,
+                      "file": 0
+                    }
+                  ]
+                ],
+                "depth": 0,
+                "extended_message": "Assuming the condition is false",
+                "message": "Assuming the condition is false"
+              },
+              {
+                "kind": "event",
+                "location": {
+                  "line": 239,
+                  "col": 22,
+                  "file": 0
+                },
+                "ranges": [
+                  [
+                    {
+                      "line": 239,
+                      "col": 22,
+                      "file": 0
+                    },
+                    {
+                      "line": 239,
+                      "col": 40,
+                      "file": 0
+                    }
+                  ]
+                ],
+                "depth": 0,
+                "extended_message": "Loop body executed 0 times",
+                "message": "Loop body executed 0 times"
+              },
+              {
+                "kind": "control",
+                "edges": [
+                  {
+                    "start": [
+                      {
+                        "line": 239,
+                        "col": 22,
+                        "file": 0
+                      },
+                      {
+                        "line": 239,
+                        "col": 22,
+                        "file": 0
+                      }
+                    ],
+                    "end": [
+                      {
+                        "line": 256,
+                        "col": 3,
+                        "file": 0
+                      },
+                      {
+                        "line": 256,
+                        "col": 7,
+                        "file": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "control",
+                "edges": [
+                  {
+                    "start": [
+                      {
+                        "line": 256,
+                        "col": 3,
+                        "file": 0
+                      },
+                      {
+                        "line": 256,
+                        "col": 7,
+                        "file": 0
+                      }
+                    ],
+                    "end": [
+                      {
+                        "line": 257,
+                        "col": 3,
+                        "file": 0
+                      },
+                      {
+                        "line": 257,
+                        "col": 4,
+                        "file": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "control",
+                "edges": [
+                  {
+                    "start": [
+                      {
+                        "line": 257,
+                        "col": 3,
+                        "file": 0
+                      },
+                      {
+                        "line": 257,
+                        "col": 4,
+                        "file": 0
+                      }
+                    ],
+                    "end": [
+                      {
+                        "line": 257,
+                        "col": 7,
+                        "file": 0
+                      },
+                      {
+                        "line": 257,
+                        "col": 13,
+                        "file": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "event",
+                "location": {
+                  "line": 257,
+                  "col": 7,
+                  "file": 0
+                },
+                "ranges": [
+                  [
+                    {
+                      "line": 257,
+                      "col": 7,
+                      "file": 0
+                    },
+                    {
+                      "line": 257,
+                      "col": 31,
+                      "file": 0
+                    }
+                  ]
+                ],
+                "depth": 0,
+                "extended_message": "Assuming 'available' is >= field 'total'",
+                "message": "Assuming 'available' is >= field 'total'"
+              },
+              {
+                "kind": "control",
+                "edges": [
+                  {
+                    "start": [
+                      {
+                        "line": 257,
+                        "col": 7,
+                        "file": 0
+                      },
+                      {
+                        "line": 257,
+                        "col": 13,
+                        "file": 0
+                      }
+                    ],
+                    "end": [
+                      {
+                        "line": 260,
+                        "col": 3,
+                        "file": 0
+                      },
+                      {
+                        "line": 260,
+                        "col": 8,
+                        "file": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "control",
+                "edges": [
+                  {
+                    "start": [
+                      {
+                        "line": 260,
+                        "col": 3,
+                        "file": 0
+                      },
+                      {
+                        "line": 260,
+                        "col": 8,
+                        "file": 0
+                      }
+                    ],
+                    "end": [
+                      {
+                        "line": 261,
+                        "col": 3,
+                        "file": 0
+                      },
+                      {
+                        "line": 261,
+                        "col": 5,
+                        "file": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "control",
+                "edges": [
+                  {
+                    "start": [
+                      {
+                        "line": 261,
+                        "col": 3,
+                        "file": 0
+                      },
+                      {
+                        "line": 261,
+                        "col": 5,
+                        "file": 0
+                      }
+                    ],
+                    "end": [
+                      {
+                        "line": 261,
+                        "col": 22,
+                        "file": 0
+                      },
+                      {
+                        "line": 261,
+                        "col": 22,
+                        "file": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "event",
+                "location": {
+                  "line": 261,
+                  "col": 22,
+                  "file": 0
+                },
+                "ranges": [
+                  [
+                    {
+                      "line": 261,
+                      "col": 22,
+                      "file": 0
+                    },
+                    {
+                      "line": 261,
+                      "col": 40,
+                      "file": 0
+                    }
+                  ]
+                ],
+                "depth": 0,
+                "extended_message": "Assuming the condition is true",
+                "message": "Assuming the condition is true"
+              },
+              {
+                "kind": "event",
+                "location": {
+                  "line": 261,
+                  "col": 22,
+                  "file": 0
+                },
+                "ranges": [
+                  [
+                    {
+                      "line": 261,
+                      "col": 22,
+                      "file": 0
+                    },
+                    {
+                      "line": 261,
+                      "col": 40,
+                      "file": 0
+                    }
+                  ]
+                ],
+                "depth": 0,
+                "extended_message": "Entering loop body",
+                "message": "Entering loop body"
+              },
+              {
+                "kind": "control",
+                "edges": [
+                  {
+                    "start": [
+                      {
+                        "line": 261,
+                        "col": 22,
+                        "file": 0
+                      },
+                      {
+                        "line": 261,
+                        "col": 22,
+                        "file": 0
+                      }
+                    ],
+                    "end": [
+                      {
+                        "line": 262,
+                        "col": 5,
+                        "file": 0
+                      },
+                      {
+                        "line": 262,
+                        "col": 6,
+                        "file": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "control",
+                "edges": [
+                  {
+                    "start": [
+                      {
+                        "line": 262,
+                        "col": 5,
+                        "file": 0
+                      },
+                      {
+                        "line": 262,
+                        "col": 6,
+                        "file": 0
+                      }
+                    ],
+                    "end": [
+                      {
+                        "line": 262,
+                        "col": 9,
+                        "file": 0
+                      },
+                      {
+                        "line": 262,
+                        "col": 17,
+                        "file": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "event",
+                "location": {
+                  "line": 262,
+                  "col": 9,
+                  "file": 0
+                },
+                "ranges": [
+                  [
+                    {
+                      "line": 262,
+                      "col": 9,
+                      "file": 0
+                    },
+                    {
+                      "line": 262,
+                      "col": 20,
+                      "file": 0
+                    }
+                  ]
+                ],
+                "depth": 0,
+                "extended_message": "Assuming the condition is true",
+                "message": "Assuming the condition is true"
+              },
+              {
+                "kind": "control",
+                "edges": [
+                  {
+                    "start": [
+                      {
+                        "line": 262,
+                        "col": 9,
+                        "file": 0
+                      },
+                      {
+                        "line": 262,
+                        "col": 17,
+                        "file": 0
+                      }
+                    ],
+                    "end": [
+                      {
+                        "line": 263,
+                        "col": 36,
+                        "file": 0
+                      },
+                      {
+                        "line": 263,
+                        "col": 36,
+                        "file": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "event",
+                "location": {
+                  "line": 263,
+                  "col": 36,
+                  "file": 0
+                },
+                "ranges": [
+                  [
+                    {
+                      "line": 263,
+                      "col": 30,
+                      "file": 0
+                    },
+                    {
+                      "line": 263,
+                      "col": 42,
+                      "file": 0
+                    }
+                  ]
+                ],
+                "depth": 0,
+                "extended_message": "Division by zero",
+                "message": "Division by zero"
+              }
+            ],
+            "description": "Division by zero",
+            "category": "Logic error",
+            "type": "Division by zero",
+            "check_name": "core.DivideZero",
+            "issue_hash_content_of_line_in_context": "b7fd78895b63841553e144fd774a0954",
+            "issue_context_kind": "function",
+            "issue_context": "project_history",
+            "issue_hash_function_offset": "42",
+            "location": {
+              "line": 263,
+              "col": 36,
+              "file": 0
+            },
+            "ExecutedLines": {
+              "0": [
+                177,
+                178,
+                220,
+                221,
+                222,
+                223,
+                224,
+                225,
+                231,
+                232,
+                233,
+                234,
+                238,
+                239,
+                256,
+                257,
+                260,
+                261,
+                262,
+                263
+              ],
+              "1": [
+                644,
+                645
+              ],
+              "2": [
+                139,
+                140
+              ]
+            }
+          }
+        }
+      ],
+      "manifest_sha256": "d9610db63ed643e00ac8fc3c31f8a4ea894829b26ffa6eedc3c10bb58ac335ba",
+      "versions": [
+        {
+          "command": [
+            "/usr/bin/c++",
+            "--version"
+          ],
+          "directory": "/Volumes/Pro2T/codet-compiled-agent",
+          "exit_code": 0,
+          "stdout": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n",
+          "stderr": "",
+          "failure": null,
+          "seconds": 0.014
+        },
+        {
+          "command": [
+            "/usr/bin/cc",
+            "--version"
+          ],
+          "directory": "/Volumes/Pro2T/codet-compiled-agent",
+          "exit_code": 0,
+          "stdout": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n",
+          "stderr": "",
+          "failure": null,
+          "seconds": 0.011
+        }
+      ]
+    }
+  },
+  "failure_evidence": {
+    "reviewed_tree_matches_fetched_main": true,
+    "tree": "11132fae79a010a8a7517bf50e8ddb4a4d980c58",
+    "baseline_probes": {
+      "full-write": {
+        "status": 0,
+        "stdout": "{\"delivered\":\"complete\",\"delivery_failed\":false,\"status\":130}\n",
+        "stderr": ""
+      },
+      "socket": {
+        "status": 0,
+        "stdout": "{\"blocked_after_cancel\":true,\"blocked_before_cancel\":true,\"status_after_peer_closed\":130}\n",
+        "stderr": ""
+      },
+      "double-close": {
+        "status": 0,
+        "stdout": "{\"open_after_fclose\":false,\"open_before_fclose\":true,\"reused_fd\":4,\"screen\":false}\n",
+        "stderr": ""
+      },
+      "render": {
+        "status": 0,
+        "stdout": "{\"display\":\"a\\nb\",\"file_notice\":\"Tool result receipt candidate (publication unconfirmed): a\\\\x0D\\\\x0Ab\"}\n",
+        "stderr": ""
+      },
+      "chmod": {
+        "status": 0,
+        "stdout": "{\"first_succeeded\":false,\"second_succeeded\":true,\"seen\":\"\\nlater\\n\"}\n",
+        "stderr": ""
+      },
+      "shared-blocking-stderr": {
+        "blocked_after_sigint": true,
+        "exit_after_drain": 130
+      },
+      "closed-stderr": {
+        "status": 0,
+        "output": "\u001b[?1049h\u001b[1;24r\u001b(B\u001b[m\u001b[4l\u001b[?7h\u001b[24;1H\u001b[?1049l\r\u001b[?1l\u001b>{\"error\":\"\",\"started\":true,\"stderr_open_during_startup\":true}\r\n"
+      },
+      "chmod-pty": {
+        "status": 0,
+        "stdout": "{\"chmod_status\":0,\"first_succeeded\":false,\"mode_after\":8656,\"mode_before\":8592,\"second_succeeded\":true,\"seen\":\"later\\n\"}\n",
+        "stderr": ""
+      }
+    },
+    "darwin_dontwait_probe": {
+      "flags": "MSG_DONTWAIT",
+      "cancel_requested_after_ms": 300,
+      "still_blocked_after_additional_ms": 1000,
+      "independent_python_probe": "sendmsg([b\"x\"], [], socket.MSG_DONTWAIT) remained blocked on a full blocking AF_UNIX socket"
+    },
+    "darwin_nbio_probe": "MSG_DONTWAIT | 0x20000 returned cancellation without draining the peer",
+    "initial_failures": [
+      "Native descriptor delivery did not clear pre-existing C++ stream state; fixed and original regression retained.",
+      "A new closed-stderr curses fixture did not drain its PTY during endwin; fixed with a scoped reader.",
+      "An exploratory repeated run used an older sanitizer helper after adding a new mode; stopped, rebuilt, and final repetitions rerun.",
+      "Three enum-size warnings produced eleven new Clang-Tidy instances; fixed with explicit uint8_t bases, without suppressions."
+    ],
+    "lazy_identity_check_negative_control": {
+      "retained": false,
+      "failure": "Note: Google Test filter = DiagnosticWriter.EmergencyDescriptorStateCannotLeakIntoACapturedStreamOrReboundFd:DiagnosticWriter.PermissionChangesOnTheSameDescriptorIdentityKeepTheSeparator\n[==========] Running 2 tests from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 2 tests from DiagnosticWriter\n[ RUN      ] DiagnosticWriter.EmergencyDescriptorStateCannotLeakIntoACapturedStreamOrReboundFd\n/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/lazy-src/tests/cli_diagnostics_test.cpp:127: Failure\nExpected equality of these values:\n  delivered\n    Which is: \"\\nUncommitted tool result preserved at /complete/path\\n\"\n  \"Uncommitted tool result preserved at /complete/path\\n\"\nWith diff:\n@@ -1,2 @@\n-\n Uncommitted tool result preserved at /complete/path\\n\n\n\n[  FAILED  ] DiagnosticWriter.EmergencyDescriptorStateCannotLeakIntoACapturedStreamOrReboundFd (0 ms)\n[ RUN      ] DiagnosticWriter.PermissionChangesOnTheSameDescriptorIdentityKeepTheSeparator\n[       OK ] DiagnosticWriter.PermissionChangesOnTheSameDescriptorIdentityKeepTheSeparator (0 ms)\n[----------] 2 tests from DiagnosticWriter (1 ms total)\n\n[----------] Global test environment tear-down\n[==========] 2 tests from 1 test suite ran. (1 ms total)\n[  PASSED  ] 1 test.\n[  FAILED  ] 1 test, listed below:\n[  FAILED  ] DiagnosticWriter.EmergencyDescriptorStateCannotLeakIntoACapturedStreamOrReboundFd\n\n 1 FAILED TEST\n"
+    }
+  },
+  "performance": {
+    "builds": [
+      {
+        "build": "baseline",
+        "ref": "f79754155f6a3fd7a72dd412570880a28799aadc",
+        "configure": [
+          "cmake",
+          "-S",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/baseline-src",
+          "-B",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/baseline-variant-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+        ],
+        "hashes": {
+          "tests/output_bench.cpp": "11abd0b4e1abb386418668574975ff97998e2a3e86e3b6d6bc5e1008707463cd",
+          "include/codet/detail/native_terminal.hpp": "de7ecb97f2f2391d2b0a68e02391ecd18d3a5a11255d15137f2e95fa6d42d015",
+          "src/modern/platform.cpp": "d25509e687af669f1c791c1d37980d5b864302d94e9950a149e6cde42b395b11"
+        }
+      },
+      {
+        "build": "mandatory",
+        "ref": "800bfe1",
+        "configure": [
+          "cmake",
+          "-S",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/mandatory-src",
+          "-B",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/mandatory-variant-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+        ],
+        "hashes": {
+          "tests/output_bench.cpp": "11abd0b4e1abb386418668574975ff97998e2a3e86e3b6d6bc5e1008707463cd",
+          "include/codet/detail/native_terminal.hpp": "c1427aa7729d6ce459193462bc7f1dfdeedd899aa27d5d4b6268a483b5c89e9b",
+          "src/modern/platform.cpp": "122824da122ad9a13f3a9ea27509a956ea4faf813ea69ab53d4d47295908e8f4"
+        }
+      },
+      {
+        "build": "buffer",
+        "ref": "800bfe1",
+        "configure": [
+          "cmake",
+          "-S",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/buffer-src",
+          "-B",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/buffer-variant-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+        ],
+        "hashes": {
+          "tests/output_bench.cpp": "11abd0b4e1abb386418668574975ff97998e2a3e86e3b6d6bc5e1008707463cd",
+          "include/codet/detail/native_terminal.hpp": "32dbbe8184ab0ab2e90901bc0e22e302b52e52fedb509189ecf0e35de6667e06",
+          "src/modern/platform.cpp": "122824da122ad9a13f3a9ea27509a956ea4faf813ea69ab53d4d47295908e8f4"
+        }
+      }
+    ],
+    "method": "One warm-up and five alternating measured runs, repeated as a second set; no concurrent analyzers.",
+    "medians": [
+      {
+        "set": 1,
+        "case": "write-positive",
+        "variant": "baseline",
+        "milliseconds": 0.128541,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 128,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "write-positive",
+        "variant": "mandatory",
+        "milliseconds": 0.124875,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 128,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "write-positive",
+        "variant": "buffer",
+        "milliseconds": 0.131625,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 128,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "stat-positive",
+        "variant": "baseline",
+        "milliseconds": 0.093541,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 128
+      },
+      {
+        "set": 1,
+        "case": "stat-positive",
+        "variant": "mandatory",
+        "milliseconds": 0.095834,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 128
+      },
+      {
+        "set": 1,
+        "case": "stat-positive",
+        "variant": "buffer",
+        "milliseconds": 0.096459,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 128
+      },
+      {
+        "set": 1,
+        "case": "jsonl-small",
+        "variant": "baseline",
+        "milliseconds": 19.857,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 20000,
+        "bytes": 2240000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "jsonl-small",
+        "variant": "mandatory",
+        "milliseconds": 19.619458,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 20000,
+        "bytes": 2240000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "jsonl-small",
+        "variant": "buffer",
+        "milliseconds": 19.557333,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 20000,
+        "bytes": 2240000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "jsonl-large",
+        "variant": "baseline",
+        "milliseconds": 2.033333,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 2000,
+        "bytes": 131096000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "jsonl-large",
+        "variant": "mandatory",
+        "milliseconds": 1.968334,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 2000,
+        "bytes": 131096000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "jsonl-large",
+        "variant": "buffer",
+        "milliseconds": 2.016125,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 2000,
+        "bytes": 131096000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "pipe-small",
+        "variant": "baseline",
+        "milliseconds": 25.329959,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 20000,
+        "bytes": 2240000,
+        "readiness": 20000,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "pipe-small",
+        "variant": "mandatory",
+        "milliseconds": 24.258333,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 20000,
+        "bytes": 2240000,
+        "readiness": 20000,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "pipe-small",
+        "variant": "buffer",
+        "milliseconds": 24.034541,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 20000,
+        "bytes": 2240000,
+        "readiness": 20000,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "pipe-large",
+        "variant": "baseline",
+        "milliseconds": 272.910042,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 258000,
+        "bytes": 131096000,
+        "readiness": 258000,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "pipe-large",
+        "variant": "mandatory",
+        "milliseconds": 265.371625,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 258000,
+        "bytes": 131096000,
+        "readiness": 258000,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "pipe-large",
+        "variant": "buffer",
+        "milliseconds": 274.674125,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 258000,
+        "bytes": 131096000,
+        "readiness": 258000,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "pipe-nocancel-small",
+        "variant": "baseline",
+        "milliseconds": 25.582958,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 20000,
+        "bytes": 2240000,
+        "readiness": 20000,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "pipe-nocancel-small",
+        "variant": "mandatory",
+        "milliseconds": 12.542459,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 20000,
+        "bytes": 2240000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "pipe-nocancel-small",
+        "variant": "buffer",
+        "milliseconds": 12.507917,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 20000,
+        "bytes": 2240000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "pipe-nocancel-large",
+        "variant": "baseline",
+        "milliseconds": 270.45325,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 258000,
+        "bytes": 131096000,
+        "readiness": 258000,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "pipe-nocancel-large",
+        "variant": "mandatory",
+        "milliseconds": 18.640833,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 2000,
+        "bytes": 131096000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "pipe-nocancel-large",
+        "variant": "buffer",
+        "milliseconds": 19.443667,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 2000,
+        "bytes": 131096000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "diagnostics",
+        "variant": "baseline",
+        "milliseconds": 0.369709,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 128
+      },
+      {
+        "set": 1,
+        "case": "diagnostics",
+        "variant": "mandatory",
+        "milliseconds": 0.365625,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 2560,
+        "readiness": 0,
+        "fstat": 256
+      },
+      {
+        "set": 1,
+        "case": "diagnostics",
+        "variant": "buffer",
+        "milliseconds": 0.357417,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 2560,
+        "readiness": 0,
+        "fstat": 256
+      },
+      {
+        "set": 1,
+        "case": "budget-full",
+        "variant": "baseline",
+        "milliseconds": 0.001834,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "budget-full",
+        "variant": "mandatory",
+        "milliseconds": 0.001833,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "budget-full",
+        "variant": "buffer",
+        "milliseconds": 0.001834,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "render-utf8",
+        "variant": "baseline",
+        "milliseconds": 405.170542,
+        "allocations": 128,
+        "allocated_bytes": 134219776,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "render-utf8",
+        "variant": "mandatory",
+        "milliseconds": 417.199208,
+        "allocations": 128,
+        "allocated_bytes": 134219776,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "render-utf8",
+        "variant": "buffer",
+        "milliseconds": 419.802208,
+        "allocations": 128,
+        "allocated_bytes": 134219776,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "answer-boundary",
+        "variant": "baseline",
+        "milliseconds": 0.146542,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 134217856,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "answer-boundary",
+        "variant": "mandatory",
+        "milliseconds": 0.138916,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 134217856,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "answer-boundary",
+        "variant": "buffer",
+        "milliseconds": 0.138666,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 134217856,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "editor",
+        "variant": "baseline",
+        "milliseconds": 1823.682542,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "editor",
+        "variant": "mandatory",
+        "milliseconds": 1850.414584,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "editor",
+        "variant": "buffer",
+        "milliseconds": 84.222833,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 1,
+        "case": "export-small",
+        "variant": "baseline",
+        "milliseconds": 54.954708,
+        "allocations": 239500,
+        "allocated_bytes": 31486600,
+        "descriptor_writes": 50,
+        "descriptor_bytes": 1320000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 1,
+        "case": "export-small",
+        "variant": "mandatory",
+        "milliseconds": 57.404417,
+        "allocations": 239500,
+        "allocated_bytes": 31487000,
+        "descriptor_writes": 50,
+        "descriptor_bytes": 1320000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 1,
+        "case": "export-small",
+        "variant": "buffer",
+        "milliseconds": 54.25425,
+        "allocations": 239500,
+        "allocated_bytes": 31487000,
+        "descriptor_writes": 50,
+        "descriptor_bytes": 1320000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 1,
+        "case": "export-large",
+        "variant": "baseline",
+        "milliseconds": 270.354833,
+        "allocations": 1500654,
+        "allocated_bytes": 450368040,
+        "descriptor_writes": 474,
+        "descriptor_bytes": 30960000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 1,
+        "case": "export-large",
+        "variant": "mandatory",
+        "milliseconds": 267.337375,
+        "allocations": 1500654,
+        "allocated_bytes": 450368064,
+        "descriptor_writes": 474,
+        "descriptor_bytes": 30960000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 1,
+        "case": "export-large",
+        "variant": "buffer",
+        "milliseconds": 274.392584,
+        "allocations": 1500654,
+        "allocated_bytes": 450368064,
+        "descriptor_writes": 474,
+        "descriptor_bytes": 30960000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 1,
+        "case": "export-small-file",
+        "variant": "baseline",
+        "milliseconds": 62.854791,
+        "allocations": 239500,
+        "allocated_bytes": 31486600,
+        "descriptor_writes": 50,
+        "descriptor_bytes": 1320000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 1,
+        "case": "export-small-file",
+        "variant": "mandatory",
+        "milliseconds": 56.992667,
+        "allocations": 239500,
+        "allocated_bytes": 31487000,
+        "descriptor_writes": 50,
+        "descriptor_bytes": 1320000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 1,
+        "case": "export-small-file",
+        "variant": "buffer",
+        "milliseconds": 56.384458,
+        "allocations": 239500,
+        "allocated_bytes": 31487000,
+        "descriptor_writes": 50,
+        "descriptor_bytes": 1320000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 1,
+        "case": "export-large-file",
+        "variant": "baseline",
+        "milliseconds": 295.878583,
+        "allocations": 1500654,
+        "allocated_bytes": 450368040,
+        "descriptor_writes": 474,
+        "descriptor_bytes": 30960000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 1,
+        "case": "export-large-file",
+        "variant": "mandatory",
+        "milliseconds": 296.714667,
+        "allocations": 1500654,
+        "allocated_bytes": 450368064,
+        "descriptor_writes": 474,
+        "descriptor_bytes": 30960000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 1,
+        "case": "export-large-file",
+        "variant": "buffer",
+        "milliseconds": 295.154333,
+        "allocations": 1500654,
+        "allocated_bytes": 450368064,
+        "descriptor_writes": 474,
+        "descriptor_bytes": 30960000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 2,
+        "case": "write-positive",
+        "variant": "baseline",
+        "milliseconds": 0.12675,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 128,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "write-positive",
+        "variant": "mandatory",
+        "milliseconds": 0.128208,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 128,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "write-positive",
+        "variant": "buffer",
+        "milliseconds": 0.12725,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 128,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "stat-positive",
+        "variant": "baseline",
+        "milliseconds": 0.098042,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 128
+      },
+      {
+        "set": 2,
+        "case": "stat-positive",
+        "variant": "mandatory",
+        "milliseconds": 0.098333,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 128
+      },
+      {
+        "set": 2,
+        "case": "stat-positive",
+        "variant": "buffer",
+        "milliseconds": 0.100583,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 128
+      },
+      {
+        "set": 2,
+        "case": "jsonl-small",
+        "variant": "baseline",
+        "milliseconds": 20.198417,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 20000,
+        "bytes": 2240000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "jsonl-small",
+        "variant": "mandatory",
+        "milliseconds": 20.235083,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 20000,
+        "bytes": 2240000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "jsonl-small",
+        "variant": "buffer",
+        "milliseconds": 20.425917,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 20000,
+        "bytes": 2240000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "jsonl-large",
+        "variant": "baseline",
+        "milliseconds": 2.042917,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 2000,
+        "bytes": 131096000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "jsonl-large",
+        "variant": "mandatory",
+        "milliseconds": 2.04575,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 2000,
+        "bytes": 131096000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "jsonl-large",
+        "variant": "buffer",
+        "milliseconds": 2.042083,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 2000,
+        "bytes": 131096000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "pipe-small",
+        "variant": "baseline",
+        "milliseconds": 26.13725,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 20000,
+        "bytes": 2240000,
+        "readiness": 20000,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "pipe-small",
+        "variant": "mandatory",
+        "milliseconds": 26.27125,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 20000,
+        "bytes": 2240000,
+        "readiness": 20000,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "pipe-small",
+        "variant": "buffer",
+        "milliseconds": 27.351584,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 20000,
+        "bytes": 2240000,
+        "readiness": 20000,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "pipe-large",
+        "variant": "baseline",
+        "milliseconds": 301.934958,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 258000,
+        "bytes": 131096000,
+        "readiness": 258000,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "pipe-large",
+        "variant": "mandatory",
+        "milliseconds": 296.662792,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 258000,
+        "bytes": 131096000,
+        "readiness": 258000,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "pipe-large",
+        "variant": "buffer",
+        "milliseconds": 319.855875,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 258000,
+        "bytes": 131096000,
+        "readiness": 258000,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "pipe-nocancel-small",
+        "variant": "baseline",
+        "milliseconds": 26.790458,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 20000,
+        "bytes": 2240000,
+        "readiness": 20000,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "pipe-nocancel-small",
+        "variant": "mandatory",
+        "milliseconds": 14.00725,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 20000,
+        "bytes": 2240000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "pipe-nocancel-small",
+        "variant": "buffer",
+        "milliseconds": 13.942917,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 20000,
+        "bytes": 2240000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "pipe-nocancel-large",
+        "variant": "baseline",
+        "milliseconds": 302.419917,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 258000,
+        "bytes": 131096000,
+        "readiness": 258000,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "pipe-nocancel-large",
+        "variant": "mandatory",
+        "milliseconds": 22.730458,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 2000,
+        "bytes": 131096000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "pipe-nocancel-large",
+        "variant": "buffer",
+        "milliseconds": 21.460584,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 2000,
+        "bytes": 131096000,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "diagnostics",
+        "variant": "baseline",
+        "milliseconds": 0.397083,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 128
+      },
+      {
+        "set": 2,
+        "case": "diagnostics",
+        "variant": "mandatory",
+        "milliseconds": 0.398625,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 2560,
+        "readiness": 0,
+        "fstat": 256
+      },
+      {
+        "set": 2,
+        "case": "diagnostics",
+        "variant": "buffer",
+        "milliseconds": 0.380084,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 2560,
+        "readiness": 0,
+        "fstat": 256
+      },
+      {
+        "set": 2,
+        "case": "budget-full",
+        "variant": "baseline",
+        "milliseconds": 0.00175,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "budget-full",
+        "variant": "mandatory",
+        "milliseconds": 0.001834,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "budget-full",
+        "variant": "buffer",
+        "milliseconds": 0.001791,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "render-utf8",
+        "variant": "baseline",
+        "milliseconds": 411.846458,
+        "allocations": 128,
+        "allocated_bytes": 134219776,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "render-utf8",
+        "variant": "mandatory",
+        "milliseconds": 428.058375,
+        "allocations": 128,
+        "allocated_bytes": 134219776,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "render-utf8",
+        "variant": "buffer",
+        "milliseconds": 430.058958,
+        "allocations": 128,
+        "allocated_bytes": 134219776,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "answer-boundary",
+        "variant": "baseline",
+        "milliseconds": 0.1415,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 134217856,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "answer-boundary",
+        "variant": "mandatory",
+        "milliseconds": 0.140584,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 134217856,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "answer-boundary",
+        "variant": "buffer",
+        "milliseconds": 0.144875,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 134217856,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "editor",
+        "variant": "baseline",
+        "milliseconds": 2246.209417,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "editor",
+        "variant": "mandatory",
+        "milliseconds": 1899.429792,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "editor",
+        "variant": "buffer",
+        "milliseconds": 92.099083,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0
+      },
+      {
+        "set": 2,
+        "case": "export-small",
+        "variant": "baseline",
+        "milliseconds": 61.270541,
+        "allocations": 239500,
+        "allocated_bytes": 31486600,
+        "descriptor_writes": 50,
+        "descriptor_bytes": 1320000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 2,
+        "case": "export-small",
+        "variant": "mandatory",
+        "milliseconds": 63.370625,
+        "allocations": 239500,
+        "allocated_bytes": 31487000,
+        "descriptor_writes": 50,
+        "descriptor_bytes": 1320000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 2,
+        "case": "export-small",
+        "variant": "buffer",
+        "milliseconds": 62.839791,
+        "allocations": 239500,
+        "allocated_bytes": 31487000,
+        "descriptor_writes": 50,
+        "descriptor_bytes": 1320000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 2,
+        "case": "export-large",
+        "variant": "baseline",
+        "milliseconds": 303.187292,
+        "allocations": 1500654,
+        "allocated_bytes": 450368040,
+        "descriptor_writes": 474,
+        "descriptor_bytes": 30960000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 2,
+        "case": "export-large",
+        "variant": "mandatory",
+        "milliseconds": 292.468708,
+        "allocations": 1500654,
+        "allocated_bytes": 450368064,
+        "descriptor_writes": 474,
+        "descriptor_bytes": 30960000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 2,
+        "case": "export-large",
+        "variant": "buffer",
+        "milliseconds": 290.4915,
+        "allocations": 1500654,
+        "allocated_bytes": 450368064,
+        "descriptor_writes": 474,
+        "descriptor_bytes": 30960000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 2,
+        "case": "export-small-file",
+        "variant": "baseline",
+        "milliseconds": 60.339708,
+        "allocations": 239500,
+        "allocated_bytes": 31486600,
+        "descriptor_writes": 50,
+        "descriptor_bytes": 1320000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 2,
+        "case": "export-small-file",
+        "variant": "mandatory",
+        "milliseconds": 63.878292,
+        "allocations": 239500,
+        "allocated_bytes": 31487000,
+        "descriptor_writes": 50,
+        "descriptor_bytes": 1320000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 2,
+        "case": "export-small-file",
+        "variant": "buffer",
+        "milliseconds": 67.272708,
+        "allocations": 239500,
+        "allocated_bytes": 31487000,
+        "descriptor_writes": 50,
+        "descriptor_bytes": 1320000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 2,
+        "case": "export-large-file",
+        "variant": "baseline",
+        "milliseconds": 286.324791,
+        "allocations": 1500654,
+        "allocated_bytes": 450368040,
+        "descriptor_writes": 474,
+        "descriptor_bytes": 30960000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 2,
+        "case": "export-large-file",
+        "variant": "mandatory",
+        "milliseconds": 288.577916,
+        "allocations": 1500654,
+        "allocated_bytes": 450368064,
+        "descriptor_writes": 474,
+        "descriptor_bytes": 30960000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 2,
+        "case": "export-large-file",
+        "variant": "buffer",
+        "milliseconds": 287.679042,
+        "allocations": 1500654,
+        "allocated_bytes": 450368064,
+        "descriptor_writes": 474,
+        "descriptor_bytes": 30960000,
+        "stream_flushes": 0
+      }
+    ],
+    "source_match": {
+      "production_native_header_sha256": "32dbbe8184ab0ab2e90901bc0e22e302b52e52fedb509189ecf0e35de6667e06",
+      "measured_native_header_sha256": "32dbbe8184ab0ab2e90901bc0e22e302b52e52fedb509189ecf0e35de6667e06",
+      "equal": true
+    },
+    "final_harness_commit": "800bfe1",
+    "investigation_builds": [
+      {
+        "build": "baseline",
+        "ref": "f79754155f6a3fd7a72dd412570880a28799aadc",
+        "configure": [
+          "cmake",
+          "-S",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/baseline-src",
+          "-B",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/baseline-variant-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+        ],
+        "hashes": {
+          "tests/output_bench.cpp": "37506f1e21d414d9dc926cb5236f8fa3267ec2c7191a59d03a488611745642e6",
+          "include/codet/detail/native_terminal.hpp": "de7ecb97f2f2391d2b0a68e02391ecd18d3a5a11255d15137f2e95fa6d42d015",
+          "src/modern/platform.cpp": "d25509e687af669f1c791c1d37980d5b864302d94e9950a149e6cde42b395b11"
+        }
+      },
+      {
+        "build": "mandatory",
+        "ref": "232f947",
+        "configure": [
+          "cmake",
+          "-S",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/mandatory-src",
+          "-B",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/mandatory-variant-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+        ],
+        "hashes": {
+          "tests/output_bench.cpp": "37506f1e21d414d9dc926cb5236f8fa3267ec2c7191a59d03a488611745642e6",
+          "include/codet/detail/native_terminal.hpp": "c1427aa7729d6ce459193462bc7f1dfdeedd899aa27d5d4b6268a483b5c89e9b",
+          "src/modern/platform.cpp": "122824da122ad9a13f3a9ea27509a956ea4faf813ea69ab53d4d47295908e8f4"
+        }
+      },
+      {
+        "build": "buffer",
+        "ref": "232f947",
+        "configure": [
+          "cmake",
+          "-S",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/buffer-src",
+          "-B",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/buffer-variant-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+        ],
+        "hashes": {
+          "tests/output_bench.cpp": "37506f1e21d414d9dc926cb5236f8fa3267ec2c7191a59d03a488611745642e6",
+          "include/codet/detail/native_terminal.hpp": "32dbbe8184ab0ab2e90901bc0e22e302b52e52fedb509189ecf0e35de6667e06",
+          "src/modern/platform.cpp": "122824da122ad9a13f3a9ea27509a956ea4faf813ea69ab53d4d47295908e8f4"
+        }
+      },
+      {
+        "build": "lazy",
+        "ref": "232f947",
+        "configure": [
+          "cmake",
+          "-S",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/lazy-src",
+          "-B",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-shutdown-followup/lazy-variant-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+        ],
+        "hashes": {
+          "tests/output_bench.cpp": "37506f1e21d414d9dc926cb5236f8fa3267ec2c7191a59d03a488611745642e6",
+          "include/codet/detail/native_terminal.hpp": "c1427aa7729d6ce459193462bc7f1dfdeedd899aa27d5d4b6268a483b5c89e9b",
+          "src/modern/platform.cpp": "8b6d31f1b32d60770bb749c8712073a5af86c4e3291cdf78ae1fd4d9c71ab962"
+        }
+      }
+    ],
+    "amplified_harness": {
+      "sha256": "11abd0b4e1abb386418668574975ff97998e2a3e86e3b6d6bc5e1008707463cd",
+      "repetitions": 200000
+    },
+    "amplified_samples": [
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 526.304583,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 0,
+        "variant": "mandatory",
+        "warmup": true
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 532.13325,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 0,
+        "variant": "buffer",
+        "warmup": true
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 557.950291,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 1,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 535.420875,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 1,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 532.704667,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 2,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 533.37675,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 2,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 535.046333,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 3,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 528.748,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 3,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 532.56025,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 4,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 538.118083,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 4,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 540.195333,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 5,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 550.40125,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 5,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 200.983958,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 0,
+        "variant": "mandatory",
+        "warmup": true
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 201.891709,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 0,
+        "variant": "buffer",
+        "warmup": true
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 203.213542,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 1,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 196.452083,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 1,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 197.09525,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 2,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 197.353375,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 2,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 198.815208,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 3,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 196.597,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 3,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 201.455875,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 4,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 195.709,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 4,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 197.007458,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 5,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 201.923875,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 1,
+        "sample": 5,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 552.627083,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 0,
+        "variant": "buffer",
+        "warmup": true
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 534.393375,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 0,
+        "variant": "mandatory",
+        "warmup": true
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 555.545542,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 1,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 530.391167,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 1,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 528.805292,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 2,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 549.088959,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 2,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 560.072792,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 3,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 536.524042,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 3,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 536.716292,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 4,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 549.074042,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 4,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 544.860125,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 5,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "case": "diagnostics-amplified",
+        "direct_native_write_counter": false,
+        "fstat": 400000,
+        "milliseconds": 531.940375,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 5,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 193.88025,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 0,
+        "variant": "buffer",
+        "warmup": true
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 193.98025,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 0,
+        "variant": "mandatory",
+        "warmup": true
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 195.935167,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 1,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 194.125166,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 1,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 194.83075,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 2,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 196.938375,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 2,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 196.1295,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 3,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 196.265542,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 3,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 199.88375,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 4,
+        "variant": "buffer",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 193.583458,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 4,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 194.998917,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 5,
+        "variant": "mandatory",
+        "warmup": false
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 13109600000,
+        "case": "jsonl-amplified-large",
+        "direct_native_write_counter": true,
+        "fstat": 0,
+        "milliseconds": 196.134834,
+        "observed": 0,
+        "readiness": 0,
+        "writes": 200000,
+        "set": 2,
+        "sample": 5,
+        "variant": "buffer",
+        "warmup": false
+      }
+    ],
+    "acceptance": {
+      "private_output_buffer": "Retained: approximately 95% lower private-editor median latency in both sets, zero C++ allocations in measured loops, no repeated export regression; full lifecycle tests pass. Adds 4096 owned bytes during native acquisition.",
+      "lazy_descriptor_identity": "Omitted: misses independent descriptor replacement; timing cannot override safety failure.",
+      "no_cancellation_pipe_path": "Retained: 258000 writes/readiness calls become 2000 writes and zero readiness calls for 2000 large records.",
+      "startup_context_cost": "Shared DiagnosticWriter grows by 8 allocated bytes per invocation without another allocation.",
+      "counter_limits": "C++ operator-new counts are measured. Direct write/writev and fstat positive controls pass. Libedit/libc internal writes and C malloc are not fully intercepted: editor write counters are unavailable, not zero work. Baseline ostream diagnostic writes are likewise not comparable as direct native counts.",
+      "timing_limits": "Timings vary across samples, including unrelated paths. Claim only workload-specific measured improvements, not general CLI speedup."
+    }
+  },
+  "limits": [
+    "Blocking TTY output remains outside the bounded-cancellation guarantee.",
+    "Immediate best-effort pipe/socket output may be incomplete, including on EAGAIN or EINTR; no waiting, inherited flag changes, or socket-option changes.",
+    "One quarantined native ownership bundle remains process-lifetime storage; native destructors and closes are deliberately skipped, pending private stdio output purged, subsequent native acquisition rejected. The OS reclaims it at exit.",
+    "macOS sends use Tiger-era private MSG_NBIO=0x20000 as well as MSG_DONTWAIT. Current-host regression passes; Tiger runtime/compiler and SDK are unavailable locally.",
+    "Linux runtime checks were not executed locally.",
+    "A failing renderer may emit a partial notice before the one emergency attempt; duplicate visible output remains accepted.",
+    "The six Clang-Tidy findings and the context.cpp analyzer divide-by-zero finding remain existing gates, not passes. No new analysis suppressions or weakened checks."
+  ],
+  "platform_sources": [
+    "https://github.com/apple-oss-distributions/xnu/blob/xnu-792/bsd/kern/uipc_socket.c",
+    "https://github.com/apple-oss-distributions/xnu/blob/xnu-792/bsd/sys/socket.h",
+    "https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/uipc_socket.c",
+    "https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/socket_private.h"
+  ]
+}

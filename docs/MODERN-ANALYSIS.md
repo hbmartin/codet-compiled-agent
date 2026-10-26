@@ -303,3 +303,62 @@ Canonical sanitization and text-repair code is unchanged apart from the shared d
 macOS arm64; Linux and native Tiger runtime acceptance remain untested. Existing local compiler
 warning exceptions, SDK limitations, and the legacy default benchmark's `Glob` failure are
 recorded separately.
+
+## Diagnostic shutdown and terminal ownership follow-up
+
+The [validation record](validation/diagnostic-shutdown-followup.json) starts from fetched main
+`f79754155f6a3fd7a72dd412570880a28799aadc`. It includes the original shared-stderr hang,
+socket cancellation, failed-detachment descriptor reuse, and separator-identity probes. The
+reviewed PR #37 tree is identical to that baseline. Final checks cover checked descriptor
+stderr, cancellation with shared full pipes/sockets, literal approval identifiers, private
+terminal ownership/quarantine, and unchanged persistence/acknowledgement contracts.
+
+[Release medians](validation/diagnostic-shutdown-followup-performance.csv) and
+[every warm-up/measured sample](validation/diagnostic-shutdown-followup-performance-samples.csv)
+compare identical harnesses and Apple Clang 21 settings. Each set has one warm-up and five
+alternating measured runs; the whole set is repeated without concurrent analyzers. The
+mandatory build disables only the optional private output buffer in source commit `800bfe1`;
+the buffer build's native header exactly matches production. Small exports execute 50 complete
+invocations per sample; large exports execute three. Timings are workload measurements, not
+CI thresholds or a general CLI speedup claim.
+
+| Workload | Baseline medians, sets 1 / 2 | Mandatory medians | Buffered medians |
+| --- | --- | --- | --- |
+| 20,000 private libedit refreshes | 1823.683 / 2246.209 ms | 1850.415 / 1899.430 ms | 84.223 / 92.099 ms |
+| 2,000 large pipe records, no cancellation context | 270.453 / 302.420 ms | 18.641 / 22.730 ms | 19.444 / 21.461 ms |
+| 50 small regular-file exports | 62.855 / 60.340 ms | 56.993 / 63.878 ms | 56.384 / 67.273 ms |
+| Three large regular-file exports | 295.879 / 286.325 ms | 296.715 / 288.578 ms | 295.154 / 287.679 ms |
+
+The 4 KiB private output buffer is retained: both editor sets improve by about 95%, with zero
+C++ allocations in the measured loop and no repeated export regression. Input and the private
+error stream remain unbuffered. The buffer adds 4096 owned bytes at native acquisition.
+The mandatory invocation context adds eight bytes to an existing diagnostic-writer allocation,
+without adding an allocation. Export write counts and payload bytes remain unchanged.
+Without cancellation, large pipe records drop from 258,000 writes and readiness operations
+to 2,000 writes and zero readiness operations. Cancellable pipe limits remain in force.
+
+[Exploratory medians](validation/diagnostic-shutdown-followup-investigation-performance.csv)
+and [samples](validation/diagnostic-shutdown-followup-investigation-performance-samples.csv)
+also include lazy descriptor checking. It is omitted: the existing fd-replacement regression
+fails when checks are spaced out. Permission-only changes now preserve pending separators.
+Native diagnostic writes retain two `fstat` calls per attempt (identity and classification),
+versus one in the previous ostream path. Explicit write and `fstat` counter positive controls
+pass. Libedit's internal libc writes and C allocations are not fully intercepted; zero editor
+write-counter readings mean unavailable instrumentation, not zero native I/O. Longer diagnostic
+and JSONL control runs are included in the JSON record; small timing differences are noisy.
+
+Emergency pipe/socket output remains immediate best effort, with complete path formatting but
+no promise of delivery or exactly-once visible output. Blocking TTY writes remain outside the
+bounded-cancellation guarantee. Failed private-stream detachment purges pending output and
+retains one complete ownership bundle until process exit; it skips native teardown and further
+acquisition, rather than closing a descriptor behind its `FILE*`. Normal cleanup retains
+`endwin()` before `delscreen()`. macOS sends additionally use the Tiger-era XNU `MSG_NBIO` ABI:
+[historical send-buffer handling](https://github.com/apple-oss-distributions/xnu/blob/xnu-792/bsd/kern/uipc_socket.c)
+and [current handling](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/uipc_socket.c).
+
+Debug and ASan/UBSan CTest, repeated diagnostic/fault/PTY checks, pinned lint, Semgrep, runner
+checks, and analyzer self-checks are recorded separately. Cppcheck is clean. Clang-Tidy retains
+the same six recorded findings and one SDK13-incomplete translation unit; Clang Analyzer retains
+the existing `context.cpp` division-by-zero finding. No checks or suppressions were weakened.
+Linux and native Tiger runtime checks were not performed locally; the Tiger compiler and SDK
+are unavailable on this host.

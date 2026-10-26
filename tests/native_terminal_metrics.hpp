@@ -1,7 +1,11 @@
 #pragma once
+#include <cstdio>
 namespace codet::test {
 struct NativeTerminalMetrics {
   bool observe = false, ended_before_delete = false;
+  bool observe_streams = false;
+  FILE *streams[3]{};
+  unsigned stream_count = 0;
   bool detach_failure = false, query_failure = false;
   unsigned ends = 0, deletes = 0, settings = 0, live_settings = 0;
 };
