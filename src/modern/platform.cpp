@@ -254,6 +254,7 @@ auto *const native_stdout_buffer = std::cout.rdbuf();
 struct DescriptorDiagnosticState {
   struct stat identity {};
   bool known = false;
+  size_t pipe_limit = 0;
   detail::DiagnosticState state;
   detail::DiagnosticState &bind(int descriptor, detail::OutputAttempt &attempt) noexcept {
     struct stat current {};
@@ -261,27 +262,33 @@ struct DescriptorDiagnosticState {
     if (status < 0 || !known || current.st_dev != identity.st_dev ||
         current.st_ino != identity.st_ino ||
         (current.st_mode & S_IFMT) != (identity.st_mode & S_IFMT) ||
-        current.st_rdev != identity.st_rdev)
+        current.st_rdev != identity.st_rdev) {
       state.reset(nullptr);
+      pipe_limit = 0;
+    }
     known = status == 0;
     identity = current;
     return state;
   }
   void reset() noexcept {
     known = false;
+    pipe_limit = 0;
     state.reset(nullptr);
   }
 } stderr_descriptor_state, stdout_descriptor_state;
 struct DiagnosticDestination {
   detail::DiagnosticState &state;
   int native;
+  DescriptorDiagnosticState *owner = nullptr;
 };
 DiagnosticDestination diagnostic_destination(std::ostream &output, detail::DiagnosticState &local,
                                              detail::OutputAttempt &attempt) noexcept {
   if (&output == &std::cerr && output.rdbuf() == native_stderr_buffer)
-    return {stderr_descriptor_state.bind(STDERR_FILENO, attempt), STDERR_FILENO};
+    return {stderr_descriptor_state.bind(STDERR_FILENO, attempt), STDERR_FILENO,
+            &stderr_descriptor_state};
   if (&output == &std::cout && output.rdbuf() == native_stdout_buffer)
-    return {stdout_descriptor_state.bind(STDOUT_FILENO, attempt), STDOUT_FILENO};
+    return {stdout_descriptor_state.bind(STDOUT_FILENO, attempt), STDOUT_FILENO,
+            &stdout_descriptor_state};
   auto &state = &output == &std::cerr   ? stderr_stream_state
                 : &output == &std::cout ? stdout_stream_state
                                         : local;
@@ -360,7 +367,9 @@ class ImmediateRecord {
 public:
   ImmediateRecord() noexcept
       : state_(stderr_descriptor_state.bind(STDERR_FILENO, attempt_)),
-        descriptor_(STDERR_FILENO, attempt_) {
+        descriptor_(STDERR_FILENO, attempt_,
+                    stderr_descriptor_state.known ? &stderr_descriptor_state.identity : nullptr,
+                    stderr_descriptor_state.pipe_limit) {
     if (state_.pending) {
       ready_ = write({"\n"}, false);
       if (ready_)
@@ -442,7 +451,9 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
   if (native >= 0) {
     if (!output_ || (file_ && std::ferror(file_)))
       (void)recover_diagnostic_stream(output_);
-    DescriptorOutput descriptor(native, attempt);
+    DescriptorOutput descriptor(native, attempt,
+                                destination.owner->known ? &destination.owner->identity : nullptr,
+                                destination.owner->pipe_limit);
     bool success = true;
     if (state_->pending) {
       success = descriptor.result({"\n"}, false, attempt) == OutputResult::success;

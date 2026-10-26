@@ -9,6 +9,7 @@ struct NativeIoMetrics {
   unsigned writes_interrupted = 0, vectors_interrupted = 0, polls_interrupted = 0;
   unsigned stats_interrupted = 0, bounds_interrupted = 0;
   unsigned writes = 0, vectors = 0, inspections = 0;
+  unsigned bound_queries = 0;
 };
 extern thread_local NativeIoMetrics native_io_metrics;
 } // namespace codet::test

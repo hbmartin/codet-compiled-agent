@@ -204,6 +204,46 @@ TEST(DiagnosticWriter, ImmediatePipeInspectionReadinessAndWritesShareOneRetryBud
   ASSERT_EQ(::read(descriptors[0], bytes, sizeof(bytes)), 13);
   EXPECT_EQ(std::string(bytes, 13), "checked pipe\n");
 }
+TEST(DiagnosticWriter, InspectionRefreshesFlagsAndCachesPipeBoundsOnlyForTheCurrentDestination) {
+  int first[2], second[2];
+  ASSERT_EQ(::pipe(first), 0);
+  ASSERT_EQ(::pipe(second), 0);
+  const int saved = ::dup(STDERR_FILENO);
+  ASSERT_GE(saved, 0);
+  struct Restore {
+    int saved, first[2], second[2];
+    ~Restore() {
+      test::native_io_metrics = {};
+      (void)::dup2(saved, STDERR_FILENO);
+      ::close(saved);
+      for (int fd : first)
+        ::close(fd);
+      for (int fd : second)
+        ::close(fd);
+      detail::reset_standard_diagnostics();
+    }
+  } restore{saved, {first[0], first[1]}, {second[0], second[1]}};
+  ASSERT_EQ(::dup2(first[1], STDERR_FILENO), STDERR_FILENO);
+  detail::reset_standard_diagnostics();
+  auto &metrics = test::native_io_metrics;
+  metrics.interrupt_fd = STDERR_FILENO;
+  detail::DiagnosticWriter writer(std::cerr);
+  EXPECT_TRUE(writer.write({"first"}));
+  EXPECT_EQ(metrics.inspections, 1u);
+  EXPECT_EQ(metrics.bound_queries, 1u);
+  const int flags = ::fcntl(STDERR_FILENO, F_GETFL);
+  ASSERT_GE(flags, 0);
+  ASSERT_EQ(::fcntl(STDERR_FILENO, F_SETFL, flags | O_NONBLOCK), 0);
+  EXPECT_TRUE(writer.write({"nonblocking"}));
+  ASSERT_EQ(::fcntl(STDERR_FILENO, F_SETFL, flags), 0);
+  EXPECT_TRUE(writer.write({"blocking again"}));
+  EXPECT_EQ(metrics.inspections, 3u);
+  EXPECT_EQ(metrics.bound_queries, 1u);
+  ASSERT_EQ(::dup2(second[1], STDERR_FILENO), STDERR_FILENO);
+  EXPECT_TRUE(writer.write({"new destination"}));
+  EXPECT_EQ(metrics.inspections, 4u);
+  EXPECT_EQ(metrics.bound_queries, 2u);
+}
 TEST(DiagnosticWriter, PartialRecordsRetainASeparatorAcrossFailedAttempts) {
   for (bool mask : {false, true}) {
     PartialDiagnosticStream buffer;

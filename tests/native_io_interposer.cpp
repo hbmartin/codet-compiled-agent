@@ -106,10 +106,13 @@ extern "C" long fpathconf(int descriptor, int name)
   using Bound = long (*)(int, int);
   static const auto original = reinterpret_cast<Bound>(codet::test::native_symbol("fpathconf"));
   auto &metrics = codet::test::native_io_metrics;
-  if (descriptor == metrics.interrupt_fd && metrics.bounds_interrupted) {
-    --metrics.bounds_interrupted;
-    errno = EINTR;
-    return -1;
+  if (descriptor == metrics.interrupt_fd) {
+    ++metrics.bound_queries;
+    if (metrics.bounds_interrupted) {
+      --metrics.bounds_interrupted;
+      errno = EINTR;
+      return -1;
+    }
   }
   return original(descriptor, name);
 }

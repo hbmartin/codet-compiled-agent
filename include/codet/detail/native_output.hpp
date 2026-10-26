@@ -85,6 +85,32 @@ private:
   bool immediate() const noexcept {
     return attempt_->immediate();
   }
+  void classify(OutputAttempt *inspection, const struct stat *identity = nullptr,
+                size_t *cached_bound = nullptr, bool supplied = false) noexcept {
+    struct stat status {};
+    const auto inspect = [&](auto operation) {
+      return inspection ? inspection->inspect(operation) : operation();
+    };
+    const auto flags = inspect([&] { return ::fcntl(descriptor_, F_GETFL); });
+    valid_ = flags >= 0 && (supplied ? identity != nullptr
+                                     : inspect([&] { return ::fstat(descriptor_, &status); }) == 0);
+    if (identity)
+      status = *identity;
+    nonblocking_ = valid_ && (flags & O_NONBLOCK);
+    pipe_ = valid_ && S_ISFIFO(status.st_mode) && !nonblocking_;
+    socket_ = valid_ && S_ISSOCK(status.st_mode);
+    if (pipe_) {
+      if (cached_bound && *cached_bound)
+        pipe_limit_ = *cached_bound;
+      else {
+        const auto bound = inspect([&] { return ::fpathconf(descriptor_, _PC_PIPE_BUF); });
+        pipe_limit_ = std::min(static_cast<size_t>(INT_MAX),
+                               bound > 0 ? static_cast<size_t>(bound) : size_t{512});
+        if (cached_bound && bound > 0)
+          *cached_bound = pipe_limit_;
+      }
+    }
+  }
   static ssize_t native_write(void *, int descriptor, const void *bytes, size_t size) {
     return ::write(descriptor, bytes, size);
   }
@@ -217,25 +243,19 @@ public:
     if (write_ != native_write)
       return;
     vector_ = native_vector;
-    struct stat status {};
-    const auto inspect = [&](auto operation) {
-      return inspection ? inspection->inspect(operation) : operation();
-    };
-    const auto flags = inspect([&] { return ::fcntl(descriptor_, F_GETFL); });
-    valid_ = flags >= 0 && inspect([&] { return ::fstat(descriptor_, &status); }) == 0;
-    nonblocking_ = valid_ && (flags & O_NONBLOCK);
-    pipe_ = valid_ && S_ISFIFO(status.st_mode) && !nonblocking_;
-    socket_ = valid_ && S_ISSOCK(status.st_mode);
-    if (pipe_) {
-      const auto bound = inspect([&] { return ::fpathconf(descriptor_, _PC_PIPE_BUF); });
-      pipe_limit_ = std::min(static_cast<size_t>(INT_MAX),
-                             bound > 0 ? static_cast<size_t>(bound) : size_t{512});
-    }
+    classify(inspection);
   }
   DescriptorOutput(int descriptor, const Cancellation *cancel) noexcept
       : DescriptorOutput(descriptor, native_write, nullptr, cancel) {}
   DescriptorOutput(int descriptor, OutputAttempt &attempt) noexcept
       : DescriptorOutput(descriptor, native_write, nullptr, nullptr, &attempt) {}
+  DescriptorOutput(int descriptor, OutputAttempt &attempt, const struct stat *identity,
+                   size_t &cached_bound) noexcept
+      : DescriptorOutput(descriptor, static_cast<Write>(nullptr), nullptr, nullptr) {
+    write_ = native_write;
+    vector_ = native_vector;
+    classify(&attempt, identity, &cached_bound, true);
+  }
   DescriptorOutput(int descriptor, const Cancellation &cancel) noexcept
       : DescriptorOutput(descriptor, native_write, nullptr, &cancel) {}
   DescriptorOutput(int descriptor, WriteVector write, void *context,

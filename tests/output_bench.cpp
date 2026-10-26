@@ -97,7 +97,8 @@ extern "C" ssize_t writev(int fd, const iovec *data, int count) {
 }
 extern "C" int poll(pollfd *fds, nfds_t count, int timeout) {
   static const auto native = resolve<int (*)(pollfd *, nfds_t, int)>("poll");
-  if (measuring && count == 1 && (fds[0].fd == STDOUT_FILENO || fds[0].fd == STDERR_FILENO) && (fds[0].events & POLLOUT))
+  if (measuring && count == 1 && (fds[0].fd == STDOUT_FILENO || fds[0].fd == STDERR_FILENO) &&
+      (fds[0].events & POLLOUT))
     ++waits;
   return native(fds, count, timeout);
 }
@@ -172,8 +173,8 @@ int main(int argc, char **argv) {
   if (diagnostic && ::dup2(STDOUT_FILENO, STDERR_FILENO) < 0)
     return 3;
   detail::IoContext io(cancel);
-  detail::DiagnosticWriter diagnostics(std::cerr,
-                                      mode.find("standalone") == std::string::npos ? &io : nullptr);
+  detail::DiagnosticWriter diagnostics(
+      std::cerr, mode.find("standalone") == std::string::npos ? &io : nullptr);
   TempDirectory temporary;
   std::vector<std::string> command;
   if (mode == "answer") {
