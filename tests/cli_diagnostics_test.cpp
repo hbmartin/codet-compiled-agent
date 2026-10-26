@@ -1,3 +1,4 @@
+#include "codet/detail/approval_review.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
 #include "process_helper.hpp"
 #include "temp.hpp"
@@ -12,6 +13,58 @@
 using namespace codet;
 using namespace testing;
 namespace {
+TEST(ApprovalReview, EveryPageMustRenderAndResizeRestartsReview) {
+  detail::ApprovalReview review("session", 3, "request", std::string(3000, 'a') + "suffix");
+  EXPECT_TRUE(review.reshape(8, 40));
+  ASSERT_GT(review.pages(), 2u);
+  EXPECT_FALSE(review.approved_review());
+  review.next();
+  EXPECT_EQ(review.page(), 0u);
+  while (review.page() + 1 < review.pages()) {
+    review.displayed();
+    EXPECT_FALSE(review.approved_review());
+    review.next();
+  }
+  EXPECT_FALSE(review.approved_review());
+  review.displayed();
+  EXPECT_TRUE(review.approved_review());
+  review.previous();
+  EXPECT_TRUE(review.approved_review());
+  EXPECT_FALSE(review.reshape(8, 40));
+  EXPECT_TRUE(review.approved_review());
+  EXPECT_TRUE(review.reshape(8, 30));
+  EXPECT_EQ(review.page(), 0u);
+  EXPECT_FALSE(review.approved_review());
+  EXPECT_TRUE(review.reshape(3, 5));
+  EXPECT_FALSE(review.usable());
+  review.displayed();
+  EXPECT_FALSE(review.approved_review());
+}
+TEST(ApprovalReview, WrappingRetainsCompleteUnicodeAndEscapeTokensBeyondTranscriptLimits) {
+  std::string source;
+  for (size_t i = 0; i != 1100; ++i)
+    source += "雪\\x0A ";
+  const auto document = detail::literal_text(source + "\r\n\t\xff");
+  for (int columns : {20, 40, 80}) {
+    detail::ApprovalReview review("session", 1, "request", document);
+    review.reshape(6, columns);
+    std::string reconstructed;
+    for (;;) {
+      for (size_t i = 0; i < review.capacity(); ++i) {
+        const auto row = review.line(i);
+        EXPECT_EQ(safe_text(std::string(row)), row);
+        EXPECT_EQ(row.size(),
+                  detail::rendered_prefix(document.substr(reconstructed.size()), row.size()));
+        reconstructed += row;
+      }
+      review.displayed();
+      if (review.approved_review())
+        break;
+      review.next();
+    }
+    EXPECT_EQ(reconstructed, document);
+  }
+}
 struct PartialDiagnosticStream : std::streambuf {
   std::string bytes;
   bool partial = true, fail_newline = false;
