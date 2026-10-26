@@ -6,6 +6,9 @@
 #include <cstddef>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/uio.h>
+#include <unistd.h>
 namespace codet::test {
 thread_local NativeIoMetrics native_io_metrics;
 }
@@ -37,10 +40,76 @@ extern "C" int poll(pollfd *descriptors, nfds_t count, int timeout) {
   using Poll = int (*)(pollfd *, nfds_t, int);
   static const auto original = reinterpret_cast<Poll>(codet::test::native_symbol("poll"));
   auto &metrics = codet::test::native_io_metrics;
+  if (count == 1 && descriptors[0].fd == metrics.interrupt_fd && metrics.polls_interrupted) {
+    --metrics.polls_interrupted;
+    errno = EINTR;
+    return -1;
+  }
   if (metrics.observe && count == 1 && descriptors[0].events == POLLOUT) {
     ++metrics.waits;
     descriptors[0].revents = POLLOUT;
     return 1;
   }
   return original(descriptors, count, timeout);
+}
+extern "C" ssize_t write(int descriptor, const void *bytes, size_t size) {
+  using Write = ssize_t (*)(int, const void *, size_t);
+  static const auto original = reinterpret_cast<Write>(codet::test::native_symbol("write"));
+  auto &metrics = codet::test::native_io_metrics;
+  if (descriptor == metrics.interrupt_fd) {
+    ++metrics.writes;
+    if (metrics.writes_interrupted) {
+      --metrics.writes_interrupted;
+      errno = EINTR;
+      return -1;
+    }
+  }
+  return original(descriptor, bytes, size);
+}
+extern "C" ssize_t writev(int descriptor, const iovec *parts, int count) {
+  using Write = ssize_t (*)(int, const iovec *, int);
+  static const auto original = reinterpret_cast<Write>(codet::test::native_symbol("writev"));
+  auto &metrics = codet::test::native_io_metrics;
+  if (descriptor == metrics.interrupt_fd) {
+    ++metrics.vectors;
+    if (metrics.vectors_interrupted) {
+      --metrics.vectors_interrupted;
+      errno = EINTR;
+      return -1;
+    }
+  }
+  return original(descriptor, parts, count);
+}
+extern "C" int fstat(int descriptor, struct stat *status)
+#ifdef __linux__
+    noexcept
+#endif
+{
+  using Stat = int (*)(int, struct stat *);
+  static const auto original = reinterpret_cast<Stat>(codet::test::native_symbol("fstat"));
+  auto &metrics = codet::test::native_io_metrics;
+  if (descriptor == metrics.interrupt_fd) {
+    ++metrics.inspections;
+    if (metrics.stats_interrupted) {
+      --metrics.stats_interrupted;
+      errno = EINTR;
+      return -1;
+    }
+  }
+  return original(descriptor, status);
+}
+extern "C" long fpathconf(int descriptor, int name)
+#ifdef __linux__
+    noexcept
+#endif
+{
+  using Bound = long (*)(int, int);
+  static const auto original = reinterpret_cast<Bound>(codet::test::native_symbol("fpathconf"));
+  auto &metrics = codet::test::native_io_metrics;
+  if (descriptor == metrics.interrupt_fd && metrics.bounds_interrupted) {
+    --metrics.bounds_interrupted;
+    errno = EINTR;
+    return -1;
+  }
+  return original(descriptor, name);
 }

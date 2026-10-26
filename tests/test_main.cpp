@@ -183,12 +183,17 @@ int main(int argc, char **argv) {
         if (mode.rfind("detach-failure", 0) == 0) {
           if (metrics.stream_count != (mode == "detach-failure-curses" ? 2u : 3u))
             return 11;
-          // Retain test backing storage through normal process exit, just like the bundle.
-          auto *buffer = new char[4096];
-          if (std::setvbuf(metrics.streams[1], buffer, _IOFBF, 4096) != 0)
-            return 12;
+          // Exercise the production bundle's pre-acquisition 4 KiB buffer through process exit.
           (void)std::fputs("QUARANTINED OUTPUT MUST NEVER REACH THE FOREGROUND",
                            metrics.streams[1]);
+#ifdef __linux__
+          const auto pending = ::__fpending(metrics.streams[1]);
+#else
+          const auto pending =
+              static_cast<size_t>(metrics.streams[1]->_p - metrics.streams[1]->_bf._base);
+#endif
+          if (pending < std::strlen("QUARANTINED OUTPUT MUST NEVER REACH THE FOREGROUND"))
+            return 12;
         }
         metrics.observe = true;
         metrics.detach_failure = mode.rfind("detach-failure", 0) == 0;

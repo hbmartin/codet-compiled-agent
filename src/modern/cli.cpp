@@ -1,6 +1,7 @@
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/detail/approval_review.hpp"
+#include "codet/detail/cleanup_diagnostics.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
 #include "codet/detail/cli_output.hpp"
 #include "codet/detail/native_terminal.hpp"
@@ -956,10 +957,13 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       try {
         end();
       } catch (const std::exception &error) {
-        (void)errors.write(
-            {"SessionEnd hook cleanup failed: ", detail::terminal_text(error.what())});
+        detail::secondary_diagnostic([&] {
+          (void)errors.write(
+              {"SessionEnd hook cleanup failed: ", detail::terminal_text(error.what())});
+        });
       } catch (...) {
-        (void)errors.write({"SessionEnd hook cleanup failed: unknown exception"});
+        detail::secondary_diagnostic(
+            [&] { (void)errors.write({"SessionEnd hook cleanup failed: unknown exception"}); });
       }
     }
   } session_end{errors, [&, started_id = session.id] {
@@ -1094,25 +1098,13 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       terminal->end_active();
       return work.get();
     } catch (...) {
-      const auto failure = std::current_exception();
-      cancel.requested = true;
-      while (work.valid() &&
-             work.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready) {
-      }
-      pending.reset();
-      try {
-        terminal->end_active();
-      } catch (...) {
-        (void)errors.write({"Terminal restoration also failed"});
-      }
-      try {
-        deliver(true);
-      } catch (...) {
-        (void)errors.write({"Worker events could not be drained during cleanup"});
-      }
-      if (!quit_requested)
-        cancel.requested = false;
-      std::rethrow_exception(failure);
+      detail::recover_turn(
+          std::current_exception(), cancel, quit_requested, work,
+          [&] {
+            pending.reset();
+            terminal->end_active();
+          },
+          [&] { deliver(true); }, [&](std::string_view message) { (void)errors.write({message}); });
     }
   };
   std::deque<std::string> followups;

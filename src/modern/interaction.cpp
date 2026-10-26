@@ -1,4 +1,5 @@
 #include "codet/interaction.hpp"
+#include "codet/detail/diagnostic_stream.hpp"
 #include <cstdio>
 #include <iterator>
 
@@ -25,7 +26,7 @@ void Interaction::deliver(const EventSink &sink, const DiagnosticSink &diagnosti
     try {
       report_diagnostic(diagnostics, message);
     } catch (...) {
-      std::fputs("Worker event diagnostic could not be displayed\n", stderr);
+      (void)detail::immediate_stderr({"Worker event diagnostic could not be displayed"});
     }
   };
   for (size_t i = 0; i < batch.size(); ++i) {

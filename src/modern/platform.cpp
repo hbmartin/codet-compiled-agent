@@ -255,12 +255,9 @@ struct DescriptorDiagnosticState {
   struct stat identity {};
   bool known = false;
   detail::DiagnosticState state;
-  detail::DiagnosticState &bind(int descriptor) noexcept {
+  detail::DiagnosticState &bind(int descriptor, detail::OutputAttempt &attempt) noexcept {
     struct stat current {};
-    int status;
-    do {
-      status = ::fstat(descriptor, &current);
-    } while (status < 0 && errno == EINTR);
+    const auto status = attempt.inspect([&] { return ::fstat(descriptor, &current); });
     if (status < 0 || !known || current.st_dev != identity.st_dev ||
         current.st_ino != identity.st_ino ||
         (current.st_mode & S_IFMT) != (identity.st_mode & S_IFMT) ||
@@ -275,12 +272,12 @@ struct DescriptorDiagnosticState {
     state.reset(nullptr);
   }
 } stderr_descriptor_state, stdout_descriptor_state;
-detail::DiagnosticState &diagnostic_state(std::ostream &output,
-                                          detail::DiagnosticState &local) noexcept {
+detail::DiagnosticState &diagnostic_state(std::ostream &output, detail::DiagnosticState &local,
+                                          detail::OutputAttempt &attempt) noexcept {
   if (&output == &std::cerr && output.rdbuf() == native_stderr_buffer)
-    return stderr_descriptor_state.bind(STDERR_FILENO);
+    return stderr_descriptor_state.bind(STDERR_FILENO, attempt);
   if (&output == &std::cout && output.rdbuf() == native_stdout_buffer)
-    return stdout_descriptor_state.bind(STDOUT_FILENO);
+    return stdout_descriptor_state.bind(STDOUT_FILENO, attempt);
   auto &state = &output == &std::cerr   ? stderr_stream_state
                 : &output == &std::cout ? stdout_stream_state
                                         : local;
@@ -348,24 +345,57 @@ std::string FileNotice::text() const {
     result += path;
   return result;
 }
-void emergency_file_diagnostic(const FileNotice &notice) noexcept {
-  auto &state = stderr_descriptor_state.bind(STDERR_FILENO);
-  detail::DescriptorOutput descriptor(STDERR_FILENO);
-  const auto write_all = [&](const char *bytes, size_t size) noexcept {
-    return descriptor.result({std::string_view(bytes, size)}, false,
-                             detail::OutputMode::immediate) == detail::OutputResult::success;
-  };
-  if (state.pending) {
-    if (!write_all("\n", 1))
-      return;
-    state.pending = false;
+namespace {
+// One record owns the separator and EINTR budget across streamed emergency-path chunks.
+class ImmediateRecord {
+  detail::OutputAttempt attempt_{nullptr, detail::OutputMode::immediate};
+  detail::DiagnosticState &state_;
+  detail::DescriptorOutput descriptor_;
+  bool ready_ = true;
+
+public:
+  ImmediateRecord() noexcept
+      : state_(stderr_descriptor_state.bind(STDERR_FILENO, attempt_)),
+        descriptor_(STDERR_FILENO, attempt_) {
+    if (state_.pending) {
+      ready_ = write({"\n"}, false);
+      if (ready_)
+        state_.pending = false;
+    }
   }
-  const auto *label = notice.label();
-  state.pending = true;
-  if (!write_all(label, std::strlen(label)))
+  bool write(std::initializer_list<std::string_view> parts, bool newline = false) noexcept {
+    if (!ready_)
+      return false;
+    ready_ = descriptor_.result(parts, newline, attempt_) == detail::OutputResult::success;
+    return ready_;
+  }
+  void begin() noexcept {
+    if (ready_)
+      state_.pending = true;
+  }
+  bool finish(std::initializer_list<std::string_view> tail = {}, bool newline = true) noexcept {
+    if (!write(tail, newline))
+      return false;
+    state_.pending = false;
+    return true;
+  }
+};
+} // namespace
+bool detail::immediate_stderr(std::initializer_list<std::string_view> parts,
+                              bool newline) noexcept {
+  ImmediateRecord record;
+  record.begin();
+  return record.finish(parts, newline);
+}
+void emergency_file_diagnostic(const FileNotice &notice) noexcept {
+  ImmediateRecord record;
+  record.begin();
+  if (!record.write({notice.label()}))
     return;
-  if (escaped_file_path(notice.path, write_all) && write_all("\n", 1))
-    state.pending = false;
+  if (escaped_file_path(notice.path, [&](const char *bytes, size_t size) {
+        return record.write({std::string_view(bytes, size)});
+      }))
+    (void)record.finish();
 }
 void deliver_file_diagnostic(const FileNotice &notice, const DiagnosticSink &sink) noexcept {
   if (sink)
@@ -400,7 +430,9 @@ void detail::reset_standard_diagnostics() noexcept {
 }
 bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> parts, bool newline,
                                      bool flush) {
-  state_ = &diagnostic_state(output_, local_);
+  const auto mode = io_ ? OutputMode::diagnostic : OutputMode::immediate;
+  OutputAttempt attempt(io_ ? io_->cancel : nullptr, mode);
+  state_ = &diagnostic_state(output_, local_, attempt);
   const int native =
       &output_ == &std::cerr && output_.rdbuf() == native_stderr_buffer   ? STDERR_FILENO
       : &output_ == &std::cout && output_.rdbuf() == native_stdout_buffer ? STDOUT_FILENO
@@ -408,16 +440,15 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
   if (native >= 0) {
     if (!output_ || (file_ && std::ferror(file_)))
       (void)recover_diagnostic_stream(output_);
-    DescriptorOutput descriptor(native, nullptr == io_ ? nullptr : io_->cancel);
-    const auto mode = io_ ? OutputMode::diagnostic : OutputMode::immediate;
+    DescriptorOutput descriptor(native, attempt);
     bool success = true;
     if (state_->pending) {
-      success = descriptor.result({"\n"}, false, mode) == OutputResult::success;
+      success = descriptor.result({"\n"}, false, attempt) == OutputResult::success;
       if (success)
         state_->pending = false;
     }
     if (success) {
-      success = descriptor.result(parts, newline, mode) == OutputResult::success;
+      success = descriptor.result(parts, newline, attempt) == OutputResult::success;
       state_->pending = !success && newline;
     }
     if (!success) {

@@ -1,4 +1,5 @@
 #pragma once
+#include "codet/detail/diagnostic_stream.hpp"
 #include "codet/detail/native_output.hpp"
 #include "codet/detail/terminal_resources.hpp"
 #include <memory>
@@ -170,9 +171,7 @@ public:
       held_->quarantined = true;
       // Do not write a warning into another foreground program's terminal.
       if (!::isatty(STDERR_FILENO)) {
-        DescriptorOutput warning(STDERR_FILENO);
-        (void)warning.result({"codet: terminal cleanup quarantined after failed detachment"}, true,
-                             OutputMode::immediate);
+        (void)immediate_stderr({"codet: terminal cleanup quarantined after failed detachment"});
       }
     }
   }
