@@ -253,25 +253,29 @@ auto *const native_stderr_buffer = std::cerr.rdbuf();
 auto *const native_stdout_buffer = std::cout.rdbuf();
 struct DescriptorDiagnosticState {
   struct stat identity {};
-  bool known = false;
+  bool known = false, inspected = false;
   size_t pipe_limit = 0;
   detail::DiagnosticState state;
   detail::DiagnosticState &bind(int descriptor, detail::OutputAttempt &attempt) noexcept {
     struct stat current {};
     const auto status = attempt.inspect([&] { return ::fstat(descriptor, &current); });
-    if (status < 0 || !known || current.st_dev != identity.st_dev ||
-        current.st_ino != identity.st_ino ||
+    inspected = status == 0;
+    if (!inspected)
+      return state; // An interruption cannot establish a different destination or erase its
+                    // boundary.
+    if (!known || current.st_dev != identity.st_dev || current.st_ino != identity.st_ino ||
         (current.st_mode & S_IFMT) != (identity.st_mode & S_IFMT) ||
         current.st_rdev != identity.st_rdev) {
       state.reset(nullptr);
       pipe_limit = 0;
     }
-    known = status == 0;
+    known = true;
     identity = current;
     return state;
   }
   void reset() noexcept {
     known = false;
+    inspected = false;
     pipe_limit = 0;
     state.reset(nullptr);
   }
@@ -368,7 +372,7 @@ public:
   ImmediateRecord() noexcept
       : state_(stderr_descriptor_state.bind(STDERR_FILENO, attempt_)),
         descriptor_(STDERR_FILENO, attempt_,
-                    stderr_descriptor_state.known ? &stderr_descriptor_state.identity : nullptr,
+                    stderr_descriptor_state.inspected ? &stderr_descriptor_state.identity : nullptr,
                     stderr_descriptor_state.pipe_limit) {
     if (state_.pending) {
       ready_ = write({"\n"}, false);
@@ -451,9 +455,9 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
   if (native >= 0) {
     if (!output_ || (file_ && std::ferror(file_)))
       (void)recover_diagnostic_stream(output_);
-    DescriptorOutput descriptor(native, attempt,
-                                destination.owner->known ? &destination.owner->identity : nullptr,
-                                destination.owner->pipe_limit);
+    DescriptorOutput descriptor(
+        native, attempt, destination.owner->inspected ? &destination.owner->identity : nullptr,
+        destination.owner->pipe_limit);
     bool success = true;
     if (state_->pending) {
       success = descriptor.result({"\n"}, false, attempt) == OutputResult::success;

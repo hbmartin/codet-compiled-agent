@@ -175,6 +175,21 @@ TEST(DiagnosticWriter, ImmediateVectorOutputRetriesInterruptedCallsAndStopsAtIts
   }
   detail::reset_standard_diagnostics();
 }
+TEST(DiagnosticWriter, InterruptedIdentityInspectionCannotEraseAnAlreadyOwedSeparator) {
+  detail::reset_standard_diagnostics();
+  testing::internal::CaptureStderr();
+  EXPECT_EQ(::write(STDERR_FILENO, "fi", 2), 2);
+  auto &metrics = test::native_io_metrics;
+  metrics.interrupt_fd = STDERR_FILENO;
+  metrics.vectors_interrupted = 9;
+  EXPECT_FALSE(detail::write_diagnostic(std::cerr, {"rst"}));
+  metrics.stats_interrupted = 9;
+  EXPECT_FALSE(detail::immediate_stderr({"inspection fails before delivery"}));
+  metrics = {};
+  EXPECT_TRUE(detail::write_diagnostic(std::cerr, {"later"}));
+  EXPECT_EQ(testing::internal::GetCapturedStderr(), "fi\nlater\n");
+  detail::reset_standard_diagnostics();
+}
 TEST(DiagnosticWriter, ImmediatePipeInspectionReadinessAndWritesShareOneRetryBudget) {
   int descriptors[2];
   ASSERT_EQ(::pipe(descriptors), 0);
