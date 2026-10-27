@@ -10,8 +10,8 @@ class UiHistory {
   static constexpr std::string_view omission = "[UI history excerpt truncated]";
 
 public:
-  static constexpr size_t byte_limit = 256 * 1024, line_limit = 1000;
-  static constexpr size_t approval_limit = 16 * 1024;
+  static constexpr size_t byte_limit = size_t{256} * 1024, line_limit = 1000;
+  static constexpr size_t approval_limit = size_t{16} * 1024;
   size_t bytes() const noexcept {
     return bytes_;
   }

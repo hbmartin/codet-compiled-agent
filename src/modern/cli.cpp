@@ -1112,15 +1112,16 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
         }
         if (line) {
           const auto &text = line->text;
+          const bool current_request = pending && line->request && line->request->matches(*pending);
           if (text == "/quit" || text == "/exit") {
             quit_requested = true;
             cancel.requested = true;
-          } else if (line->discarded) {
+          } else if (line->discarded || (line->request && !current_request)) {
             terminal->say("Expired request answer discarded; enter a fresh message.");
           } else if (text == "/model" || text.rfind("/model ", 0) == 0 || text == "/status" ||
                      text == "/compact") {
             terminal->say("Use /model, /status and /compact after the active turn completes.");
-          } else if (pending && line->request && line->request->matches(*pending)) {
+          } else if (current_request) {
             if (pending->value("type", "") == "codet.approval" && detail::approves(text) &&
                 !terminal->approval_reviewed(*pending))
               continue;
@@ -1129,8 +1130,6 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
               terminal->say("Expired request answer discarded; enter a fresh message.");
             pending.reset();
             terminal->end_approval(answered ? std::optional<std::string_view>(text) : std::nullopt);
-          } else if (line->request) {
-            terminal->say("Expired request answer discarded; enter a fresh message.");
           } else if (text.rfind("/permissions", 0) == 0)
             terminal->say("Change permission modes after the active turn completes.");
           else if (text == "/new") {
