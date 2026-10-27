@@ -19,7 +19,7 @@ public:
   std::string session, request;
   uint64_t turn;
   ApprovalReview(std::string session_id, uint64_t turn_id, std::string request_id,
-                 std::string document, bool unicode = true)
+                 const std::string &document, bool unicode = true)
       : document_(document, unicode), session(std::move(session_id)),
         request(std::move(request_id)), turn(turn_id) {}
   bool reshape(int rows, int columns) {

@@ -8,8 +8,8 @@ inline bool approves(std::string_view answer) noexcept {
 }
 struct ApprovalIdentity {
   std::string session, request;
-  uint64_t turn;
-  static bool valid(const Json &event) noexcept {
+  uint64_t turn = 0;
+  static bool valid(const Json &event) {
     if (!event.is_object())
       return false;
     const auto session = event.find("codet_session_id"), request = event.find("request_id"),
@@ -28,11 +28,11 @@ struct ApprovalIdentity {
     return {event.at("codet_session_id").get<std::string>(),
             event.at("request_id").get<std::string>(), event.at("codet_turn").get<uint64_t>()};
   }
-  bool matches(const Json &event) const noexcept {
+  bool matches(const Json &event) const {
     return matches(event, session, request, turn);
   }
   static bool matches(const Json &event, std::string_view session, std::string_view request,
-                      uint64_t turn) noexcept {
+                      uint64_t turn) {
     return valid(event) && event.at("codet_session_id").get_ref<const std::string &>() == session &&
            event.at("request_id").get_ref<const std::string &>() == request &&
            event.at("codet_turn").get<uint64_t>() == turn;
