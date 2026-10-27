@@ -1280,6 +1280,81 @@ class CliTests(unittest.TestCase):
                         if process.poll() is None:process.kill();process.wait(timeout=5)
                         os.close(master);os.close(slave)
 
+    def test_curses_c_locale_review_survives_partial_input_and_retains_history(self):
+        import fcntl
+        import pty
+        import select
+        import struct
+        import termios
+        master,slave=pty.openpty()
+        fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',12,20,0,0))
+        process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','curses','--color','never','fixture-paged-approval-unsafe'],
+            stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm',LC_ALL='C'))
+        received=bytearray()
+        def collect(predicate,seconds=10):
+            deadline=time.monotonic()+seconds
+            while not predicate() and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+            self.assertTrue(predicate(),bytes(received))
+        try:
+            collect(lambda:b'Approval review' in received)
+            os.write(master,b'yes\n')
+            os.write(master,b'\xe9')
+            collect(lambda:br'\xE9' in received)
+            os.write(master,b'\x9b\xaa')
+            collect(lambda:br'\xE9\x9B\xAA' in received)
+            os.write(master,b'\x7f')
+            for _ in range(240):
+                if b'Approve? [y/N]' in received:break
+                os.write(master,b' ')
+                if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+            collect(lambda:b'Approve? [y/N]' in received)
+            self.assertIn(b'curl',received)
+            self.assertIn(b'evil',received)
+            self.assertFalse((self.workspace/'reviewed-marker').exists())
+            received.clear()
+            os.write(master,('雪'*30+'\n').encode())
+            collect(lambda:b'fixture done' in received)
+            self.assertIn(b'denied',received)
+            self.assertIn(b'exec_command:',received)
+            self.assertIn(b'Context:',received)
+            self.assertNotIn(b'Cannot render approval',received)
+            os.write(master,b'/quit\n')
+            collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,bytes(received))
+        finally:
+            if process.poll() is None:process.kill();process.wait(timeout=5)
+            os.close(master);os.close(slave)
+
+    def test_curses_small_approval_echoes_quit_without_unlocking(self):
+        import fcntl
+        import pty
+        import select
+        import struct
+        import termios
+        master,slave=pty.openpty()
+        fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',4,30,0,0))
+        process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','curses','--color','never','fixture-paged-approval'],
+            stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm',LC_ALL='C'))
+        received=bytearray()
+        def collect(predicate):
+            deadline=time.monotonic()+10
+            while not predicate() and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+            self.assertTrue(predicate(),bytes(received))
+        try:
+            collect(lambda:b'Resize to review' in received)
+            os.write(master,b'yes\n/quit')
+            collect(lambda:b'/quit' in received)
+            self.assertNotIn(b'Approve? [y/N]',received)
+            os.write(master,b'\n')
+            collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,bytes(received))
+            self.assertFalse((self.workspace/'reviewed-marker').exists())
+        finally:
+            if process.poll() is None:process.kill();process.wait(timeout=5)
+            os.close(master);os.close(slave)
+
     def test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize(self):
         import fcntl
         import pty

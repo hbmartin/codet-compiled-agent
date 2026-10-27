@@ -57,6 +57,9 @@ public:
   bool usable() const noexcept {
     return rows_ >= 6 && columns_ >= 20;
   }
+  const std::string &document() const noexcept {
+    return document_.text();
+  }
   size_t capacity() const noexcept {
     return usable() ? static_cast<size_t>(rows_ - 4) : 0;
   }

@@ -1,3 +1,4 @@
+#include "codet/detail/approval_identity.hpp"
 #include "codet/detail/approval_review.hpp"
 #include "codet/detail/cleanup_diagnostics.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
@@ -16,6 +17,40 @@
 using namespace codet;
 using namespace testing;
 namespace {
+TEST(ApprovalIdentity, RequiresCompleteTypedIdentityAndNeverDefaultsApproval) {
+  const Json valid = {
+      {"codet_session_id", "session"}, {"codet_turn", uint64_t{3}}, {"request_id", "request"}};
+  const auto identity = detail::ApprovalIdentity::from(valid);
+  EXPECT_TRUE(identity.matches(valid));
+  for (const auto *key : {"codet_session_id", "codet_turn", "request_id"}) {
+    auto missing = valid;
+    missing.erase(key);
+    EXPECT_THROW(detail::ApprovalIdentity::from(missing), Error);
+    EXPECT_FALSE(identity.matches(missing));
+    auto wrong = valid;
+    wrong[key] = Json::array();
+    EXPECT_THROW(detail::ApprovalIdentity::from(wrong), Error);
+    EXPECT_FALSE(identity.matches(wrong));
+  }
+  for (Json turn : {Json(0), Json(-1), Json(1.5)}) {
+    auto invalid = valid;
+    invalid["codet_turn"] = turn;
+    EXPECT_THROW(detail::ApprovalIdentity::from(invalid), Error);
+  }
+  auto other = valid;
+  other["request_id"] = "expired";
+  EXPECT_FALSE(identity.matches(other));
+  other = valid;
+  other["codet_session_id"] = "different";
+  EXPECT_FALSE(identity.matches(other));
+  other = valid;
+  other["codet_turn"] = 4;
+  EXPECT_FALSE(identity.matches(other));
+  for (const auto *answer : {"y", "yes"})
+    EXPECT_TRUE(detail::approves(answer));
+  for (const auto *answer : {"Y", "YES", " y", "yes ", "n", "/quit", ""})
+    EXPECT_FALSE(detail::approves(answer));
+}
 TEST(ApprovalReview, EveryPageMustRenderAndResizeRestartsReview) {
   detail::ApprovalReview review("session", 3, "request", std::string(3000, 'a') + "suffix");
   EXPECT_TRUE(review.reshape(8, 40));
