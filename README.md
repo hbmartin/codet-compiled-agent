@@ -122,6 +122,11 @@ Fullscreen approvals use a separate paged review of the complete escaped target 
 Space or PageDown advances, and PageUp returns. Approval is enabled after every page has been
 displayed and requires a fresh `y` or `yes` followed by Enter. Resizing restarts review; denial,
 quit, and cancellation remain available throughout.
+Curses prepares that review for the active locale and native renderer before measuring it;
+unsupported characters appear as reversible ASCII byte escapes. Approval input uses the same
+column-safe presentation, including while a UTF-8 character is only partly typed. Small screens
+keep denial and quit input visible while approval remains disabled. The bounded UI transcript
+retains the request, context, and associated approval decision after the review closes.
 
 Terminal cleanup checks foreground ownership before native teardown. If private stream
 redirection fails, pending private stdio output is purged and the entire native ownership bundle

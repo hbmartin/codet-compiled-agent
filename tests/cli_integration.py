@@ -1274,6 +1274,7 @@ class CliTests(unittest.TestCase):
                             if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
                         self.assertTrue(any(value in received for value in allowed),received)
                         self.assertNotIn(b'unsafe:\x1b[2K',received)
+                        self.assertNotIn(b'M-i~[M-*',received)  # Narrow-curses corruption of 雪.
                         os.write(master,b'/quit\n');deadline=time.monotonic()+7
                         while process.poll() is None and time.monotonic()<deadline:
                             if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)

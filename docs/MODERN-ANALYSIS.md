@@ -442,3 +442,64 @@ including after exhausting the interruption budget. Unicode policies, raw data o
 journal authority, retained-notice ownership, and process-lifetime quarantine remain unchanged.
 Linux and native Tiger runtime/toolchain checks are unavailable locally. Python 3.15 reports
 existing SQLite fixture ResourceWarnings; the final suites pass.
+
+
+## Locale-safe approval rendering follow-up
+
+Fetched baseline `2030ab8` contains PR #39. A native C-locale negative control reproduces four
+review rows spilling into their successors while the page is credited as reviewed, plus a bottom-row
+input draw error. With the change, the same first page has no spilled rows, remains unapproved
+because later pages are still required, and the input draw succeeds. Full-page tests independently
+complete every page and reconstruct the entire prepared document before approval unlocks.
+
+Curses prepares locale-compatible text before measuring it and probes native UTF-8 support on an
+unrefreshed scratch pad. Unsupported bytes become reversible ASCII escapes; supported Unicode
+remains intact. The approval document and byte-by-byte input use complete tokens and column
+limits, with actual draw-row verification. Small screens retain input while approval stays disabled.
+Ordinary narrow-curses questions, commentary and progress use the same reversible fallback;
+wide-renderer text and prose tabs retain their behavior. The bounded UI transcript retains the request/context and its associated decision. Empty
+submission is denial, distinct from cancellation. Identity validation precedes review and all gates
+share the exact `y`/`yes` predicate.
+
+The stat shim now shares platform-aware ABI selection across tests and benchmarks. Intel SDK
+cross-compilation selects `fstat$INODE64` for both wrapper and resolver. Older glibc uses its
+versioned stat entry point and forwards the version; local runtime coverage for that branch is
+unavailable. File, pipe and socket positive controls pass on macOS arm64. Indeterminate pipe
+bounds clear errno before each attempt, and all native diagnostic forms share logical record
+boundaries and their retry budget. Conservative separators, including possible extra blank lines,
+remain intentional.
+
+[Recorded validation](validation/approval-rendering-followup.json),
+[Release medians](validation/approval-rendering-followup-performance.csv), and
+[every warm-up and measured sample](validation/approval-rendering-followup-performance-samples.csv)
+include commands, source hashes, analyzer results and platform limits. Both full Debug and
+ASan/UBSan CTest suites pass. Twenty batches exercise focused unit/fault tests and twelve CLI/PTY
+cases. Pinned lint, Semgrep, runner checks and analyzer detection self-tests pass. Cppcheck reports
+zero findings; Clang-Tidy retains the same six findings and SDK13-incomplete translation unit,
+and Clang Analyzer retains the existing context.cpp division warning. No checks were weakened.
+
+The Release comparison uses identical compiler settings and harnesses for fetched main and the
+recorded changed production revision. Each of two sets has one warm-up and five alternating
+measured runs, with no concurrent analyzers or test batches. Write/stat/flag/bound-query counters
+have positive controls. Times below are medians in milliseconds; no timing-based CI threshold or
+general performance improvement is claimed.
+
+| Workload | Baseline, sets 1 / 2 | Changed, sets 1 / 2 |
+| --- | --- | --- |
+| diagnostics-amplified | 415.689 / 394.816 | 428.723 / 395.999 |
+| diagnostics-standalone-amplified | 394.666 / 397.880 | 397.862 / 396.254 |
+| diagnostics-pipe-amplified | 399.101 / 400.396 | 400.796 / 400.421 |
+| jsonl-small | 20.001 / 19.875 | 19.959 / 19.933 |
+| editor | 84.238 / 83.455 | 85.130 / 82.698 |
+| export-small-file | 57.323 / 57.820 | 55.981 / 56.284 |
+| export-large-file | 283.782 / 277.781 | 288.141 / 276.796 |
+
+Diagnostic loops retain zero C++ allocations and the same write, identity, flag and bound-query counts. Export allocation/byte and output-operation counts are identical. Large-file export median changes versus baseline are +1.54% and -0.35% in the two sets. This is a correctness/consolidation change with no claimed export speedup.
+
+Counters cover C++ new and direct observed calls, not every libc/libedit operation or C allocation.
+Blocking TTY cancellation, standalone/emergency best-effort delivery, raw data output, Unicode
+policy, storage formats and journal authority retain their previous contracts. Native Intel,
+older-glibc and Tiger runtime/toolchain checks were unavailable locally; Ubuntu workflow evidence
+is linked separately when available.
+
+The first Ubuntu run compiled and passed static analysis, then exposed narrow-curses display expectations and an inherited-fd-hole assumption in a fault helper. Ordinary narrow displays now use reversible byte escapes; the helper reserves holes and deliberately inherits fd 64. No checks were removed or relaxed to accept garbled text or successful acquisition in a fault case. The initial workflow artifact is recorded alongside the replacement run.
