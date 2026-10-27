@@ -31,7 +31,7 @@ public:
       if (parsed.valid &&
           (parsed.point == '\n' || (prose_tabs && parsed.point == '\t') ||
            (parsed.point >= 0x20 && parsed.point != 0x7f && (unicode || parsed.point < 0x80) &&
-            (!strict || !approval_invisible(parsed.point)) &&
+            (!strict || parsed.point < 0x80 || !approval_invisible(parsed.point)) &&
             (columns(token, parsed) > 0 || (!strict && columns(token, parsed) == 0)))))
         text_.append(token);
       else

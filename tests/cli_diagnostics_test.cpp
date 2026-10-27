@@ -2,6 +2,7 @@
 #include "codet/detail/approval_review.hpp"
 #include "codet/detail/cleanup_diagnostics.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
+#include "codet/detail/curses_input.hpp"
 #include "codet/detail/native_output.hpp"
 #include "codet/detail/request_input.hpp"
 #include "codet/detail/ui_history.hpp"
@@ -106,6 +107,38 @@ TEST(ApprovalReview, WrappingRetainsCompleteUnicodeAndEscapeTokensBeyondTranscri
     }
     EXPECT_EQ(reconstructed, expected);
   }
+}
+TEST(CursesInput, IncrementalPreparationPreservesRawBytesAndHasLinearWork) {
+  for (bool unicode : {false, true}) {
+    detail::CursesInput input;
+    input.unicode(unicode);
+    const std::string text = "abc雪\\x0A\xff";
+    std::string prefix;
+    for (const char byte : text) {
+      prefix += byte;
+      input += byte;
+      EXPECT_EQ(input.raw(), prefix);
+      EXPECT_EQ(input.view("", 1000),
+                detail::CursesText(detail::literal_text(prefix), unicode).text());
+    }
+    while (!prefix.empty()) {
+      prefix.pop_back();
+      input.pop_back();
+      EXPECT_EQ(input.raw(), prefix);
+      EXPECT_EQ(input.view("", 1000),
+                detail::CursesText(detail::literal_text(prefix), unicode).text());
+    }
+  }
+  detail::CursesInput input;
+  for (size_t i = 0; i != detail::CursesInput::limit; ++i)
+    input += 'a';
+  EXPECT_LE(input.rebuilt_bytes(), 2 * detail::CursesInput::limit);
+  const auto before = input.rebuilt_bytes();
+  for (size_t i = 0; i != 100; ++i)
+    EXPECT_EQ(input.view("codet> ", 79).size(), 79u);
+  EXPECT_EQ(input.rebuilt_bytes(), before);
+  input += 'b';
+  EXPECT_EQ(input.size(), detail::CursesInput::limit);
 }
 TEST(RequestInput, ExpiryAndReplacementNeverReclassifyDraftAnswers) {
   const detail::ApprovalIdentity first{"session", "first", 1}, second{"session", "second", 1};

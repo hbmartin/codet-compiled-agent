@@ -6,6 +6,7 @@
 #include "codet/detail/cleanup_diagnostics.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
 #include "codet/detail/cli_output.hpp"
+#include "codet/detail/curses_input.hpp"
 #include "codet/detail/curses_render.hpp"
 #include "codet/detail/native_terminal.hpp"
 #include "codet/detail/request_input.hpp"
@@ -255,7 +256,8 @@ class Terminal final : public detail::CliDiagnosticSurface {
   detail::RequestInput input_scope_;
   std::optional<detail::ApprovalReview> approval_;
   bool curses_unicode_ = true;
-  std::string input_, status_, progress_;
+  detail::CursesInput input_;
+  std::string status_, progress_;
   std::string prompt_;
   std::map<std::string, int> bindings_{{"submit", 10}, {"quit", 4}, {"backspace", 127}};
   const Cancellation *read_cancel_ = nullptr;
@@ -311,8 +313,7 @@ class Terminal final : public detail::CliDiagnosticSurface {
           draw(0, std::string_view("Resize to review; approval disabled")
                       .substr(0, static_cast<size_t>(cols - 1)));
         if (rows > 0 && cols > 1)
-          draw(rows - 1, detail::CursesText::input(rows == 1 ? "!> " : "codet> ", input_,
-                                                   static_cast<size_t>(cols - 1), curses_unicode_));
+          draw(rows - 1, input_.view(rows == 1 ? "!> " : "codet> ", static_cast<size_t>(cols - 1)));
       } else {
         const auto heading = "Approval review " + std::to_string(approval_->page() + 1) + "/" +
                              std::to_string(approval_->pages());
@@ -324,8 +325,7 @@ class Terminal final : public detail::CliDiagnosticSurface {
         const std::string_view prompt =
             approval_->approved_review() ? "Approve? [y/N]" : "Read all pages; n denies";
         draw(rows - 2, prompt.substr(0, static_cast<size_t>(cols - 1)));
-        draw(rows - 1, detail::CursesText::input("codet> ", input_, static_cast<size_t>(cols - 1),
-                                                 curses_unicode_));
+        draw(rows - 1, input_.view("codet> ", static_cast<size_t>(cols - 1)));
       }
       if (::refresh() == ERR)
         throw Error("Cannot refresh approval review");
@@ -342,10 +342,7 @@ class Terminal final : public detail::CliDiagnosticSurface {
     }
     if (rows < 4 || cols < 8) {
       if (rows > 0 && cols > 1)
-        detail::curses_draw_row(rows - 1,
-                                detail::CursesText::input("codet> ", input_,
-                                                          static_cast<size_t>(cols - 1),
-                                                          curses_unicode_),
+        detail::curses_draw_row(rows - 1, input_.view("codet> ", static_cast<size_t>(cols - 1)),
                                 cols);
       refresh();
       return;
@@ -356,10 +353,7 @@ class Terminal final : public detail::CliDiagnosticSurface {
     for (auto it = transcript_.lines().rbegin(); it != transcript_.lines().rend() && y > 0;
          ++it, --y)
       detail::curses_draw_row(y, *it, cols);
-    detail::curses_draw_row(rows - 1,
-                            detail::CursesText::input(
-                                "codet> ", input_, static_cast<size_t>(cols - 1), curses_unicode_),
-                            cols);
+    detail::curses_draw_row(rows - 1, input_.view("codet> ", static_cast<size_t>(cols - 1)), cols);
     refresh();
   }
 
@@ -424,6 +418,7 @@ public:
     if (curses_) {
       resources_.start_screen();
       curses_unicode_ = detail::curses_unicode_supported();
+      input_.unicode(curses_unicode_);
       cbreak();
       noecho();
       keypad(stdscr, TRUE);
@@ -529,7 +524,7 @@ public:
       if (ch == bindings_["quit"])
         return std::nullopt;
       if (ch == bindings_["submit"] || ch == KEY_ENTER) {
-        auto submitted = input_scope_.take(input_);
+        auto submitted = input_scope_.take(input_.raw());
         input_.clear();
         if (submitted.discarded && submitted.text != "/quit" && submitted.text != "/exit") {
           say("Expired request answer discarded; enter a fresh message.");
@@ -604,7 +599,7 @@ public:
       return {};
     }
     if (ch == bindings_["submit"] || ch == KEY_ENTER || ch == '\r') {
-      auto submitted = input_scope_.take(input_);
+      auto submitted = input_scope_.take(input_.raw());
       const auto &text = submitted.text;
       input_.clear();
       if (!submitted.discarded && approval_ && detail::approves(text) &&
