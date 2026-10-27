@@ -2,6 +2,7 @@
 #include "codet/detail/approval_review.hpp"
 #include "codet/detail/cleanup_diagnostics.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
+#include "codet/detail/native_output.hpp"
 #include "native_io_metrics.hpp"
 #include "process_helper.hpp"
 #include "temp.hpp"
@@ -162,6 +163,42 @@ TEST(DiagnosticWriter, TurnCleanupKeepsOriginalFailureAfterQuiescenceAndResetsCa
   }
 }
 #ifdef CODET_NATIVE_TERMINAL_METRICS
+TEST(DiagnosticWriter, IndeterminatePipeBoundsDoNotRetryStaleInterruptedErrno) {
+  int descriptors[2];
+  ASSERT_EQ(::pipe(descriptors), 0);
+  const int saved = ::dup(STDERR_FILENO);
+  ASSERT_GE(saved, 0);
+  struct Restore {
+    int saved, read, write;
+    ~Restore() {
+      test::native_io_metrics = {};
+      (void)::dup2(saved, STDERR_FILENO);
+      ::close(saved);
+      ::close(read);
+      ::close(write);
+      detail::reset_standard_diagnostics();
+    }
+  } restore{saved, descriptors[0], descriptors[1]};
+  ASSERT_EQ(::dup2(descriptors[1], STDERR_FILENO), STDERR_FILENO);
+  Cancellation cancel;
+  detail::IoContext io(cancel);
+  for (bool active : {false, true}) {
+    detail::reset_standard_diagnostics();
+    auto &metrics = test::native_io_metrics;
+    metrics = {};
+    metrics.interrupt_fd = STDERR_FILENO;
+    metrics.bounds_interrupted = 1;
+    metrics.bound_indeterminate = true;
+    detail::DiagnosticWriter writer(std::cerr, active ? &io : nullptr);
+    errno = EINTR;
+    EXPECT_TRUE(writer.write({"bound"}));
+    EXPECT_EQ(metrics.bound_queries, 2u);
+    metrics = {};
+    char output[6]{};
+    ASSERT_EQ(::read(descriptors[0], output, sizeof(output)), 6);
+    EXPECT_EQ(std::string(output, sizeof(output)), "bound\n");
+  }
+}
 TEST(DiagnosticWriter, EmergencyChunksShareEightInterruptionRetriesWithInspectionAndSeparator) {
   FileNotice notice("/" + std::string(4097, 'a') + "\xff", FileNoticeKind::tool_result);
   notice.confirmed = true;
