@@ -171,4 +171,18 @@ TEST(ApprovalCurses, BackendFallbackEscapesBytesWithoutChangingSupportedLocaleTe
   erase();
   expect_row(1, review.line(0), 20);
 }
+TEST(ApprovalCurses, ProseNewlinesAndTabsCannotEscapeTheirAssignedRow) {
+  Screen native;
+  ASSERT_TRUE(native.open("C"));
+  ASSERT_EQ(::resizeterm(5, 20), OK);
+  erase();
+  codet::detail::curses_draw_row(0, "abc\nnext row", 20);
+  EXPECT_EQ(mvinch(1, 0) & A_CHARTEXT, static_cast<chtype>(' '));
+  codet::detail::curses_draw_row(4, "a\tb\tc", 20);
+  EXPECT_EQ(mvinch(4, 8) & A_CHARTEXT, static_cast<chtype>('b'));
+  EXPECT_EQ(mvinch(4, 16) & A_CHARTEXT, static_cast<chtype>('c'));
+  ASSERT_EQ(::resizeterm(1, 8), OK);
+  EXPECT_NO_THROW(codet::detail::curses_draw_row(0, "a\tb", 8));
+  EXPECT_EQ(mvinch(0, 7) & A_CHARTEXT, static_cast<chtype>(' '));
+}
 } // namespace

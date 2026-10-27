@@ -59,14 +59,20 @@ public:
     }
     return result;
   }
-  static size_t prefix(std::string_view text, size_t limit) noexcept {
-    size_t offset = 0;
+  static size_t prefix(std::string_view text, size_t limit, size_t tab_width = 8) noexcept {
+    tab_width = std::max(tab_width, size_t{1});
+    size_t offset = 0, used = 0;
     while (offset < text.size()) {
-      const auto columns = token_columns(text, offset);
+      const auto token = rendered_token(text, offset);
+      if (token.point == '\n')
+        break;
+      const auto columns =
+          token.point == '\t' ? tab_width - used % tab_width : token_columns(text, offset);
       if (columns > limit)
         break;
       limit -= columns;
-      offset += rendered_token(text, offset).bytes;
+      used += columns;
+      offset += token.bytes;
     }
     return offset;
   }

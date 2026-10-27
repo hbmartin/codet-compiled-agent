@@ -22,7 +22,8 @@ inline bool curses_unicode_supported(WINDOW *(*allocate)(int, int) = &::newpad) 
 inline void curses_draw_row(int row, std::string_view text, int columns, bool exact = false) {
   if (columns <= 1)
     return;
-  const auto size = CursesText::prefix(text, static_cast<size_t>(columns - 1));
+  const auto size = CursesText::prefix(text, static_cast<size_t>(columns - 1),
+                                       static_cast<size_t>(std::max(TABSIZE, 1)));
   if (exact && size != text.size())
     throw Error("Approval review exceeded its assigned row");
   text = text.substr(0, size);
