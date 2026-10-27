@@ -4,7 +4,9 @@
 #include "codet/core.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
 #include "codet/detail/cli_output.hpp"
+#include "codet/detail/curses_input.hpp"
 #include "codet/detail/terminal_resources.hpp"
+#include "codet/detail/ui_history.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/prompt.hpp"
 #include "journal_fixture.hpp"
@@ -207,6 +209,30 @@ extern "C" int sqlite3_step(sqlite3_stmt *statement) {
   return result;
 }
 namespace {
+TEST(UiBudgetFault, RedrawAndHistoryDoNotAllocateInProportionToWholeInput) {
+  struct Reset {
+    ~Reset() {
+      fault::disable();
+    }
+  } reset;
+  detail::CursesInput input;
+  for (size_t i = 0; i != detail::CursesInput::limit; ++i)
+    input += 'a';
+  const std::string huge(2 * 1024 * 1024, 'x');
+  detail::UiHistory history;
+  fault::largest_allocation = 0;
+  fault::measure_allocations = true;
+  for (size_t i = 0; i != 100; ++i)
+    (void)input.view("codet> ", 79);
+  const auto redraw_allocation = fault::largest_allocation;
+  fault::largest_allocation = 0;
+  history.add(huge, detail::UiHistory::approval_limit);
+  const auto history_allocation = fault::largest_allocation;
+  fault::disable();
+  EXPECT_LT(redraw_allocation, 512u);
+  EXPECT_LE(history_allocation, detail::UiHistory::approval_limit);
+  EXPECT_LE(history.bytes(), detail::UiHistory::approval_limit);
+}
 TEST(FileDiagnosticsFault, RedirectedAnswersBorrowTheirBytesWithoutAllocation) {
   const std::string answer(1024 * 1024, 'x');
   struct Probe {
