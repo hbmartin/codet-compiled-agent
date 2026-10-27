@@ -1268,10 +1268,13 @@ class CliTests(unittest.TestCase):
                     received=b''
                     try:
                         expected=(DISPLAY_ESCAPED+(r'\x0D\x0Anext\x09\x5Cx0A' if prompt=='fixture-control-approval' else '')).encode();deadline=time.monotonic()+7
-                        while expected not in received and time.monotonic()<deadline:
+                        # Narrow curses needs complete byte escapes, never its M- garbling.
+                        allowed=(expected,expected.replace('雪'.encode(),br'\xE9\x9B\xAA')) if mode=='curses' else (expected,)
+                        while not any(value in received for value in allowed) and time.monotonic()<deadline:
                             if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
-                        self.assertIn(expected,received)
+                        self.assertTrue(any(value in received for value in allowed),received)
                         self.assertNotIn(b'unsafe:\x1b[2K',received)
+                        self.assertNotIn(b'M-i~[M-*',received)  # Narrow-curses corruption of 雪.
                         os.write(master,b'/quit\n');deadline=time.monotonic()+7
                         while process.poll() is None and time.monotonic()<deadline:
                             if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
@@ -1279,6 +1282,111 @@ class CliTests(unittest.TestCase):
                     finally:
                         if process.poll() is None:process.kill();process.wait(timeout=5)
                         os.close(master);os.close(slave)
+
+    def test_curses_c_locale_review_survives_partial_input_and_retains_history(self):
+        import fcntl
+        import pty
+        import select
+        import struct
+        import termios
+        master,slave=pty.openpty()
+        fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',12,20,0,0))
+        process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','curses','--color','never','fixture-paged-approval-unsafe'],
+            stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm',LC_ALL='C'))
+        received=bytearray()
+        def collect(predicate,seconds=10):
+            deadline=time.monotonic()+seconds
+            while not predicate() and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+            self.assertTrue(predicate(),bytes(received))
+        try:
+            collect(lambda:b'Approval review' in received)
+            os.write(master,b'yes\n')
+            os.write(master,b'\xe9')
+            collect(lambda:br'\xE9' in received)
+            os.write(master,b'\x9b\xaa')
+            collect(lambda:br'\xE9\x9B\xAA' in received)
+            os.write(master,b'\x7f')
+            for _ in range(240):
+                if b'Approve? [y/N]' in received:break
+                os.write(master,b' ')
+                if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+            collect(lambda:b'Approve? [y/N]' in received)
+            self.assertIn(b'curl',received)
+            self.assertIn(b'evil',received)
+            self.assertFalse((self.workspace/'reviewed-marker').exists())
+            received.clear()
+            os.write(master,('雪'*30+'\n').encode())
+            collect(lambda:b'fixture done' in received)
+            self.assertIn(b'denied',received)
+            self.assertIn(b'exec_command:',received)
+            self.assertIn(b'Context:',received)
+            self.assertNotIn(b'Cannot render approval',received)
+            os.write(master,b'/quit\n')
+            collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,bytes(received))
+        finally:
+            if process.poll() is None:process.kill();process.wait(timeout=5)
+            os.close(master);os.close(slave)
+
+    def test_curses_empty_answer_records_denial_in_history(self):
+        import fcntl
+        import pty
+        import select
+        import struct
+        import termios
+        master,slave=pty.openpty()
+        fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
+        process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','curses','--color','never','fixture-command'],
+            stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm',LC_ALL='C'))
+        received=bytearray()
+        def collect(predicate):
+            deadline=time.monotonic()+10
+            while not predicate() and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+            self.assertTrue(predicate(),bytes(received))
+        try:
+            collect(lambda:b'Approve? [y/N]' in received)
+            received.clear();os.write(master,b'\n')
+            collect(lambda:b'fixture done' in received)
+            self.assertIn(b'[Approval denied]',received)
+            self.assertNotIn(b'[Approval cancelled]',received)
+            self.assertIn(b'exec_command: printf approved',received)
+            os.write(master,b'/quit\n')
+            collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,bytes(received))
+        finally:
+            if process.poll() is None:process.kill();process.wait(timeout=5)
+            os.close(master);os.close(slave)
+
+    def test_curses_small_approval_echoes_quit_without_unlocking(self):
+        import fcntl
+        import pty
+        import select
+        import struct
+        import termios
+        master,slave=pty.openpty()
+        fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',4,30,0,0))
+        process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','curses','--color','never','fixture-paged-approval'],
+            stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm',LC_ALL='C'))
+        received=bytearray()
+        def collect(predicate):
+            deadline=time.monotonic()+10
+            while not predicate() and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+            self.assertTrue(predicate(),bytes(received))
+        try:
+            collect(lambda:b'Resize to review' in received)
+            os.write(master,b'yes\n/quit')
+            collect(lambda:b'/quit' in received)
+            self.assertNotIn(b'Approve? [y/N]',received)
+            os.write(master,b'\n')
+            collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,bytes(received))
+            self.assertFalse((self.workspace/'reviewed-marker').exists())
+        finally:
+            if process.poll() is None:process.kill();process.wait(timeout=5)
+            os.close(master);os.close(slave)
 
     def test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize(self):
         import fcntl

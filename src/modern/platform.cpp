@@ -361,19 +361,19 @@ std::string FileNotice::text() const {
   return result;
 }
 namespace {
-// One record owns the separator and EINTR budget across streamed emergency-path chunks.
-class ImmediateRecord {
-  detail::OutputAttempt attempt_{nullptr, detail::OutputMode::immediate};
+// Ordinary diagnostics and streamed notices use the same record boundaries and attempt.
+class NativeDiagnosticRecord {
+  detail::OutputAttempt &attempt_;
   detail::DiagnosticState &state_;
   detail::DescriptorOutput descriptor_;
   bool ready_ = true;
 
 public:
-  ImmediateRecord() noexcept
-      : state_(stderr_descriptor_state.bind(STDERR_FILENO, attempt_)),
-        descriptor_(STDERR_FILENO, attempt_,
-                    stderr_descriptor_state.inspected ? &stderr_descriptor_state.identity : nullptr,
-                    stderr_descriptor_state.pipe_limit) {
+  NativeDiagnosticRecord(int descriptor, detail::DiagnosticState &state,
+                         DescriptorDiagnosticState &owner, detail::OutputAttempt &attempt) noexcept
+      : attempt_(attempt), state_(state),
+        descriptor_(descriptor, attempt, owner.inspected ? &owner.identity : nullptr,
+                    owner.pipe_limit) {
     if (state_.pending) {
       ready_ = write({"\n"}, false);
       if (ready_)
@@ -386,8 +386,8 @@ public:
     ready_ = descriptor_.result(parts, newline, attempt_) == detail::OutputResult::success;
     return ready_;
   }
-  void begin() noexcept {
-    if (ready_)
+  void begin(bool newline = true) noexcept {
+    if (ready_ && newline)
       state_.pending = true;
   }
   bool finish(std::initializer_list<std::string_view> tail = {}, bool newline = true) noexcept {
@@ -397,15 +397,21 @@ public:
     return true;
   }
 };
+NativeDiagnosticRecord immediate_record(detail::OutputAttempt &attempt) noexcept {
+  auto &state = stderr_descriptor_state.bind(STDERR_FILENO, attempt);
+  return {STDERR_FILENO, state, stderr_descriptor_state, attempt};
+}
 } // namespace
 bool detail::immediate_stderr(std::initializer_list<std::string_view> parts,
                               bool newline) noexcept {
-  ImmediateRecord record;
-  record.begin();
+  OutputAttempt attempt(nullptr, OutputMode::immediate);
+  auto record = immediate_record(attempt);
+  record.begin(); // Keep the conservative boundary even for a failed unterminated warning.
   return record.finish(parts, newline);
 }
 void emergency_file_diagnostic(const FileNotice &notice) noexcept {
-  ImmediateRecord record;
+  detail::OutputAttempt attempt(nullptr, detail::OutputMode::immediate);
+  auto record = immediate_record(attempt);
   record.begin();
   if (!record.write({notice.label()}))
     return;
@@ -455,19 +461,9 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
   if (native >= 0) {
     if (!output_ || (file_ && std::ferror(file_)))
       (void)recover_diagnostic_stream(output_);
-    DescriptorOutput descriptor(
-        native, attempt, destination.owner->inspected ? &destination.owner->identity : nullptr,
-        destination.owner->pipe_limit);
-    bool success = true;
-    if (state_->pending) {
-      success = descriptor.result({"\n"}, false, attempt) == OutputResult::success;
-      if (success)
-        state_->pending = false;
-    }
-    if (success) {
-      success = descriptor.result(parts, newline, attempt) == OutputResult::success;
-      state_->pending = !success && newline;
-    }
+    NativeDiagnosticRecord record(native, *state_, *destination.owner, attempt);
+    record.begin(newline);
+    const bool success = record.finish(parts, newline);
     if (!success) {
       try {
         output_.setstate(std::ios::badbit);
@@ -545,15 +541,23 @@ bool escape_token(std::string_view text, size_t offset) noexcept {
          hexadecimal(text[offset + 2]) && hexadecimal(text[offset + 3]);
 }
 } // namespace
+detail::RenderedToken detail::rendered_token(std::string_view text, size_t offset) noexcept {
+  if (offset >= text.size())
+    return {0, 0, false, false};
+  if (escape_token(text, offset))
+    return {4, '\\', true, true};
+  const auto lead = static_cast<unsigned char>(text[offset]);
+  if (lead < 0x80)
+    return {1, lead, true, false};
+  const auto point = decode_text_point(text, offset);
+  return {point.consumed, point.value, point.valid, false};
+}
 size_t detail::rendered_prefix(std::string_view text, size_t limit) noexcept {
   if (text.size() <= limit)
     return text.size();
   size_t offset = 0;
   while (offset < text.size() && offset < limit) {
-    const auto width = (text[offset] == '\\' && escape_token(text, offset)) ? size_t{4}
-                       : static_cast<unsigned char>(text[offset]) < 0x80
-                           ? size_t{1}
-                           : decode_text_point(text, offset).consumed;
+    const auto width = rendered_token(text, offset).bytes;
     if (width > limit - offset)
       break;
     offset += width;

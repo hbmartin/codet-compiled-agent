@@ -1,5 +1,6 @@
 // Host-only, calling-thread injection of socket readiness races and partial native sends.
 #include "native_io_metrics.hpp"
+#include "native_stat_interposer.hpp"
 #include "native_symbol.hpp"
 #include <algorithm>
 #include <cerrno>
@@ -80,23 +81,16 @@ extern "C" ssize_t writev(int descriptor, const iovec *parts, int count) {
   }
   return original(descriptor, parts, count);
 }
-extern "C" int fstat(int descriptor, struct stat *status)
-#ifdef __linux__
-    noexcept
-#endif
-{
-  using Stat = int (*)(int, struct stat *);
-  static const auto original = reinterpret_cast<Stat>(codet::test::native_symbol("fstat"));
-  auto &metrics = codet::test::native_io_metrics;
+bool codet::test::interrupt_stat(int descriptor) noexcept {
+  auto &metrics = native_io_metrics;
   if (descriptor == metrics.interrupt_fd) {
     ++metrics.inspections;
     if (metrics.stats_interrupted) {
       --metrics.stats_interrupted;
-      errno = EINTR;
-      return -1;
+      return true;
     }
   }
-  return original(descriptor, status);
+  return false;
 }
 extern "C" long fpathconf(int descriptor, int name)
 #ifdef __linux__
@@ -113,6 +107,8 @@ extern "C" long fpathconf(int descriptor, int name)
       errno = EINTR;
       return -1;
     }
+    if (metrics.bound_indeterminate)
+      return -1; // POSIX permits an indeterminate limit to leave errno unchanged.
   }
   return original(descriptor, name);
 }

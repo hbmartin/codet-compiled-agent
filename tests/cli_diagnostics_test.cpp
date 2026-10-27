@@ -1,6 +1,8 @@
+#include "codet/detail/approval_identity.hpp"
 #include "codet/detail/approval_review.hpp"
 #include "codet/detail/cleanup_diagnostics.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
+#include "codet/detail/native_output.hpp"
 #include "native_io_metrics.hpp"
 #include "process_helper.hpp"
 #include "temp.hpp"
@@ -16,6 +18,40 @@
 using namespace codet;
 using namespace testing;
 namespace {
+TEST(ApprovalIdentity, RequiresCompleteTypedIdentityAndNeverDefaultsApproval) {
+  const Json valid = {
+      {"codet_session_id", "session"}, {"codet_turn", uint64_t{3}}, {"request_id", "request"}};
+  const auto identity = detail::ApprovalIdentity::from(valid);
+  EXPECT_TRUE(identity.matches(valid));
+  for (const auto *key : {"codet_session_id", "codet_turn", "request_id"}) {
+    auto missing = valid;
+    missing.erase(key);
+    EXPECT_THROW(detail::ApprovalIdentity::from(missing), Error);
+    EXPECT_FALSE(identity.matches(missing));
+    auto wrong = valid;
+    wrong[key] = Json::array();
+    EXPECT_THROW(detail::ApprovalIdentity::from(wrong), Error);
+    EXPECT_FALSE(identity.matches(wrong));
+  }
+  for (Json turn : {Json(0), Json(-1), Json(1.5)}) {
+    auto invalid = valid;
+    invalid["codet_turn"] = turn;
+    EXPECT_THROW(detail::ApprovalIdentity::from(invalid), Error);
+  }
+  auto other = valid;
+  other["request_id"] = "expired";
+  EXPECT_FALSE(identity.matches(other));
+  other = valid;
+  other["codet_session_id"] = "different";
+  EXPECT_FALSE(identity.matches(other));
+  other = valid;
+  other["codet_turn"] = 4;
+  EXPECT_FALSE(identity.matches(other));
+  for (const auto *answer : {"y", "yes"})
+    EXPECT_TRUE(detail::approves(answer));
+  for (const auto *answer : {"Y", "YES", " y", "yes ", "n", "/quit", ""})
+    EXPECT_FALSE(detail::approves(answer));
+}
 TEST(ApprovalReview, EveryPageMustRenderAndResizeRestartsReview) {
   detail::ApprovalReview review("session", 3, "request", std::string(3000, 'a') + "suffix");
   EXPECT_TRUE(review.reshape(8, 40));
@@ -48,6 +84,7 @@ TEST(ApprovalReview, WrappingRetainsCompleteUnicodeAndEscapeTokensBeyondTranscri
   for (size_t i = 0; i != 1100; ++i)
     source += "雪\\x0A ";
   const auto document = detail::literal_text(source + "\r\n\t\xff");
+  const auto expected = detail::CursesText(document).text();
   for (int columns : {20, 40, 80}) {
     detail::ApprovalReview review("session", 1, "request", document);
     review.reshape(6, columns);
@@ -57,7 +94,7 @@ TEST(ApprovalReview, WrappingRetainsCompleteUnicodeAndEscapeTokensBeyondTranscri
         const auto row = review.line(i);
         EXPECT_EQ(safe_text(std::string(row)), row);
         EXPECT_EQ(row.size(),
-                  detail::rendered_prefix(document.substr(reconstructed.size()), row.size()));
+                  detail::rendered_prefix(expected.substr(reconstructed.size()), row.size()));
         reconstructed += row;
       }
       review.displayed();
@@ -65,7 +102,7 @@ TEST(ApprovalReview, WrappingRetainsCompleteUnicodeAndEscapeTokensBeyondTranscri
         break;
       review.next();
     }
-    EXPECT_EQ(reconstructed, document);
+    EXPECT_EQ(reconstructed, expected);
   }
 }
 struct PartialDiagnosticStream : std::streambuf {
@@ -126,6 +163,42 @@ TEST(DiagnosticWriter, TurnCleanupKeepsOriginalFailureAfterQuiescenceAndResetsCa
   }
 }
 #ifdef CODET_NATIVE_TERMINAL_METRICS
+TEST(DiagnosticWriter, IndeterminatePipeBoundsDoNotRetryStaleInterruptedErrno) {
+  int descriptors[2];
+  ASSERT_EQ(::pipe(descriptors), 0);
+  const int saved = ::dup(STDERR_FILENO);
+  ASSERT_GE(saved, 0);
+  struct Restore {
+    int saved, read, write;
+    ~Restore() {
+      test::native_io_metrics = {};
+      (void)::dup2(saved, STDERR_FILENO);
+      ::close(saved);
+      ::close(read);
+      ::close(write);
+      detail::reset_standard_diagnostics();
+    }
+  } restore{saved, descriptors[0], descriptors[1]};
+  ASSERT_EQ(::dup2(descriptors[1], STDERR_FILENO), STDERR_FILENO);
+  Cancellation cancel;
+  detail::IoContext io(cancel);
+  for (bool active : {false, true}) {
+    detail::reset_standard_diagnostics();
+    auto &metrics = test::native_io_metrics;
+    metrics = {};
+    metrics.interrupt_fd = STDERR_FILENO;
+    metrics.bounds_interrupted = 1;
+    metrics.bound_indeterminate = true;
+    detail::DiagnosticWriter writer(std::cerr, active ? &io : nullptr);
+    errno = EINTR;
+    EXPECT_TRUE(writer.write({"bound"}));
+    EXPECT_EQ(metrics.bound_queries, 2u);
+    metrics = {};
+    char output[6]{};
+    ASSERT_EQ(::read(descriptors[0], output, sizeof(output)), 6);
+    EXPECT_EQ(std::string(output, sizeof(output)), "bound\n");
+  }
+}
 TEST(DiagnosticWriter, EmergencyChunksShareEightInterruptionRetriesWithInspectionAndSeparator) {
   FileNotice notice("/" + std::string(4097, 'a') + "\xff", FileNoticeKind::tool_result);
   notice.confirmed = true;
@@ -174,6 +247,18 @@ TEST(DiagnosticWriter, ImmediateVectorOutputRetriesInterruptedCallsAndStopsAtIts
     metrics = {};
     EXPECT_EQ(testing::internal::GetCapturedStderr(), interruptions <= 8 ? "firstsecond\n" : "");
   }
+  detail::reset_standard_diagnostics();
+}
+TEST(DiagnosticWriter, FailedUnterminatedImmediateWarningRetainsItsConservativeBoundary) {
+  detail::reset_standard_diagnostics();
+  testing::internal::CaptureStderr();
+  auto &metrics = test::native_io_metrics;
+  metrics.interrupt_fd = STDERR_FILENO;
+  metrics.writes_interrupted = 9;
+  EXPECT_FALSE(detail::immediate_stderr({"warning"}, false));
+  metrics = {};
+  EXPECT_TRUE(detail::immediate_stderr({"later"}));
+  EXPECT_EQ(testing::internal::GetCapturedStderr(), "\nlater\n");
   detail::reset_standard_diagnostics();
 }
 TEST(DiagnosticWriter, InterruptedIdentityInspectionCannotEraseAnAlreadyOwedSeparator) {

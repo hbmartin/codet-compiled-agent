@@ -126,11 +126,29 @@ int main(int argc, char **argv) {
           return 3;
       if (terminal > 2)
         ::close(terminal);
-      int highest = 2, before = 0;
+      int highest = 2;
       for (int fd = 0; fd != 512; ++fd)
         if (::fcntl(fd, F_GETFD) >= 0) {
           highest = fd;
-          ++before;
+        }
+      // Inherited descriptors can leave holes below the highest fd on Linux.
+      // Reserve them so each allowance controls the actual number of free slots.
+      struct Reservations {
+        int descriptors[512]{};
+        size_t size = 0;
+        ~Reservations() {
+          for (size_t i = 0; i < size; ++i)
+            ::close(descriptors[i]);
+        }
+      } reservations;
+      for (int fd = 3; fd <= highest; ++fd)
+        if (::fcntl(fd, F_GETFD) < 0) {
+          const int reserved = ::fcntl(STDIN_FILENO, F_DUPFD, fd);
+          if (reserved < 0)
+            return 4;
+          reservations.descriptors[reservations.size++] = reserved;
+          if (reserved != fd)
+            return 4;
         }
       rlimit original{};
       if (::getrlimit(RLIMIT_NOFILE, &original))
@@ -145,6 +163,10 @@ int main(int argc, char **argv) {
           (void)::setrlimit(RLIMIT_NOFILE, &original);
         }
       } restore{original};
+      int before = 0;
+      const int bound = highest + 1 + allowance;
+      for (int fd = 0; fd < bound; ++fd)
+        before += ::fcntl(fd, F_GETFD) >= 0;
       bool failed = false;
       {
         codet::detail::NativeTerminalResourceOps ops;
@@ -158,7 +180,7 @@ int main(int argc, char **argv) {
       if (!failed)
         return 5;
       int after = 0;
-      for (int fd = 0; fd != 512; ++fd)
+      for (int fd = 0; fd < bound; ++fd)
         after += ::fcntl(fd, F_GETFD) >= 0;
       return before == after ? 0 : 6;
     }

@@ -1,5 +1,6 @@
 #pragma once
 // Host benchmark counters. No observation state is compiled into production.
+#include "native_stat_interposer.hpp"
 #include "native_symbol.hpp"
 #include <atomic>
 #include <cstdarg>
@@ -11,16 +12,10 @@ namespace codet::test::descriptor_bench {
 inline bool observing = false;
 inline std::atomic<size_t> stats{0}, flags{0}, bounds{0};
 } // namespace codet::test::descriptor_bench
-extern "C" int fstat(int descriptor, struct stat *status)
-#ifdef __linux__
-    noexcept
-#endif
-{
-  using Stat = int (*)(int, struct stat *);
-  static const auto native = reinterpret_cast<Stat>(codet::test::native_symbol("fstat"));
+inline bool codet::test::interrupt_stat(int) noexcept {
   if (codet::test::descriptor_bench::observing)
     ++codet::test::descriptor_bench::stats;
-  return native(descriptor, status);
+  return false;
 }
 extern "C" long fpathconf(int descriptor, int name)
 #ifdef __linux__
@@ -33,11 +28,7 @@ extern "C" long fpathconf(int descriptor, int name)
     ++codet::test::descriptor_bench::bounds;
   return native(descriptor, name);
 }
-extern "C" int fcntl(int descriptor, int command, ...)
-#ifdef __linux__
-    noexcept
-#endif
-{
+extern "C" int fcntl(int descriptor, int command, ...) {
   using Flags = int (*)(int, int, ...);
   static const auto native = reinterpret_cast<Flags>(codet::test::native_symbol("fcntl"));
   if (codet::test::descriptor_bench::observing)

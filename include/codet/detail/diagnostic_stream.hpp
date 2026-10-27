@@ -23,6 +23,12 @@ enum class RenderMode : uint8_t { prose, literal };
 RenderProgress terminal_text_into(std::string_view, char *, size_t,
                                   RenderMode = RenderMode::prose) noexcept;
 RenderedText render_terminal_text(std::string_view, size_t, RenderMode = RenderMode::prose);
+struct RenderedToken {
+  size_t bytes;
+  uint32_t point;
+  bool valid, escape;
+};
+RenderedToken rendered_token(std::string_view, size_t) noexcept;
 size_t rendered_prefix(std::string_view, size_t) noexcept;
 struct DiagnosticState {
   std::streambuf *buffer = nullptr;

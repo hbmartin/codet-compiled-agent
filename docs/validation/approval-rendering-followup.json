@@ -1,0 +1,2308 @@
+{
+  "baseline": "2030ab8d16dccd07976dc79d877de17904805108",
+  "production_ref": "ac145ac69261e09e4c4a13036589199a4a3b53f4",
+  "environment": {
+    "baseline": "2030ab8d16dccd07976dc79d877de17904805108",
+    "branch": "codex/approval-rendering-followup",
+    "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+    "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n",
+    "date": "2026-10-27",
+    "sanitizers": {
+      "build_type": "Debug",
+      "CODET_SANITIZERS": true,
+      "repeat_environment": {
+        "ASAN_OPTIONS": "detect_leaks=0"
+      }
+    }
+  },
+  "approval_negative_control": [
+    {
+      "case": "baseline",
+      "exit": 22,
+      "result": "spilled_rows=4 reviewed=1 input_status=-1"
+    },
+    {
+      "case": "changed",
+      "exit": 0,
+      "result": "spilled_rows=0 reviewed=0 input_status=0"
+    }
+  ],
+  "initial_ubuntu_failures": {
+    "run": "https://github.com/hbmartin/codet-compiled-agent/actions/runs/40519262308",
+    "artifact": "https://github.com/hbmartin/codet-compiled-agent/actions/runs/40519262308/artifacts/12741836730",
+    "source": "fc6d73415ba7fb37342776e4fa9dc69ce3db9c34",
+    "analysis": "Ubuntu compilation, analyzer self-tests, and all static analysis passed.",
+    "failures": [
+      {
+        "test": "TerminalResources.EveryPartialPrivateStreamAcquisitionReleasesItsDescriptors",
+        "result": "exit 5 for allowances 0 through 3",
+        "cause": "Inherited high-numbered fds left unreserved holes below the assumed descriptor bound, so acquisition unexpectedly succeeded.",
+        "change": "Fill holes with owned reservations and deliberately inherit fd 64 in the regression; preserve every failure and leak check."
+      },
+      {
+        "test": "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "result": "Three narrow-curses subcases failed",
+        "cause": "The approval fallback correctly emitted byte escapes, while the assertion required raw UTF-8; ordinary question/commentary paths still used narrow-curses M- garbling.",
+        "change": "Use the safe locale/backend fallback for ordinary narrow-curses text and accept only complete readable Unicode or reversible ASCII byte escapes. Raw terminal controls and M- garbling remain rejected."
+      }
+    ]
+  },
+  "checks": [
+    {
+      "name": "final-debug-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/host",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 0.111,
+      "log": "build/approval-rendering-followup/final-debug-build.log"
+    },
+    {
+      "name": "final-sanitize-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/sanitize",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 4.761,
+      "log": "build/approval-rendering-followup/final-sanitize-build.log"
+    },
+    {
+      "name": "final-debug-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/host",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 108.385,
+      "log": "build/approval-rendering-followup/final-debug-ctest.log"
+    },
+    {
+      "name": "final-sanitize-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/sanitize",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 159.88,
+      "log": "build/approval-rendering-followup/final-sanitize-ctest.log"
+    },
+    {
+      "name": "final-repeated-diagnostics",
+      "command": [
+        "build/sanitize/codet_tests",
+        "--gtest_filter=Approval*.*:NativeStat.*:FileDiagnostics.*:CliDiagnosticsTest.*:TerminalResources.*:DiagnosticWriter.*:CliOutput.*:Pr17.ConsumerFailuresSurviveEveryTransportExitWithoutAnotherRequest:Pr17.CompletedSessionSurvivesDeliveryFailureWithTheOriginalException",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 53.612,
+      "log": "build/approval-rendering-followup/final-repeated-diagnostics.log"
+    },
+    {
+      "name": "final-repeated-faults",
+      "command": [
+        "build/sanitize/codet_publication_fault_tests",
+        "--gtest_filter=FileDiagnosticsFault.*",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 3.819,
+      "log": "build/approval-rendering-followup/final-repeated-faults.log"
+    },
+    {
+      "name": "final-repeated-cli-0",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 7.048,
+      "log": "build/approval-rendering-followup/final-repeated-cli-0.log"
+    },
+    {
+      "name": "final-repeated-cli-1",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.961,
+      "log": "build/approval-rendering-followup/final-repeated-cli-1.log"
+    },
+    {
+      "name": "final-repeated-cli-2",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.996,
+      "log": "build/approval-rendering-followup/final-repeated-cli-2.log"
+    },
+    {
+      "name": "final-repeated-cli-3",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.984,
+      "log": "build/approval-rendering-followup/final-repeated-cli-3.log"
+    },
+    {
+      "name": "final-repeated-cli-4",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 7.523,
+      "log": "build/approval-rendering-followup/final-repeated-cli-4.log"
+    },
+    {
+      "name": "final-repeated-cli-5",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 7.043,
+      "log": "build/approval-rendering-followup/final-repeated-cli-5.log"
+    },
+    {
+      "name": "final-repeated-cli-6",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.993,
+      "log": "build/approval-rendering-followup/final-repeated-cli-6.log"
+    },
+    {
+      "name": "final-repeated-cli-7",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 7.02,
+      "log": "build/approval-rendering-followup/final-repeated-cli-7.log"
+    },
+    {
+      "name": "final-repeated-cli-8",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.974,
+      "log": "build/approval-rendering-followup/final-repeated-cli-8.log"
+    },
+    {
+      "name": "final-repeated-cli-9",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.883,
+      "log": "build/approval-rendering-followup/final-repeated-cli-9.log"
+    },
+    {
+      "name": "final-repeated-cli-10",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.959,
+      "log": "build/approval-rendering-followup/final-repeated-cli-10.log"
+    },
+    {
+      "name": "final-repeated-cli-11",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.942,
+      "log": "build/approval-rendering-followup/final-repeated-cli-11.log"
+    },
+    {
+      "name": "final-repeated-cli-12",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.977,
+      "log": "build/approval-rendering-followup/final-repeated-cli-12.log"
+    },
+    {
+      "name": "final-repeated-cli-13",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.959,
+      "log": "build/approval-rendering-followup/final-repeated-cli-13.log"
+    },
+    {
+      "name": "final-repeated-cli-14",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.946,
+      "log": "build/approval-rendering-followup/final-repeated-cli-14.log"
+    },
+    {
+      "name": "final-repeated-cli-15",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.989,
+      "log": "build/approval-rendering-followup/final-repeated-cli-15.log"
+    },
+    {
+      "name": "final-repeated-cli-16",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 7.005,
+      "log": "build/approval-rendering-followup/final-repeated-cli-16.log"
+    },
+    {
+      "name": "final-repeated-cli-17",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.971,
+      "log": "build/approval-rendering-followup/final-repeated-cli-17.log"
+    },
+    {
+      "name": "final-repeated-cli-18",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 7.011,
+      "log": "build/approval-rendering-followup/final-repeated-cli-18.log"
+    },
+    {
+      "name": "final-repeated-cli-19",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 7.044,
+      "log": "build/approval-rendering-followup/final-repeated-cli-19.log"
+    }
+  ],
+  "repetitions": [
+    {
+      "name": "final-repeated-diagnostics",
+      "command": [
+        "build/sanitize/codet_tests",
+        "--gtest_filter=Approval*.*:NativeStat.*:FileDiagnostics.*:CliDiagnosticsTest.*:TerminalResources.*:DiagnosticWriter.*:CliOutput.*:Pr17.ConsumerFailuresSurviveEveryTransportExitWithoutAnotherRequest:Pr17.CompletedSessionSurvivesDeliveryFailureWithTheOriginalException",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 53.612,
+      "log": "build/approval-rendering-followup/final-repeated-diagnostics.log"
+    },
+    {
+      "name": "final-repeated-faults",
+      "command": [
+        "build/sanitize/codet_publication_fault_tests",
+        "--gtest_filter=FileDiagnosticsFault.*",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 3.819,
+      "log": "build/approval-rendering-followup/final-repeated-faults.log"
+    },
+    {
+      "name": "final-repeated-cli-0",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 7.048,
+      "log": "build/approval-rendering-followup/final-repeated-cli-0.log"
+    },
+    {
+      "name": "final-repeated-cli-1",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.961,
+      "log": "build/approval-rendering-followup/final-repeated-cli-1.log"
+    },
+    {
+      "name": "final-repeated-cli-2",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.996,
+      "log": "build/approval-rendering-followup/final-repeated-cli-2.log"
+    },
+    {
+      "name": "final-repeated-cli-3",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.984,
+      "log": "build/approval-rendering-followup/final-repeated-cli-3.log"
+    },
+    {
+      "name": "final-repeated-cli-4",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 7.523,
+      "log": "build/approval-rendering-followup/final-repeated-cli-4.log"
+    },
+    {
+      "name": "final-repeated-cli-5",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 7.043,
+      "log": "build/approval-rendering-followup/final-repeated-cli-5.log"
+    },
+    {
+      "name": "final-repeated-cli-6",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.993,
+      "log": "build/approval-rendering-followup/final-repeated-cli-6.log"
+    },
+    {
+      "name": "final-repeated-cli-7",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 7.02,
+      "log": "build/approval-rendering-followup/final-repeated-cli-7.log"
+    },
+    {
+      "name": "final-repeated-cli-8",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.974,
+      "log": "build/approval-rendering-followup/final-repeated-cli-8.log"
+    },
+    {
+      "name": "final-repeated-cli-9",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.883,
+      "log": "build/approval-rendering-followup/final-repeated-cli-9.log"
+    },
+    {
+      "name": "final-repeated-cli-10",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.959,
+      "log": "build/approval-rendering-followup/final-repeated-cli-10.log"
+    },
+    {
+      "name": "final-repeated-cli-11",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.942,
+      "log": "build/approval-rendering-followup/final-repeated-cli-11.log"
+    },
+    {
+      "name": "final-repeated-cli-12",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.977,
+      "log": "build/approval-rendering-followup/final-repeated-cli-12.log"
+    },
+    {
+      "name": "final-repeated-cli-13",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.959,
+      "log": "build/approval-rendering-followup/final-repeated-cli-13.log"
+    },
+    {
+      "name": "final-repeated-cli-14",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.946,
+      "log": "build/approval-rendering-followup/final-repeated-cli-14.log"
+    },
+    {
+      "name": "final-repeated-cli-15",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.989,
+      "log": "build/approval-rendering-followup/final-repeated-cli-15.log"
+    },
+    {
+      "name": "final-repeated-cli-16",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 7.005,
+      "log": "build/approval-rendering-followup/final-repeated-cli-16.log"
+    },
+    {
+      "name": "final-repeated-cli-17",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.971,
+      "log": "build/approval-rendering-followup/final-repeated-cli-17.log"
+    },
+    {
+      "name": "final-repeated-cli-18",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 7.011,
+      "log": "build/approval-rendering-followup/final-repeated-cli-18.log"
+    },
+    {
+      "name": "final-repeated-cli-19",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr",
+        "CliTests.test_shared_full_stdout_stderr_cancels_without_draining_cleanup",
+        "CliTests.test_human_displays_escape_approval_questions_answers_and_commentary",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 7.044,
+      "log": "build/approval-rendering-followup/final-repeated-cli-19.log"
+    }
+  ],
+  "tooling": [
+    {
+      "name": "lint",
+      "command": [
+        "make",
+        "check-lint",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 1.4942605000687763
+    },
+    {
+      "name": "runner-tests",
+      "command": [
+        "make",
+        "test-lint-runners",
+        "test-modern-analysis-runner",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "ANALYSIS_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 6.23997837502975
+    },
+    {
+      "name": "semgrep",
+      "command": [
+        "make",
+        "check-semgrep",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "SEMGREP=build/semgrep-venv/bin/pysemgrep"
+      ],
+      "exit": 0,
+      "seconds": 5.596693375031464
+    }
+  ],
+  "analysis": {
+    "cppcheck": {
+      "passed": true,
+      "expected_sources": 25,
+      "completed_sources": 25,
+      "findings": 0,
+      "changed_sources": [],
+      "changed_inputs": [],
+      "diagnostics": []
+    },
+    "clang-tidy": {
+      "passed": false,
+      "expected_sources": 25,
+      "completed_sources": 24,
+      "findings": 6,
+      "changed_sources": [],
+      "changed_inputs": [],
+      "diagnostics": [
+        {
+          "DiagnosticName": "bugprone-narrowing-conversions",
+          "DiagnosticMessage": {
+            "Message": "narrowing conversion from 'unsigned long' to 'double'",
+            "FilePath": "/Volumes/Pro2T/codet-compiled-agent/src/modern/images.cpp",
+            "FileOffset": 2861,
+            "Replacements": []
+          },
+          "Level": "Error",
+          "BuildDirectory": "/Volumes/Pro2T/codet-compiled-agent/build/host"
+        },
+        {
+          "DiagnosticName": "bugprone-narrowing-conversions",
+          "DiagnosticMessage": {
+            "Message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'",
+            "FilePath": "/Volumes/Pro2T/codet-compiled-agent/src/modern/images.cpp",
+            "FileOffset": 2946,
+            "Replacements": []
+          },
+          "Level": "Error",
+          "BuildDirectory": "/Volumes/Pro2T/codet-compiled-agent/build/host"
+        },
+        {
+          "DiagnosticName": "bugprone-narrowing-conversions",
+          "DiagnosticMessage": {
+            "Message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'",
+            "FilePath": "/Volumes/Pro2T/codet-compiled-agent/src/modern/images.cpp",
+            "FileOffset": 3022,
+            "Replacements": []
+          },
+          "Level": "Error",
+          "BuildDirectory": "/Volumes/Pro2T/codet-compiled-agent/build/host"
+        },
+        {
+          "DiagnosticName": "bugprone-exception-escape",
+          "DiagnosticMessage": {
+            "Message": "an exception may be thrown in function 'main' which should not throw exceptions",
+            "FilePath": "/Volumes/Pro2T/codet-compiled-agent/src/modern/main.cpp",
+            "FileOffset": 365,
+            "Replacements": []
+          },
+          "Level": "Error",
+          "BuildDirectory": "/Volumes/Pro2T/codet-compiled-agent/build/host"
+        },
+        {
+          "DiagnosticName": "clang-diagnostic-error",
+          "DiagnosticMessage": {
+            "Message": "implicit instantiation of undefined template 'std::basic_istringstream<char>'",
+            "FilePath": "/Volumes/Pro2T/codet-compiled-agent/src/modern/platform.cpp",
+            "FileOffset": 1576,
+            "Replacements": []
+          },
+          "Notes": [
+            {
+              "Message": "template is declared here",
+              "FilePath": "/Library/Developer/CommandLineTools/SDKs/MacOSX13.1.sdk/usr/include/c++/v1/iosfwd",
+              "FileOffset": 5293,
+              "Replacements": []
+            }
+          ],
+          "Level": "Error",
+          "BuildDirectory": "/Volumes/Pro2T/codet-compiled-agent/build/host"
+        },
+        {
+          "DiagnosticName": "bugprone-exception-escape",
+          "DiagnosticMessage": {
+            "Message": "an exception may be thrown in function 'operator()' which should not throw exceptions",
+            "FilePath": "/Volumes/Pro2T/codet-compiled-agent/src/modern/state.cpp",
+            "FileOffset": 122188,
+            "Replacements": []
+          },
+          "Level": "Error",
+          "BuildDirectory": "/Volumes/Pro2T/codet-compiled-agent/build/host"
+        }
+      ]
+    },
+    "clang-analyzer": {
+      "passed": false,
+      "expected_sources": 25,
+      "completed_sources": 25,
+      "findings": 1,
+      "changed_sources": [],
+      "changed_inputs": [],
+      "diagnostics": [
+        {
+          "path": [
+            {
+              "kind": "control",
+              "edges": [
+                {
+                  "start": [
+                    {
+                      "line": 222,
+                      "col": 3,
+                      "file": 0
+                    },
+                    {
+                      "line": 222,
+                      "col": 20,
+                      "file": 0
+                    }
+                  ],
+                  "end": [
+                    {
+                      "line": 225,
+                      "col": 3,
+                      "file": 0
+                    },
+                    {
+                      "line": 225,
+                      "col": 4,
+                      "file": 0
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "control",
+              "edges": [
+                {
+                  "start": [
+                    {
+                      "line": 225,
+                      "col": 3,
+                      "file": 0
+                    },
+                    {
+                      "line": 225,
+                      "col": 4,
+                      "file": 0
+                    }
+                  ],
+                  "end": [
+                    {
+                      "line": 225,
+                      "col": 7,
+                      "file": 0
+                    },
+                    {
+                      "line": 225,
+                      "col": 10,
+                      "file": 0
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "event",
+              "location": {
+                "line": 225,
+                "col": 7,
+                "file": 0
+              },
+              "ranges": [
+                [
+                  {
+                    "line": 225,
+                    "col": 7,
+                    "file": 0
+                  },
+                  {
+                    "line": 225,
+                    "col": 29,
+                    "file": 0
+                  }
+                ]
+              ],
+              "depth": 0,
+              "extended_message": "Assuming 'available' is < field 'total'",
+              "message": "Assuming 'available' is < field 'total'"
+            },
+            {
+              "kind": "control",
+              "edges": [
+                {
+                  "start": [
+                    {
+                      "line": 225,
+                      "col": 7,
+                      "file": 0
+                    },
+                    {
+                      "line": 225,
+                      "col": 10,
+                      "file": 0
+                    }
+                  ],
+                  "end": [
+                    {
+                      "line": 231,
+                      "col": 3,
+                      "file": 0
+                    },
+                    {
+                      "line": 231,
+                      "col": 5,
+                      "file": 0
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "control",
+              "edges": [
+                {
+                  "start": [
+                    {
+                      "line": 231,
+                      "col": 3,
+                      "file": 0
+                    },
+                    {
+                      "line": 231,
+                      "col": 5,
+                      "file": 0
+                    }
+                  ],
+                  "end": [
+                    {
+                      "line": 233,
+                      "col": 3,
+                      "file": 0
+                    },
+                    {
+                      "line": 233,
+                      "col": 8,
+                      "file": 0
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "event",
+              "location": {
+                "line": 233,
+                "col": 3,
+                "file": 0
+              },
+              "ranges": [
+                [
+                  {
+                    "line": 233,
+                    "col": 3,
+                    "file": 0
+                  },
+                  {
+                    "line": 233,
+                    "col": 14,
+                    "file": 0
+                  }
+                ]
+              ],
+              "depth": 0,
+              "extended_message": "'count' initialized to 0",
+              "message": "'count' initialized to 0"
+            },
+            {
+              "kind": "control",
+              "edges": [
+                {
+                  "start": [
+                    {
+                      "line": 233,
+                      "col": 3,
+                      "file": 0
+                    },
+                    {
+                      "line": 233,
+                      "col": 8,
+                      "file": 0
+                    }
+                  ],
+                  "end": [
+                    {
+                      "line": 239,
+                      "col": 3,
+                      "file": 0
+                    },
+                    {
+                      "line": 239,
+                      "col": 5,
+                      "file": 0
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "control",
+              "edges": [
+                {
+                  "start": [
+                    {
+                      "line": 239,
+                      "col": 3,
+                      "file": 0
+                    },
+                    {
+                      "line": 239,
+                      "col": 5,
+                      "file": 0
+                    }
+                  ],
+                  "end": [
+                    {
+                      "line": 239,
+                      "col": 22,
+                      "file": 0
+                    },
+                    {
+                      "line": 239,
+                      "col": 22,
+                      "file": 0
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "event",
+              "location": {
+                "line": 239,
+                "col": 22,
+                "file": 0
+              },
+              "ranges": [
+                [
+                  {
+                    "line": 239,
+                    "col": 22,
+                    "file": 0
+                  },
+                  {
+                    "line": 239,
+                    "col": 40,
+                    "file": 0
+                  }
+                ]
+              ],
+              "depth": 0,
+              "extended_message": "Assuming the condition is false",
+              "message": "Assuming the condition is false"
+            },
+            {
+              "kind": "event",
+              "location": {
+                "line": 239,
+                "col": 22,
+                "file": 0
+              },
+              "ranges": [
+                [
+                  {
+                    "line": 239,
+                    "col": 22,
+                    "file": 0
+                  },
+                  {
+                    "line": 239,
+                    "col": 40,
+                    "file": 0
+                  }
+                ]
+              ],
+              "depth": 0,
+              "extended_message": "Loop body executed 0 times",
+              "message": "Loop body executed 0 times"
+            },
+            {
+              "kind": "control",
+              "edges": [
+                {
+                  "start": [
+                    {
+                      "line": 239,
+                      "col": 22,
+                      "file": 0
+                    },
+                    {
+                      "line": 239,
+                      "col": 22,
+                      "file": 0
+                    }
+                  ],
+                  "end": [
+                    {
+                      "line": 256,
+                      "col": 3,
+                      "file": 0
+                    },
+                    {
+                      "line": 256,
+                      "col": 7,
+                      "file": 0
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "control",
+              "edges": [
+                {
+                  "start": [
+                    {
+                      "line": 256,
+                      "col": 3,
+                      "file": 0
+                    },
+                    {
+                      "line": 256,
+                      "col": 7,
+                      "file": 0
+                    }
+                  ],
+                  "end": [
+                    {
+                      "line": 257,
+                      "col": 3,
+                      "file": 0
+                    },
+                    {
+                      "line": 257,
+                      "col": 4,
+                      "file": 0
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "control",
+              "edges": [
+                {
+                  "start": [
+                    {
+                      "line": 257,
+                      "col": 3,
+                      "file": 0
+                    },
+                    {
+                      "line": 257,
+                      "col": 4,
+                      "file": 0
+                    }
+                  ],
+                  "end": [
+                    {
+                      "line": 257,
+                      "col": 7,
+                      "file": 0
+                    },
+                    {
+                      "line": 257,
+                      "col": 13,
+                      "file": 0
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "event",
+              "location": {
+                "line": 257,
+                "col": 7,
+                "file": 0
+              },
+              "ranges": [
+                [
+                  {
+                    "line": 257,
+                    "col": 7,
+                    "file": 0
+                  },
+                  {
+                    "line": 257,
+                    "col": 31,
+                    "file": 0
+                  }
+                ]
+              ],
+              "depth": 0,
+              "extended_message": "Assuming 'available' is >= field 'total'",
+              "message": "Assuming 'available' is >= field 'total'"
+            },
+            {
+              "kind": "control",
+              "edges": [
+                {
+                  "start": [
+                    {
+                      "line": 257,
+                      "col": 7,
+                      "file": 0
+                    },
+                    {
+                      "line": 257,
+                      "col": 13,
+                      "file": 0
+                    }
+                  ],
+                  "end": [
+                    {
+                      "line": 260,
+                      "col": 3,
+                      "file": 0
+                    },
+                    {
+                      "line": 260,
+                      "col": 8,
+                      "file": 0
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "control",
+              "edges": [
+                {
+                  "start": [
+                    {
+                      "line": 260,
+                      "col": 3,
+                      "file": 0
+                    },
+                    {
+                      "line": 260,
+                      "col": 8,
+                      "file": 0
+                    }
+                  ],
+                  "end": [
+                    {
+                      "line": 261,
+                      "col": 3,
+                      "file": 0
+                    },
+                    {
+                      "line": 261,
+                      "col": 5,
+                      "file": 0
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "control",
+              "edges": [
+                {
+                  "start": [
+                    {
+                      "line": 261,
+                      "col": 3,
+                      "file": 0
+                    },
+                    {
+                      "line": 261,
+                      "col": 5,
+                      "file": 0
+                    }
+                  ],
+                  "end": [
+                    {
+                      "line": 261,
+                      "col": 22,
+                      "file": 0
+                    },
+                    {
+                      "line": 261,
+                      "col": 22,
+                      "file": 0
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "event",
+              "location": {
+                "line": 261,
+                "col": 22,
+                "file": 0
+              },
+              "ranges": [
+                [
+                  {
+                    "line": 261,
+                    "col": 22,
+                    "file": 0
+                  },
+                  {
+                    "line": 261,
+                    "col": 40,
+                    "file": 0
+                  }
+                ]
+              ],
+              "depth": 0,
+              "extended_message": "Assuming the condition is true",
+              "message": "Assuming the condition is true"
+            },
+            {
+              "kind": "event",
+              "location": {
+                "line": 261,
+                "col": 22,
+                "file": 0
+              },
+              "ranges": [
+                [
+                  {
+                    "line": 261,
+                    "col": 22,
+                    "file": 0
+                  },
+                  {
+                    "line": 261,
+                    "col": 40,
+                    "file": 0
+                  }
+                ]
+              ],
+              "depth": 0,
+              "extended_message": "Entering loop body",
+              "message": "Entering loop body"
+            },
+            {
+              "kind": "control",
+              "edges": [
+                {
+                  "start": [
+                    {
+                      "line": 261,
+                      "col": 22,
+                      "file": 0
+                    },
+                    {
+                      "line": 261,
+                      "col": 22,
+                      "file": 0
+                    }
+                  ],
+                  "end": [
+                    {
+                      "line": 262,
+                      "col": 5,
+                      "file": 0
+                    },
+                    {
+                      "line": 262,
+                      "col": 6,
+                      "file": 0
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "control",
+              "edges": [
+                {
+                  "start": [
+                    {
+                      "line": 262,
+                      "col": 5,
+                      "file": 0
+                    },
+                    {
+                      "line": 262,
+                      "col": 6,
+                      "file": 0
+                    }
+                  ],
+                  "end": [
+                    {
+                      "line": 262,
+                      "col": 9,
+                      "file": 0
+                    },
+                    {
+                      "line": 262,
+                      "col": 17,
+                      "file": 0
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "event",
+              "location": {
+                "line": 262,
+                "col": 9,
+                "file": 0
+              },
+              "ranges": [
+                [
+                  {
+                    "line": 262,
+                    "col": 9,
+                    "file": 0
+                  },
+                  {
+                    "line": 262,
+                    "col": 20,
+                    "file": 0
+                  }
+                ]
+              ],
+              "depth": 0,
+              "extended_message": "Assuming the condition is true",
+              "message": "Assuming the condition is true"
+            },
+            {
+              "kind": "control",
+              "edges": [
+                {
+                  "start": [
+                    {
+                      "line": 262,
+                      "col": 9,
+                      "file": 0
+                    },
+                    {
+                      "line": 262,
+                      "col": 17,
+                      "file": 0
+                    }
+                  ],
+                  "end": [
+                    {
+                      "line": 263,
+                      "col": 36,
+                      "file": 0
+                    },
+                    {
+                      "line": 263,
+                      "col": 36,
+                      "file": 0
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "event",
+              "location": {
+                "line": 263,
+                "col": 36,
+                "file": 0
+              },
+              "ranges": [
+                [
+                  {
+                    "line": 263,
+                    "col": 30,
+                    "file": 0
+                  },
+                  {
+                    "line": 263,
+                    "col": 42,
+                    "file": 0
+                  }
+                ]
+              ],
+              "depth": 0,
+              "extended_message": "Division by zero",
+              "message": "Division by zero"
+            }
+          ],
+          "description": "Division by zero",
+          "category": "Logic error",
+          "type": "Division by zero",
+          "check_name": "core.DivideZero",
+          "issue_hash_content_of_line_in_context": "b7fd78895b63841553e144fd774a0954",
+          "issue_context_kind": "function",
+          "issue_context": "project_history",
+          "issue_hash_function_offset": "42",
+          "location": {
+            "line": 263,
+            "col": 36,
+            "file": 0
+          },
+          "ExecutedLines": {
+            "0": [
+              177,
+              178,
+              220,
+              221,
+              222,
+              223,
+              224,
+              225,
+              231,
+              232,
+              233,
+              234,
+              238,
+              239,
+              256,
+              257,
+              260,
+              261,
+              262,
+              263
+            ],
+            "1": [
+              644,
+              645
+            ],
+            "2": [
+              139,
+              140
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "analysis_comparison": {
+    "baseline": "2030ab8d16dccd07976dc79d877de17904805108",
+    "same_clang_tidy_diagnostic_multiset": true,
+    "current_findings": [
+      {
+        "check": "bugprone-narrowing-conversions",
+        "message": "narrowing conversion from 'unsigned long' to 'double'",
+        "file": "images.cpp"
+      },
+      {
+        "check": "bugprone-narrowing-conversions",
+        "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'",
+        "file": "images.cpp"
+      },
+      {
+        "check": "bugprone-narrowing-conversions",
+        "message": "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'",
+        "file": "images.cpp"
+      },
+      {
+        "check": "bugprone-exception-escape",
+        "message": "an exception may be thrown in function 'main' which should not throw exceptions",
+        "file": "main.cpp"
+      },
+      {
+        "check": "clang-diagnostic-error",
+        "message": "implicit instantiation of undefined template 'std::basic_istringstream<char>'",
+        "file": "platform.cpp"
+      },
+      {
+        "check": "bugprone-exception-escape",
+        "message": "an exception may be thrown in function 'operator()' which should not throw exceptions",
+        "file": "state.cpp"
+      }
+    ],
+    "cppcheck_findings": 0,
+    "clang_analyzer_existing_warning": "context.cpp division-by-zero"
+  },
+  "benchmark_builds": [
+    {
+      "name": "baseline",
+      "ref": "2030ab8d16dccd07976dc79d877de17904805108",
+      "configure": [
+        "cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent/build/approval-rendering-followup/baseline-src",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/approval-rendering-followup/baseline-release",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+      ],
+      "hashes": {
+        "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+        "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+        "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+        "tests/native_stat_interposer.hpp": "1b18a6ad90b78d614d8665cfaeacd490b543071541cb63857ce919e1fdcc51ef",
+        "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6",
+        "include/codet/detail/native_output.hpp": "ce7c0bd8be04d043cf233b9d4bb5178c1973bc10e0548c86d398d98fd28ed11d",
+        "src/modern/platform.cpp": "92628600518b0f623a481600bd4cb88a22689f974032a8251bdc391308010cb5"
+      }
+    },
+    {
+      "name": "changed",
+      "ref": "ac145ac69261e09e4c4a13036589199a4a3b53f4",
+      "configure": [
+        "cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent/build/approval-rendering-followup/changed-src",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/approval-rendering-followup/changed-release",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+      ],
+      "hashes": {
+        "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+        "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+        "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+        "tests/native_stat_interposer.hpp": "1b18a6ad90b78d614d8665cfaeacd490b543071541cb63857ce919e1fdcc51ef",
+        "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6",
+        "include/codet/detail/native_output.hpp": "b21dc41a16fcfb942481a1079eaecec469b5de190dacc428284a3d05abae3442",
+        "src/modern/platform.cpp": "acb9051a9e48d3a1dcc1c86d0897ea071296bc44b5c0c04aec26918e98ca99f1"
+      }
+    }
+  ],
+  "benchmark_source_match": {
+    "include/codet/detail/native_output.hpp": true,
+    "include/codet/detail/approval_identity.hpp": true,
+    "include/codet/detail/approval_review.hpp": true,
+    "include/codet/detail/curses_text.hpp": true,
+    "include/codet/detail/curses_render.hpp": true,
+    "src/modern/platform.cpp": true,
+    "src/modern/cli.cpp": true
+  },
+  "platform_availability": {
+    "docker": null,
+    "tiger_sdk": false,
+    "intel_runtime": "Unavailable: Rosetta was not installed when the x86_64 probe was attempted"
+  },
+  "limits": [
+    "Blocking TTY cancellation remains outside the bounded guarantee.",
+    "Emergency delivery remains best effort with no EAGAIN waiting.",
+    "No native Intel, older-glibc, or Tiger runtime was available locally.",
+    "Native screen tests inspect ASCII cells, row/cursor advancement and complete prepared-document reconstruction without adding wide-curses linkage.",
+    "Counters measure C++ new and interposed direct operations; they do not cover every C allocation or library-internal write."
+  ],
+  "ci": {
+    "url": "https://github.com/hbmartin/codet-compiled-agent/actions/runs/40522050990",
+    "commit": "ac145ac69261e09e4c4a13036589199a4a3b53f4",
+    "jobs": [
+      {
+        "name": "ubuntu",
+        "status": "completed",
+        "conclusion": "success",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1
+          },
+          {
+            "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2
+          },
+          {
+            "name": "Install host tools and libraries",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3
+          },
+          {
+            "name": "Fetch verified dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4
+          },
+          {
+            "name": "Fetch pinned analyzer sources",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5
+          },
+          {
+            "name": "Build pinned analyzer offline",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6
+          },
+          {
+            "name": "Configure and build with Clang",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7
+          },
+          {
+            "name": "Verify analyzer detection",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8
+          },
+          {
+            "name": "Analyze all application sources",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 9
+          },
+          {
+            "name": "Run unit, CLI and integration tests",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 10
+          },
+          {
+            "name": "Upload analysis and test evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 11
+          },
+          {
+            "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 22
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 23
+          }
+        ]
+      },
+      {
+        "name": "semgrep",
+        "status": "completed",
+        "conclusion": "success",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1
+          },
+          {
+            "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2
+          },
+          {
+            "name": "Install policy-check prerequisites",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3
+          },
+          {
+            "name": "Provision hash-locked Semgrep environment",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4
+          },
+          {
+            "name": "Check production sources and headers",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5
+          },
+          {
+            "name": "Upload policy evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6
+          },
+          {
+            "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 12
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 13
+          }
+        ]
+      },
+      {
+        "name": "lint",
+        "status": "completed",
+        "conclusion": "success",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1
+          },
+          {
+            "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2
+          },
+          {
+            "name": "Install lightweight check prerequisites",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3
+          },
+          {
+            "name": "Test enforcement runners without building C++",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4
+          },
+          {
+            "name": "Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5
+          },
+          {
+            "name": "Provision pinned lint tools",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6
+          },
+          {
+            "name": "Check formatting, Python, shell and workflows",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7
+          },
+          {
+            "name": "Upload lint evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8
+          },
+          {
+            "name": "Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 15
+          },
+          {
+            "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 16
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 17
+          }
+        ]
+      },
+      {
+        "name": "Required checks",
+        "status": "completed",
+        "conclusion": "success",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1
+          },
+          {
+            "name": "Require every mandatory job to succeed",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3
+          }
+        ]
+      }
+    ]
+  }
+}
