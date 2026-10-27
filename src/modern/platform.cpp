@@ -460,7 +460,7 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
     if (!output_ || (file_ && std::ferror(file_)))
       (void)recover_diagnostic_stream(output_);
     NativeDiagnosticRecord record(native, *state_, *destination.owner, attempt);
-    record.begin(newline);
+    record.begin();
     const bool success = record.finish(parts, newline);
     if (!success) {
       try {
@@ -477,17 +477,16 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
   struct Recovery {
     std::ostream &stream;
     bool &pending;
-    bool newline, attempted = false, complete = false;
-    Recovery(std::ostream &out, bool &separator, bool line) noexcept
-        : stream(out), pending(separator), newline(line) {}
+    bool attempted = false, complete = false;
+    Recovery(std::ostream &out, bool &separator) noexcept : stream(out), pending(separator) {}
     ~Recovery() {
       if (!complete) {
-        if (newline && attempted)
+        if (attempted)
           pending = true;
         recover_diagnostic_stream(stream);
       }
     }
-  } recovery{output_, state_->pending, newline};
+  } recovery{output_, state_->pending};
   if ((!output_ || (file_ && std::ferror(file_))) && !recover_diagnostic_stream(output_))
     output_.clear(output_.rdstate()); // Preserve configured exception-mask behavior.
   if (state_->pending) {

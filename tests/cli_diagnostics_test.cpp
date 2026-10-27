@@ -207,6 +207,25 @@ struct PartialDiagnosticStream : std::streambuf {
     return character;
   }
 };
+TEST(DiagnosticWriter, PartialUnterminatedRecordsOweSeparatorButSuccessfulFragmentsDoNot) {
+  for (bool throwing : {false, true}) {
+    PartialDiagnosticStream buffer;
+    std::ostream stream(&buffer);
+    if (throwing)
+      stream.exceptions(std::ios::badbit | std::ios::failbit);
+    detail::DiagnosticWriter writer(stream);
+    try {
+      EXPECT_FALSE(writer.write({"prefix"}, false));
+    } catch (const std::ios_base::failure &) {
+    }
+    buffer.partial = false;
+    EXPECT_TRUE(writer.write({"later"}));
+    EXPECT_EQ(buffer.bytes, "pr\nlater\n");
+    EXPECT_TRUE(writer.write({"fragment"}, false));
+    EXPECT_TRUE(writer.write({"tail"}));
+    EXPECT_EQ(buffer.bytes, "pr\nlater\nfragmenttail\n");
+  }
+}
 TEST(DiagnosticWriter, TurnCleanupKeepsOriginalFailureAfterQuiescenceAndResetsCancellation) {
   for (bool quitting : {false, true}) {
     PartialDiagnosticStream buffer;
@@ -278,10 +297,14 @@ TEST(DiagnosticWriter, IndeterminatePipeBoundsDoNotRetryStaleInterruptedErrno) {
     errno = EINTR;
     EXPECT_TRUE(writer.write({"bound"}));
     EXPECT_EQ(metrics.bound_queries, 2u);
+    EXPECT_TRUE(writer.write({"bound"}));
+    EXPECT_EQ(metrics.bound_queries, 2u);
     metrics = {};
-    char output[6]{};
-    ASSERT_EQ(::read(descriptors[0], output, sizeof(output)), 6);
-    EXPECT_EQ(std::string(output, sizeof(output)), "bound\n");
+    pollfd readable{descriptors[0], POLLIN, 0};
+    ASSERT_GT(::poll(&readable, 1, 2000), 0);
+    char output[12]{};
+    ASSERT_EQ(::read(descriptors[0], output, sizeof(output)), 12);
+    EXPECT_EQ(std::string(output, sizeof(output)), "bound\nbound\n");
   }
 }
 TEST(DiagnosticWriter, EmergencyChunksShareEightInterruptionRetriesWithInspectionAndSeparator) {
