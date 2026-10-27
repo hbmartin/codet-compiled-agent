@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <initializer_list>
@@ -7,6 +8,10 @@
 #include <string_view>
 
 namespace codet::detail {
+inline std::array<char, 4> escaped_byte(unsigned char byte) noexcept {
+  constexpr char hex[] = "0123456789ABCDEF";
+  return {'\\', 'x', hex[byte >> 4u], hex[byte & 15u]};
+}
 struct IoContext;
 // Internal trust boundary: the referenced text has already been rendered for humans.
 struct RenderedTextView {

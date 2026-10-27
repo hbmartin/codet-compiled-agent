@@ -1,4 +1,5 @@
 #pragma once
+#include "codet/detail/approval_unicode.hpp"
 #include "codet/detail/diagnostic_stream.hpp"
 #include <algorithm>
 #include <cwchar>
@@ -22,20 +23,22 @@ class CursesText {
 
 public:
   // Ordinary transcript rows may retain native tab expansion; approval layout never enables it.
-  explicit CursesText(std::string_view rendered, bool unicode = true, bool prose_tabs = false) {
-    constexpr char hex[] = "0123456789ABCDEF";
+  explicit CursesText(std::string_view rendered, bool unicode = true, bool prose_tabs = false,
+                      bool strict = true) {
     for (size_t offset = 0; offset < rendered.size();) {
       const auto parsed = rendered_token(rendered, offset);
       const auto token = rendered.substr(offset, parsed.bytes);
-      if (parsed.valid && (parsed.point == '\n' || (prose_tabs && parsed.point == '\t') ||
-                           (parsed.point >= 0x20 && parsed.point != 0x7f &&
-                            (unicode || parsed.point < 0x80) && columns(token, parsed) >= 0)))
+      if (parsed.valid &&
+          (parsed.point == '\n' || (prose_tabs && parsed.point == '\t') ||
+           (parsed.point >= 0x20 && parsed.point != 0x7f && (unicode || parsed.point < 0x80) &&
+            (!strict || !approval_invisible(parsed.point)) &&
+            (columns(token, parsed) > 0 || (!strict && columns(token, parsed) == 0)))))
         text_.append(token);
       else
         for (const auto character : token) {
           const auto byte = static_cast<unsigned char>(character);
-          const char escaped[] = {'\\', 'x', hex[byte >> 4u], hex[byte & 15u]};
-          text_.append(escaped, sizeof(escaped));
+          const auto escaped = escaped_byte(byte);
+          text_.append(escaped.data(), escaped.size());
         }
       offset += parsed.bytes;
     }
@@ -55,6 +58,17 @@ public:
       offset += rendered_token(text, offset).bytes;
     }
     return result;
+  }
+  static size_t prefix(std::string_view text, size_t limit) noexcept {
+    size_t offset = 0;
+    while (offset < text.size()) {
+      const auto columns = token_columns(text, offset);
+      if (columns > limit)
+        break;
+      limit -= columns;
+      offset += rendered_token(text, offset).bytes;
+    }
+    return offset;
   }
   static std::string input(std::string_view prompt, const std::string &answer, size_t limit,
                            bool unicode = true) {

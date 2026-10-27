@@ -301,18 +301,10 @@ class Terminal final : public detail::CliDiagnosticSurface {
       if (approval_->reshape(rows, cols))
         input_.clear();
       const auto draw = [&](int row, std::string_view text) {
-        if (!text.empty() && mvaddnstr(row, 0, text.data(), static_cast<int>(text.size())) == ERR)
-          throw Error("Cannot render approval review");
-        if (!text.empty()) {
-          int actual_row = 0, actual_column = 0;
-          getyx(stdscr, actual_row, actual_column);
-          if (actual_row != row || actual_column < 0 || actual_column >= cols ||
-              static_cast<size_t>(actual_column) != detail::CursesText::width(text))
-            throw Error("Approval review exceeded its assigned row");
-        }
+        detail::curses_draw_row(row, text, cols, true);
       };
       if (!approval_->usable()) {
-        if (rows > 0 && cols > 1)
+        if (rows > 1 && cols > 1)
           draw(0, std::string_view("Resize to review; approval disabled")
                       .substr(0, static_cast<size_t>(cols - 1)));
         if (rows > 0 && cols > 1)
@@ -346,15 +338,24 @@ class Terminal final : public detail::CliDiagnosticSurface {
       return;
     }
     if (rows < 4 || cols < 8) {
+      if (rows > 0 && cols > 1)
+        detail::curses_draw_row(rows - 1,
+                                detail::CursesText::input("codet> ", input_,
+                                                          static_cast<size_t>(cols - 1),
+                                                          curses_unicode_),
+                                cols);
       refresh();
       return;
     }
     const auto heading = status_ + (progress_.empty() ? "" : " | " + progress_);
-    mvaddnstr(0, 0, heading.c_str(), cols - 1);
+    detail::curses_draw_row(0, heading, cols);
     int y = rows - 3;
     for (auto it = transcript_.rbegin(); it != transcript_.rend() && y > 0; ++it, --y)
-      mvaddnstr(y, 0, it->c_str(), cols - 1);
-    mvaddnstr(rows - 1, 0, ("codet> " + input_).c_str(), cols - 1);
+      detail::curses_draw_row(y, *it, cols);
+    detail::curses_draw_row(rows - 1,
+                            detail::CursesText::input(
+                                "codet> ", input_, static_cast<size_t>(cols - 1), curses_unicode_),
+                            cols);
     refresh();
   }
 
@@ -364,9 +365,11 @@ public:
     const auto target =
         event.at("tool").get<std::string>() + ": " + event.at("target").get<std::string>();
     if (!curses_) {
-      say_literal(target);
+      say_rendered({detail::CursesText(detail::literal_text(target)).text()});
       if (event.contains("context") && !event.at("context").empty())
-        say(safe_json(event.at("context")).dump());
+        say_rendered(
+            {detail::CursesText(detail::terminal_text(safe_json(event.at("context")).dump()))
+                 .text()});
       say("Approve? [y/N]");
       return;
     }
@@ -471,10 +474,7 @@ public:
   }
   void say_rendered(detail::RenderedTextView text) {
     if (curses_) {
-      if (curses_unicode_)
-        remember(text.text);
-      else
-        remember(detail::CursesText(text.text, false, true).text());
+      remember(detail::CursesText(text.text, curses_unicode_, true, false).text());
       render();
     } else
       (void)output_.display({text.text});
@@ -650,8 +650,7 @@ public:
     }
     if (curses_ && type == "item.updated") {
       progress_ = "Responding: " + detail::terminal_text(event["item"].value("text_delta", ""));
-      if (!curses_unicode_)
-        progress_ = detail::CursesText(progress_, false, true).text();
+      progress_ = detail::CursesText(progress_, curses_unicode_, true, false).text();
       render();
     }
   }
