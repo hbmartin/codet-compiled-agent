@@ -1,4 +1,5 @@
 #pragma once
+#include "codet/detail/approval_identity.hpp"
 #include "codet/detail/curses_text.hpp"
 #include <algorithm>
 #include <climits>
@@ -16,12 +17,11 @@ class ApprovalReview {
   int rows_ = 0, columns_ = 0;
 
 public:
-  std::string session, request;
-  uint64_t turn;
+  ApprovalIdentity identity;
   ApprovalReview(std::string session_id, uint64_t turn_id, std::string request_id,
                  const std::string &document, bool unicode = true)
-      : document_(document, unicode), session(std::move(session_id)),
-        request(std::move(request_id)), turn(turn_id) {}
+      : document_(document, unicode),
+        identity{std::move(session_id), std::move(request_id), turn_id} {}
   bool reshape(int rows, int columns) {
     if (rows == rows_ && columns == columns_)
       return false;

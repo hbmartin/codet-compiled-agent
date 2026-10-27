@@ -8,6 +8,8 @@
 #include "codet/detail/cli_output.hpp"
 #include "codet/detail/curses_render.hpp"
 #include "codet/detail/native_terminal.hpp"
+#include "codet/detail/request_input.hpp"
+#include "codet/detail/ui_history.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/interaction.hpp"
 #include "codet/prompt.hpp"
@@ -249,7 +251,8 @@ class Terminal final : public detail::CliDiagnosticSurface {
   detail::NativeTerminalResourceOps native_resources_;
   bool curses_ = false;
   HistEvent history_event_{};
-  std::vector<std::string> transcript_;
+  detail::UiHistory transcript_;
+  detail::RequestInput input_scope_;
   std::optional<detail::ApprovalReview> approval_;
   bool curses_unicode_ = true;
   std::string input_, status_, progress_;
@@ -350,7 +353,8 @@ class Terminal final : public detail::CliDiagnosticSurface {
     const auto heading = status_ + (progress_.empty() ? "" : " | " + progress_);
     detail::curses_draw_row(0, heading, cols);
     int y = rows - 3;
-    for (auto it = transcript_.rbegin(); it != transcript_.rend() && y > 0; ++it, --y)
+    for (auto it = transcript_.lines().rbegin(); it != transcript_.lines().rend() && y > 0;
+         ++it, --y)
       detail::curses_draw_row(y, *it, cols);
     detail::curses_draw_row(rows - 1,
                             detail::CursesText::input(
@@ -360,8 +364,13 @@ class Terminal final : public detail::CliDiagnosticSurface {
   }
 
 public:
+  void begin_request(const Json &event) {
+    if (input_scope_.open(detail::ApprovalIdentity::from(event)))
+      input_.clear();
+  }
   void begin_approval(const Json &event) {
     const auto identity = detail::ApprovalIdentity::from(event);
+    begin_request(event);
     const auto target =
         event.at("tool").get<std::string>() + ": " + event.at("target").get<std::string>();
     if (!curses_) {
@@ -377,17 +386,20 @@ public:
     if (event.contains("context") && !event.at("context").empty())
       document += "\nContext:\n" + detail::terminal_text(safe_json(event.at("context")).dump());
     approval_.emplace(identity.session, identity.turn, identity.request, document, curses_unicode_);
-    remember("[Approval " + detail::literal_text(identity.request) + "]\n" + approval_->document());
+    const auto label = "[Approval " + detail::literal_text(identity.request) + "]";
+    remember(label);
+    transcript_.add(approval_->document(),
+                    detail::UiHistory::approval_limit -
+                        std::min(detail::UiHistory::approval_limit, label.size() + 1));
     input_.clear();
     render();
   }
   bool approval_reviewed(const Json &event) const {
-    return !curses_ || (approval_ &&
-                        detail::ApprovalIdentity::matches(event, approval_->session,
-                                                          approval_->request, approval_->turn) &&
-                        approval_->approved_review());
+    return !curses_ ||
+           (approval_ && approval_->identity.matches(event) && approval_->approved_review());
   }
   void end_approval(std::optional<std::string_view> answer = {}) {
+    input_scope_.close();
     auto finished = std::move(approval_);
     approval_.reset();
     input_.clear();
@@ -396,7 +408,7 @@ public:
                (!answer                     ? "cancelled"
                 : detail::approves(*answer) ? "approved"
                                             : "denied") +
-               "] " + detail::literal_text(finished->request));
+               "] " + detail::literal_text(finished->identity.request));
     render();
   }
   Terminal(const Config &c, const std::string &color, detail::CliOutput &output,
@@ -480,19 +492,7 @@ public:
       (void)output_.display({text.text});
   }
   void remember(const std::string &text) {
-    for (const auto &line : split(text))
-      transcript_.push_back(line);
-    if (transcript_.size() > 1000)
-      transcript_.erase(transcript_.begin(),
-                        transcript_.begin() + static_cast<long>(transcript_.size() - 1000));
-  }
-  static std::vector<std::string> split(const std::string &text) {
-    std::vector<std::string> ls;
-    std::istringstream in(text);
-    std::string line;
-    while (std::getline(in, line))
-      ls.push_back(line);
-    return ls;
+    transcript_.add(text);
   }
   std::optional<std::string> read(Cancellation &cancel) {
     if (!curses_) {
@@ -507,7 +507,12 @@ public:
         line.pop_back();
       if (resources_.entries())
         history(resources_.entries(), &history_event_, H_ENTER, line.c_str());
-      return line;
+      const auto submitted = input_scope_.take(std::move(line));
+      if (submitted.discarded && submitted.text != "/quit" && submitted.text != "/exit") {
+        say("Expired request answer discarded; enter a fresh message.");
+        return read(cancel);
+      }
+      return submitted.text;
     }
     input_.clear();
     render();
@@ -524,10 +529,14 @@ public:
       if (ch == bindings_["quit"])
         return std::nullopt;
       if (ch == bindings_["submit"] || ch == KEY_ENTER) {
-        auto out = input_;
-        say("you> " + out);
+        auto submitted = input_scope_.take(input_);
         input_.clear();
-        return out;
+        if (submitted.discarded && submitted.text != "/quit" && submitted.text != "/exit") {
+          say("Expired request answer discarded; enter a fresh message.");
+          continue;
+        }
+        say("you> " + submitted.text);
+        return submitted.text;
       }
       if (ch == bindings_["backspace"] || ch == KEY_BACKSPACE || ch == 8) {
         if (!input_.empty()) {
@@ -540,6 +549,7 @@ public:
         }
         render();
       } else if (ch >= 32 && ch <= 255 && input_.size() < 65536) {
+        input_scope_.edit();
         input_ += static_cast<char>(ch);
         render();
       }
@@ -558,7 +568,7 @@ public:
     input_.clear();
     end_approval();
   }
-  std::optional<std::string> active_input(bool &closed) {
+  std::optional<detail::InputLine> active_input(bool &closed) {
     int ch = ERR;
     if (curses_)
       ch = getch();
@@ -594,12 +604,16 @@ public:
       return {};
     }
     if (ch == bindings_["submit"] || ch == KEY_ENTER || ch == '\r') {
-      auto text = input_;
+      auto submitted = input_scope_.take(input_);
+      const auto &text = submitted.text;
       input_.clear();
-      if (approval_ && detail::approves(text) && !approval_->approved_review()) {
+      if (!submitted.discarded && approval_ && detail::approves(text) &&
+          !approval_->approved_review()) {
         render();
         return {};
       }
+      if (submitted.discarded)
+        return submitted;
       if (!curses_)
         output_.echo({"\n"});
       else if (approval_) {
@@ -609,7 +623,7 @@ public:
       } else
         say("you> " + text);
       render();
-      return text;
+      return submitted;
     }
     if (ch == bindings_["backspace"] || ch == KEY_BACKSPACE || ch == 8) {
       if (!input_.empty()) {
@@ -623,6 +637,7 @@ public:
           output_.echo({"\b \b"});
       }
     } else if (ch >= 32 && ch <= 255 && input_.size() < 65536) {
+      input_scope_.edit();
       input_ += static_cast<char>(ch);
       if (!curses_) {
         const auto character = static_cast<char>(ch);
@@ -1056,6 +1071,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
               terminal->begin_approval(event);
               pending = event;
             } else if (type == "codet.question") {
+              terminal->begin_request(event);
               terminal->say(event.at("question"));
               const auto options = event.at("options").get<std::vector<std::string>>();
               for (size_t i = 0; i < options.size(); ++i)
@@ -1090,6 +1106,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
         if (pending && !interaction->request_active(pending->at("request_id"))) {
           pending.reset();
           terminal->end_approval();
+          terminal->say("Request expired; any unfinished answer is discarded at Enter.");
         }
         bool closed = false;
         const auto line = terminal->active_input(closed);
@@ -1099,35 +1116,34 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
           cancel.requested = true;
         }
         if (line) {
-          if (*line == "/quit" || *line == "/exit") {
+          const auto &text = line->text;
+          if (text == "/quit" || text == "/exit") {
             quit_requested = true;
             cancel.requested = true;
-          } else if (*line == "/model" || line->rfind("/model ", 0) == 0 || *line == "/status" ||
-                     *line == "/compact") {
+          } else if (line->discarded) {
+            terminal->say("Expired request answer discarded; enter a fresh message.");
+          } else if (text == "/model" || text.rfind("/model ", 0) == 0 || text == "/status" ||
+                     text == "/compact") {
             terminal->say("Use /model, /status and /compact after the active turn completes.");
-          } else if (pending) {
-            if (pending->value("type", "") == "codet.approval" && detail::approves(*line) &&
+          } else if (pending && line->request && line->request->matches(*pending)) {
+            if (pending->value("type", "") == "codet.approval" && detail::approves(text) &&
                 !terminal->approval_reviewed(*pending))
               continue;
-            const bool answered = interaction->answer(pending->at("request_id"), *line);
-            if (!answered) {
-              try {
-                interaction->submit(*line);
-              } catch (const Error &error) {
-                terminal->say(error.what());
-              }
-            }
+            const bool answered = interaction->answer(pending->at("request_id"), text);
+            if (!answered)
+              terminal->say("Expired request answer discarded; enter a fresh message.");
             pending.reset();
-            terminal->end_approval(answered ? std::optional<std::string_view>(*line)
-                                            : std::nullopt);
-          } else if (line->rfind("/permissions", 0) == 0)
+            terminal->end_approval(answered ? std::optional<std::string_view>(text) : std::nullopt);
+          } else if (line->request) {
+            terminal->say("Expired request answer discarded; enter a fresh message.");
+          } else if (text.rfind("/permissions", 0) == 0)
             terminal->say("Change permission modes after the active turn completes.");
-          else if (*line == "/new") {
+          else if (text == "/new") {
             new_requested = true;
             terminal->say("Starting a new session after pending messages are handled.");
           } else {
             try {
-              interaction->submit(*line);
+              interaction->submit(text);
             } catch (const Error &error) {
               terminal->say(error.what());
             }

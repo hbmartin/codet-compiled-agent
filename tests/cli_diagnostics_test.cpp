@@ -3,6 +3,8 @@
 #include "codet/detail/cleanup_diagnostics.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
 #include "codet/detail/native_output.hpp"
+#include "codet/detail/request_input.hpp"
+#include "codet/detail/ui_history.hpp"
 #include "native_io_metrics.hpp"
 #include "process_helper.hpp"
 #include "temp.hpp"
@@ -103,6 +105,56 @@ TEST(ApprovalReview, WrappingRetainsCompleteUnicodeAndEscapeTokensBeyondTranscri
       review.next();
     }
     EXPECT_EQ(reconstructed, expected);
+  }
+}
+TEST(RequestInput, ExpiryAndReplacementNeverReclassifyDraftAnswers) {
+  const detail::ApprovalIdentity first{"session", "first", 1}, second{"session", "second", 1};
+  for (const auto *answer : {"yes", "n", "free text", "1"}) {
+    detail::RequestInput input;
+    input.open(first);
+    input.edit();
+    input.close(); // Worker expiry before Enter, including across turn cleanup.
+    const auto stale = input.take(answer);
+    ASSERT_TRUE(stale.request);
+    EXPECT_EQ(stale.request->request, "first");
+    EXPECT_TRUE(stale.discarded);
+    EXPECT_FALSE(input.take("ordinary steering").request);
+    input.open(first);
+    input.edit();
+    EXPECT_TRUE(input.open(second));
+    EXPECT_TRUE(input.take(answer).discarded);
+    const auto fresh = input.take(answer);
+    ASSERT_TRUE(fresh.request);
+    EXPECT_EQ(fresh.request->request, "second");
+    EXPECT_FALSE(fresh.discarded);
+  }
+  detail::RequestInput input;
+  input.edit(); // An ordinary draft started before a request cannot answer it.
+  EXPECT_TRUE(input.open(first));
+  EXPECT_TRUE(input.take("yes").discarded);
+  EXPECT_FALSE(input.take("yes").discarded);
+}
+TEST(UiHistory, BoundsBytesBeforeSplittingAndKeepsRecentDecision) {
+  detail::UiHistory history;
+  const std::string huge(2 * 1024 * 1024, 'x');
+  for (int i = 0; i != 30; ++i) {
+    history.add("[Approval request]");
+    history.add(huge, detail::UiHistory::approval_limit - 19);
+    history.add("[Approval denied] request");
+    EXPECT_LE(history.bytes(), detail::UiHistory::byte_limit);
+    EXPECT_LE(history.lines().size(), detail::UiHistory::line_limit);
+    EXPECT_EQ(history.lines().back(), "[Approval denied] request");
+  }
+  for (int i = 0; i != 2000; ++i)
+    history.add("line");
+  EXPECT_EQ(history.lines().size(), detail::UiHistory::line_limit);
+  EXPECT_LE(history.bytes(), detail::UiHistory::byte_limit);
+  detail::UiHistory tokens;
+  for (size_t limit = 35; limit != 60; ++limit) {
+    tokens.add(std::string(28, 'a') + "\\xFF雪\\x00" + huge, limit);
+    EXPECT_LE(tokens.lines().back().size() + 1, limit);
+    for (const auto &line : tokens.lines())
+      EXPECT_EQ(detail::rendered_prefix(line, line.size()), line.size());
   }
 }
 struct PartialDiagnosticStream : std::streambuf {
