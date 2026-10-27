@@ -249,6 +249,18 @@ TEST(DiagnosticWriter, ImmediateVectorOutputRetriesInterruptedCallsAndStopsAtIts
   }
   detail::reset_standard_diagnostics();
 }
+TEST(DiagnosticWriter, FailedUnterminatedImmediateWarningRetainsItsConservativeBoundary) {
+  detail::reset_standard_diagnostics();
+  testing::internal::CaptureStderr();
+  auto &metrics = test::native_io_metrics;
+  metrics.interrupt_fd = STDERR_FILENO;
+  metrics.writes_interrupted = 9;
+  EXPECT_FALSE(detail::immediate_stderr({"warning"}, false));
+  metrics = {};
+  EXPECT_TRUE(detail::immediate_stderr({"later"}));
+  EXPECT_EQ(testing::internal::GetCapturedStderr(), "\nlater\n");
+  detail::reset_standard_diagnostics();
+}
 TEST(DiagnosticWriter, InterruptedIdentityInspectionCannotEraseAnAlreadyOwedSeparator) {
   detail::reset_standard_diagnostics();
   testing::internal::CaptureStderr();

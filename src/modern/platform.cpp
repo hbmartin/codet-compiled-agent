@@ -406,7 +406,7 @@ bool detail::immediate_stderr(std::initializer_list<std::string_view> parts,
                               bool newline) noexcept {
   OutputAttempt attempt(nullptr, OutputMode::immediate);
   auto record = immediate_record(attempt);
-  record.begin(newline);
+  record.begin(); // Keep the conservative boundary even for a failed unterminated warning.
   return record.finish(parts, newline);
 }
 void emergency_file_diagnostic(const FileNotice &notice) noexcept {
