@@ -1,8 +1,7 @@
 #pragma once
-#include "codet/detail/diagnostic_stream.hpp"
+#include "codet/detail/curses_text.hpp"
 #include <algorithm>
 #include <climits>
-#include <cwchar>
 #include <vector>
 
 namespace codet::detail {
@@ -11,41 +10,18 @@ class ApprovalReview {
   struct Row {
     size_t offset, size;
   };
-  std::string document_;
+  CursesText document_;
   std::vector<Row> lines_;
   size_t page_ = 0, shown_ = 0;
   int rows_ = 0, columns_ = 0;
-  static size_t token(std::string_view text) noexcept {
-    const auto hex = [](char c) {
-      return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
-    };
-    if (text.size() >= 4 && text[0] == '\\' && text[1] == 'x' && hex(text[2]) && hex(text[3]))
-      return 4;
-    const auto lead = static_cast<unsigned char>(text[0]);
-    const size_t bytes = lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
-    return std::min(bytes, text.size());
-  }
-  static size_t width(std::string_view text) noexcept {
-    if (static_cast<unsigned char>(text[0]) < 0x80)
-      return text.size();
-    std::mbstate_t state{};
-    wchar_t point{};
-    const auto decoded = std::mbrtowc(&point, text.data(), text.size(), &state);
-    if (decoded == text.size()) {
-      const int columns = ::wcwidth(point);
-      if (columns >= 0)
-        return static_cast<size_t>(columns);
-    }
-    return text.size(); // Conservative fallback for locales without this character.
-  }
 
 public:
   std::string session, request;
   uint64_t turn;
   ApprovalReview(std::string session_id, uint64_t turn_id, std::string request_id,
                  std::string document)
-      : document_(std::move(document)), session(std::move(session_id)),
-        request(std::move(request_id)), turn(turn_id) {}
+      : document_(document), session(std::move(session_id)), request(std::move(request_id)),
+        turn(turn_id) {}
   bool reshape(int rows, int columns) {
     if (rows == rows_ && columns == columns_)
       return false;
@@ -56,16 +32,17 @@ public:
     if (!usable())
       return true;
     const auto limit = static_cast<size_t>(columns_ - 1);
+    const auto &document = document_.text();
     size_t start = 0, offset = 0, used = 0;
-    while (offset < document_.size()) {
-      if (document_[offset] == '\n') {
+    while (offset < document.size()) {
+      if (document[offset] == '\n') {
         lines_.push_back({start, offset - start});
         start = ++offset;
         used = 0;
         continue;
       }
-      const auto bytes = token(std::string_view(document_).substr(offset));
-      const auto columns_used = width(std::string_view(document_).substr(offset, bytes));
+      const auto bytes = rendered_token(document, offset).bytes;
+      const auto columns_used = CursesText::token_columns(document, offset);
       if (columns_used > limit - used || offset - start > size_t{INT_MAX} - bytes) {
         lines_.push_back({start, offset - start});
         start = offset;
@@ -93,7 +70,7 @@ public:
     const auto row = page_ * capacity() + index;
     if (row >= lines_.size())
       return {};
-    return {document_.data() + lines_[row].offset, lines_[row].size};
+    return {document_.text().data() + lines_[row].offset, lines_[row].size};
   }
   // Called only after the whole page has rendered successfully.
   void displayed() noexcept {

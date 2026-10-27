@@ -48,6 +48,7 @@ TEST(ApprovalReview, WrappingRetainsCompleteUnicodeAndEscapeTokensBeyondTranscri
   for (size_t i = 0; i != 1100; ++i)
     source += "雪\\x0A ";
   const auto document = detail::literal_text(source + "\r\n\t\xff");
+  const auto expected = detail::CursesText(document).text();
   for (int columns : {20, 40, 80}) {
     detail::ApprovalReview review("session", 1, "request", document);
     review.reshape(6, columns);
@@ -57,7 +58,7 @@ TEST(ApprovalReview, WrappingRetainsCompleteUnicodeAndEscapeTokensBeyondTranscri
         const auto row = review.line(i);
         EXPECT_EQ(safe_text(std::string(row)), row);
         EXPECT_EQ(row.size(),
-                  detail::rendered_prefix(document.substr(reconstructed.size()), row.size()));
+                  detail::rendered_prefix(expected.substr(reconstructed.size()), row.size()));
         reconstructed += row;
       }
       review.displayed();
@@ -65,7 +66,7 @@ TEST(ApprovalReview, WrappingRetainsCompleteUnicodeAndEscapeTokensBeyondTranscri
         break;
       review.next();
     }
-    EXPECT_EQ(reconstructed, document);
+    EXPECT_EQ(reconstructed, expected);
   }
 }
 struct PartialDiagnosticStream : std::streambuf {

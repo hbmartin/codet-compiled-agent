@@ -545,15 +545,23 @@ bool escape_token(std::string_view text, size_t offset) noexcept {
          hexadecimal(text[offset + 2]) && hexadecimal(text[offset + 3]);
 }
 } // namespace
+detail::RenderedToken detail::rendered_token(std::string_view text, size_t offset) noexcept {
+  if (offset >= text.size())
+    return {0, 0, false, false};
+  if (escape_token(text, offset))
+    return {4, '\\', true, true};
+  const auto lead = static_cast<unsigned char>(text[offset]);
+  if (lead < 0x80)
+    return {1, lead, true, false};
+  const auto point = decode_text_point(text, offset);
+  return {point.consumed, point.value, point.valid, false};
+}
 size_t detail::rendered_prefix(std::string_view text, size_t limit) noexcept {
   if (text.size() <= limit)
     return text.size();
   size_t offset = 0;
   while (offset < text.size() && offset < limit) {
-    const auto width = (text[offset] == '\\' && escape_token(text, offset)) ? size_t{4}
-                       : static_cast<unsigned char>(text[offset]) < 0x80
-                           ? size_t{1}
-                           : decode_text_point(text, offset).consumed;
+    const auto width = rendered_token(text, offset).bytes;
     if (width > limit - offset)
       break;
     offset += width;

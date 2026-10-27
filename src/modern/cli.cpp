@@ -300,11 +300,21 @@ class Terminal final : public detail::CliDiagnosticSurface {
       const auto draw = [&](int row, std::string_view text) {
         if (!text.empty() && mvaddnstr(row, 0, text.data(), static_cast<int>(text.size())) == ERR)
           throw Error("Cannot render approval review");
+        if (!text.empty()) {
+          int actual_row = 0, actual_column = 0;
+          getyx(stdscr, actual_row, actual_column);
+          if (actual_row != row || actual_column < 0 || actual_column >= cols ||
+              static_cast<size_t>(actual_column) != detail::CursesText::width(text))
+            throw Error("Approval review exceeded its assigned row");
+        }
       };
       if (!approval_->usable()) {
         if (rows > 0 && cols > 1)
           draw(0, std::string_view("Resize to review; approval disabled")
                       .substr(0, static_cast<size_t>(cols - 1)));
+        if (rows > 0 && cols > 1)
+          draw(rows - 1, detail::CursesText::input(rows == 1 ? "!> " : "codet> ", input_,
+                                                   static_cast<size_t>(cols - 1)));
       } else {
         const auto heading = "Approval review " + std::to_string(approval_->page() + 1) + "/" +
                              std::to_string(approval_->pages());
@@ -316,8 +326,7 @@ class Terminal final : public detail::CliDiagnosticSurface {
         const std::string_view prompt =
             approval_->approved_review() ? "Approve? [y/N]" : "Read all pages; n denies";
         draw(rows - 2, prompt.substr(0, static_cast<size_t>(cols - 1)));
-        const auto entered = "codet> " + input_;
-        draw(rows - 1, std::string_view(entered).substr(0, static_cast<size_t>(cols - 1)));
+        draw(rows - 1, detail::CursesText::input("codet> ", input_, static_cast<size_t>(cols - 1)));
       }
       if (::refresh() == ERR)
         throw Error("Cannot refresh approval review");
