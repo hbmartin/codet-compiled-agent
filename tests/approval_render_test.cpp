@@ -1,4 +1,5 @@
 #include "codet/detail/approval_review.hpp"
+#include "codet/detail/curses_render.hpp"
 #include <clocale>
 #include <cstdio>
 #include <curses.h>
@@ -9,6 +10,7 @@ struct Screen {
   std::string locale = std::setlocale(LC_CTYPE, nullptr);
   FILE *output = std::tmpfile(), *input = std::tmpfile();
   SCREEN *screen = nullptr;
+  bool unicode = false;
   ~Screen() {
     if (screen) {
       (void)::endwin();
@@ -25,8 +27,10 @@ struct Screen {
       return false;
     char terminal[] = "xterm";
     screen = ::newterm(terminal, output, input);
-    if (screen)
+    if (screen) {
       ::set_term(screen);
+      unicode = codet::detail::curses_unicode_supported();
+    }
     return screen != nullptr;
   }
 };
@@ -63,12 +67,12 @@ TEST(ApprovalCurses, PreparedPagesFitRealCellsInCAndUtf8Locales) {
       ASSERT_EQ(::resizeterm(10, columns), OK);
       const auto document = codet::detail::literal_text(
           std::string(90, 'a') + "雪界e\xcc\x81👩‍💻\xff\r\n\t\\x0A; UNSAFE_SUFFIX");
-      const auto expected = codet::detail::CursesText(document).text();
+      const auto expected = codet::detail::CursesText(document, native.unicode).text();
       if (std::string(locale) == "C") {
         EXPECT_EQ(expected.find("雪"), std::string::npos);
         EXPECT_NE(expected.find("\\xE9\\x9B\\xAA"), std::string::npos);
       }
-      codet::detail::ApprovalReview review("session", 1, "request", document);
+      codet::detail::ApprovalReview review("session", 1, "request", document, native.unicode);
       review.reshape(10, columns);
       std::string reconstructed;
       for (;;) {
@@ -99,13 +103,27 @@ TEST(ApprovalCurses, InputRemainsWithinBottomRowForEveryBytePrefixAndSmallScreen
         ASSERT_EQ(::resizeterm(rows, columns), OK);
         for (size_t bytes = 0; bytes <= input.size(); ++bytes) {
           erase();
-          const auto shown = codet::detail::CursesText::input(rows == 1 ? "!> " : "codet> ",
-                                                              input.substr(0, bytes),
-                                                              static_cast<size_t>(columns - 1));
+          const auto shown = codet::detail::CursesText::input(
+              rows == 1 ? "!> " : "codet> ", input.substr(0, bytes),
+              static_cast<size_t>(columns - 1), native.unicode);
           ASSERT_NO_FATAL_FAILURE(expect_row(rows - 1, shown, columns));
         }
       }
     }
   }
+}
+TEST(ApprovalCurses, BackendFallbackEscapesBytesWithoutChangingSupportedLocaleText) {
+  Screen native;
+  if (!native.open("en_US.UTF-8") && !native.open("C.UTF-8"))
+    GTEST_SKIP() << "No UTF-8 locale available";
+  const auto raw = codet::detail::literal_text("雪\\x0A");
+  EXPECT_EQ(codet::detail::CursesText(raw).text(), raw);
+  const auto fallback = codet::detail::CursesText(raw, false).text();
+  EXPECT_EQ(fallback, "\\xE9\\x9B\\xAA\\x5Cx0A");
+  ASSERT_EQ(::resizeterm(10, 20), OK);
+  codet::detail::ApprovalReview review("session", 1, "request", raw, false);
+  review.reshape(10, 20);
+  erase();
+  expect_row(1, review.line(0), 20);
 }
 } // namespace

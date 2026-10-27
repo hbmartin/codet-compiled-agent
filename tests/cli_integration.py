@@ -1326,6 +1326,36 @@ class CliTests(unittest.TestCase):
             if process.poll() is None:process.kill();process.wait(timeout=5)
             os.close(master);os.close(slave)
 
+    def test_curses_empty_answer_records_denial_in_history(self):
+        import fcntl
+        import pty
+        import select
+        import struct
+        import termios
+        master,slave=pty.openpty()
+        fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
+        process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','curses','--color','never','fixture-command'],
+            stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm',LC_ALL='C'))
+        received=bytearray()
+        def collect(predicate):
+            deadline=time.monotonic()+10
+            while not predicate() and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+            self.assertTrue(predicate(),bytes(received))
+        try:
+            collect(lambda:b'Approve? [y/N]' in received)
+            received.clear();os.write(master,b'\n')
+            collect(lambda:b'fixture done' in received)
+            self.assertIn(b'[Approval denied]',received)
+            self.assertNotIn(b'[Approval cancelled]',received)
+            self.assertIn(b'exec_command: printf approved',received)
+            os.write(master,b'/quit\n')
+            collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,bytes(received))
+        finally:
+            if process.poll() is None:process.kill();process.wait(timeout=5)
+            os.close(master);os.close(slave)
+
     def test_curses_small_approval_echoes_quit_without_unlocking(self):
         import fcntl
         import pty

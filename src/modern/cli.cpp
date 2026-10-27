@@ -6,6 +6,7 @@
 #include "codet/detail/cleanup_diagnostics.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
 #include "codet/detail/cli_output.hpp"
+#include "codet/detail/curses_render.hpp"
 #include "codet/detail/native_terminal.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/interaction.hpp"
@@ -250,6 +251,7 @@ class Terminal final : public detail::CliDiagnosticSurface {
   HistEvent history_event_{};
   std::vector<std::string> transcript_;
   std::optional<detail::ApprovalReview> approval_;
+  bool curses_unicode_ = true;
   std::string input_, status_, progress_;
   std::string prompt_;
   std::map<std::string, int> bindings_{{"submit", 10}, {"quit", 4}, {"backspace", 127}};
@@ -315,7 +317,7 @@ class Terminal final : public detail::CliDiagnosticSurface {
                       .substr(0, static_cast<size_t>(cols - 1)));
         if (rows > 0 && cols > 1)
           draw(rows - 1, detail::CursesText::input(rows == 1 ? "!> " : "codet> ", input_,
-                                                   static_cast<size_t>(cols - 1)));
+                                                   static_cast<size_t>(cols - 1), curses_unicode_));
       } else {
         const auto heading = "Approval review " + std::to_string(approval_->page() + 1) + "/" +
                              std::to_string(approval_->pages());
@@ -327,7 +329,8 @@ class Terminal final : public detail::CliDiagnosticSurface {
         const std::string_view prompt =
             approval_->approved_review() ? "Approve? [y/N]" : "Read all pages; n denies";
         draw(rows - 2, prompt.substr(0, static_cast<size_t>(cols - 1)));
-        draw(rows - 1, detail::CursesText::input("codet> ", input_, static_cast<size_t>(cols - 1)));
+        draw(rows - 1, detail::CursesText::input("codet> ", input_, static_cast<size_t>(cols - 1),
+                                                 curses_unicode_));
       }
       if (::refresh() == ERR)
         throw Error("Cannot refresh approval review");
@@ -370,7 +373,7 @@ public:
     auto document = detail::literal_text(target);
     if (event.contains("context") && !event.at("context").empty())
       document += "\nContext:\n" + detail::terminal_text(safe_json(event.at("context")).dump());
-    approval_.emplace(identity.session, identity.turn, identity.request, document);
+    approval_.emplace(identity.session, identity.turn, identity.request, document, curses_unicode_);
     remember("[Approval " + detail::literal_text(identity.request) + "]\n" + approval_->document());
     input_.clear();
     render();
@@ -381,15 +384,15 @@ public:
                                                           approval_->request, approval_->turn) &&
                         approval_->approved_review());
   }
-  void end_approval(std::string_view answer = {}) {
+  void end_approval(std::optional<std::string_view> answer = {}) {
     auto finished = std::move(approval_);
     approval_.reset();
     input_.clear();
     if (finished)
       remember(std::string("[Approval ") +
-               (answer.empty()             ? "cancelled"
-                : detail::approves(answer) ? "approved"
-                                           : "denied") +
+               (!answer                     ? "cancelled"
+                : detail::approves(*answer) ? "approved"
+                                            : "denied") +
                "] " + detail::literal_text(finished->request));
     render();
   }
@@ -405,6 +408,7 @@ public:
     }
     if (curses_) {
       resources_.start_screen();
+      curses_unicode_ = detail::curses_unicode_supported();
       cbreak();
       noecho();
       keypad(stdscr, TRUE);
@@ -596,7 +600,8 @@ public:
       if (!curses_)
         output_.echo({"\n"});
       else if (approval_) {
-        const auto shown = detail::CursesText(detail::literal_text("you> " + text)).text();
+        const auto shown =
+            detail::CursesText(detail::literal_text("you> " + text), curses_unicode_).text();
         say_rendered({shown});
       } else
         say("you> " + text);
@@ -1109,7 +1114,8 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
               }
             }
             pending.reset();
-            terminal->end_approval(answered ? std::string_view(*line) : std::string_view{});
+            terminal->end_approval(answered ? std::optional<std::string_view>(*line)
+                                            : std::nullopt);
           } else if (line->rfind("/permissions", 0) == 0)
             terminal->say("Change permission modes after the active turn completes.");
           else if (*line == "/new") {

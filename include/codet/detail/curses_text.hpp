@@ -21,13 +21,14 @@ class CursesText {
   }
 
 public:
-  explicit CursesText(std::string_view rendered) {
+  explicit CursesText(std::string_view rendered, bool unicode = true) {
     constexpr char hex[] = "0123456789ABCDEF";
     for (size_t offset = 0; offset < rendered.size();) {
       const auto parsed = rendered_token(rendered, offset);
       const auto token = rendered.substr(offset, parsed.bytes);
-      if (parsed.valid && (parsed.point == '\n' || (parsed.point >= 0x20 && parsed.point != 0x7f &&
-                                                    columns(token, parsed) >= 0)))
+      if (parsed.valid && (parsed.point == '\n' ||
+                           (parsed.point >= 0x20 && parsed.point != 0x7f &&
+                            (unicode || parsed.point < 0x80) && columns(token, parsed) >= 0)))
         text_.append(token);
       else
         for (const auto character : token) {
@@ -54,10 +55,11 @@ public:
     }
     return result;
   }
-  static std::string input(std::string_view prompt, const std::string &answer, size_t limit) {
+  static std::string input(std::string_view prompt, const std::string &answer, size_t limit,
+                           bool unicode = true) {
     std::string result(prompt.substr(0, limit)); // Prompts are fixed ASCII.
     limit -= result.size();
-    const CursesText rendered(literal_text(answer));
+    const CursesText rendered(literal_text(answer), unicode);
     const auto &text = rendered.text();
     size_t remaining = width(text), start = 0;
     if (remaining > limit && limit) {
