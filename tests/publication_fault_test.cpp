@@ -233,6 +233,34 @@ TEST(UiBudgetFault, RedrawAndHistoryDoNotAllocateInProportionToWholeInput) {
   EXPECT_LE(history_allocation, detail::UiHistory::approval_limit);
   EXPECT_LE(history.bytes(), detail::UiHistory::approval_limit);
 }
+TEST(UiBudgetFault, FailedInputMutationDiscardsItsPartialCacheAndAllowsFreshInput) {
+  struct Reset {
+    ~Reset() {
+      fault::disable();
+    }
+  } reset;
+  detail::CursesInput input;
+  for (size_t i = 0; i != 1024; ++i)
+    input += 'a';
+  fault::fired = false;
+  fault::countdown = 0;
+  bool caught = false;
+  try {
+    for (size_t i = 0; i != 4096; ++i)
+      input += 'b';
+  } catch (const std::bad_alloc &) {
+    caught = true;
+  }
+  const bool fired = fault::fired;
+  fault::disable();
+  ASSERT_TRUE(caught);
+  ASSERT_TRUE(fired);
+  EXPECT_TRUE(input.empty());
+  EXPECT_EQ(input.view("codet> ", 79), "codet> ");
+  input += 'r';
+  EXPECT_EQ(input.raw(), "r");
+  EXPECT_EQ(input.view("codet> ", 79), "codet> r");
+}
 TEST(FileDiagnosticsFault, RedirectedAnswersBorrowTheirBytesWithoutAllocation) {
   const std::string answer(1024 * 1024, 'x');
   struct Probe {

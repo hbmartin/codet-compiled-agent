@@ -11,23 +11,40 @@ class CursesInput {
   std::vector<Token> tokens_;
   bool unicode_ = true;
   size_t rebuilt_ = 0;
+  struct Mutation {
+    CursesInput &input;
+    bool complete = false;
+    ~Mutation() {
+      if (!complete)
+        input.clear();
+    }
+  };
   void rebuild(size_t start) {
     while (start < raw_.size()) {
       const auto bytes = static_cast<unsigned char>(raw_[start]) < 0x80
                              ? size_t{1}
                              : rendered_token(raw_, start).bytes;
       const CursesText token(literal_text(raw_.substr(start, bytes)), unicode_);
+      const auto display_start = display_.size();
       display_ += token.text();
       start += bytes;
-      tokens_.push_back({static_cast<uint32_t>(start), static_cast<uint32_t>(display_.size()),
-                         static_cast<uint32_t>(CursesText::width(token.text()))});
+      for (size_t offset = 0; offset < token.text().size();) {
+        const auto columns = CursesText::token_columns(token.text(), offset);
+        offset += rendered_token(token.text(), offset).bytes;
+        tokens_.push_back({static_cast<uint32_t>(start),
+                           static_cast<uint32_t>(display_start + offset),
+                           static_cast<uint32_t>(columns)});
+      }
       rebuilt_ += bytes;
     }
   }
   size_t rewind() noexcept {
     if (tokens_.empty())
       return 0;
-    tokens_.pop_back();
+    const auto source_end = tokens_.back().source_end;
+    do {
+      tokens_.pop_back();
+    } while (!tokens_.empty() && tokens_.back().source_end == source_end);
     const auto start = tokens_.empty() ? 0u : tokens_.back().source_end;
     display_.resize(tokens_.empty() ? 0u : tokens_.back().display_end);
     return start;
@@ -52,10 +69,12 @@ public:
   }
   void unicode(bool enabled) {
     if (unicode_ != enabled) {
+      Mutation mutation{*this};
       unicode_ = enabled;
       display_.clear();
       tokens_.clear();
       rebuild(0);
+      mutation.complete = true;
     }
   }
   void clear() noexcept {
@@ -66,16 +85,20 @@ public:
   void operator+=(char byte) {
     if (raw_.size() == limit)
       return;
+    Mutation mutation{*this};
     const auto start = rewind();
     raw_ += byte;
     rebuild(start);
+    mutation.complete = true;
   }
   void pop_back() {
     if (raw_.empty())
       return;
+    Mutation mutation{*this};
     const auto start = rewind();
     raw_.pop_back();
     rebuild(start);
+    mutation.complete = true;
   }
   std::string view(std::string_view prompt, size_t columns) const {
     std::string result(prompt.substr(0, columns));

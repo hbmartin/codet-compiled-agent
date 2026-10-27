@@ -1,5 +1,6 @@
 #define _XOPEN_SOURCE_EXTENDED 1
 #include "codet/detail/approval_review.hpp"
+#include "codet/detail/curses_input.hpp"
 #include "codet/detail/curses_render.hpp"
 #include <clocale>
 #include <cstdio>
@@ -118,11 +119,14 @@ TEST(ApprovalCurses, InputRemainsWithinBottomRowForEveryBytePrefixAndSmallScreen
     for (int columns : {2, 5, 19, 20, 40, 80}) {
       for (int rows : {1, 2, 5, 10}) {
         ASSERT_EQ(::resizeterm(rows, columns), OK);
+        codet::detail::CursesInput cached;
+        cached.unicode(native.unicode);
         for (size_t bytes = 0; bytes <= input.size(); ++bytes) {
+          if (bytes)
+            cached += input[bytes - 1];
           erase();
-          const auto shown = codet::detail::CursesText::input(
-              rows == 1 ? "!> " : "codet> ", input.substr(0, bytes),
-              static_cast<size_t>(columns - 1), native.unicode);
+          const auto shown =
+              cached.view(rows == 1 ? "!> " : "codet> ", static_cast<size_t>(columns - 1));
           ASSERT_NO_FATAL_FAILURE(expect_row(rows - 1, shown, columns));
         }
       }

@@ -120,6 +120,9 @@ TEST(CursesInput, IncrementalPreparationPreservesRawBytesAndHasLinearWork) {
       EXPECT_EQ(input.raw(), prefix);
       EXPECT_EQ(input.view("", 1000),
                 detail::CursesText(detail::literal_text(prefix), unicode).text());
+      for (size_t columns = 1; columns < 80; ++columns)
+        EXPECT_EQ(input.view("codet> ", columns),
+                  detail::CursesText::input("codet> ", prefix, columns, unicode));
     }
     while (!prefix.empty()) {
       prefix.pop_back();
