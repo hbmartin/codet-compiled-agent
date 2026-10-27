@@ -4,6 +4,7 @@
 #endif
 #include "process_helper.hpp"
 #include <cstring>
+#include <fcntl.h>
 #include <future>
 #include <gtest/gtest.h>
 #include <poll.h>
@@ -258,12 +259,16 @@ TEST(TerminalResources, EveryPartialPrivateStreamAcquisitionReleasesItsDescripto
   int master = -1, slave = -1;
   ASSERT_EQ(::openpty(&master, &slave, nullptr, nullptr, nullptr), 0);
   struct Close {
-    int master, slave;
+    int master, slave, inherited = -1;
     ~Close() {
       ::close(master);
       ::close(slave);
+      if (inherited >= 0)
+        ::close(inherited);
     }
   } close{master, slave};
+  close.inherited = ::fcntl(slave, F_DUPFD, 64);
+  ASSERT_GE(close.inherited, 64); // Deliberately leave inherited holes below this fd.
   for (int allowance = 0; allowance != 4; ++allowance) {
     const auto child = test::start_helper(
         {"--codet-private-stream-failure-helper", std::to_string(allowance), std::to_string(slave)},
