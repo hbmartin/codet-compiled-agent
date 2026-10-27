@@ -162,6 +162,11 @@ TEST(RequestInput, ExpiryAndReplacementNeverReclassifyDraftAnswers) {
     EXPECT_FALSE(fresh.discarded);
   }
   detail::RequestInput input;
+  input.edit();
+  EXPECT_TRUE(input.ordinary_draft());
+  input.close();
+  EXPECT_TRUE(input.ordinary_draft()); // Worker completion preserves ordinary intent.
+  EXPECT_EQ(input.take("ordinary steering").text, "ordinary steering");
   input.edit(); // An ordinary draft started before a request cannot answer it.
   EXPECT_TRUE(input.open(first));
   EXPECT_TRUE(input.take("yes").discarded);

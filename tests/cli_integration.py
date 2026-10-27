@@ -1286,6 +1286,49 @@ class CliTests(unittest.TestCase):
                         if process.poll() is None:process.kill();process.wait(timeout=5)
                         os.close(master);os.close(slave)
 
+    def test_ordinary_draft_survives_worker_completion(self):
+        import fcntl
+        import pty
+        import re
+        import select
+        import struct
+        import termios
+        for ui in ('line','curses'):
+            with self.subTest(ui=ui):
+                ready,release=threading.Event(),threading.Event()
+                self.server.signal_gate=(ready,release);self.server.releases.append(release)
+                master,slave=pty.openpty()
+                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
+                process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',ui,'--color','never','fixture-signal-wait'],
+                    stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+                received=bytearray()
+                def collect(predicate,master=master,received=received):
+                    deadline=time.monotonic()+10
+                    while not predicate() and time.monotonic()<deadline:
+                        if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+                    self.assertTrue(predicate(),bytes(received))
+                try:
+                    self.assertTrue(ready.wait(10))
+                    os.write(master,b'fixture-reco')
+                    collect(lambda received=received: b'fixture-reco' in re.sub(rb'\x1b(?:\[[0-?]*[ -/]*[@-~]|\([A-Z0-9])',b'',received))
+                    release.set()
+                    collect(lambda received=received:b'fixture done' in received)
+                    # Wait for terminal output quiescence after the completion event. The
+                    # prefix was admitted while the provider was explicitly held at its gate.
+                    deadline=time.monotonic()+10
+                    while select.select([master],[],[],.2)[0] and time.monotonic()<deadline:
+                        received.extend(os.read(master,65536))
+                    received.clear();os.write(master,b'vered-output\n')
+                    collect(lambda received=received:b'recovered reply' in received)
+                    self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'fixture-recovered-output')
+                    os.write(master,b'/quit\n')
+                    collect(lambda process=process:process.poll() is not None)
+                    self.assertEqual(process.returncode,0,bytes(received))
+                finally:
+                    release.set()
+                    if process.poll() is None:process.kill();process.wait(timeout=5)
+                    os.close(master);os.close(slave)
+
     def test_expired_approval_draft_is_discarded_before_next_turn(self):
         import fcntl
         import pty

@@ -32,6 +32,9 @@ public:
   bool stale() const noexcept {
     return stale_;
   }
+  bool ordinary_draft() const noexcept {
+    return started_ && !draft_ && !stale_;
+  }
   InputLine take(std::string text) {
     InputLine result{std::move(text), started_ ? std::move(draft_) : active_, stale_};
     draft_.reset();

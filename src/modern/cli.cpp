@@ -396,7 +396,8 @@ public:
     input_scope_.close();
     auto finished = std::move(approval_);
     approval_.reset();
-    input_.clear();
+    if (!input_scope_.ordinary_draft())
+      input_.clear();
     if (finished)
       remember(std::string("[Approval ") +
                (!answer                     ? "cancelled"
@@ -490,6 +491,31 @@ public:
     transcript_.add(text);
   }
   std::optional<std::string> read(Cancellation &cancel) {
+    if (!curses_ && input_scope_.ordinary_draft() && !input_.empty()) {
+      begin_active();
+      struct Restore {
+        Terminal &terminal;
+        ~Restore() {
+          try {
+            terminal.end_active();
+          } catch (...) {
+          }
+        }
+      } restore{*this};
+      for (;;) {
+        if (cancel.requested)
+          return std::nullopt;
+        bool closed = false;
+        auto line = active_input(closed);
+        if (closed)
+          return std::nullopt;
+        if (line) {
+          if (resources_.entries())
+            history(resources_.entries(), &history_event_, H_ENTER, line->text.c_str());
+          return std::move(line->text);
+        }
+      }
+    }
     if (!curses_) {
       read_cancel_ = &cancel;
       el_set(resources_.editor(), EL_PREP_TERM, 1);
@@ -509,7 +535,8 @@ public:
       }
       return submitted.text;
     }
-    input_.clear();
+    if (!input_scope_.ordinary_draft())
+      input_.clear();
     render();
     for (;;) {
       if (cancel.requested)
@@ -551,7 +578,8 @@ public:
     }
   }
   void begin_active() {
-    input_.clear();
+    if (!input_scope_.ordinary_draft())
+      input_.clear();
     if (!curses_ && resources_.saved()) {
       el_set(resources_.editor(), EL_PREP_TERM, 0);
       resources_.begin_active();
@@ -560,7 +588,6 @@ public:
   void end_active() {
     if (!curses_ && resources_.saved())
       resources_.end_active();
-    input_.clear();
     end_approval();
   }
   std::optional<detail::InputLine> active_input(bool &closed) {
