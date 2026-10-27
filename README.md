@@ -123,10 +123,18 @@ Space or PageDown advances, and PageUp returns. Approval is enabled after every 
 displayed and requires a fresh `y` or `yes` followed by Enter. Resizing restarts review; denial,
 quit, and cancellation remain available throughout.
 Curses prepares that review for the active locale and native renderer before measuring it;
-unsupported characters appear as reversible ASCII byte escapes. Approval input uses the same
-column-safe presentation, including while a UTF-8 character is only partly typed. Small screens
-keep denial and quit input visible while approval remains disabled. The bounded UI transcript
-retains the request, context, and associated approval decision after the review closes.
+unsupported characters appear as reversible ASCII byte escapes. Approval targets and context also
+escape default-ignorable, format, nonspacing/enclosing, and nonpositive-width characters, so
+invisible bytes and excess combining marks cannot disappear from the reviewed command. This
+uses checked-in Unicode 17.0 ranges rather than a runtime Unicode dependency; it does not
+promise visually unique Unicode. Normal and approval input share column-safe presentation,
+including partly typed UTF-8. Preparation is incremental and keeps submitted answer bytes intact.
+Small screens keep denial and quit input visible while approval remains disabled. Draft answers
+remain bound to their request through Enter; expired answers are discarded rather than becoming
+new user messages. UI history retains request/context excerpts and associated decisions within
+256 KiB and 1,000 lines, with at most 16 KiB per approval excerpt. The pending review stays complete.
+Native Linux builds select wide curses and CI requires real UTF-8 cell coverage. Darwin/Tiger
+retain their existing library discovery and ASCII fallback.
 
 Terminal cleanup checks foreground ownership before native teardown. If private stream
 redirection fails, pending private stdio output is purged and the entire native ownership bundle

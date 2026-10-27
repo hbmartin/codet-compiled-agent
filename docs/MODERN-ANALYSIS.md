@@ -503,3 +503,94 @@ older-glibc and Tiger runtime/toolchain checks were unavailable locally; Ubuntu 
 is linked separately when available.
 
 The first Ubuntu run compiled and passed static analysis, then exposed narrow-curses display expectations and an inherited-fd-hole assumption in a fault helper. Ordinary narrow displays now use reversible byte escapes; the helper reserves holes and deliberately inherits fd 64. No checks were removed or relaxed to accept garbled text or successful acquisition in a fault case. The initial workflow artifact is recorded alongside the replacement run.
+
+## Visible approval and input ownership follow-up
+
+Fetched baseline `e3b32c3` contains PR #40. Final production revision
+`7f6a0bcd278b0700860850875cc68844b17643c9` makes approval targets/context and input
+strictly visible without changing execution or answer bytes. A native shared-boundary negative
+control approves a document containing a raw tag character and nine combining marks on baseline;
+the changed document renders their bytes as complete ASCII escapes. Both versions preserve the
+spacing-Unicode control and still allow approval after successful complete review. Real screen-cell
+tests separately inspect retained wide characters, escapes, row limits and the reserved final column.
+
+The strict policy uses 376 merged Unicode 17.0 ranges for default-ignorable characters and general
+categories Mn, Me and Cf, plus locale printability/width checks. The checked-in table records official
+source hashes and the Unicode license. There is no runtime Unicode dependency. Ordinary prose,
+preserved-file formatting and canonical/structured data retain their existing policies. Native Linux
+selects wide curses and requires actual UTF-8 cell coverage in CI; Darwin/Tiger discovery remains
+unchanged. Scratch-pad failure selects the ASCII fallback.
+
+One prepared drawing boundary clears and clips every curses row at complete rendered tokens.
+Normal input, disabled small-screen input, headings, progress, transcript and approval rows all
+reserve the final column. Drafts retain the request identity captured at their first byte through Enter.
+Expired/rejected approval and question answers are discarded instead of submitted as ordinary user
+messages. Ordinary partial messages survive worker completion. A deterministic gated regression
+fails on baseline in both line and curses modes and passes with the change.
+
+Rendered history has a 256 KiB payload cap and a 1,000-line cap. Each approval excerpt, including
+labels and its omission marker, consumes at most 16 KiB; its decision carries the request identity.
+The complete pending review is independent. Cached input keeps the original 65,536-byte limit,
+rebuilds only the affected UTF-8 tail, and chooses its viewport from cached rendered-token metadata.
+An allocation failure discards a partial cache, preserves the exception and permits fresh input.
+Unchanged redraws copy only the visible suffix.
+
+Failed unterminated diagnostics now conservatively owe a separator on both native and injected
+paths; successful fragments keep concatenating. An indeterminate zero-errno pipe-bound query
+caches the conservative bound for the descriptor identity. Interrupted/failed queries remain
+uncached. Existing exception masks, eight-interruption budgets, destination rebinding, emergency
+ownership and best-effort output policies remain intact.
+
+[Validation evidence](validation/approval-visibility-followup.json),
+[Release medians](validation/approval-visibility-followup-performance.csv), and
+[all warm-up/measured samples](validation/approval-visibility-followup-performance-samples.csv)
+record commands, final source hashes, compiler/harness identities, controls and limitations.
+Full Debug and ASan/UBSan CTest both pass 9/9: 578 unit cases (two expected opt-in skips),
+64 publication-fault cases and 87 CLI integration cases, plus the other CTest runners. Twenty
+focused batches pass 1,780 unit, 300 fault and 260 PTY/lifecycle method runs. Pinned lint,
+Semgrep, runner checks, offline dependency verification and analyzer detection self-tests pass.
+[Ubuntu CI on the production revision](https://github.com/hbmartin/codet-compiled-agent/actions/runs/40589394974)
+passes compilation, all-source analysis, actual Unicode coverage, CTest, lint and Semgrep.
+
+Local Cppcheck completes 25/25 with zero findings. Local Clang-Tidy completes 24/25 with the
+same five source warnings and one SDK13-incomplete translation-unit error as baseline. Clang
+Analyzer completes 25/25 with the unchanged `context.cpp` division warning. Diagnostic multisets
+and final input hashes were checked; no suppressions or checks were weakened.
+
+The isolated Release comparison uses identical settings/harnesses, one warm-up and five alternating
+measured runs, repeated as a second set without concurrent local tests or analyzers (408 total
+samples). Times below are median milliseconds at the helper/harness boundary, not end-to-end
+interactive terminal latency. No timing-based CI threshold or general output speedup is claimed.
+
+| Workload | Baseline, sets 1 / 2 | Changed, sets 1 / 2 |
+| --- | --- | --- |
+| Incremental 1 KiB input | 9.224 / 9.511 | 0.164 / 0.169 |
+| Incremental 8 KiB input | 579.990 / 581.164 | 1.263 / 1.233 |
+| Incremental 64 KiB input | 37283.061 / 37362.509 | 9.792 / 9.889 |
+| 256 unchanged 64 KiB redraws | 289.230 / 289.969 | 0.020 / 0.018 |
+| Thirty 2 MiB history entries | 11.693 / 11.823 | 0.414 / 0.416 |
+| diagnostics-amplified | 385.617 / 380.135 | 386.069 / 382.525 |
+| diagnostics-standalone-amplified | 385.747 / 386.986 | 384.910 / 387.264 |
+| diagnostics-pipe-amplified | 377.606 / 389.200 | 375.796 / 393.263 |
+| editor | 80.042 / 80.256 | 80.402 / 79.760 |
+| export-small-file | 51.085 / 52.218 | 52.069 / 53.155 |
+| export-large-file | 267.009 / 276.607 | 265.291 / 276.332 |
+
+The 64 KiB incremental workload prepares 131,071 bytes instead of 2,147,516,416; cumulative
+C++ allocation bytes fall from 8,592,750,241 to 7,206,468. Unchanged redraws prepare zero new
+input bytes; the 256 viewport strings allocate 20,480 bytes in total. The large-history workload
+retains 262,144 rendered payload bytes instead of 62,914,590. Input checksums match, and
+allocation/write/stat/flag/pipe-bound positive controls succeed in every sample. Diagnostics and
+exports have identical allocation/byte and observed native-operation counts. Small-file exports
+are about 1.9%/1.8% slower; large-file exports about 0.6%/0.1% faster. Counters cover C++ new and
+directly observed native calls, not all libc/libedit allocation or I/O.
+
+Earlier failures are retained separately from final passing checks. One case-insensitive filesystem
+test failed during initial sanitizers and reproduced 2/100 times on exact baseline; changed focused
+sanitizers passed 20/20 without weakening assertions. One intermediate native child-setup failure
+was not reproduced in 100 baseline or 100 changed focused reruns; its cause remains unknown.
+The worker-completion prefix loss and new development-time static findings were fixed before the
+final suites and measurements. Native Tiger runtime/cross-build tools and Intel macOS runtime
+were unavailable. Tiger's pinned unsuffixed wide-curses configuration is preserved, not reported
+as executed validation. Blocking-TTY cancellation and the absence of a visually-unique-Unicode
+or exactly-once-output guarantee remain documented limitations.
