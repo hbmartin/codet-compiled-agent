@@ -499,6 +499,7 @@ public:
           try {
             terminal.end_active();
           } catch (...) {
+            (void)detail::immediate_stderr({"Terminal active-mode restoration also failed"});
           }
         }
       } restore{*this};
