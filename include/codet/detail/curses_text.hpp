@@ -21,12 +21,13 @@ class CursesText {
   }
 
 public:
-  explicit CursesText(std::string_view rendered, bool unicode = true) {
+  // Ordinary transcript rows may retain native tab expansion; approval layout never enables it.
+  explicit CursesText(std::string_view rendered, bool unicode = true, bool prose_tabs = false) {
     constexpr char hex[] = "0123456789ABCDEF";
     for (size_t offset = 0; offset < rendered.size();) {
       const auto parsed = rendered_token(rendered, offset);
       const auto token = rendered.substr(offset, parsed.bytes);
-      if (parsed.valid && (parsed.point == '\n' ||
+      if (parsed.valid && (parsed.point == '\n' || (prose_tabs && parsed.point == '\t') ||
                            (parsed.point >= 0x20 && parsed.point != 0x7f &&
                             (unicode || parsed.point < 0x80) && columns(token, parsed) >= 0)))
         text_.append(token);

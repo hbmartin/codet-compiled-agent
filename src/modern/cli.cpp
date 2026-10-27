@@ -471,7 +471,10 @@ public:
   }
   void say_rendered(detail::RenderedTextView text) {
     if (curses_) {
-      remember(text.text);
+      if (curses_unicode_)
+        remember(text.text);
+      else
+        remember(detail::CursesText(text.text, false, true).text());
       render();
     } else
       (void)output_.display({text.text});
@@ -647,6 +650,8 @@ public:
     }
     if (curses_ && type == "item.updated") {
       progress_ = "Responding: " + detail::terminal_text(event["item"].value("text_delta", ""));
+      if (!curses_unicode_)
+        progress_ = detail::CursesText(progress_, false, true).text();
       render();
     }
   }

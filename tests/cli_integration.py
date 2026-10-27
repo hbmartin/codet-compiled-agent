@@ -1268,9 +1268,11 @@ class CliTests(unittest.TestCase):
                     received=b''
                     try:
                         expected=(DISPLAY_ESCAPED+(r'\x0D\x0Anext\x09\x5Cx0A' if prompt=='fixture-control-approval' else '')).encode();deadline=time.monotonic()+7
-                        while expected not in received and time.monotonic()<deadline:
+                        # Narrow curses needs complete byte escapes, never its M- garbling.
+                        allowed=(expected,expected.replace('雪'.encode(),br'\xE9\x9B\xAA')) if mode=='curses' else (expected,)
+                        while not any(value in received for value in allowed) and time.monotonic()<deadline:
                             if select.select([master],[],[],.02)[0]:received+=os.read(master,65536)
-                        self.assertIn(expected,received)
+                        self.assertTrue(any(value in received for value in allowed),received)
                         self.assertNotIn(b'unsafe:\x1b[2K',received)
                         os.write(master,b'/quit\n');deadline=time.monotonic()+7
                         while process.poll() is None and time.monotonic()<deadline:
