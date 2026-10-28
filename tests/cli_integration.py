@@ -1561,8 +1561,9 @@ class CliTests(unittest.TestCase):
                     self.assertFalse(marker.exists())
                     os.write(master,b'yes\n')
                     collect(lambda marker=marker:marker.exists())
-                    self.assertEqual(marker.read_text(),'approved')
+                    # Redirection creates the file before printf writes it; completion owns readiness.
                     collect(lambda received=received:b'fixture done' in received)
+                    self.assertEqual(marker.read_text(),'approved')
                     os.write(master,b'/quit\n')
                     collect(lambda process=process:process.poll() is not None)
                     self.assertEqual(process.returncode,0,bytes(received))
