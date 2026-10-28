@@ -326,8 +326,12 @@ class Terminal final : public detail::CliDiagnosticSurface {
 public:
   void discarded_line() {
     say("Expired request answer discarded; enter a fresh message.");
-    if (!curses_ && !request_prompt_.empty())
-      say(request_prompt_);
+    if (!curses_) {
+      if (request_prompt_.empty())
+        (void)output_.display({prompt_}, false);
+      else
+        say(request_prompt_);
+    }
   }
 
 private:
@@ -1219,10 +1223,10 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
                 !terminal->approval_reviewed(*pending))
               continue;
             const bool answered = interaction->answer(pending->at("request_id"), text);
-            if (!answered)
-              terminal->discarded_line();
             pending.reset();
             terminal->end_approval(answered ? std::optional<std::string_view>(text) : std::nullopt);
+            if (!answered)
+              terminal->discarded_line();
           } else if (text.rfind("/permissions", 0) == 0)
             terminal->say("Change permission modes after the active turn completes.");
           else if (text == "/new") {
