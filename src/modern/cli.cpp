@@ -250,7 +250,8 @@ class Terminal final : public detail::CliDiagnosticSurface {
   detail::CliOutput &output_;
   detail::DiagnosticWriter &errors_;
   detail::NativeTerminalResourceOps native_resources_;
-  bool curses_ = false;
+  bool curses_ = false, display_dirty_ = true;
+  detail::CursesDrawOps drawing_;
   HistEvent history_event_{};
   detail::UiHistory transcript_;
   detail::RequestInput input_scope_;
@@ -333,14 +334,15 @@ private:
   void render() {
     if (!curses_)
       return;
-    erase();
+    detail::CursesFrame frame(display_dirty_, drawing_);
     int rows = 0, cols = 0;
     getmaxyx(stdscr, rows, cols);
     if (approval_) {
       if (approval_->reshape(rows, cols))
         clear_review_input();
       const auto draw = [&](int row, std::string_view text) {
-        detail::curses_draw_row(row, text, cols, true);
+        if (!frame.row(row, text, cols, true))
+          throw Error("Cannot render approval review");
       };
       if (!approval_->usable()) {
         if (rows > 1 && cols > 1)
@@ -363,36 +365,31 @@ private:
         draw(rows - 2, prompt.substr(0, static_cast<size_t>(cols - 1)));
         draw(rows - 1, input_view("codet> ", static_cast<size_t>(cols - 1)));
       }
-      if (::refresh() == ERR)
-        throw Error("Cannot refresh approval review");
+      frame.require_finish();
       const bool previously_reviewed = approval_->approved_review();
       approval_->displayed();
       if (!input_scope_.stale() && !previously_reviewed && approval_->approved_review()) {
-        if (move(rows - 2, 0) == ERR || clrtoeol() == ERR)
-          throw Error("Cannot render approval prompt");
         draw(rows - 2, "Approve? [y/N]");
-        if (::refresh() == ERR)
-          throw Error("Cannot refresh approval review");
+        frame.require_finish();
       }
       return;
     }
     if (rows < 4 || cols < 8) {
       if (rows > 0 && cols > 1)
-        detail::curses_draw_row(rows - 1, input_view("codet> ", static_cast<size_t>(cols - 1)),
-                                cols);
-      refresh();
+        frame.row(rows - 1, input_view("codet> ", static_cast<size_t>(cols - 1)), cols);
+      (void)frame.finish();
       return;
     }
     const auto heading = input_scope_.stale()
                              ? std::string(detail::RequestInput::discard_instruction)
                              : status_ + (progress_.empty() ? "" : " | " + progress_);
-    detail::curses_draw_row(0, heading, cols);
+    frame.row(0, heading, cols);
     int y = rows - 3;
     for (auto it = transcript_.lines().rbegin(); it != transcript_.lines().rend() && y > 0;
          ++it, --y)
-      detail::curses_draw_row(y, *it, cols);
-    detail::curses_draw_row(rows - 1, input_view("codet> ", static_cast<size_t>(cols - 1)), cols);
-    refresh();
+      frame.row(y, *it, cols);
+    frame.row(rows - 1, input_view("codet> ", static_cast<size_t>(cols - 1)), cols);
+    (void)frame.finish();
   }
 
 public:
@@ -459,8 +456,8 @@ public:
     render();
   }
   Terminal(const Config &c, const std::string &color, detail::CliOutput &output,
-           detail::DiagnosticWriter &errors)
-      : output_(output), errors_(errors) {
+           detail::DiagnosticWriter &errors, const detail::CursesDrawOps &drawing)
+      : output_(output), errors_(errors), drawing_(drawing) {
     curses_ =
         (c.ui == "curses" || (c.ui == "auto" && env("TERM") != "dumb" && !env("TERM").empty()));
     for (auto it = c.keybindings.begin(); it != c.keybindings.end(); ++it) {
@@ -755,6 +752,10 @@ int cli_main(const std::vector<std::string> &args, Cancellation &cancel) {
   return detail::cli_main(args, cancel, io);
 }
 int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel, IoContext &io) {
+  return detail::cli_main(args, cancel, io, CursesDrawOps{});
+}
+int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel, IoContext &io,
+                     const CursesDrawOps &drawing) {
   detail::DiagnosticWriter errors(std::cerr, &io);
   detail::reset_standard_diagnostics();
   const auto o = parse(args);
@@ -1041,7 +1042,8 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   diagnostics->cleanup = DiagnosticBuffer(config.tool_output_limit);
   detail::TerminalDiagnosticsScope<Terminal> restore_diagnostics{terminal, diagnostics, state};
   if (interactive) {
-    restore_diagnostics.activate(std::make_shared<Terminal>(config, o.color, output, errors));
+    restore_diagnostics.activate(
+        std::make_shared<Terminal>(config, o.color, output, errors, drawing));
     terminal->set_mode(config.permission_mode);
   }
   interaction = terminal ? std::make_shared<Interaction>() : std::shared_ptr<Interaction>{};

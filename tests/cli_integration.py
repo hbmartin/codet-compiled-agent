@@ -1329,6 +1329,44 @@ class CliTests(unittest.TestCase):
                     if process.poll() is None:process.kill();process.wait(timeout=5)
                     os.close(master);os.close(slave)
 
+    def test_ordinary_curses_failure_preserves_worker_and_partial_input(self):
+        import fcntl
+        import pty
+        import select
+        import struct
+        import termios
+        for stage in ('clear','put','refresh'):
+            with self.subTest(stage=stage):
+                ready,release=threading.Event(),threading.Event()
+                self.server.signal_gate=(ready,release);self.server.releases.append(release)
+                master,slave=pty.openpty();arm,trigger=os.pipe();notice,notify=os.pipe()
+                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
+                helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+                process=subprocess.Popen([helper,'--codet-redraw-helper',stage,str(arm),str(notify),
+                    '-C',str(self.workspace),'--ui','curses','--color','never','fixture-signal-wait'],
+                    stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=dict(self.env,TERM='xterm'))
+                received=bytearray()
+                def collect(predicate,master=master,received=received):
+                    deadline=time.monotonic()+10
+                    while not predicate() and time.monotonic()<deadline:
+                        if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+                    self.assertTrue(predicate(),bytes(received))
+                try:
+                    self.assertTrue(ready.wait(10));os.write(trigger,b'a');os.write(master,b'fixture-reco')
+                    collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
+                    self.assertEqual(os.read(notice,1),b'f')
+                    self.assertIsNone(process.poll());release.set()
+                    collect(lambda received=received:b'fixture done' in received)
+                    received.clear();os.write(master,b'vered-output\n')
+                    collect(lambda received=received:b'recovered reply' in received)
+                    self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'fixture-recovered-output')
+                    os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                    self.assertEqual(process.returncode,0,bytes(received))
+                finally:
+                    release.set()
+                    if process.poll() is None:process.kill();process.wait(timeout=5)
+                    for descriptor in (master,slave,arm,trigger,notice,notify):os.close(descriptor)
+
     def test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer(self):
         import fcntl
         import pty
