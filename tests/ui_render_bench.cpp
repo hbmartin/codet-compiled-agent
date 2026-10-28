@@ -121,9 +121,14 @@ int main(int argc, char **argv) {
   const bool redraw = mode.find("redraw") != std::string::npos;
   const std::string huge(mode == "history-large" ? 2 * 1024 * 1024 : 128, 'a');
   const bool large_presentation = mode == "presentation-large" || mode == "presentation-controls" ||
-                                  mode == "presentation-rendered";
-  const std::string source(large_presentation ? 8 * 1024 * 1024 : 512,
-                           mode == "presentation-controls" ? '\x1b' : 'x');
+                                  mode == "presentation-rendered" || mode == "presentation-unicode";
+  std::string source(large_presentation ? 8 * 1024 * 1024 : 512,
+                     mode == "presentation-controls" ? '\x1b' : 'x');
+  if (mode == "presentation-unicode") {
+    source.clear();
+    while (source.size() < 8 * 1024 * 1024)
+      source += "雪🙂\r\n\x1b";
+  }
   size_t work = 0, checksum = 0, retained = 0, mutations = 0;
 #ifdef CODET_CACHED_UI
   codet::detail::CursesInput input;
