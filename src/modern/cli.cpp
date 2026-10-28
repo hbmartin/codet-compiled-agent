@@ -633,12 +633,7 @@ public:
       }
       if (ch == bindings_["backspace"] || ch == KEY_BACKSPACE || ch == 8) {
         if (!input_.empty()) {
-          do {
-            const auto b = static_cast<unsigned char>(input_.back());
-            input_.pop_back();
-            if ((b & 0xc0) != 0x80)
-              break;
-          } while (!input_.empty());
+          input_.erase_character();
         }
         render();
       } else if (ch >= 32 && ch <= 255 && input_.size() < 65536) {
@@ -720,12 +715,7 @@ public:
     }
     if (ch == bindings_["backspace"] || ch == KEY_BACKSPACE || ch == 8) {
       if (!input_.empty()) {
-        do {
-          const auto b = static_cast<unsigned char>(input_.back());
-          input_.pop_back();
-          if ((b & 0xc0) != 0x80)
-            break;
-        } while (!input_.empty());
+        input_.erase_character();
         if (!curses_ && !input_scope_.stale())
           output_.echo({"\b \b"});
       }

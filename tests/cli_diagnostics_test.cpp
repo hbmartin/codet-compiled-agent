@@ -143,6 +143,36 @@ TEST(CursesInput, IncrementalPreparationPreservesRawBytesAndHasLinearWork) {
   input += 'b';
   EXPECT_EQ(input.size(), detail::CursesInput::limit);
 }
+TEST(CursesInput, CharacterEraseMatchesPriorByteSemanticsWithoutRepeatedTailRebuild) {
+  for (const auto *sample : {"abc雪🙂e\xcc\x81", "\x80\x81", "a\xe9\x9b", "x\xff\x80", "\\xFF"}) {
+    const std::string text(sample);
+    for (size_t bytes = 0; bytes <= text.size(); ++bytes) {
+      detail::CursesInput input;
+      auto expected = text.substr(0, bytes);
+      for (const char byte : expected)
+        input += byte;
+      while (!expected.empty()) {
+        do {
+          const auto byte = static_cast<unsigned char>(expected.back());
+          expected.pop_back();
+          if ((byte & 0xc0) != 0x80)
+            break;
+        } while (!expected.empty());
+        input.erase_character();
+        EXPECT_EQ(input.raw(), expected);
+        EXPECT_EQ(input.view("", 1000), detail::CursesText(detail::literal_text(expected)).text());
+      }
+      input.erase_character();
+    }
+  }
+  detail::CursesInput input;
+  for (const char byte : std::string("retained🙂"))
+    input += byte;
+  const auto before = input.rebuilt_bytes();
+  input.erase_character();
+  EXPECT_EQ(input.raw(), "retained");
+  EXPECT_EQ(input.rebuilt_bytes(), before);
+}
 TEST(RequestInput, ExpiryAndReplacementNeverReclassifyDraftAnswers) {
   const detail::ApprovalIdentity first{"session", "first", 1}, second{"session", "second", 1};
   for (const auto *answer : {"yes", "n", "free text", "1"}) {
