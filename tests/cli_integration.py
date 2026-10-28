@@ -1466,20 +1466,20 @@ class CliTests(unittest.TestCase):
                     prompt+' fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,
                     env=dict(self.env,TERM='xterm'))
                 received=bytearray()
-                def collect(predicate):
+                def collect(predicate,master=master,received=received):
                     deadline=time.monotonic()+10
                     while not predicate() and time.monotonic()<deadline:
                         if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
                     self.assertTrue(predicate(),bytes(received))
                 try:
                     self.assertTrue(ready.wait(10));os.write(master,b'erase-me')
-                    collect(lambda:b'erase-me' in received)
+                    collect(lambda received=received:b'erase-me' in received)
                     received.clear();os.write(master,b'\x7f'*8)
-                    collect(lambda:bytes(received).count(b'\b \b')==8)
-                    received.clear();release.set();collect(lambda:expected in received)
+                    collect(lambda received=received:bytes(received).count(b'\b \b')==8)
+                    received.clear();release.set();collect(lambda expected=expected,received=received:expected in received)
                     self.assertNotIn(b'discard>',received)
-                    os.write(master,answer);collect(lambda:done in received)
-                    os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+                    os.write(master,answer);collect(lambda done=done,received=received:done in received)
+                    os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
                     self.assertEqual(process.returncode,0,bytes(received))
                 finally:
                     release.set()
