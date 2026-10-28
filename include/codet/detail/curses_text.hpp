@@ -3,6 +3,7 @@
 #include "codet/detail/diagnostic_stream.hpp"
 #include <algorithm>
 #include <cwchar>
+#include <optional>
 
 namespace codet::detail {
 // Curses must draw exactly the representation whose columns were measured. Unsupported
@@ -21,27 +22,85 @@ class CursesText {
                : -1;
   }
 
+  static size_t prepare(std::string_view token, RenderedToken parsed, char *output, bool unicode,
+                        bool prose_tabs, bool strict) noexcept {
+    if (parsed.valid &&
+        (parsed.point == '\n' || (prose_tabs && parsed.point == '\t') ||
+         (parsed.point >= 0x20 && parsed.point != 0x7f && (unicode || parsed.point < 0x80) &&
+          (!strict || parsed.point < 0x80 || !approval_invisible(parsed.point)) &&
+          (columns(token, parsed) > 0 || (!strict && columns(token, parsed) == 0))))) {
+      std::copy(token.begin(), token.end(), output);
+      return token.size();
+    }
+    size_t written = 0;
+    for (const auto character : token) {
+      const auto escaped = escaped_byte(static_cast<unsigned char>(character));
+      std::copy(escaped.begin(), escaped.end(), output + written);
+      written += escaped.size();
+    }
+    return written;
+  }
+
 public:
   // Ordinary transcript rows may retain native tab expansion; approval layout never enables it.
   explicit CursesText(std::string_view rendered, bool unicode = true, bool prose_tabs = false,
                       bool strict = true) {
     for (size_t offset = 0; offset < rendered.size();) {
       const auto parsed = rendered_token(rendered, offset);
-      const auto token = rendered.substr(offset, parsed.bytes);
-      if (parsed.valid &&
-          (parsed.point == '\n' || (prose_tabs && parsed.point == '\t') ||
-           (parsed.point >= 0x20 && parsed.point != 0x7f && (unicode || parsed.point < 0x80) &&
-            (!strict || parsed.point < 0x80 || !approval_invisible(parsed.point)) &&
-            (columns(token, parsed) > 0 || (!strict && columns(token, parsed) == 0)))))
-        text_.append(token);
-      else
-        for (const auto character : token) {
-          const auto byte = static_cast<unsigned char>(character);
-          const auto escaped = escaped_byte(byte);
-          text_.append(escaped.data(), escaped.size());
-        }
+      char output[16]; // One UTF-8 scalar or one ASCII escape, expanded at most fourfold.
+      const auto written = prepare(rendered.substr(offset, parsed.bytes), parsed, output, unicode,
+                                   prose_tabs, strict);
+      text_.append(output, written);
       offset += parsed.bytes;
     }
+  }
+  // Ordinary history only: raw rendering and locale preparation share a bounded pipeline.
+  // Approval documents continue using the unlimited strict constructor above.
+  static RenderedText bounded(std::string_view source, size_t budget, std::string_view marker,
+                              bool unicode, std::optional<RenderMode> raw = {},
+                              size_t *processed = nullptr) {
+    RenderedText result;
+    if (processed)
+      *processed = 0;
+    if (budget <= marker.size() + 1) {
+      result.truncated = !source.empty();
+      return result;
+    }
+    const auto available = budget - marker.size() - 1;
+    size_t offset = 0;
+    while (offset < source.size()) {
+      char human[16];
+      const auto progress =
+          raw ? terminal_text_into(source.substr(offset), human, sizeof(human), *raw)
+              : RenderProgress{rendered_token(source, offset).bytes,
+                               rendered_token(source, offset).bytes};
+      const auto fragment =
+          raw ? std::string_view(human, progress.written) : source.substr(offset, progress.written);
+      if (processed)
+        *processed += progress.consumed;
+      bool full = progress.consumed == 0;
+      for (size_t part = 0; !full && part < fragment.size();) {
+        const auto token = rendered_token(fragment, part);
+        char prepared[16];
+        const auto written =
+            prepare(fragment.substr(part, token.bytes), token, prepared, unicode, true, false);
+        if (written > available - result.text.size()) {
+          full = true;
+          break;
+        }
+        result.text.append(prepared, written);
+        part += token.bytes;
+      }
+      if (full)
+        break;
+      offset += progress.consumed;
+    }
+    result.truncated = offset != source.size();
+    if (result.truncated) {
+      result.text += '\n';
+      result.text += marker;
+    }
+    return result;
   }
   const std::string &text() const noexcept {
     return text_;

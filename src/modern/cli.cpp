@@ -506,6 +506,10 @@ public:
     return curses_;
   }
   void diagnostic(const std::string &text) override {
+    if (curses_) {
+      say(text);
+      return;
+    }
     const auto shown = detail::terminal_text(text);
     diagnostic_rendered({shown});
   }
@@ -521,19 +525,32 @@ public:
     if (curses_)
       render();
   }
+  void remember_bounded(std::string_view text, std::optional<detail::RenderMode> raw = {}) {
+    remember(detail::CursesText::bounded(text, detail::UiHistory::byte_limit - 1,
+                                         detail::UiHistory::omission, curses_unicode_, raw)
+                 .text);
+    render();
+  }
   void say_literal(const std::string &text) {
+    if (curses_) {
+      remember_bounded(text, detail::RenderMode::literal);
+      return;
+    }
     const auto shown = detail::literal_text(text);
     say_rendered({shown});
   }
   void say(const std::string &text) {
+    if (curses_) {
+      remember_bounded(text, detail::RenderMode::prose);
+      return;
+    }
     const auto shown = detail::terminal_text(text);
     say_rendered({shown});
   }
   void say_rendered(detail::RenderedTextView text) {
-    if (curses_) {
-      remember(detail::CursesText(text.text, curses_unicode_, true, false).text());
-      render();
-    } else
+    if (curses_)
+      remember_bounded(text.text);
+    else
       (void)output_.display({text.text});
   }
   void remember(const std::string &text) {

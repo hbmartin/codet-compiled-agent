@@ -198,6 +198,40 @@ TEST(RequestInput, ClassificationKeepsQuitOutOfBandAndRequiresFreshRequestInput)
   input.close();
   EXPECT_EQ(input.take("run tests").action(), detail::InputAction::message);
 }
+TEST(UiHistory, PreparationIsBoundedBeforeRawAndRenderedHistoryAllocation) {
+  const std::string pattern = "雪\r\n\x1b\xff\\x0A\t";
+  for (bool unicode : {false, true}) {
+    for (const auto mode : {detail::RenderMode::prose, detail::RenderMode::literal}) {
+      const auto rendered = mode == detail::RenderMode::prose ? detail::terminal_text(pattern)
+                                                              : detail::literal_text(pattern);
+      const detail::CursesText expected(rendered, unicode, true, false);
+      EXPECT_EQ(
+          detail::CursesText::bounded(pattern, 1000, detail::UiHistory::omission, unicode, mode)
+              .text,
+          expected.text());
+      EXPECT_EQ(
+          detail::CursesText::bounded(rendered, 1000, detail::UiHistory::omission, unicode).text,
+          expected.text());
+      for (size_t budget = 0; budget < 150; ++budget) {
+        const auto value = detail::CursesText::bounded(std::string(500, '\x1b') + pattern, budget,
+                                                       detail::UiHistory::omission, unicode, mode);
+        EXPECT_LE(value.text.size(), budget);
+        EXPECT_EQ(detail::rendered_prefix(value.text, value.text.size()), value.text.size());
+      }
+    }
+  }
+  const std::string huge(8 * 1024 * 1024, 'x');
+  size_t processed = 0;
+  const auto prepared = detail::CursesText::bounded(huge, detail::UiHistory::byte_limit - 1,
+                                                    detail::UiHistory::omission, true,
+                                                    detail::RenderMode::prose, &processed);
+  EXPECT_TRUE(prepared.truncated);
+  EXPECT_LE(processed, detail::UiHistory::byte_limit + 16);
+  detail::UiHistory history;
+  history.add(prepared.text);
+  EXPECT_LE(history.bytes(), detail::UiHistory::byte_limit);
+  EXPECT_EQ(history.lines().back(), detail::UiHistory::omission);
+}
 TEST(UiHistory, BoundsBytesBeforeSplittingAndKeepsRecentDecision) {
   detail::UiHistory history;
   const std::string huge(2 * 1024 * 1024, 'x');
