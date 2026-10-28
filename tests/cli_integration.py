@@ -1329,6 +1329,50 @@ class CliTests(unittest.TestCase):
                     if process.poll() is None:process.kill();process.wait(timeout=5)
                     os.close(master);os.close(slave)
 
+    def test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer(self):
+        import fcntl
+        import pty
+        import re
+        import select
+        import struct
+        import termios
+        for ui in ('line','curses'):
+            with self.subTest(ui=ui):
+                self.server.requests=[]
+                ready,release=threading.Event(),threading.Event()
+                self.server.signal_gate=(ready,release);self.server.releases.append(release)
+                master,slave=pty.openpty()
+                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
+                process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',ui,'--color','never',
+                    'fixture-command fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,
+                    env=dict(self.env,TERM='xterm'))
+                received=bytearray()
+                def collect(predicate,master=master,received=received):
+                    deadline=time.monotonic()+10
+                    while not predicate() and time.monotonic()<deadline:
+                        if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+                    self.assertTrue(predicate(),bytes(received))
+                try:
+                    self.assertTrue(ready.wait(10))
+                    os.write(master,b'old-draft')
+                    collect(lambda received=received:b'old-draft' in re.sub(rb'\x1b(?:\[[0-?]*[ -/]*[@-~]|\([A-Z0-9])',b'',received))
+                    received.clear();release.set()
+                    collect(lambda received=received:b'discard>' in received)
+                    self.assertNotIn(b'Approve? [y/N]',received)
+                    received.clear();os.write(master,b'yes\n')
+                    if ui=='line':collect(lambda received=received:b'answer discarded' in received)
+                    self.assertEqual(len(self.server.requests),1)
+                    collect(lambda received=received:b'Approve? [y/N]' in received)
+                    received.clear();os.write(master,b'y\n')
+                    collect(lambda received=received:b'fixture done' in received)
+                    self.assertGreaterEqual(len(self.server.requests),2)
+                    os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                    self.assertEqual(process.returncode,0,bytes(received))
+                finally:
+                    release.set()
+                    if process.poll() is None:process.kill();process.wait(timeout=5)
+                    os.close(master);os.close(slave)
+
     def test_expired_approval_draft_is_discarded_before_next_turn(self):
         import fcntl
         import pty
@@ -1354,6 +1398,7 @@ class CliTests(unittest.TestCase):
                     collect(lambda received=received:b'ye' in received)
                     process.send_signal(signal.SIGINT)
                     collect(lambda received=received:b'Interrupted' in received)
+                    collect(lambda received=received:b'discard>' in received)
                     received.clear();os.write(master,b's\n')
                     collect(lambda received=received:b'answer discarded' in received)
                     self.assertEqual(len(self.server.requests),1)

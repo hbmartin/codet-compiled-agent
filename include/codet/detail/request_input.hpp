@@ -1,10 +1,18 @@
 #pragma once
 #include "codet/detail/approval_identity.hpp"
 namespace codet::detail {
+enum class InputAction { quit, discard, answer, message };
 struct InputLine {
   std::string text;
   std::optional<ApprovalIdentity> request;
   bool discarded = false;
+  InputAction action(const Json *pending = nullptr) const {
+    if (text == "/quit" || text == "/exit")
+      return InputAction::quit;
+    if (discarded || (request && (!pending || !request->matches(*pending))))
+      return InputAction::discard;
+    return request ? InputAction::answer : InputAction::message;
+  }
 };
 // Intent belongs to the draft, not whichever request happens to exist at Enter.
 class RequestInput {
@@ -12,6 +20,9 @@ class RequestInput {
   bool started_ = false, stale_ = false;
 
 public:
+  static constexpr std::string_view discard_prompt = "discard> ";
+  static constexpr std::string_view discard_instruction =
+      "Unfinished input must be discarded. Press Enter, then type a fresh answer.";
   bool open(ApprovalIdentity identity) {
     if (started_)
       stale_ = true;

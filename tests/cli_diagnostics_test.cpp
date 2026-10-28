@@ -175,6 +175,29 @@ TEST(RequestInput, ExpiryAndReplacementNeverReclassifyDraftAnswers) {
   EXPECT_TRUE(input.take("yes").discarded);
   EXPECT_FALSE(input.take("yes").discarded);
 }
+TEST(RequestInput, ClassificationKeepsQuitOutOfBandAndRequiresFreshRequestInput) {
+  const detail::ApprovalIdentity identity{"session", "approval-or-question", 1};
+  const Json event = {
+      {"codet_session_id", "session"}, {"codet_turn", 1}, {"request_id", "approval-or-question"}};
+  detail::RequestInput input;
+  EXPECT_FALSE(input.open(identity));
+  input.edit();
+  EXPECT_EQ(input.take("y").action(&event), detail::InputAction::answer);
+  input.edit();
+  input.close();
+  EXPECT_TRUE(input.stale());
+  input.open(identity);
+  for (const auto *exit : {"/quit", "/exit"})
+    EXPECT_EQ((detail::InputLine{exit, identity, true}.action(&event)), detail::InputAction::quit);
+  auto stale = input.take("yes");
+  EXPECT_EQ(stale.action(&event), detail::InputAction::discard);
+  EXPECT_FALSE(input.stale());
+  auto fresh = input.take("n");
+  EXPECT_EQ(fresh.action(&event), detail::InputAction::answer);
+  EXPECT_EQ(fresh.action(), detail::InputAction::discard);
+  input.close();
+  EXPECT_EQ(input.take("run tests").action(), detail::InputAction::message);
+}
 TEST(UiHistory, BoundsBytesBeforeSplittingAndKeepsRecentDecision) {
   detail::UiHistory history;
   const std::string huge(2 * 1024 * 1024, 'x');
