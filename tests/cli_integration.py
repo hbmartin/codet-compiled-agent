@@ -1452,6 +1452,40 @@ class CliTests(unittest.TestCase):
                     if process.poll() is None:process.kill();process.wait(timeout=5)
                     os.close(master);os.close(slave)
 
+    def test_line_empty_draft_does_not_delay_a_fresh_request_answer(self):
+        import pty
+        import select
+        for prompt,flags,expected,answer,done in (
+            ('fixture-command',[],b'Approve? [y/N]',b'y\n',b'fixture done'),
+            ('fixture-question',['--permission-mode','plan'],b'Enter a choice',b'2\n',b'question answered')):
+            with self.subTest(prompt=prompt):
+                ready,release=threading.Event(),threading.Event()
+                self.server.signal_gate=(ready,release);self.server.releases.append(release)
+                master,slave=pty.openpty()
+                process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','line',*flags,
+                    prompt+' fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,
+                    env=dict(self.env,TERM='xterm'))
+                received=bytearray()
+                def collect(predicate):
+                    deadline=time.monotonic()+10
+                    while not predicate() and time.monotonic()<deadline:
+                        if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+                    self.assertTrue(predicate(),bytes(received))
+                try:
+                    self.assertTrue(ready.wait(10));os.write(master,b'erase-me')
+                    collect(lambda:b'erase-me' in received)
+                    received.clear();os.write(master,b'\x7f'*8)
+                    collect(lambda:bytes(received).count(b'\b \b')==8)
+                    received.clear();release.set();collect(lambda:expected in received)
+                    self.assertNotIn(b'discard>',received)
+                    os.write(master,answer);collect(lambda:done in received)
+                    os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+                    self.assertEqual(process.returncode,0,bytes(received))
+                finally:
+                    release.set()
+                    if process.poll() is None:process.kill();process.wait(timeout=5)
+                    os.close(master);os.close(slave)
+
     def test_expired_approval_draft_is_discarded_before_next_turn(self):
         import fcntl
         import pty
@@ -1484,6 +1518,7 @@ class CliTests(unittest.TestCase):
                     collect(lambda received=received:b'discard>' in received)
                     received.clear();os.write(master,b's\n')
                     collect(lambda received=received:b'input discarded' in received)
+                    if ui=='line':collect(lambda received=received:b'codet> [' in received)
                     self.assertEqual(len(self.server.requests),1)
                     received.clear();os.write(master,b'fixture-recovered-output\n')
                     collect(lambda received=received:b'recovered reply' in received)

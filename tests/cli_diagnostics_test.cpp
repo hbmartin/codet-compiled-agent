@@ -291,6 +291,7 @@ TEST(RequestInputController, CompletionPreservesOrdinaryDraftAndQuitRemainsOutOf
   for (char byte : std::string("/quit"))
     input.append(byte);
   EXPECT_EQ(input.take().action(), detail::InputAction::quit);
+  EXPECT_TRUE(input.needs_prompt());
   EXPECT_EQ(input.take("new message").action(), detail::InputAction::message);
 }
 TEST(UiHistory, PreparationIsBoundedBeforeRawAndRenderedHistoryAllocation) {

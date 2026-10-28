@@ -90,8 +90,7 @@ public:
     return visible;
   }
   bool needs_prompt() const noexcept {
-    return prompt_due_ && !prompt_visible_ &&
-           (stale() || kind_ != RequestKind::message || ordinary_draft());
+    return prompt_due_ && !prompt_visible_;
   }
   bool needs_explanation() const noexcept {
     return stale() && !discard_explained_;
