@@ -90,15 +90,16 @@ int main(int argc, char **argv) {
       ops.context = &failure;
       const std::string stage = argv[2];
       if (stage == "clear")
-        ops.clear = +[](void *p) { return static_cast<Failure *>(p)->fail() ? ERR : ::clrtoeol(); };
+        ops.clear_row =
+            +[](void *p) { return static_cast<Failure *>(p)->fail() ? ERR : ::clrtoeol(); };
       else if (stage == "put")
-        ops.put = +[](void *p, std::string_view text) {
+        ops.put_text = +[](void *p, std::string_view text) {
           return static_cast<Failure *>(p)->fail()
                      ? ERR
                      : ::addnstr(text.data(), static_cast<int>(text.size()));
         };
       else if (stage == "refresh")
-        ops.refresh =
+        ops.refresh_screen =
             +[](void *p) { return static_cast<Failure *>(p)->fail() ? ERR : ::refresh(); };
       else
         return 2;

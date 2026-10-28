@@ -82,17 +82,19 @@ TEST(ApprovalCurses, OrdinaryNativeFailuresKeepStateAndNextFrameRecovers) {
     } state{failure};
     codet::detail::CursesDrawOps ops;
     ops.context = &state;
-    ops.erase = +[](void *p) { return static_cast<Failure *>(p)->stage == 0 ? ERR : ::erase(); };
-    ops.move = +[](void *p, int y, int x) {
+    ops.erase_screen =
+        +[](void *p) { return static_cast<Failure *>(p)->stage == 0 ? ERR : ::erase(); };
+    ops.move_cursor = +[](void *p, int y, int x) {
       return static_cast<Failure *>(p)->stage == 1 ? ERR : ::move(y, x);
     };
-    ops.clear = +[](void *p) { return static_cast<Failure *>(p)->stage == 2 ? ERR : ::clrtoeol(); };
-    ops.put = +[](void *p, std::string_view text) {
+    ops.clear_row =
+        +[](void *p) { return static_cast<Failure *>(p)->stage == 2 ? ERR : ::clrtoeol(); };
+    ops.put_text = +[](void *p, std::string_view text) {
       return static_cast<Failure *>(p)->stage == 3
                  ? ERR
                  : ::addnstr(text.data(), static_cast<int>(text.size()));
     };
-    ops.refresh =
+    ops.refresh_screen =
         +[](void *p) { return static_cast<Failure *>(p)->stage == 4 ? ERR : ::refresh(); };
     bool dirty = false;
     codet::detail::CursesFrame frame(dirty, ops);

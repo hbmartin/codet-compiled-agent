@@ -21,13 +21,15 @@ inline bool curses_unicode_supported(WINDOW *(*allocate)(int, int) = &::newpad) 
 // Allocation-free native seam; injected operations can fail without replacing UI state.
 struct CursesDrawOps {
   void *context = nullptr;
-  int (*erase)(void *) = +[](void *) { return ::erase(); };
-  int (*move)(void *, int, int) = +[](void *, int row, int column) { return ::move(row, column); };
-  int (*clear)(void *) = +[](void *) { return ::clrtoeol(); };
-  int (*put)(void *, std::string_view) = +[](void *, std::string_view text) {
+  int (*erase_screen)(void *) = +[](void *) { return ::erase(); };
+  int (*move_cursor)(void *, int, int) = +[](void *, int row, int column) {
+    return ::move(row, column);
+  };
+  int (*clear_row)(void *) = +[](void *) { return ::clrtoeol(); };
+  int (*put_text)(void *, std::string_view) = +[](void *, std::string_view text) {
     return ::addnstr(text.data(), static_cast<int>(text.size()));
   };
-  int (*refresh)(void *) = +[](void *) { return ::refresh(); };
+  int (*refresh_screen)(void *) = +[](void *) { return ::refresh(); };
 };
 // Takes already prepared text. Every row has one clipping/clearing/drawing boundary.
 inline bool curses_draw_row(int row, std::string_view text, int columns, bool exact = false,
@@ -39,8 +41,8 @@ inline bool curses_draw_row(int row, std::string_view text, int columns, bool ex
   if (exact && size != text.size())
     return false;
   text = text.substr(0, size);
-  if (ops.move(ops.context, row, 0) == ERR || ops.clear(ops.context) == ERR ||
-      (!text.empty() && ops.put(ops.context, text) == ERR))
+  if (ops.move_cursor(ops.context, row, 0) == ERR || ops.clear_row(ops.context) == ERR ||
+      (!text.empty() && ops.put_text(ops.context, text) == ERR))
     return false;
   int actual_row = 0, actual_column = 0;
   getyx(stdscr, actual_row, actual_column);
@@ -56,7 +58,7 @@ class CursesFrame {
 
 public:
   explicit CursesFrame(bool &dirty, const CursesDrawOps &ops)
-      : dirty_(dirty), ops_(ops), success_(ops.erase(ops.context) != ERR) {
+      : dirty_(dirty), ops_(ops), success_(ops.erase_screen(ops.context) != ERR) {
     dirty_ = true;
   }
   bool row(int index, std::string_view text, int columns, bool exact = false) {
@@ -65,7 +67,7 @@ public:
     return success_;
   }
   bool finish() {
-    success_ = (ops_.refresh(ops_.context) != ERR) && success_;
+    success_ = (ops_.refresh_screen(ops_.context) != ERR) && success_;
     dirty_ = !success_;
     return success_;
   }
