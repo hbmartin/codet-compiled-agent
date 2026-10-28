@@ -327,6 +327,34 @@ TEST(UiHistory, PreparationIsBoundedBeforeRawAndRenderedHistoryAllocation) {
   EXPECT_LE(history.bytes(), detail::UiHistory::byte_limit);
   EXPECT_EQ(history.lines().back(), detail::UiHistory::omission);
 }
+TEST(UiHistory, PreparedAndDirectInsertionShareExactBudgetAndRowCharges) {
+  for (const std::string &text :
+       {std::string(70, 'x'), std::string(99, 'x'), std::string(100, 'x'),
+        std::string(70, 'x') + "\n", std::string(68, 'x') + "\n" + std::string(100, 'z'),
+        std::string("a\n\nb\n"), std::string("雪\\xFF")}) {
+    for (size_t budget = 0; budget < 160; ++budget) {
+      const auto bounded =
+          detail::CursesText::bounded(text, budget, detail::UiHistory::omission, false);
+      // This fixture is rendered exactly as curses would render in the C locale.
+      const auto prepared = detail::CursesText(text, false, true, false).text();
+      detail::UiHistory direct, pipelined;
+      direct.add(prepared, budget);
+      pipelined.add(bounded.text, budget);
+      EXPECT_EQ(pipelined.lines(), direct.lines()) << "budget " << budget;
+      EXPECT_EQ(pipelined.bytes(), direct.bytes());
+      EXPECT_LE(pipelined.bytes(), budget);
+    }
+  }
+  const auto fitting =
+      detail::CursesText::bounded(std::string(70, 'x'), 100, detail::UiHistory::omission, true);
+  EXPECT_FALSE(fitting.truncated);
+  EXPECT_EQ(fitting.text, std::string(70, 'x'));
+  const auto tiny = detail::CursesText::bounded("a", 2, detail::UiHistory::omission, true);
+  EXPECT_EQ(tiny.text, "a");
+  const auto edge = detail::CursesText::bounded(std::string(68, 'x') + "\n" + std::string(100, 'z'),
+                                                100, detail::UiHistory::omission, true);
+  EXPECT_EQ(edge.text.find("\n\n"), std::string::npos);
+}
 TEST(UiHistory, BoundsBytesBeforeSplittingAndKeepsRecentDecision) {
   detail::UiHistory history;
   const std::string huge(2 * 1024 * 1024, 'x');

@@ -1,6 +1,6 @@
 #pragma once
 #include "codet/detail/approval_unicode.hpp"
-#include "codet/detail/diagnostic_stream.hpp"
+#include "codet/detail/history_excerpt.hpp"
 #include <algorithm>
 #include <cwchar>
 #include <optional>
@@ -22,13 +22,19 @@ class CursesText {
                : -1;
   }
 
+  static bool printable_ascii(RenderedToken parsed, bool prose_tabs) noexcept {
+    return parsed.valid && parsed.point < 0x80 &&
+           (parsed.point == '\n' || (prose_tabs && parsed.point == '\t') ||
+            (parsed.point >= 0x20 && parsed.point != 0x7f));
+  }
   static size_t prepare(std::string_view token, RenderedToken parsed, char *output, bool unicode,
                         bool prose_tabs, bool strict) noexcept {
+    const auto width = columns(token, parsed);
     if (parsed.valid &&
         (parsed.point == '\n' || (prose_tabs && parsed.point == '\t') ||
          (parsed.point >= 0x20 && parsed.point != 0x7f && (unicode || parsed.point < 0x80) &&
           (!strict || parsed.point < 0x80 || !approval_invisible(parsed.point)) &&
-          (columns(token, parsed) > 0 || (!strict && columns(token, parsed) == 0))))) {
+          (width > 0 || (!strict && width == 0))))) {
       std::copy(token.begin(), token.end(), output);
       return token.size();
     }
@@ -47,9 +53,7 @@ public:
                       bool strict = true) {
     for (size_t offset = 0; offset < rendered.size();) {
       const auto parsed = rendered_token(rendered, offset);
-      if (parsed.valid && parsed.point < 0x80 &&
-          (parsed.point == '\n' || (prose_tabs && parsed.point == '\t') ||
-           (parsed.point >= 0x20 && parsed.point != 0x7f))) {
+      if (printable_ascii(parsed, prose_tabs)) {
         text_.append(rendered.substr(offset, parsed.bytes));
         offset += parsed.bytes;
         continue;
@@ -69,11 +73,10 @@ public:
     RenderedText result;
     if (processed)
       *processed = 0;
-    if (budget <= marker.size() + 1) {
+    if (budget == 0) {
       result.truncated = !source.empty();
       return result;
     }
-    const auto available = budget - marker.size() - 1;
     size_t offset = 0;
     while (offset < source.size()) {
       char human[512];
@@ -89,13 +92,11 @@ public:
       for (size_t part = 0; !full && part < fragment.size();) {
         const auto token = raw ? rendered_token(fragment, part) : first;
         char prepared[16];
-        const bool ascii = token.valid && token.point < 0x80 &&
-                           (token.point == '\n' || token.point == '\t' ||
-                            (token.point >= 0x20 && token.point != 0x7f));
+        const bool ascii = printable_ascii(token, true);
         const auto written = ascii ? token.bytes
                                    : prepare(fragment.substr(part, token.bytes), token, prepared,
                                              unicode, true, false);
-        if (written > available - result.text.size()) {
+        if (written > budget - result.text.size()) {
           full = true;
           break;
         }
@@ -109,9 +110,12 @@ public:
         break;
       offset += progress.consumed;
     }
-    result.truncated = offset != source.size();
-    if (result.truncated) {
-      result.text += '\n';
+    result.truncated = offset != source.size() || history_bytes(result.text) > budget;
+    const auto excerpt = history_excerpt(result.text, budget, marker, result.truncated);
+    result.text.resize(excerpt.prefix);
+    if (excerpt.omitted) {
+      if (!result.text.empty() && result.text.back() != '\n')
+        result.text += '\n';
       result.text += marker;
     }
     return result;

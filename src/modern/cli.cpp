@@ -514,7 +514,7 @@ public:
       render();
   }
   void remember_bounded(std::string_view text, std::optional<detail::RenderMode> raw = {}) {
-    remember(detail::CursesText::bounded(text, detail::UiHistory::byte_limit - 1,
+    remember(detail::CursesText::bounded(text, detail::UiHistory::byte_limit,
                                          detail::UiHistory::omission, curses_unicode_, raw)
                  .text);
     render();
