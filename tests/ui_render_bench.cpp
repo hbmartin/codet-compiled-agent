@@ -65,10 +65,10 @@ Text history_text(const std::string &source, size_t &work, bool rendered, long) 
     return Text(source, true, true, false);
   return Text(codet::detail::terminal_text(source), true, true, false);
 }
-inline const std::string &prepared_text(const codet::detail::RenderedText &value) {
+template <class Value> auto prepared_text(const Value &value, int) -> decltype((value.text)) {
   return value.text;
 }
-template <class Text> const std::string &prepared_text(const Text &value) {
+template <class Value> auto prepared_text(const Value &value, long) -> decltype(value.text()) {
   return value.text();
 }
 template <class Input>
@@ -160,7 +160,7 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i != (large_presentation ? size_t{4} : size_t{1000}); ++i) {
       const auto prepared =
           history_text<codet::detail::CursesText>(source, work, mode == "presentation-rendered", 0);
-      history.add(prepared_text(prepared));
+      history.add(prepared_text(prepared, 0));
       checksum += history.bytes();
     }
     retained = history.bytes();
