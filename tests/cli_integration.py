@@ -1329,19 +1329,21 @@ class CliTests(unittest.TestCase):
                     if process.poll() is None:process.kill();process.wait(timeout=5)
                     os.close(master);os.close(slave)
 
-    def test_expired_approval_draft_is_discarded_before_next_turn(self):
+    def test_approval_curses_failure_cancels_without_running_the_tool(self):
         import fcntl
         import pty
         import select
         import struct
         import termios
-        for ui in ('line','curses'):
-            with self.subTest(ui=ui):
+        for stage in ('clear','put','refresh'):
+            with self.subTest(stage=stage):
                 self.server.requests=[]
-                master,slave=pty.openpty()
-                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
-                process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',ui,'--color','never','fixture-command'],
-                    stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+                master,slave=pty.openpty();arm,trigger=os.pipe();notice,notify=os.pipe()
+                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
+                helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+                process=subprocess.Popen([helper,'--codet-redraw-helper',stage,str(arm),str(notify),
+                    '-C',str(self.workspace),'--ui','curses','--color','never','fixture-command'],
+                    stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=dict(self.env,TERM='xterm'))
                 received=bytearray()
                 def collect(predicate,master=master,received=received):
                     deadline=time.monotonic()+10
@@ -1350,10 +1352,131 @@ class CliTests(unittest.TestCase):
                     self.assertTrue(predicate(),bytes(received))
                 try:
                     collect(lambda received=received:b'Approve? [y/N]' in received)
+                    os.write(trigger,b'a');received.clear()
+                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,101,0,0))
+                    process.send_signal(signal.SIGWINCH)
+                    collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
+                    self.assertEqual(os.read(notice,1),b'f')
+                    collect(lambda received=received:b'Cannot render approval review' in received)
+                    self.assertEqual(len(self.server.requests),1)
+                    os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                    self.assertEqual(process.returncode,0,bytes(received))
+                finally:
+                    if process.poll() is None:process.kill();process.wait(timeout=5)
+                    for descriptor in (master,slave,arm,trigger,notice,notify):os.close(descriptor)
+
+    def test_ordinary_curses_failure_preserves_worker_and_partial_input(self):
+        import fcntl
+        import pty
+        import select
+        import struct
+        import termios
+        for stage in ('clear','put','refresh'):
+            with self.subTest(stage=stage):
+                ready,release=threading.Event(),threading.Event()
+                self.server.signal_gate=(ready,release);self.server.releases.append(release)
+                master,slave=pty.openpty();arm,trigger=os.pipe();notice,notify=os.pipe()
+                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
+                helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+                process=subprocess.Popen([helper,'--codet-redraw-helper',stage,str(arm),str(notify),
+                    '-C',str(self.workspace),'--ui','curses','--color','never','fixture-signal-wait'],
+                    stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=dict(self.env,TERM='xterm'))
+                received=bytearray()
+                def collect(predicate,master=master,received=received):
+                    deadline=time.monotonic()+10
+                    while not predicate() and time.monotonic()<deadline:
+                        if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+                    self.assertTrue(predicate(),bytes(received))
+                try:
+                    self.assertTrue(ready.wait(10));os.write(trigger,b'a');os.write(master,b'fixture-reco')
+                    collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
+                    self.assertEqual(os.read(notice,1),b'f')
+                    self.assertIsNone(process.poll());release.set()
+                    collect(lambda received=received:b'fixture done' in received)
+                    received.clear();os.write(master,b'vered-output\n')
+                    collect(lambda received=received:b'recovered reply' in received)
+                    self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'fixture-recovered-output')
+                    os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                    self.assertEqual(process.returncode,0,bytes(received))
+                finally:
+                    release.set()
+                    if process.poll() is None:process.kill();process.wait(timeout=5)
+                    for descriptor in (master,slave,arm,trigger,notice,notify):os.close(descriptor)
+
+    def test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer(self):
+        import fcntl
+        import pty
+        import re
+        import select
+        import struct
+        import termios
+        for ui in ('line','curses'):
+            with self.subTest(ui=ui):
+                self.server.requests=[]
+                ready,release=threading.Event(),threading.Event()
+                self.server.signal_gate=(ready,release);self.server.releases.append(release)
+                master,slave=pty.openpty()
+                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
+                process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',ui,'--color','never',
+                    'fixture-command fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,
+                    env=dict(self.env,TERM='xterm'))
+                received=bytearray()
+                def collect(predicate,master=master,received=received):
+                    deadline=time.monotonic()+10
+                    while not predicate() and time.monotonic()<deadline:
+                        if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+                    self.assertTrue(predicate(),bytes(received))
+                try:
+                    self.assertTrue(ready.wait(10))
+                    os.write(master,b'old-draft')
+                    collect(lambda received=received:b'old-draft' in re.sub(rb'\x1b(?:\[[0-?]*[ -/]*[@-~]|\([A-Z0-9])',b'',received))
+                    received.clear();release.set()
+                    collect(lambda received=received:b'discard>' in received)
+                    self.assertNotIn(b'Approve? [y/N]',received)
+                    received.clear();os.write(master,b'yes\n')
+                    if ui=='line':collect(lambda received=received:b'answer discarded' in received)
+                    self.assertEqual(len(self.server.requests),1)
+                    collect(lambda received=received:b'Approve? [y/N]' in received)
+                    received.clear();os.write(master,b'y\n')
+                    collect(lambda received=received:b'fixture done' in received)
+                    self.assertGreaterEqual(len(self.server.requests),2)
+                    os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                    self.assertEqual(process.returncode,0,bytes(received))
+                finally:
+                    release.set()
+                    if process.poll() is None:process.kill();process.wait(timeout=5)
+                    os.close(master);os.close(slave)
+
+    def test_expired_approval_draft_is_discarded_before_next_turn(self):
+        import fcntl
+        import pty
+        import select
+        import struct
+        import termios
+        for ui,prompt,flags,expected in (
+            ('line','fixture-command',[],b'Approve? [y/N]'),
+            ('curses','fixture-command',[],b'Approve? [y/N]'),
+            ('line','fixture-question',['--permission-mode','plan'],b'Enter a choice'),
+            ('curses','fixture-question',['--permission-mode','plan'],b'Enter a choice')):
+            with self.subTest(ui=ui,prompt=prompt):
+                self.server.requests=[]
+                master,slave=pty.openpty()
+                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
+                process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',ui,'--color','never',*flags,prompt],
+                    stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+                received=bytearray()
+                def collect(predicate,master=master,received=received):
+                    deadline=time.monotonic()+10
+                    while not predicate() and time.monotonic()<deadline:
+                        if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+                    self.assertTrue(predicate(),bytes(received))
+                try:
+                    collect(lambda received=received,expected=expected:expected in received)
                     received.clear();os.write(master,b'ye')
                     collect(lambda received=received:b'ye' in received)
                     process.send_signal(signal.SIGINT)
                     collect(lambda received=received:b'Interrupted' in received)
+                    collect(lambda received=received:b'discard>' in received)
                     received.clear();os.write(master,b's\n')
                     collect(lambda received=received:b'answer discarded' in received)
                     self.assertEqual(len(self.server.requests),1)

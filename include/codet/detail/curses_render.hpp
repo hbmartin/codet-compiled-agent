@@ -18,22 +18,62 @@ inline bool curses_unicode_supported(WINDOW *(*allocate)(int, int) = &::newpad) 
   (void)::delwin(window);
   return result != ERR && row == 0 && column == 1;
 }
+// Allocation-free native seam; injected operations can fail without replacing UI state.
+struct CursesDrawOps {
+  void *context = nullptr;
+  int (*erase_screen)(void *) = +[](void *) { return ::erase(); };
+  int (*move_cursor)(void *, int, int) = +[](void *, int row, int column) {
+    return ::move(row, column);
+  };
+  int (*clear_row)(void *) = +[](void *) { return ::clrtoeol(); };
+  int (*put_text)(void *, std::string_view) = +[](void *, std::string_view text) {
+    return ::addnstr(text.data(), static_cast<int>(text.size()));
+  };
+  int (*refresh_screen)(void *) = +[](void *) { return ::refresh(); };
+};
 // Takes already prepared text. Every row has one clipping/clearing/drawing boundary.
-inline void curses_draw_row(int row, std::string_view text, int columns, bool exact = false) {
+inline bool curses_draw_row(int row, std::string_view text, int columns, bool exact = false,
+                            const CursesDrawOps &ops = {}) {
   if (columns <= 1)
-    return;
+    return text.empty();
   const auto size = CursesText::prefix(text, static_cast<size_t>(columns - 1),
                                        static_cast<size_t>(std::max(TABSIZE, 1)));
   if (exact && size != text.size())
-    throw Error("Approval review exceeded its assigned row");
+    return false;
   text = text.substr(0, size);
-  if (move(row, 0) == ERR || clrtoeol() == ERR ||
-      (!text.empty() && mvaddnstr(row, 0, text.data(), static_cast<int>(text.size())) == ERR))
-    throw Error("Cannot render terminal row");
+  if (ops.move_cursor(ops.context, row, 0) == ERR || ops.clear_row(ops.context) == ERR ||
+      (!text.empty() && ops.put_text(ops.context, text) == ERR))
+    return false;
   int actual_row = 0, actual_column = 0;
   getyx(stdscr, actual_row, actual_column);
   if (exact && (actual_row != row || actual_column < 0 || actual_column >= columns ||
                 static_cast<size_t>(actual_column) != CursesText::width(text)))
-    throw Error("Approval review exceeded its assigned row");
+    return false;
+  return true;
 }
+class CursesFrame {
+  bool &dirty_;
+  const CursesDrawOps &ops_;
+  bool success_;
+
+public:
+  explicit CursesFrame(bool &dirty, const CursesDrawOps &ops)
+      : dirty_(dirty), ops_(ops), success_(ops.erase_screen(ops.context) != ERR) {
+    dirty_ = true;
+  }
+  bool row(int index, std::string_view text, int columns, bool exact = false) {
+    const bool drawn = curses_draw_row(index, text, columns, exact, ops_);
+    success_ = drawn && success_;
+    return success_;
+  }
+  bool finish() {
+    success_ = (ops_.refresh_screen(ops_.context) != ERR) && success_;
+    dirty_ = !success_;
+    return success_;
+  }
+  void require_finish() {
+    if (!finish())
+      throw Error("Cannot render approval review");
+  }
+};
 } // namespace codet::detail

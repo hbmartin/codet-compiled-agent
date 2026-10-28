@@ -1,4 +1,6 @@
+#include "codet/detail/cli.hpp"
 #include "codet/detail/cli_output.hpp"
+#include "codet/detail/curses_render.hpp"
 #include "codet/detail/native_terminal.hpp"
 #include "codet/diagnostics.hpp"
 #ifdef CODET_NATIVE_TERMINAL_METRICS
@@ -64,6 +66,49 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc > 1 && std::string(argv[1]) == "--codet-redraw-helper") {
+      if (argc < 6)
+        return 2;
+      struct Failure {
+        int arm, notify;
+        bool fired = false;
+        bool fail() {
+          if (fired)
+            return false;
+          pollfd descriptor{arm, POLLIN, 0};
+          if (::poll(&descriptor, 1, 0) != 1)
+            return false;
+          char byte = 0;
+          if (::read(arm, &byte, 1) != 1)
+            return false;
+          fired = true;
+          (void)::write(notify, "f", 1);
+          return true;
+        }
+      } failure{std::stoi(argv[3]), std::stoi(argv[4])};
+      codet::detail::CursesDrawOps ops;
+      ops.context = &failure;
+      const std::string stage = argv[2];
+      if (stage == "clear")
+        ops.clear_row =
+            +[](void *p) { return static_cast<Failure *>(p)->fail() ? ERR : ::clrtoeol(); };
+      else if (stage == "put")
+        ops.put_text = +[](void *p, std::string_view text) {
+          return static_cast<Failure *>(p)->fail()
+                     ? ERR
+                     : ::addnstr(text.data(), static_cast<int>(text.size()));
+        };
+      else if (stage == "refresh")
+        ops.refresh_screen =
+            +[](void *p) { return static_cast<Failure *>(p)->fail() ? ERR : ::refresh(); };
+      else
+        return 2;
+      codet::Cancellation cancel;
+      codet::detail::IoContext io(cancel);
+      return codet::detail::cli_main(std::vector<std::string>(argv + 5, argv + argc), cancel, io,
+                                     ops);
+    }
+
 #ifdef CODET_NATIVE_TERMINAL_METRICS
     if (argc > 1 && std::string(argv[1]) == "--codet-quarantine-warning-helper") {
       if (argc != 3 || ::dup2(std::stoi(argv[2]), STDERR_FILENO) < 0)

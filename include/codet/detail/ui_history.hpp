@@ -7,9 +7,9 @@ namespace codet::detail {
 class UiHistory {
   std::deque<std::string> lines_;
   size_t bytes_ = 0;
-  static constexpr std::string_view omission = "[UI history excerpt truncated]";
 
 public:
+  static constexpr std::string_view omission = "[UI history excerpt truncated]";
   static constexpr size_t byte_limit = size_t{256} * 1024, line_limit = 1000;
   static constexpr size_t approval_limit = size_t{16} * 1024;
   size_t bytes() const noexcept {

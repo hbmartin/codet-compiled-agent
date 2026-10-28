@@ -72,6 +72,47 @@ void expect_row(int row, std::string_view text, int columns) {
   }
   EXPECT_EQ(mvinch(row, columns - 1) & A_CHARTEXT, static_cast<chtype>(' '));
 }
+TEST(ApprovalCurses, OrdinaryNativeFailuresKeepStateAndNextFrameRecovers) {
+  Screen native;
+  ASSERT_TRUE(native.open("C"));
+  ASSERT_EQ(::resizeterm(10, 80), OK);
+  for (int failure = 0; failure != 5; ++failure) {
+    struct Failure {
+      int stage;
+    } state{failure};
+    codet::detail::CursesDrawOps ops;
+    ops.context = &state;
+    ops.erase_screen =
+        +[](void *p) { return static_cast<Failure *>(p)->stage == 0 ? ERR : ::erase(); };
+    ops.move_cursor = +[](void *p, int y, int x) {
+      return static_cast<Failure *>(p)->stage == 1 ? ERR : ::move(y, x);
+    };
+    ops.clear_row =
+        +[](void *p) { return static_cast<Failure *>(p)->stage == 2 ? ERR : ::clrtoeol(); };
+    ops.put_text = +[](void *p, std::string_view text) {
+      return static_cast<Failure *>(p)->stage == 3
+                 ? ERR
+                 : ::addnstr(text.data(), static_cast<int>(text.size()));
+    };
+    ops.refresh_screen =
+        +[](void *p) { return static_cast<Failure *>(p)->stage == 4 ? ERR : ::refresh(); };
+    bool dirty = false;
+    codet::detail::CursesFrame frame(dirty, ops);
+    EXPECT_NO_THROW(frame.row(1, "retained progress", 80));
+    EXPECT_FALSE(frame.finish());
+    EXPECT_TRUE(dirty);
+    codet::detail::ApprovalReview review("session", 1, "request", "command");
+    review.reshape(10, 80);
+    EXPECT_THROW(frame.require_finish(), codet::Error);
+    EXPECT_FALSE(review.approved_review());
+    state.stage = -1;
+    codet::detail::CursesFrame retry(dirty, ops);
+    EXPECT_TRUE(retry.row(1, "retained progress", 80));
+    EXPECT_TRUE(retry.finish());
+    EXPECT_FALSE(dirty);
+    expect_row(1, "retained progress", 80);
+  }
+}
 TEST(ApprovalCurses, PreparedPagesFitRealCellsInCAndUtf8Locales) {
   bool exercised_unicode = false;
   for (const char *locale : {"C", "en_US.UTF-8", "C.UTF-8"}) {

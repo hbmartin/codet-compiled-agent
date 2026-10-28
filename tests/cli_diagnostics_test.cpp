@@ -143,6 +143,36 @@ TEST(CursesInput, IncrementalPreparationPreservesRawBytesAndHasLinearWork) {
   input += 'b';
   EXPECT_EQ(input.size(), detail::CursesInput::limit);
 }
+TEST(CursesInput, CharacterEraseMatchesPriorByteSemanticsWithoutRepeatedTailRebuild) {
+  for (const auto *sample : {"abc雪🙂e\xcc\x81", "\x80\x81", "a\xe9\x9b", "x\xff\x80", "\\xFF"}) {
+    const std::string text(sample);
+    for (size_t bytes = 0; bytes <= text.size(); ++bytes) {
+      detail::CursesInput input;
+      auto expected = text.substr(0, bytes);
+      for (const char byte : expected)
+        input += byte;
+      while (!expected.empty()) {
+        do {
+          const auto byte = static_cast<unsigned char>(expected.back());
+          expected.pop_back();
+          if ((byte & 0xc0) != 0x80)
+            break;
+        } while (!expected.empty());
+        input.erase_character();
+        EXPECT_EQ(input.raw(), expected);
+        EXPECT_EQ(input.view("", 1000), detail::CursesText(detail::literal_text(expected)).text());
+      }
+      input.erase_character();
+    }
+  }
+  detail::CursesInput input;
+  for (const char byte : std::string("retained🙂"))
+    input += byte;
+  const auto before = input.rebuilt_bytes();
+  input.erase_character();
+  EXPECT_EQ(input.raw(), "retained");
+  EXPECT_EQ(input.rebuilt_bytes(), before);
+}
 TEST(RequestInput, ExpiryAndReplacementNeverReclassifyDraftAnswers) {
   const detail::ApprovalIdentity first{"session", "first", 1}, second{"session", "second", 1};
   for (const auto *answer : {"yes", "n", "free text", "1"}) {
@@ -174,6 +204,63 @@ TEST(RequestInput, ExpiryAndReplacementNeverReclassifyDraftAnswers) {
   EXPECT_TRUE(input.open(first));
   EXPECT_TRUE(input.take("yes").discarded);
   EXPECT_FALSE(input.take("yes").discarded);
+}
+TEST(RequestInput, ClassificationKeepsQuitOutOfBandAndRequiresFreshRequestInput) {
+  const detail::ApprovalIdentity identity{"session", "approval-or-question", 1};
+  const Json event = {
+      {"codet_session_id", "session"}, {"codet_turn", 1}, {"request_id", "approval-or-question"}};
+  detail::RequestInput input;
+  EXPECT_FALSE(input.open(identity));
+  input.edit();
+  EXPECT_EQ(input.take("y").action(&event), detail::InputAction::answer);
+  input.edit();
+  input.close();
+  EXPECT_TRUE(input.stale());
+  input.open(identity);
+  for (const auto *exit : {"/quit", "/exit"})
+    EXPECT_EQ((detail::InputLine{exit, identity, true}.action(&event)), detail::InputAction::quit);
+  auto stale = input.take("yes");
+  EXPECT_EQ(stale.action(&event), detail::InputAction::discard);
+  EXPECT_FALSE(input.stale());
+  auto fresh = input.take("n");
+  EXPECT_EQ(fresh.action(&event), detail::InputAction::answer);
+  EXPECT_EQ(fresh.action(), detail::InputAction::discard);
+  input.close();
+  EXPECT_EQ(input.take("run tests").action(), detail::InputAction::message);
+}
+TEST(UiHistory, PreparationIsBoundedBeforeRawAndRenderedHistoryAllocation) {
+  const std::string pattern = "雪\r\n\x1b\xff\\x0A\t";
+  for (bool unicode : {false, true}) {
+    for (const auto mode : {detail::RenderMode::prose, detail::RenderMode::literal}) {
+      const auto rendered = mode == detail::RenderMode::prose ? detail::terminal_text(pattern)
+                                                              : detail::literal_text(pattern);
+      const detail::CursesText expected(rendered, unicode, true, false);
+      EXPECT_EQ(
+          detail::CursesText::bounded(pattern, 1000, detail::UiHistory::omission, unicode, mode)
+              .text,
+          expected.text());
+      EXPECT_EQ(
+          detail::CursesText::bounded(rendered, 1000, detail::UiHistory::omission, unicode).text,
+          expected.text());
+      for (size_t budget = 0; budget < 150; ++budget) {
+        const auto value = detail::CursesText::bounded(std::string(500, '\x1b') + pattern, budget,
+                                                       detail::UiHistory::omission, unicode, mode);
+        EXPECT_LE(value.text.size(), budget);
+        EXPECT_EQ(detail::rendered_prefix(value.text, value.text.size()), value.text.size());
+      }
+    }
+  }
+  const std::string huge(8 * 1024 * 1024, 'x');
+  size_t processed = 0;
+  const auto prepared = detail::CursesText::bounded(huge, detail::UiHistory::byte_limit - 1,
+                                                    detail::UiHistory::omission, true,
+                                                    detail::RenderMode::prose, &processed);
+  EXPECT_TRUE(prepared.truncated);
+  EXPECT_LE(processed, detail::UiHistory::byte_limit + 512);
+  detail::UiHistory history;
+  history.add(prepared.text);
+  EXPECT_LE(history.bytes(), detail::UiHistory::byte_limit);
+  EXPECT_EQ(history.lines().back(), detail::UiHistory::omission);
 }
 TEST(UiHistory, BoundsBytesBeforeSplittingAndKeepsRecentDecision) {
   detail::UiHistory history;

@@ -209,6 +209,27 @@ extern "C" int sqlite3_step(sqlite3_stmt *statement) {
   return result;
 }
 namespace {
+TEST(UiBudgetFault, BoundedRawPreparationCapsAllocationsAndPropagatesFailure) {
+  const std::string huge(16 * 1024 * 1024, '\x1b');
+  fault::largest_allocation = 0;
+  fault::measure_allocations = true;
+  auto prepared =
+      detail::CursesText::bounded(huge, detail::UiHistory::byte_limit - 1,
+                                  detail::UiHistory::omission, true, detail::RenderMode::prose);
+  fault::measure_allocations = false;
+  EXPECT_TRUE(prepared.truncated);
+  EXPECT_LE(fault::largest_allocation, 2 * detail::UiHistory::byte_limit);
+  fault::countdown = 0;
+  bool failed = false;
+  try {
+    (void)detail::CursesText::bounded(huge, detail::UiHistory::byte_limit - 1,
+                                      detail::UiHistory::omission, true, detail::RenderMode::prose);
+  } catch (const std::bad_alloc &) {
+    failed = true;
+  }
+  fault::disable();
+  EXPECT_TRUE(failed);
+}
 TEST(UiBudgetFault, RedrawAndHistoryDoNotAllocateInProportionToWholeInput) {
   struct Reset {
     ~Reset() {

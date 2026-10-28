@@ -100,6 +100,23 @@ public:
     rebuild(start);
     mutation.complete = true;
   }
+  void erase_character() {
+    if (raw_.empty())
+      return;
+    Mutation mutation{*this};
+    size_t start = raw_.size();
+    do {
+      const auto byte = static_cast<unsigned char>(raw_[--start]);
+      if ((byte & 0xc0) != 0x80)
+        break;
+    } while (start);
+    while (!tokens_.empty() && tokens_.back().source_end > start)
+      tokens_.pop_back();
+    display_.resize(tokens_.empty() ? 0u : tokens_.back().display_end);
+    raw_.resize(start);
+    rebuild(tokens_.empty() ? 0u : tokens_.back().source_end);
+    mutation.complete = true;
+  }
   std::string view(std::string_view prompt, size_t columns) const {
     std::string result(prompt.substr(0, columns));
     columns -= result.size();

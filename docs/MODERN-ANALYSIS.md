@@ -594,3 +594,101 @@ final suites and measurements. Native Tiger runtime/cross-build tools and Intel 
 were unavailable. Tiger's pinned unsuffixed wide-curses configuration is preserved, not reported
 as executed validation. Blocking-TTY cancellation and the absence of a visually-unique-Unicode
 or exactly-once-output guarantee remain documented limitations.
+
+
+## Explicit discard prompts and recoverable redraw follow-up
+
+Fetched baseline `a850f04` contains PR #41. Validated/measured production revision
+`28530968692d77848e8f1ffb133d1682ca22f977` makes stale line ownership explicit without
+releasing the expired-answer guard. A deterministic gated PTY control fails on baseline in both
+line and curses modes because a fresh-looking approval prompt appears while an old draft still
+owns the line. With the change, `discard>` appears first; Enter only discards that line, and a
+subsequent fresh answer is required. Approval and question expiry, ordinary drafts across worker
+completion, request matching, quit/EOF/cancellation, resizing and page navigation retain their rules.
+One classifier handles stale/quit/answer/message decisions; opening approval parses identity once.
+
+Ordinary native row/refresh errors now return status, preserve history/input and the worker, and
+leave the display dirty until the next normal UI event. No retry spin or automatic line-mode switch
+is added. Approval rendering still requires successful complete rows and refresh before credit.
+The identical native negative-control harness throws on baseline (exit 31) and returns status on
+the change (exit 0). Real CLI tests inject clear, put and refresh failures: ordinary work and partial
+input survive; equivalent approval failure cancels without running the tool. Preparation/allocation
+exceptions remain exceptional, and cleanup retains the existing original-exception rules.
+
+Ordinary transcript preparation now bounds raw human encoding and locale fallback before making
+full-message display copies. A 512-byte stack chunk and complete token boundaries preserve prose,
+literal/escape distinctions, CRLF policy and supported Unicode. The omission rule is shared with
+history, including its bytes within the 256 KiB payload / 1,000-line cap. Pending review documents
+remain complete and independent; approval excerpts remain capped at 16 KiB. Character deletion
+mutates the cached UTF-8 tail once, retaining previous valid/partial/malformed byte semantics.
+The uncached input reference and real-cell tests of the cached viewport remain in place.
+
+[Commands, hashes, controls, findings and limits](validation/approval-ui-recovery-followup.json),
+[final medians](validation/approval-ui-recovery-followup-performance.csv), and
+[every final warm-up/measured sample](validation/approval-ui-recovery-followup-performance-samples.csv)
+record the verification. Full Debug and ASan/UBSan CTest pass 9/9 each: 582 unit cases (two expected
+opt-in skips), 65 publication-fault cases and 90 CLI integration methods, plus the other runners.
+Twenty focused batches pass 1,860 unit cases, 320 fault cases and 320 PTY/lifecycle methods.
+Pinned lint, Semgrep, runner checks, offline dependency verification and analyzer canaries pass.
+Ubuntu required checks pass on the exact implementation revision; the run is linked in the JSON.
+
+Local Cppcheck completes 25/25 with no findings. Local Clang-Tidy completes 24/25 with exactly
+five baseline source warnings plus the existing SDK13-incomplete platform translation unit;
+Clang Analyzer completes 25/25 with the unchanged context.cpp division warning. Both local
+Clang tools retain nonzero exits; they are not claimed clean. Final input hashes and diagnostic
+multisets match the recorded comparison. No checks or suppressions were weakened.
+
+Two isolated Release sets use identical compiler/settings/harnesses, one warm-up plus five
+alternating measured runs per workload/variant (552 samples across 23 workloads). Times below
+are median milliseconds at the measured boundary, not complete interactive latency. No
+timing-based CI threshold or general output performance improvement is claimed.
+
+| Workload | Baseline, sets 1 / 2 | Changed, sets 1 / 2 |
+| --- | --- | --- |
+| presentation-small | 5.364 / 5.805 | 4.816 / 4.953 |
+| presentation-large | 400.069 / 535.025 | 11.476 / 9.363 |
+| presentation-controls | 417.076 / 462.803 | 3.442 / 2.797 |
+| presentation-unicode | 401.246 / 422.347 | 3.519 / 3.477 |
+| presentation-rendered | 230.044 / 247.920 | 7.768 / 7.076 |
+| erase-emoji | 0.982 / 1.096 | 0.045 / 0.047 |
+| input-65536 | 11.328 / 11.083 | 11.537 / 11.058 |
+| input-redraw-65536 | 0.019 / 0.018 | 0.022 / 0.020 |
+| diagnostics-amplified | 546.825 / 518.861 | 495.416 / 638.363 |
+| diagnostics-standalone-amplified | 496.061 / 552.921 | 503.616 / 538.872 |
+| diagnostics-pipe-amplified | 620.393 / 842.987 | 632.292 / 729.535 |
+| editor | 153.224 / 119.415 | 151.702 / 124.546 |
+| export-small-file | 112.104 / 101.470 | 104.671 / 103.909 |
+| export-large-file | 327.281 / 337.087 | 490.522 / 382.320 |
+
+The first correctness comparison exposed repeatable small-message overhead. Its
+[medians](validation/approval-ui-recovery-followup-first-performance.csv) and
+[all samples](validation/approval-ui-recovery-followup-first-performance-samples.csv) are retained.
+The final implementation restores ASCII fast paths, avoids duplicate tokenization and encodes
+raw chunks on the stack. Allocation and write/stat/flag/bound-query positive controls pass.
+Input and nontruncated presentation checksums match; truncated Unicode can stop earlier at a
+complete prepared scalar. Diagnostic/export allocation/byte and observed native-operation counts
+are unchanged. Native output timings vary between sets; no export/editor speedup is inferred. The primary large
+export sets show higher changed medians (327.281/490.522 and 337.087/382.320 ms baseline/changed).
+Two additional isolated alternating sets give 371.178/395.895 and 300.908/295.427 ms; every sample
+is embedded in the JSON. Counts are identical, but the timing variation remains unresolved; a
+blanket timing no-regression claim is not made.
+
+For 4,096 emoji deletions, cache mutations fall from 16,384 to 4,096 and retained-tail preparation
+falls from 24,576 source bytes to zero, with zero C++ allocations in either version. Unchanged
+redraws still prepare zero input bytes and copy only their viewport. Presentation work stops at
+retained output plus fixed lookahead, including exhausted/small budgets; allocation-failure tests
+retain the exception. Counters cover C++ new and directly observed calls, not every libc/libedit
+operation or peak RSS. The JSON records allocations, bytes and raw consumed/prepared-byte counts.
+
+An earlier sanitizer full suite aborted in unchanged
+`Followup.SpoolFailureKeepsExitStatusAndSerializablePreview`: it reported an unexpected tool error,
+then indexed absent metadata. It emitted no sanitizer memory-error report. One hundred exact
+baseline and one hundred changed focused runs did not reproduce it; the cause remains unresolved.
+Final complete suites and repetitions pass without changing that test or process/spool production
+code. Development-time enum-size and baseline-harness build warnings were corrected in source.
+
+Native Tiger runtime, PPC compiler/10.4u SDK and Intel macOS runtime are unavailable; no passing
+Tiger build/runtime is claimed. Existing Tiger library selection, ASCII fallback, strict approval
+Unicode policy, raw execution/answer/data bytes, storage/journal formats, completed-turn authority,
+terminal cleanup ownership and live-to-cleanup-to-file replay ordering remain unchanged.
+Blocking-TTY cancellation and best-effort standalone/emergency output retain their existing limits.
