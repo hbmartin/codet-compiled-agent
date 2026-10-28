@@ -1,5 +1,6 @@
 // Identical host harness for the original and cached UI boundaries.
 #include "codet/core.hpp"
+#include "codet/detail/curses_render.hpp"
 #include "codet/detail/curses_text.hpp"
 #if __has_include("codet/detail/curses_input.hpp")
 #include "codet/detail/curses_input.hpp"
@@ -86,6 +87,28 @@ int main(int argc, char **argv) {
     return 2;
   (void)std::setlocale(LC_ALL, "C");
   const std::string mode = argv[1];
+  if (mode == "draw-negative") {
+    FILE *output = std::tmpfile(), *input_file = std::tmpfile();
+    char terminal[] = "xterm";
+    auto *screen = ::newterm(terminal, output, input_file);
+    if (!screen)
+      return 2;
+    ::set_term(screen);
+    bool threw = false;
+    try {
+      (void)codet::detail::curses_draw_row(-1, "ordinary row", 80);
+    } catch (const codet::Error &) {
+      threw = true;
+    }
+    ::endwin();
+    ::delscreen(screen);
+    std::fclose(output);
+    std::fclose(input_file);
+    std::ofstream report(argv[2]);
+    report << codet::Json({{"ordinary_draw_threw", threw}}).dump() << '\n';
+    return threw ? 31 : 0;
+  }
+
   const size_t size = mode.find("65536") != std::string::npos  ? 65536
                       : mode.find("8192") != std::string::npos ? 8192
                                                                : 1024;
