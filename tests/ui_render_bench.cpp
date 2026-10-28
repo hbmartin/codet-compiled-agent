@@ -59,11 +59,17 @@ auto history_text(const std::string &source, size_t &work, bool rendered,
   return result;
 }
 template <class Text>
-codet::detail::RenderedText history_text(const std::string &source, size_t &work, bool rendered,
-                                         long) {
+Text history_text(const std::string &source, size_t &work, bool rendered, long) {
   work += source.size();
-  return {Text(rendered ? source : codet::detail::terminal_text(source), true, true, false).text(),
-          false};
+  if (rendered)
+    return Text(source, true, true, false);
+  return Text(codet::detail::terminal_text(source), true, true, false);
+}
+inline const std::string &prepared_text(const codet::detail::RenderedText &value) {
+  return value.text;
+}
+template <class Text> const std::string &prepared_text(const Text &value) {
+  return value.text();
 }
 template <class Input>
 auto erase_character(Input &input, int) -> decltype(input.erase_character(), size_t{}) {
@@ -149,7 +155,7 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i != (large_presentation ? size_t{4} : size_t{1000}); ++i) {
       const auto prepared =
           history_text<codet::detail::CursesText>(source, work, mode == "presentation-rendered", 0);
-      history.add(prepared.text);
+      history.add(prepared_text(prepared));
       checksum += history.bytes();
     }
     retained = history.bytes();
