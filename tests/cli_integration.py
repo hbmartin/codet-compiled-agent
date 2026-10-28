@@ -1410,15 +1410,19 @@ class CliTests(unittest.TestCase):
         import select
         import struct
         import termios
-        for ui in ('line','curses'):
-            with self.subTest(ui=ui):
+        for ui,prompt,flags,expected,answer,done in (
+            ('line','fixture-command',[],b'Approve? [y/N]',b'y\n',b'fixture done'),
+            ('curses','fixture-command',[],b'Approve? [y/N]',b'y\n',b'fixture done'),
+            ('line','fixture-question',['--permission-mode','plan'],b'Enter a choice',b'2\n',b'question answered'),
+            ('curses','fixture-question',['--permission-mode','plan'],b'Enter a choice',b'2\n',b'question answered')):
+            with self.subTest(ui=ui,prompt=prompt):
                 self.server.requests=[]
                 ready,release=threading.Event(),threading.Event()
                 self.server.signal_gate=(ready,release);self.server.releases.append(release)
                 master,slave=pty.openpty()
                 fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
                 process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',ui,'--color','never',
-                    'fixture-command fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,
+                    *flags,prompt+' fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,
                     env=dict(self.env,TERM='xterm'))
                 received=bytearray()
                 def collect(predicate,master=master,received=received):
@@ -1432,13 +1436,14 @@ class CliTests(unittest.TestCase):
                     collect(lambda received=received:b'old-draft' in re.sub(rb'\x1b(?:\[[0-?]*[ -/]*[@-~]|\([A-Z0-9])',b'',received))
                     received.clear();release.set()
                     collect(lambda received=received:b'discard>' in received)
-                    self.assertNotIn(b'Approve? [y/N]',received)
+                    self.assertNotIn(expected,received)
+                    if ui=='line':self.assertTrue(received.endswith(b'discard> '),bytes(received))
                     received.clear();os.write(master,b'yes\n')
-                    if ui=='line':collect(lambda received=received:b'answer discarded' in received)
+                    if ui=='line':collect(lambda received=received:b'input discarded' in received)
                     self.assertEqual(len(self.server.requests),1)
-                    collect(lambda received=received:b'Approve? [y/N]' in received)
-                    received.clear();os.write(master,b'y\n')
-                    collect(lambda received=received:b'fixture done' in received)
+                    collect(lambda received=received,expected=expected:expected in received)
+                    received.clear();os.write(master,answer)
+                    collect(lambda received=received,done=done:done in received)
                     self.assertGreaterEqual(len(self.server.requests),2)
                     os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
                     self.assertEqual(process.returncode,0,bytes(received))
@@ -1478,7 +1483,7 @@ class CliTests(unittest.TestCase):
                     collect(lambda received=received:b'Interrupted' in received)
                     collect(lambda received=received:b'discard>' in received)
                     received.clear();os.write(master,b's\n')
-                    collect(lambda received=received:b'answer discarded' in received)
+                    collect(lambda received=received:b'input discarded' in received)
                     self.assertEqual(len(self.server.requests),1)
                     received.clear();os.write(master,b'fixture-recovered-output\n')
                     collect(lambda received=received:b'recovered reply' in received)

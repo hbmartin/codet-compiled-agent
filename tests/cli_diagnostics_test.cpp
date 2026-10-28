@@ -5,6 +5,7 @@
 #include "codet/detail/curses_input.hpp"
 #include "codet/detail/native_output.hpp"
 #include "codet/detail/request_input.hpp"
+#include "codet/detail/request_input_controller.hpp"
 #include "codet/detail/ui_history.hpp"
 #include "native_io_metrics.hpp"
 #include "process_helper.hpp"
@@ -227,6 +228,70 @@ TEST(RequestInput, ClassificationKeepsQuitOutOfBandAndRequiresFreshRequestInput)
   EXPECT_EQ(fresh.action(), detail::InputAction::discard);
   input.close();
   EXPECT_EQ(input.take("run tests").action(), detail::InputAction::message);
+}
+TEST(RequestInputController, FreshEmptyAndPresentationClearsHaveDistinctOwnership) {
+  detail::RequestInputController input;
+  const detail::ApprovalIdentity first{"s", "first", 1}, second{"s", "second", 1};
+  input.append('x');
+  input.erase_character();
+  input.open(first, detail::RequestKind::question);
+  EXPECT_FALSE(input.stale());
+  EXPECT_EQ(input.guidance(), detail::RequestInputController::question_prompt);
+  input.append('y');
+  input.presentation_clear();
+  EXPECT_TRUE(input.input().empty());
+  input.open(second, detail::RequestKind::approval);
+  EXPECT_TRUE(input.stale());
+  EXPECT_EQ(input.guidance(), detail::RequestInput::discard_instruction);
+  input.append('x');
+  input.erase_character();
+  EXPECT_TRUE(input.stale());
+  const auto discarded = input.take();
+  ASSERT_TRUE(discarded.request);
+  EXPECT_EQ(discarded.request->request, "first");
+  EXPECT_TRUE(discarded.discarded);
+  EXPECT_EQ(input.guidance(), "Approve? [y/N]");
+  input.append('y');
+  const auto answer = input.take();
+  ASSERT_TRUE(answer.request);
+  EXPECT_EQ(answer.request->request, "second");
+  EXPECT_FALSE(answer.discarded);
+}
+TEST(RequestInputController, PromptInvalidationDoesNotRepeatOnPollingOrEcho) {
+  detail::RequestInputController input;
+  input.append('x');
+  input.open({"s", "q", 1}, detail::RequestKind::question);
+  EXPECT_TRUE(input.needs_explanation());
+  input.presented(true);
+  EXPECT_FALSE(input.needs_prompt());
+  input.append('x');
+  EXPECT_FALSE(input.needs_prompt());
+  EXPECT_TRUE(input.before_output());
+  EXPECT_TRUE(input.needs_prompt());
+  EXPECT_FALSE(input.needs_explanation());
+  input.presented(true);
+  EXPECT_FALSE(input.needs_prompt());
+  EXPECT_TRUE(input.take().discarded);
+  EXPECT_TRUE(input.needs_prompt());
+  EXPECT_EQ(input.guidance(), detail::RequestInputController::question_prompt);
+  input.presented(false);
+  EXPECT_FALSE(input.needs_prompt());
+  input.before_output();
+  EXPECT_TRUE(input.needs_prompt());
+}
+TEST(RequestInputController, CompletionPreservesOrdinaryDraftAndQuitRemainsOutOfBand) {
+  detail::RequestInputController input;
+  input.append('a');
+  input.close();
+  EXPECT_TRUE(input.ordinary_draft());
+  EXPECT_EQ(input.input().raw(), "a");
+  input.open({"s", "q", 1}, detail::RequestKind::question);
+  input.presentation_clear();
+  input.close();
+  for (char byte : std::string("/quit"))
+    input.append(byte);
+  EXPECT_EQ(input.take().action(), detail::InputAction::quit);
+  EXPECT_EQ(input.take("new message").action(), detail::InputAction::message);
 }
 TEST(UiHistory, PreparationIsBoundedBeforeRawAndRenderedHistoryAllocation) {
   const std::string pattern = "雪\r\n\x1b\xff\\x0A\t";
