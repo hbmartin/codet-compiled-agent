@@ -144,26 +144,24 @@ TEST(CursesInput, IncrementalPreparationPreservesRawBytesAndHasLinearWork) {
   input += 'b';
   EXPECT_EQ(input.size(), detail::CursesInput::limit);
 }
-TEST(CursesInput, CharacterEraseMatchesPriorByteSemanticsWithoutRepeatedTailRebuild) {
-  for (const auto *sample : {"abc雪🙂e\xcc\x81", "\x80\x81", "a\xe9\x9b", "x\xff\x80", "\\xFF"}) {
-    const std::string text(sample);
-    for (size_t bytes = 0; bytes <= text.size(); ++bytes) {
+TEST(CursesInput, CharacterEraseUsesValidatedRawBoundariesAndUpdatesTailOnce) {
+  const std::vector<std::pair<std::string, std::string>> cases{
+      {"abc", "ab"},          {"a雪", "a"},           {"a🙂", "a"},
+      {"ae\xcc\x81", "ae"},   {"a\xe9", "a"},         {"a\xe9\x9b", "a"},
+      {"a\xf0\x9f\x99", "a"}, {"a\x80", "a"},         {"a\x80\x81", "a\x80"},
+      {"x\xff\x80", "x\xff"}, {"a\xe0\x80", "a\xe0"}, {"a\xed\xa0", "a\xed"},
+      {"a\xf4\x90", "a\xf4"}, {"a\xf5\x80", "a\xf5"}, {"雪\x80", "雪"},
+      {"🙂\x80", "🙂"},       {"\\xFF", "\\xF"},      {"\\", ""}};
+  for (bool unicode : {false, true}) {
+    for (const auto &[before, after] : cases) {
       detail::CursesInput input;
-      auto expected = text.substr(0, bytes);
-      for (const char byte : expected)
+      input.unicode(unicode);
+      for (char byte : before)
         input += byte;
-      while (!expected.empty()) {
-        do {
-          const auto byte = static_cast<unsigned char>(expected.back());
-          expected.pop_back();
-          if ((byte & 0xc0) != 0x80)
-            break;
-        } while (!expected.empty());
-        input.erase_character();
-        EXPECT_EQ(input.raw(), expected);
-        EXPECT_EQ(input.view("", 1000), detail::CursesText(detail::literal_text(expected)).text());
-      }
       input.erase_character();
+      EXPECT_EQ(input.raw(), after);
+      EXPECT_EQ(input.view("", 1000),
+                detail::CursesText(detail::literal_text(after), unicode).text());
     }
   }
   detail::CursesInput input;
@@ -173,6 +171,8 @@ TEST(CursesInput, CharacterEraseMatchesPriorByteSemanticsWithoutRepeatedTailRebu
   input.erase_character();
   EXPECT_EQ(input.raw(), "retained");
   EXPECT_EQ(input.rebuilt_bytes(), before);
+  input.clear();
+  EXPECT_NO_THROW(input.erase_character());
 }
 TEST(RequestInput, ExpiryAndReplacementNeverReclassifyDraftAnswers) {
   const detail::ApprovalIdentity first{"session", "first", 1}, second{"session", "second", 1};
