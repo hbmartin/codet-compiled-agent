@@ -34,7 +34,7 @@ struct RenderedToken {
   bool valid, escape;
 };
 RenderedToken rendered_token(std::string_view, size_t) noexcept;
-size_t rendered_prefix(std::string_view, size_t) noexcept;
+size_t rendered_prefix(std::string_view, size_t, size_t *last_token = nullptr) noexcept;
 struct DiagnosticState {
   std::streambuf *buffer = nullptr;
   bool pending = false;

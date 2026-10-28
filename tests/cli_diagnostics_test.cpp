@@ -328,6 +328,15 @@ TEST(UiHistory, PreparationIsBoundedBeforeRawAndRenderedHistoryAllocation) {
   EXPECT_LE(history.bytes(), detail::UiHistory::byte_limit);
   EXPECT_EQ(history.lines().back(), detail::UiHistory::omission);
 }
+TEST(UiHistory, PrefixReportsThePreviousCompleteTokenWithoutASecondScan) {
+  const std::string text = "abc\\xFF雪";
+  for (const auto &[limit, expected, previous] : std::vector<std::tuple<size_t, size_t, size_t>>{
+           {0, 0, 0}, {3, 3, 2}, {5, 3, 2}, {7, 7, 3}, {9, 7, 3}, {10, 10, 7}}) {
+    size_t last = 99;
+    EXPECT_EQ(detail::rendered_prefix(text, limit, &last), expected);
+    EXPECT_EQ(last, previous);
+  }
+}
 TEST(UiHistory, PreparedAndDirectInsertionShareExactBudgetAndRowCharges) {
   for (const std::string &text :
        {std::string(70, 'x'), std::string(99, 'x'), std::string(100, 'x'),

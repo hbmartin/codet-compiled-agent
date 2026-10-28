@@ -18,9 +18,10 @@ inline HistoryExcerpt history_excerpt(std::string_view text, size_t budget,
   if (budget < marker.size() + 1)
     return {0, false};
   const auto room = budget - marker.size() - 1;
-  auto prefix = rendered_prefix(text, room);
+  size_t previous = 0;
+  auto prefix = rendered_prefix(text, room, &previous);
   if (prefix && text[prefix - 1] != '\n' && prefix == room)
-    prefix = rendered_prefix(text.substr(0, prefix), room - 1);
+    prefix = previous;
   return {prefix, true};
 }
 } // namespace codet::detail
