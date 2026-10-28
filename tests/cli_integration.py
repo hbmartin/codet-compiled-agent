@@ -1417,12 +1417,16 @@ class CliTests(unittest.TestCase):
         import select
         import struct
         import termios
-        for ui in ('line','curses'):
-            with self.subTest(ui=ui):
+        for ui,prompt,flags,expected in (
+            ('line','fixture-command',[],b'Approve? [y/N]'),
+            ('curses','fixture-command',[],b'Approve? [y/N]'),
+            ('line','fixture-question',['--permission-mode','plan'],b'Enter a choice'),
+            ('curses','fixture-question',['--permission-mode','plan'],b'Enter a choice')):
+            with self.subTest(ui=ui,prompt=prompt):
                 self.server.requests=[]
                 master,slave=pty.openpty()
                 fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
-                process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',ui,'--color','never','fixture-command'],
+                process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',ui,'--color','never',*flags,prompt],
                     stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
                 received=bytearray()
                 def collect(predicate,master=master,received=received):
@@ -1431,7 +1435,7 @@ class CliTests(unittest.TestCase):
                         if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
                     self.assertTrue(predicate(),bytes(received))
                 try:
-                    collect(lambda received=received:b'Approve? [y/N]' in received)
+                    collect(lambda received=received,expected=expected:expected in received)
                     received.clear();os.write(master,b'ye')
                     collect(lambda received=received:b'ye' in received)
                     process.send_signal(signal.SIGINT)
