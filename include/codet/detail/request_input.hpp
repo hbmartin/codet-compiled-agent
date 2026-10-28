@@ -1,7 +1,7 @@
 #pragma once
 #include "codet/detail/approval_identity.hpp"
 namespace codet::detail {
-enum class InputAction { quit, discard, answer, message };
+enum class InputAction : uint8_t { quit, discard, answer, message };
 struct InputLine {
   std::string text;
   std::optional<ApprovalIdentity> request;
