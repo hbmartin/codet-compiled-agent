@@ -47,6 +47,13 @@ public:
                       bool strict = true) {
     for (size_t offset = 0; offset < rendered.size();) {
       const auto parsed = rendered_token(rendered, offset);
+      if (parsed.valid && parsed.point < 0x80 &&
+          (parsed.point == '\n' || (prose_tabs && parsed.point == '\t') ||
+           (parsed.point >= 0x20 && parsed.point != 0x7f))) {
+        text_.append(rendered.substr(offset, parsed.bytes));
+        offset += parsed.bytes;
+        continue;
+      }
       char output[16]; // One UTF-8 scalar or one ASCII escape, expanded at most fourfold.
       const auto written = prepare(rendered.substr(offset, parsed.bytes), parsed, output, unicode,
                                    prose_tabs, strict);
@@ -69,26 +76,33 @@ public:
     const auto available = budget - marker.size() - 1;
     size_t offset = 0;
     while (offset < source.size()) {
-      char human[16];
+      char human[512];
+      const auto first = raw ? RenderedToken{} : rendered_token(source, offset);
       const auto progress =
           raw ? terminal_text_into(source.substr(offset), human, sizeof(human), *raw)
-              : RenderProgress{rendered_token(source, offset).bytes,
-                               rendered_token(source, offset).bytes};
+              : RenderProgress{first.bytes, first.bytes};
       const auto fragment =
           raw ? std::string_view(human, progress.written) : source.substr(offset, progress.written);
       if (processed)
         *processed += progress.consumed;
       bool full = progress.consumed == 0;
       for (size_t part = 0; !full && part < fragment.size();) {
-        const auto token = rendered_token(fragment, part);
+        const auto token = raw ? rendered_token(fragment, part) : first;
         char prepared[16];
-        const auto written =
-            prepare(fragment.substr(part, token.bytes), token, prepared, unicode, true, false);
+        const bool ascii = token.valid && token.point < 0x80 &&
+                           (token.point == '\n' || token.point == '\t' ||
+                            (token.point >= 0x20 && token.point != 0x7f));
+        const auto written = ascii ? token.bytes
+                                   : prepare(fragment.substr(part, token.bytes), token, prepared,
+                                             unicode, true, false);
         if (written > available - result.text.size()) {
           full = true;
           break;
         }
-        result.text.append(prepared, written);
+        if (ascii)
+          result.text.append(fragment.substr(part, written));
+        else
+          result.text.append(prepared, written);
         part += token.bytes;
       }
       if (full)

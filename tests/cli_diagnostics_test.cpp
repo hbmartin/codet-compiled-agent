@@ -256,7 +256,7 @@ TEST(UiHistory, PreparationIsBoundedBeforeRawAndRenderedHistoryAllocation) {
                                                     detail::UiHistory::omission, true,
                                                     detail::RenderMode::prose, &processed);
   EXPECT_TRUE(prepared.truncated);
-  EXPECT_LE(processed, detail::UiHistory::byte_limit + 16);
+  EXPECT_LE(processed, detail::UiHistory::byte_limit + 512);
   detail::UiHistory history;
   history.add(prepared.text);
   EXPECT_LE(history.bytes(), detail::UiHistory::byte_limit);
