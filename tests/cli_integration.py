@@ -1329,6 +1329,42 @@ class CliTests(unittest.TestCase):
                     if process.poll() is None:process.kill();process.wait(timeout=5)
                     os.close(master);os.close(slave)
 
+    def test_approval_curses_failure_cancels_without_running_the_tool(self):
+        import fcntl
+        import pty
+        import select
+        import struct
+        import termios
+        for stage in ('clear','put','refresh'):
+            with self.subTest(stage=stage):
+                self.server.requests=[]
+                master,slave=pty.openpty();arm,trigger=os.pipe();notice,notify=os.pipe()
+                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
+                helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+                process=subprocess.Popen([helper,'--codet-redraw-helper',stage,str(arm),str(notify),
+                    '-C',str(self.workspace),'--ui','curses','--color','never','fixture-command'],
+                    stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=dict(self.env,TERM='xterm'))
+                received=bytearray()
+                def collect(predicate,master=master,received=received):
+                    deadline=time.monotonic()+10
+                    while not predicate() and time.monotonic()<deadline:
+                        if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+                    self.assertTrue(predicate(),bytes(received))
+                try:
+                    collect(lambda received=received:b'Approve? [y/N]' in received)
+                    os.write(trigger,b'a');received.clear()
+                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,101,0,0))
+                    process.send_signal(signal.SIGWINCH)
+                    collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
+                    self.assertEqual(os.read(notice,1),b'f')
+                    collect(lambda received=received:b'Cannot render approval review' in received)
+                    self.assertEqual(len(self.server.requests),1)
+                    os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                    self.assertEqual(process.returncode,0,bytes(received))
+                finally:
+                    if process.poll() is None:process.kill();process.wait(timeout=5)
+                    for descriptor in (master,slave,arm,trigger,notice,notify):os.close(descriptor)
+
     def test_ordinary_curses_failure_preserves_worker_and_partial_input(self):
         import fcntl
         import pty
