@@ -1,7 +1,11 @@
+#define _XOPEN_SOURCE_EXTENDED 1
 #include "codet/detail/approval_review.hpp"
+#include "codet/detail/curses_input.hpp"
 #include "codet/detail/curses_render.hpp"
 #include <clocale>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <curses.h>
 #include <gtest/gtest.h>
 
@@ -53,16 +57,28 @@ void expect_row(int row, std::string_view text, int columns) {
       for (size_t i = 0; i < token.bytes; ++i)
         EXPECT_EQ(mvinch(row, static_cast<int>(column + i)) & A_CHARTEXT,
                   static_cast<chtype>(text[offset + i]));
+    if (token.point >= 0x80) {
+      cchar_t cell{};
+      ASSERT_EQ(mvwin_wch(stdscr, row, static_cast<int>(column), &cell), OK);
+      wchar_t points[CCHARW_MAX + 1]{};
+      attr_t attributes{};
+      short pair{};
+      ASSERT_EQ(getcchar(&cell, points, &attributes, &pair, nullptr), OK);
+      EXPECT_EQ(static_cast<uint32_t>(points[0]), token.point);
+      EXPECT_EQ(points[1], L'\0');
+    }
     column += codet::detail::CursesText::token_columns(text, offset);
     offset += token.bytes;
   }
   EXPECT_EQ(mvinch(row, columns - 1) & A_CHARTEXT, static_cast<chtype>(' '));
 }
 TEST(ApprovalCurses, PreparedPagesFitRealCellsInCAndUtf8Locales) {
+  bool exercised_unicode = false;
   for (const char *locale : {"C", "en_US.UTF-8", "C.UTF-8"}) {
     Screen native;
     if (!native.open(locale))
       continue;
+    exercised_unicode |= native.unicode;
     for (int columns : {20, 40, 80}) {
       ASSERT_EQ(::resizeterm(10, columns), OK);
       const auto document = codet::detail::literal_text(
@@ -91,6 +107,8 @@ TEST(ApprovalCurses, PreparedPagesFitRealCellsInCAndUtf8Locales) {
       EXPECT_EQ(reconstructed, expected);
     }
   }
+  if (std::getenv("CODET_REQUIRE_UTF8_CURSES"))
+    EXPECT_TRUE(exercised_unicode) << "Required UTF-8/wide-curses branch did not run";
 }
 TEST(ApprovalCurses, InputRemainsWithinBottomRowForEveryBytePrefixAndSmallScreen) {
   for (const char *locale : {"C", "en_US.UTF-8", "C.UTF-8"}) {
@@ -101,21 +119,52 @@ TEST(ApprovalCurses, InputRemainsWithinBottomRowForEveryBytePrefixAndSmallScreen
     for (int columns : {2, 5, 19, 20, 40, 80}) {
       for (int rows : {1, 2, 5, 10}) {
         ASSERT_EQ(::resizeterm(rows, columns), OK);
+        codet::detail::CursesInput cached;
+        cached.unicode(native.unicode);
         for (size_t bytes = 0; bytes <= input.size(); ++bytes) {
+          if (bytes)
+            cached += input[bytes - 1];
           erase();
-          const auto shown = codet::detail::CursesText::input(
-              rows == 1 ? "!> " : "codet> ", input.substr(0, bytes),
-              static_cast<size_t>(columns - 1), native.unicode);
+          const auto shown =
+              cached.view(rows == 1 ? "!> " : "codet> ", static_cast<size_t>(columns - 1));
           ASSERT_NO_FATAL_FAILURE(expect_row(rows - 1, shown, columns));
         }
       }
     }
   }
 }
+TEST(ApprovalCurses, InvisibleAndExcessCombiningBytesAreExplicitInRealCells) {
+  Screen native;
+  if (!native.open("en_US.UTF-8") && !native.open("C.UTF-8"))
+    GTEST_SKIP() << "No UTF-8 locale available";
+  ASSERT_EQ(::resizeterm(10, 80), OK);
+  for (const char *raw : {u8"\u200c", u8"\u200d", u8"\ufe0f", u8"\U000e0061", u8"\u034f",
+                          u8"\u115f", u8"\u1160", u8"\u3164", u8"\uffa0", u8"\u0488"}) {
+    const auto prepared =
+        codet::detail::CursesText(codet::detail::literal_text(raw), native.unicode).text();
+    EXPECT_EQ(prepared.find(raw), std::string::npos);
+    EXPECT_EQ(prepared.size(), std::strlen(raw) * 4);
+    erase();
+    ASSERT_NO_FATAL_FAILURE(expect_row(1, prepared, 80));
+  }
+  const std::string marks = u8"e\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301";
+  const auto prepared = codet::detail::CursesText(marks, native.unicode).text();
+  EXPECT_EQ(prepared.size(), 73u);
+  erase();
+  ASSERT_NO_FATAL_FAILURE(expect_row(1, prepared, 80));
+  ASSERT_EQ(::resizeterm(1, 40), OK);
+  erase();
+  mvaddstr(0, 0, "Resize to review; approval disabled");
+  const auto input = codet::detail::CursesText::input("!> ", "n", 39, native.unicode);
+  codet::detail::curses_draw_row(0, input, 40, true);
+  EXPECT_EQ(mvinch(0, 4) & A_CHARTEXT, static_cast<chtype>(' '));
+}
 TEST(ApprovalCurses, BackendFallbackEscapesBytesWithoutChangingSupportedLocaleText) {
   Screen native;
   if (!native.open("en_US.UTF-8") && !native.open("C.UTF-8"))
     GTEST_SKIP() << "No UTF-8 locale available";
+  EXPECT_FALSE(
+      codet::detail::curses_unicode_supported(+[](int, int) -> WINDOW * { return nullptr; }));
   const auto raw = codet::detail::literal_text("雪\\x0A");
   EXPECT_EQ(codet::detail::CursesText(raw).text(), raw);
   const auto fallback = codet::detail::CursesText(raw, false).text();
@@ -125,5 +174,19 @@ TEST(ApprovalCurses, BackendFallbackEscapesBytesWithoutChangingSupportedLocaleTe
   review.reshape(10, 20);
   erase();
   expect_row(1, review.line(0), 20);
+}
+TEST(ApprovalCurses, ProseNewlinesAndTabsCannotEscapeTheirAssignedRow) {
+  Screen native;
+  ASSERT_TRUE(native.open("C"));
+  ASSERT_EQ(::resizeterm(5, 20), OK);
+  erase();
+  codet::detail::curses_draw_row(0, "abc\nnext row", 20);
+  EXPECT_EQ(mvinch(1, 0) & A_CHARTEXT, static_cast<chtype>(' '));
+  codet::detail::curses_draw_row(4, "a\tb\tc", 20);
+  EXPECT_EQ(mvinch(4, 8) & A_CHARTEXT, static_cast<chtype>('b'));
+  EXPECT_EQ(mvinch(4, 16) & A_CHARTEXT, static_cast<chtype>('c'));
+  ASSERT_EQ(::resizeterm(1, 8), OK);
+  EXPECT_NO_THROW(codet::detail::curses_draw_row(0, "a\tb", 8));
+  EXPECT_EQ(mvinch(0, 7) & A_CHARTEXT, static_cast<chtype>(' '));
 }
 } // namespace

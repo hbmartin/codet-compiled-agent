@@ -110,7 +110,7 @@ private:
         });
         pipe_limit_ = std::min(static_cast<size_t>(INT_MAX),
                                bound > 0 ? static_cast<size_t>(bound) : size_t{512});
-        if (cached_bound && bound > 0)
+        if (cached_bound && (bound > 0 || (bound < 0 && errno == 0)))
           *cached_bound = pipe_limit_;
       }
     }

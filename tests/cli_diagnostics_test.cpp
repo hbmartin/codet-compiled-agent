@@ -2,7 +2,10 @@
 #include "codet/detail/approval_review.hpp"
 #include "codet/detail/cleanup_diagnostics.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
+#include "codet/detail/curses_input.hpp"
 #include "codet/detail/native_output.hpp"
+#include "codet/detail/request_input.hpp"
+#include "codet/detail/ui_history.hpp"
 #include "native_io_metrics.hpp"
 #include "process_helper.hpp"
 #include "temp.hpp"
@@ -105,6 +108,96 @@ TEST(ApprovalReview, WrappingRetainsCompleteUnicodeAndEscapeTokensBeyondTranscri
     EXPECT_EQ(reconstructed, expected);
   }
 }
+TEST(CursesInput, IncrementalPreparationPreservesRawBytesAndHasLinearWork) {
+  for (bool unicode : {false, true}) {
+    detail::CursesInput input;
+    input.unicode(unicode);
+    const std::string text = "abc雪\\x0A\xff";
+    std::string prefix;
+    for (const char byte : text) {
+      prefix += byte;
+      input += byte;
+      EXPECT_EQ(input.raw(), prefix);
+      EXPECT_EQ(input.view("", 1000),
+                detail::CursesText(detail::literal_text(prefix), unicode).text());
+      for (size_t columns = 1; columns < 80; ++columns)
+        EXPECT_EQ(input.view("codet> ", columns),
+                  detail::CursesText::input("codet> ", prefix, columns, unicode));
+    }
+    while (!prefix.empty()) {
+      prefix.pop_back();
+      input.pop_back();
+      EXPECT_EQ(input.raw(), prefix);
+      EXPECT_EQ(input.view("", 1000),
+                detail::CursesText(detail::literal_text(prefix), unicode).text());
+    }
+  }
+  detail::CursesInput input;
+  for (size_t i = 0; i != detail::CursesInput::limit; ++i)
+    input += 'a';
+  EXPECT_LE(input.rebuilt_bytes(), 2 * detail::CursesInput::limit);
+  const auto before = input.rebuilt_bytes();
+  for (size_t i = 0; i != 100; ++i)
+    EXPECT_EQ(input.view("codet> ", 79).size(), 79u);
+  EXPECT_EQ(input.rebuilt_bytes(), before);
+  input += 'b';
+  EXPECT_EQ(input.size(), detail::CursesInput::limit);
+}
+TEST(RequestInput, ExpiryAndReplacementNeverReclassifyDraftAnswers) {
+  const detail::ApprovalIdentity first{"session", "first", 1}, second{"session", "second", 1};
+  for (const auto *answer : {"yes", "n", "free text", "1"}) {
+    detail::RequestInput input;
+    input.open(first);
+    input.edit();
+    input.close(); // Worker expiry before Enter, including across turn cleanup.
+    const auto stale = input.take(answer);
+    ASSERT_TRUE(stale.request);
+    EXPECT_EQ(stale.request->request, "first");
+    EXPECT_TRUE(stale.discarded);
+    EXPECT_FALSE(input.take("ordinary steering").request);
+    input.open(first);
+    input.edit();
+    EXPECT_TRUE(input.open(second));
+    EXPECT_TRUE(input.take(answer).discarded);
+    const auto fresh = input.take(answer);
+    ASSERT_TRUE(fresh.request);
+    EXPECT_EQ(fresh.request->request, "second");
+    EXPECT_FALSE(fresh.discarded);
+  }
+  detail::RequestInput input;
+  input.edit();
+  EXPECT_TRUE(input.ordinary_draft());
+  input.close();
+  EXPECT_TRUE(input.ordinary_draft()); // Worker completion preserves ordinary intent.
+  EXPECT_EQ(input.take("ordinary steering").text, "ordinary steering");
+  input.edit(); // An ordinary draft started before a request cannot answer it.
+  EXPECT_TRUE(input.open(first));
+  EXPECT_TRUE(input.take("yes").discarded);
+  EXPECT_FALSE(input.take("yes").discarded);
+}
+TEST(UiHistory, BoundsBytesBeforeSplittingAndKeepsRecentDecision) {
+  detail::UiHistory history;
+  const std::string huge(2 * 1024 * 1024, 'x');
+  for (int i = 0; i != 30; ++i) {
+    history.add("[Approval request]");
+    history.add(huge, detail::UiHistory::approval_limit - 19);
+    history.add("[Approval denied] request");
+    EXPECT_LE(history.bytes(), detail::UiHistory::byte_limit);
+    EXPECT_LE(history.lines().size(), detail::UiHistory::line_limit);
+    EXPECT_EQ(history.lines().back(), "[Approval denied] request");
+  }
+  for (int i = 0; i != 2000; ++i)
+    history.add("line");
+  EXPECT_EQ(history.lines().size(), detail::UiHistory::line_limit);
+  EXPECT_LE(history.bytes(), detail::UiHistory::byte_limit);
+  detail::UiHistory tokens;
+  for (size_t limit = 35; limit != 60; ++limit) {
+    tokens.add(std::string(28, 'a') + "\\xFF雪\\x00" + huge, limit);
+    EXPECT_LE(tokens.lines().back().size() + 1, limit);
+    for (const auto &line : tokens.lines())
+      EXPECT_EQ(detail::rendered_prefix(line, line.size()), line.size());
+  }
+}
 struct PartialDiagnosticStream : std::streambuf {
   std::string bytes;
   bool partial = true, fail_newline = false;
@@ -122,6 +215,25 @@ struct PartialDiagnosticStream : std::streambuf {
     return character;
   }
 };
+TEST(DiagnosticWriter, PartialUnterminatedRecordsOweSeparatorButSuccessfulFragmentsDoNot) {
+  for (bool throwing : {false, true}) {
+    PartialDiagnosticStream buffer;
+    std::ostream stream(&buffer);
+    if (throwing)
+      stream.exceptions(std::ios::badbit | std::ios::failbit);
+    detail::DiagnosticWriter writer(stream);
+    try {
+      EXPECT_FALSE(writer.write({"prefix"}, false));
+    } catch (const std::ios_base::failure &) {
+    }
+    buffer.partial = false;
+    EXPECT_TRUE(writer.write({"later"}));
+    EXPECT_EQ(buffer.bytes, "pr\nlater\n");
+    EXPECT_TRUE(writer.write({"fragment"}, false));
+    EXPECT_TRUE(writer.write({"tail"}));
+    EXPECT_EQ(buffer.bytes, "pr\nlater\nfragmenttail\n");
+  }
+}
 TEST(DiagnosticWriter, TurnCleanupKeepsOriginalFailureAfterQuiescenceAndResetsCancellation) {
   for (bool quitting : {false, true}) {
     PartialDiagnosticStream buffer;
@@ -193,10 +305,14 @@ TEST(DiagnosticWriter, IndeterminatePipeBoundsDoNotRetryStaleInterruptedErrno) {
     errno = EINTR;
     EXPECT_TRUE(writer.write({"bound"}));
     EXPECT_EQ(metrics.bound_queries, 2u);
+    EXPECT_TRUE(writer.write({"bound"}));
+    EXPECT_EQ(metrics.bound_queries, 2u);
     metrics = {};
-    char output[6]{};
-    ASSERT_EQ(::read(descriptors[0], output, sizeof(output)), 6);
-    EXPECT_EQ(std::string(output, sizeof(output)), "bound\n");
+    pollfd readable{descriptors[0], POLLIN, 0};
+    ASSERT_GT(::poll(&readable, 1, 2000), 0);
+    char output[12]{};
+    ASSERT_EQ(::read(descriptors[0], output, sizeof(output)), 12);
+    EXPECT_EQ(std::string(output, sizeof(output)), "bound\nbound\n");
   }
 }
 TEST(DiagnosticWriter, EmergencyChunksShareEightInterruptionRetriesWithInspectionAndSeparator) {

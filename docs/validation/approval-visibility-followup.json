@@ -1,0 +1,1858 @@
+{
+  "baseline": "e3b32c3549aa6732a48aeee6b4340e4feca70169",
+  "production_ref": "7f6a0bcd278b0700860850875cc68844b17643c9",
+  "branch": "codex/approval-visibility-followup",
+  "pull_request": "https://github.com/hbmartin/codet-compiled-agent/pull/41",
+  "environment": {
+    "date": "2026-10-27",
+    "platform": "macOS 27.0.1 arm64",
+    "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+    "release_flags": "-O3 -DNDEBUG -arch arm64",
+    "host_inherited_cxx_flags": "-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+    "sanitizers": "AddressSanitizer and UndefinedBehaviorSanitizer",
+    "focused_repeat_environment": {
+      "ASAN_OPTIONS": "detect_leaks=0",
+      "CODET_REQUIRE_UTF8_CURSES": "1"
+    }
+  },
+  "security_boundary": {
+    "source": "Model-controlled approval tool target/context and request lifecycle",
+    "invariant": "Every approval byte is visibly represented before fullscreen approval unlocks; an answer owned by an expired request must never become ordinary user input.",
+    "strategy": "Strict checked-in Unicode approval presentation at shared line/curses boundaries, column-safe shared drawing, and explicit request-owned drafts through the line boundary.",
+    "legitimate_control": "Supported spacing Unicode remains readable; target execution and submitted answer bytes remain unchanged; redirected/structured output policies stay unchanged."
+  },
+  "visibility_negative_control": {
+    "source_sha256": "1017ecb4b9a2b4463b7d63ab5e941acc92c3f78d6ed389953616db9fd4cc5eaa",
+    "retained_security_artifact": "artifacts/approval_visibility_control.cpp",
+    "boundary": "The same native ApprovalReview/CursesText helper compiled against baseline and changed Release builds, en_US.UTF-8, real 10x40 curses screen.",
+    "trigger": "A tag character inside config.json and nine combining marks after e. Both pages render successfully and reach review completion.",
+    "baseline": {
+      "exit": 31,
+      "invisible_raw": true,
+      "marks_raw": true,
+      "approved": true,
+      "pages": 1,
+      "spacing_unicode_preserved": true
+    },
+    "changed": {
+      "exit": 0,
+      "invisible_raw": false,
+      "marks_raw": false,
+      "approved": true,
+      "pages": 1,
+      "spacing_unicode_preserved": true
+    },
+    "alternate_coverage": "Real wide-cell tests cover tags, selectors, joiners, CGJ, Hangul fillers, enclosing marks, excessive combining marks, malformed bytes, controls and literal escape-looking text."
+  },
+  "draft_negative_control": {
+    "command": [
+      "python3",
+      "tests/cli_integration.py",
+      "build/approval-visibility-followup/baseline-release/codet",
+      "CliTests.test_ordinary_draft_survives_worker_completion"
+    ],
+    "baseline": "Exit 1: deterministic gated ordinary prefix lost in both line/curses modes.",
+    "changed": "Pass in full Debug and ASan/UBSan and all twenty focused PTY batches.",
+    "log": "build/approval-visibility-followup/baseline-draft-negative.log"
+  },
+  "limits": {
+    "history_rendered_payload_bytes": 262144,
+    "history_lines": 1000,
+    "approval_excerpt_bytes_including_labels_and_marker": 16384,
+    "raw_input_bytes": 65536,
+    "pending_review": "Complete and independently owned; not truncated to history budgets.",
+    "redraw": "Cached preparation; only a visible suffix is copied. No full-answer preparation/allocation on unchanged redraw.",
+    "allocation_failure": "Clear partial input cache, preserve original exception, allow fresh input."
+  },
+  "unicode_provenance": {
+    "version": "17.0.0",
+    "ranges": 376,
+    "derived_properties": [
+      "Default_Ignorable_Code_Point",
+      "Mn",
+      "Me",
+      "Cf"
+    ],
+    "source_urls": [
+      "https://www.unicode.org/Public/17.0.0/ucd/DerivedCoreProperties.txt",
+      "https://www.unicode.org/Public/17.0.0/ucd/extracted/DerivedGeneralCategory.txt"
+    ],
+    "source_sha256": [
+      "24c7fed1195c482faaefd5c1e7eb821c5ee1fb6de07ecdbaa64b56a99da22c08",
+      "d62e5bab70ca74f099343f71224fa051cb1fdd61a1ab45c0488c44cfc0b6102e"
+    ],
+    "license": "docs/UNICODE-LICENSE.txt",
+    "runtime_dependency": false
+  },
+  "checks": [
+    {
+      "name": "debug-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/host",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 0.15459108306095004,
+      "log": "build/approval-visibility-followup/delivery/debug-build.log"
+    },
+    {
+      "name": "sanitize-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/sanitize",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 5.724788999999873,
+      "log": "build/approval-visibility-followup/delivery/sanitize-build.log"
+    },
+    {
+      "name": "debug-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/host",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 108.99834758392535,
+      "log": "build/approval-visibility-followup/delivery/debug-ctest.log"
+    },
+    {
+      "name": "sanitize-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/sanitize",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 176.63862695801072,
+      "log": "build/approval-visibility-followup/delivery/sanitize-ctest.log"
+    },
+    {
+      "name": "repeat-unit",
+      "command": [
+        "build/sanitize/codet_tests",
+        "--gtest_filter=Approval*.*:CursesInput.*:RequestInput.*:UiHistory.*:DiagnosticWriter.*:FileDiagnostics.*:CliDiagnosticsTest.*:TerminalResources.*:CliOutput.*",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 54.45290516701061,
+      "log": "build/approval-visibility-followup/delivery/repeat-unit.log"
+    },
+    {
+      "name": "repeat-fault",
+      "command": [
+        "build/sanitize/codet_publication_fault_tests",
+        "--gtest_filter=FileDiagnosticsFault.*:UiBudgetFault.*",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 8.033359874971211,
+      "log": "build/approval-visibility-followup/delivery/repeat-fault.log"
+    },
+    {
+      "name": "repeat-pty-0",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.559079833095893,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-0.log"
+    },
+    {
+      "name": "repeat-pty-1",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.487555291969329,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-1.log"
+    },
+    {
+      "name": "repeat-pty-2",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.466304542031139,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-2.log"
+    },
+    {
+      "name": "repeat-pty-3",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.430658333003521,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-3.log"
+    },
+    {
+      "name": "repeat-pty-4",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.5725843330146745,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-4.log"
+    },
+    {
+      "name": "repeat-pty-5",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.455302332993597,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-5.log"
+    },
+    {
+      "name": "repeat-pty-6",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.3965632079634815,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-6.log"
+    },
+    {
+      "name": "repeat-pty-7",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.396371375070885,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-7.log"
+    },
+    {
+      "name": "repeat-pty-8",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.51712045900058,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-8.log"
+    },
+    {
+      "name": "repeat-pty-9",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.615997791988775,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-9.log"
+    },
+    {
+      "name": "repeat-pty-10",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.63207166607026,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-10.log"
+    },
+    {
+      "name": "repeat-pty-11",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.601524583995342,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-11.log"
+    },
+    {
+      "name": "repeat-pty-12",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.5140129999490455,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-12.log"
+    },
+    {
+      "name": "repeat-pty-13",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.649134874925949,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-13.log"
+    },
+    {
+      "name": "repeat-pty-14",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.517136749927886,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-14.log"
+    },
+    {
+      "name": "repeat-pty-15",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.726759125012904,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-15.log"
+    },
+    {
+      "name": "repeat-pty-16",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.9912844999926165,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-16.log"
+    },
+    {
+      "name": "repeat-pty-17",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.677330875070766,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-17.log"
+    },
+    {
+      "name": "repeat-pty-18",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.552164207911119,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-18.log"
+    },
+    {
+      "name": "repeat-pty-19",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 6.649104584008455,
+      "log": "build/approval-visibility-followup/delivery/repeat-pty-19.log"
+    },
+    {
+      "name": "lint",
+      "command": [
+        "make",
+        "check-lint",
+        "CHECK_PYTHON=build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 1.1671799999894574,
+      "log": "build/approval-visibility-followup/delivery/lint.log"
+    },
+    {
+      "name": "runner-tests",
+      "command": [
+        "make",
+        "test-lint-runners",
+        "test-modern-analysis-runner",
+        "CHECK_PYTHON=build/lint-venv/bin/python",
+        "ANALYSIS_PYTHON=build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 5.238380624912679,
+      "log": "build/approval-visibility-followup/delivery/runner-tests.log"
+    },
+    {
+      "name": "semgrep",
+      "command": [
+        "make",
+        "check-semgrep",
+        "CHECK_PYTHON=build/lint-venv/bin/python",
+        "SEMGREP=build/semgrep-venv/bin/pysemgrep"
+      ],
+      "exit": 0,
+      "seconds": 3.6414593750378117,
+      "log": "build/approval-visibility-followup/delivery/semgrep.log"
+    }
+  ],
+  "full_suite_counts": {
+    "debug_ctest": {
+      "passed": 9,
+      "total": 9
+    },
+    "asan_ubsan_ctest": {
+      "passed": 9,
+      "total": 9
+    },
+    "unit_cases": 578,
+    "publication_fault_cases": 64,
+    "cli_integration_cases": 87,
+    "expected_opt_in_skips": [
+      "NetworkOptIn.TlsHandshake",
+      "Contracts.NativeTigerDesktopAcceptance"
+    ]
+  },
+  "focused_repetitions": {
+    "batches": 20,
+    "unit_cases_per_batch": 89,
+    "fault_cases_per_batch": 15,
+    "pty_methods_per_batch": 13,
+    "total_cases": 2340
+  },
+  "dependencies": {
+    "command": [
+      "python3",
+      "scripts/fetch-deps.py",
+      "--offline"
+    ],
+    "exit": 0,
+    "mode": "Pinned archives verified and extracted offline."
+  },
+  "static_analysis": {
+    "checks": [
+      {
+        "name": "cppcheck",
+        "command": [
+          "build/lint-venv/bin/python",
+          "scripts/analyze-modern.py",
+          "--build-dir",
+          "build/approval-visibility-followup/cppcheck-analysis",
+          "--jobs",
+          "4",
+          "--timeout",
+          "300",
+          "--tool",
+          "cppcheck"
+        ],
+        "exit": 0,
+        "seconds": 65.0551083330065
+      },
+      {
+        "name": "clang-tidy",
+        "command": [
+          "build/lint-venv/bin/python",
+          "scripts/analyze-modern.py",
+          "--build-dir",
+          "build/approval-visibility-followup/clang-tidy-analysis",
+          "--jobs",
+          "4",
+          "--timeout",
+          "300",
+          "--tool",
+          "clang-tidy"
+        ],
+        "exit": 1,
+        "seconds": 44.98672583291773
+      },
+      {
+        "name": "clang-analyzer",
+        "command": [
+          "build/lint-venv/bin/python",
+          "scripts/analyze-modern.py",
+          "--build-dir",
+          "build/approval-visibility-followup/clang-analyzer-analysis",
+          "--jobs",
+          "4",
+          "--timeout",
+          "300",
+          "--tool",
+          "clang-analyzer"
+        ],
+        "exit": 1,
+        "seconds": 62.35524641699158
+      },
+      {
+        "name": "selftest",
+        "command": [
+          "build/lint-venv/bin/python",
+          "scripts/analyze-modern.py",
+          "--build-dir",
+          "build/approval-visibility-followup/selftest-analysis",
+          "--jobs",
+          "4",
+          "--timeout",
+          "300",
+          "--selftest"
+        ],
+        "exit": 0,
+        "seconds": 1.6553177910391241
+      }
+    ],
+    "baseline_comparison": {
+      "clang-tidy": {
+        "findings": 6,
+        "completed": 24,
+        "expected": 25,
+        "diagnostic_multiset_equal_to_baseline": true,
+        "findings_detail": [
+          [
+            "bugprone-exception-escape",
+            "src/modern/main.cpp",
+            "an exception may be thrown in function 'main' which should not throw exceptions"
+          ],
+          [
+            "bugprone-exception-escape",
+            "src/modern/state.cpp",
+            "an exception may be thrown in function 'operator()' which should not throw exceptions"
+          ],
+          [
+            "bugprone-narrowing-conversions",
+            "src/modern/images.cpp",
+            "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+          ],
+          [
+            "bugprone-narrowing-conversions",
+            "src/modern/images.cpp",
+            "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+          ],
+          [
+            "bugprone-narrowing-conversions",
+            "src/modern/images.cpp",
+            "narrowing conversion from 'unsigned long' to 'double'"
+          ],
+          [
+            "clang-diagnostic-error",
+            "src/modern/platform.cpp",
+            "implicit instantiation of undefined template 'std::basic_istringstream<char>'"
+          ]
+        ],
+        "current_input_hash_mismatches": []
+      },
+      "clang-analyzer": {
+        "findings": 1,
+        "completed": 25,
+        "expected": 25,
+        "diagnostic_multiset_equal_to_baseline": true,
+        "findings_detail": [
+          [
+            "core.DivideZero",
+            "src/modern/context.cpp",
+            "Division by zero",
+            "project_history",
+            "b7fd78895b63841553e144fd774a0954"
+          ]
+        ],
+        "current_input_hash_mismatches": []
+      },
+      "cppcheck": {
+        "findings": 0,
+        "completed": 25,
+        "expected": 25,
+        "diagnostic_multiset_equal_to_baseline": true,
+        "findings_detail": [],
+        "current_input_hash_mismatches": []
+      }
+    },
+    "interpretation": "Cppcheck passes. Local Clang-Tidy and Clang Analyzer retain nonzero exits from exactly the baseline diagnostics: five source warnings plus one SDK13-incomplete translation unit for Tidy, and the existing context.cpp division warning. Current input hashes match final source. No suppressions/check weakening. Ubuntu mandatory analysis passes.",
+    "baseline_production_source_equal": true,
+    "environment": {
+      "CLANG_TIDY": "build/tidy18/clang-tidy-sdk13"
+    }
+  },
+  "linux_ci": {
+    "source": "7f6a0bcd278b0700860850875cc68844b17643c9",
+    "run": "https://github.com/hbmartin/codet-compiled-agent/actions/runs/40589394974",
+    "jobs": {
+      "ubuntu": "success",
+      "lint": "success",
+      "semgrep": "success",
+      "Required checks": "success"
+    },
+    "coverage": "Wide curses explicitly selected; CODET_REQUIRE_UTF8_CURSES=1 makes actual Unicode cell/wrapping coverage mandatory; build, analyzer selftests, all-source analysis and complete CTest pass."
+  },
+  "earlier_failure_evidence": [
+    {
+      "test": "History.PastEndLineCountsAndCaseAndHardLinkInspectionUseActualFiles",
+      "observation": "One initial sanitizer failure on case-insensitive macOS; exact baseline Release reproduced 2/100 failures, changed focused ASan 0/20. Assertions unchanged.",
+      "counts": {
+        "baseline": {
+          "runs": 100,
+          "failed_runs": 2
+        },
+        "changed": {
+          "runs": 20,
+          "failed_runs": 0
+        }
+      },
+      "logs": [
+        "build/approval-visibility-followup/initial-sanitize-ctest.log",
+        "build/approval-visibility-followup/baseline-case-insensitive.log",
+        "build/approval-visibility-followup/case-insensitive-repetition.log"
+      ]
+    },
+    {
+      "test": "CliTests.test_live_permission_modes_in_both_terminals",
+      "observation": "Intermediate sanitizer failure exposed an ordinary input prefix lost at worker completion. Fixed with explicit ordinary-draft retention. The new gated negative control fails baseline in both modes; final full suites and repetitions pass."
+    },
+    {
+      "test": "Followup.BackgroundAndPtyCommandsRetainLargeOutput",
+      "observation": "One intermediate macOS Child process setup failed exception; root cause unestablished. Focused 100 baseline and 100 changed reruns both pass. This is not classified as a confirmed baseline defect. Final full suites pass.",
+      "counts": {
+        "baseline-child-setup-repetition": {
+          "runs": 100,
+          "failed_runs": 0
+        },
+        "changed-child-setup-repetition": {
+          "runs": 100,
+          "failed_runs": 0
+        }
+      },
+      "logs": [
+        "build/approval-visibility-followup/final-validation-driver.log",
+        "build/approval-visibility-followup/baseline-child-setup-repetition.log",
+        "build/approval-visibility-followup/changed-child-setup-repetition.log"
+      ],
+      "original_full_log": "Overwritten by later runs; the original driver summary remains. Do not treat the later passing full log as original failure evidence."
+    },
+    {
+      "observation": "New development-time static findings were fixed in source. Final diagnostic multisets match baseline without suppressions."
+    }
+  ],
+  "performance": {
+    "method": "Two isolated measurement sets; one warm-up and five alternating measured runs per workload per variant, reversing ordering per sample. No concurrent local analyzers/tests. Identical compiler/settings and copied harnesses.",
+    "variants": [
+      {
+        "name": "baseline",
+        "ref": "e3b32c3549aa6732a48aeee6b4340e4feca70169",
+        "configure": [
+          "cmake",
+          "-S",
+          "build/approval-visibility-followup/baseline-src",
+          "-B",
+          "build/approval-visibility-followup/baseline-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCODET_DEPENDENCY_ROOT=.deps",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+        ],
+        "harness_hashes": {
+          "CMakeLists.txt": "789c1d919bcb1e6d75377731a5aa5c9cbe49758cd3b6c3df24e0d5deb9789a38",
+          "tests/ui_render_bench.cpp": "13a944532fa2968ef530b9c3dd2b80f6bc8624f21da8062560edbac8a22ef90f",
+          "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+          "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+          "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+          "tests/native_stat_interposer.hpp": "1b18a6ad90b78d614d8665cfaeacd490b543071541cb63857ce919e1fdcc51ef",
+          "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6"
+        }
+      },
+      {
+        "name": "changed",
+        "ref": "7f6a0bcd278b0700860850875cc68844b17643c9",
+        "configure": [
+          "cmake",
+          "-S",
+          "build/approval-visibility-followup/changed-src",
+          "-B",
+          "build/approval-visibility-followup/changed-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCODET_DEPENDENCY_ROOT=.deps",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+        ],
+        "harness_hashes": {
+          "CMakeLists.txt": "789c1d919bcb1e6d75377731a5aa5c9cbe49758cd3b6c3df24e0d5deb9789a38",
+          "tests/ui_render_bench.cpp": "13a944532fa2968ef530b9c3dd2b80f6bc8624f21da8062560edbac8a22ef90f",
+          "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+          "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+          "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+          "tests/native_stat_interposer.hpp": "1b18a6ad90b78d614d8665cfaeacd490b543071541cb63857ce919e1fdcc51ef",
+          "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6"
+        }
+      }
+    ],
+    "samples": 408,
+    "workloads_per_set": 17,
+    "medians_file": "approval-visibility-followup-performance.csv",
+    "samples_file": "approval-visibility-followup-performance-samples.csv",
+    "verification": {
+      "matched_input_checksums": true,
+      "allocation_positive_control": "1 allocation / 4096 bytes in every sample",
+      "syscall_positive_controls": "128 calls each for write, fstat, fcntl and fpathconf in every sample",
+      "diagnostic_and_export_allocation_and_native_operation_counts_equal": true,
+      "changed_input_work_at_most_twice_raw_bytes": true,
+      "unchanged_redraw_prepared_bytes": 0,
+      "history_payload_cap_enforced": true
+    },
+    "summaries": [
+      {
+        "set": 1,
+        "case": "allocation-positive",
+        "variant": "baseline",
+        "milliseconds": 4.1e-05,
+        "allocations": 1,
+        "allocated_bytes": 4096,
+        "prepared_input_bytes": 0,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 1,
+        "case": "allocation-positive",
+        "variant": "changed",
+        "milliseconds": 4.2e-05,
+        "allocations": 1,
+        "allocated_bytes": 4096,
+        "prepared_input_bytes": 0,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 1,
+        "case": "input-1024",
+        "variant": "baseline",
+        "milliseconds": 9.224458,
+        "allocations": 6656,
+        "allocated_bytes": 2138785,
+        "prepared_input_bytes": 524800,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 1,
+        "case": "input-1024",
+        "variant": "changed",
+        "milliseconds": 0.164208,
+        "allocations": 1032,
+        "allocated_bytes": 110148,
+        "prepared_input_bytes": 2047,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 1,
+        "case": "input-8192",
+        "variant": "baseline",
+        "milliseconds": 579.990375,
+        "allocations": 77830,
+        "allocated_bytes": 134567585,
+        "prepared_input_bytes": 33558528,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 1,
+        "case": "input-8192",
+        "variant": "changed",
+        "milliseconds": 1.263041,
+        "allocations": 8209,
+        "allocated_bytes": 898628,
+        "prepared_input_bytes": 16383,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 1,
+        "case": "input-65536",
+        "variant": "baseline",
+        "milliseconds": 37283.061459,
+        "allocations": 819212,
+        "allocated_bytes": 8592750241,
+        "prepared_input_bytes": 2147516416,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 1,
+        "case": "input-65536",
+        "variant": "changed",
+        "milliseconds": 9.7915,
+        "allocations": 65562,
+        "allocated_bytes": 7206468,
+        "prepared_input_bytes": 131071,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 1,
+        "case": "input-redraw-65536",
+        "variant": "baseline",
+        "milliseconds": 289.229709,
+        "allocations": 3584,
+        "allocated_bytes": 67119104,
+        "prepared_input_bytes": 16777216,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 1,
+        "case": "input-redraw-65536",
+        "variant": "changed",
+        "milliseconds": 0.019875,
+        "allocations": 256,
+        "allocated_bytes": 20480,
+        "prepared_input_bytes": 0,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 1,
+        "case": "history-small",
+        "variant": "baseline",
+        "milliseconds": 0.0105,
+        "allocations": 156,
+        "allocated_bytes": 18552,
+        "prepared_input_bytes": 0,
+        "retained_payload_bytes": 3870
+      },
+      {
+        "set": 1,
+        "case": "history-small",
+        "variant": "changed",
+        "milliseconds": 0.003916,
+        "allocations": 32,
+        "allocated_bytes": 8168,
+        "prepared_input_bytes": 0,
+        "retained_payload_bytes": 3870
+      },
+      {
+        "set": 1,
+        "case": "history-large",
+        "variant": "baseline",
+        "milliseconds": 11.693,
+        "allocations": 156,
+        "allocated_bytes": 251661432,
+        "prepared_input_bytes": 0,
+        "retained_payload_bytes": 62914590
+      },
+      {
+        "set": 1,
+        "case": "history-large",
+        "variant": "changed",
+        "milliseconds": 0.414042,
+        "allocations": 62,
+        "allocated_bytes": 495848,
+        "prepared_input_bytes": 0,
+        "retained_payload_bytes": 262144
+      },
+      {
+        "set": 1,
+        "case": "write-positive",
+        "variant": "baseline",
+        "milliseconds": 0.12125,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 128,
+        "readiness": 0,
+        "fstat": 0,
+        "fcntl": 0,
+        "fpathconf": 0
+      },
+      {
+        "set": 1,
+        "case": "write-positive",
+        "variant": "changed",
+        "milliseconds": 0.119791,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 128,
+        "readiness": 0,
+        "fstat": 0,
+        "fcntl": 0,
+        "fpathconf": 0
+      },
+      {
+        "set": 1,
+        "case": "stat-positive",
+        "variant": "baseline",
+        "milliseconds": 0.094041,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 128,
+        "fcntl": 0,
+        "fpathconf": 0
+      },
+      {
+        "set": 1,
+        "case": "stat-positive",
+        "variant": "changed",
+        "milliseconds": 0.093708,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 128,
+        "fcntl": 0,
+        "fpathconf": 0
+      },
+      {
+        "set": 1,
+        "case": "flags-positive",
+        "variant": "baseline",
+        "milliseconds": 0.017625,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0,
+        "fcntl": 128,
+        "fpathconf": 0
+      },
+      {
+        "set": 1,
+        "case": "flags-positive",
+        "variant": "changed",
+        "milliseconds": 0.01725,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0,
+        "fcntl": 128,
+        "fpathconf": 0
+      },
+      {
+        "set": 1,
+        "case": "bounds-positive",
+        "variant": "baseline",
+        "milliseconds": 0.034292,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0,
+        "fcntl": 0,
+        "fpathconf": 128
+      },
+      {
+        "set": 1,
+        "case": "bounds-positive",
+        "variant": "changed",
+        "milliseconds": 0.031917,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0,
+        "fcntl": 0,
+        "fpathconf": 128
+      },
+      {
+        "set": 1,
+        "case": "diagnostics-amplified",
+        "variant": "baseline",
+        "milliseconds": 385.617292,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 200000,
+        "bytes": 4000000,
+        "readiness": 0,
+        "fstat": 200000,
+        "fcntl": 200000,
+        "fpathconf": 0
+      },
+      {
+        "set": 1,
+        "case": "diagnostics-amplified",
+        "variant": "changed",
+        "milliseconds": 386.068625,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 200000,
+        "bytes": 4000000,
+        "readiness": 0,
+        "fstat": 200000,
+        "fcntl": 200000,
+        "fpathconf": 0
+      },
+      {
+        "set": 1,
+        "case": "diagnostics-standalone-amplified",
+        "variant": "baseline",
+        "milliseconds": 385.746916,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 200000,
+        "bytes": 4000000,
+        "readiness": 0,
+        "fstat": 200000,
+        "fcntl": 200000,
+        "fpathconf": 0
+      },
+      {
+        "set": 1,
+        "case": "diagnostics-standalone-amplified",
+        "variant": "changed",
+        "milliseconds": 384.910375,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 200000,
+        "bytes": 4000000,
+        "readiness": 0,
+        "fstat": 200000,
+        "fcntl": 200000,
+        "fpathconf": 0
+      },
+      {
+        "set": 1,
+        "case": "diagnostics-pipe-amplified",
+        "variant": "baseline",
+        "milliseconds": 377.605584,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 200000,
+        "bytes": 4000000,
+        "readiness": 200000,
+        "fstat": 200000,
+        "fcntl": 200000,
+        "fpathconf": 1
+      },
+      {
+        "set": 1,
+        "case": "diagnostics-pipe-amplified",
+        "variant": "changed",
+        "milliseconds": 375.796458,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 200000,
+        "bytes": 4000000,
+        "readiness": 200000,
+        "fstat": 200000,
+        "fcntl": 200000,
+        "fpathconf": 1
+      },
+      {
+        "set": 1,
+        "case": "editor",
+        "variant": "baseline",
+        "milliseconds": 80.042084,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0,
+        "fcntl": 0,
+        "fpathconf": 0
+      },
+      {
+        "set": 1,
+        "case": "editor",
+        "variant": "changed",
+        "milliseconds": 80.401666,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0,
+        "fcntl": 0,
+        "fpathconf": 0
+      },
+      {
+        "set": 1,
+        "case": "export-small-file",
+        "variant": "baseline",
+        "milliseconds": 51.085291,
+        "allocations": 239500,
+        "allocated_bytes": 31487000,
+        "fstat": 50,
+        "fcntl": 50,
+        "fpathconf": 0,
+        "descriptor_writes": 50,
+        "descriptor_bytes": 1320000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 1,
+        "case": "export-small-file",
+        "variant": "changed",
+        "milliseconds": 52.069334,
+        "allocations": 239500,
+        "allocated_bytes": 31487000,
+        "fstat": 50,
+        "fcntl": 50,
+        "fpathconf": 0,
+        "descriptor_writes": 50,
+        "descriptor_bytes": 1320000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 1,
+        "case": "export-large-file",
+        "variant": "baseline",
+        "milliseconds": 267.008666,
+        "allocations": 1500654,
+        "allocated_bytes": 450368064,
+        "fstat": 3,
+        "fcntl": 3,
+        "fpathconf": 0,
+        "descriptor_writes": 474,
+        "descriptor_bytes": 30960000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 1,
+        "case": "export-large-file",
+        "variant": "changed",
+        "milliseconds": 265.291084,
+        "allocations": 1500654,
+        "allocated_bytes": 450368064,
+        "fstat": 3,
+        "fcntl": 3,
+        "fpathconf": 0,
+        "descriptor_writes": 474,
+        "descriptor_bytes": 30960000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 2,
+        "case": "allocation-positive",
+        "variant": "baseline",
+        "milliseconds": 4.2e-05,
+        "allocations": 1,
+        "allocated_bytes": 4096,
+        "prepared_input_bytes": 0,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 2,
+        "case": "allocation-positive",
+        "variant": "changed",
+        "milliseconds": 4.2e-05,
+        "allocations": 1,
+        "allocated_bytes": 4096,
+        "prepared_input_bytes": 0,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 2,
+        "case": "input-1024",
+        "variant": "baseline",
+        "milliseconds": 9.51075,
+        "allocations": 6656,
+        "allocated_bytes": 2138785,
+        "prepared_input_bytes": 524800,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 2,
+        "case": "input-1024",
+        "variant": "changed",
+        "milliseconds": 0.169416,
+        "allocations": 1032,
+        "allocated_bytes": 110148,
+        "prepared_input_bytes": 2047,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 2,
+        "case": "input-8192",
+        "variant": "baseline",
+        "milliseconds": 581.163708,
+        "allocations": 77830,
+        "allocated_bytes": 134567585,
+        "prepared_input_bytes": 33558528,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 2,
+        "case": "input-8192",
+        "variant": "changed",
+        "milliseconds": 1.232917,
+        "allocations": 8209,
+        "allocated_bytes": 898628,
+        "prepared_input_bytes": 16383,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 2,
+        "case": "input-65536",
+        "variant": "baseline",
+        "milliseconds": 37362.509375,
+        "allocations": 819212,
+        "allocated_bytes": 8592750241,
+        "prepared_input_bytes": 2147516416,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 2,
+        "case": "input-65536",
+        "variant": "changed",
+        "milliseconds": 9.88925,
+        "allocations": 65562,
+        "allocated_bytes": 7206468,
+        "prepared_input_bytes": 131071,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 2,
+        "case": "input-redraw-65536",
+        "variant": "baseline",
+        "milliseconds": 289.9685,
+        "allocations": 3584,
+        "allocated_bytes": 67119104,
+        "prepared_input_bytes": 16777216,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 2,
+        "case": "input-redraw-65536",
+        "variant": "changed",
+        "milliseconds": 0.017583,
+        "allocations": 256,
+        "allocated_bytes": 20480,
+        "prepared_input_bytes": 0,
+        "retained_payload_bytes": 0
+      },
+      {
+        "set": 2,
+        "case": "history-small",
+        "variant": "baseline",
+        "milliseconds": 0.011792,
+        "allocations": 156,
+        "allocated_bytes": 18552,
+        "prepared_input_bytes": 0,
+        "retained_payload_bytes": 3870
+      },
+      {
+        "set": 2,
+        "case": "history-small",
+        "variant": "changed",
+        "milliseconds": 0.002458,
+        "allocations": 32,
+        "allocated_bytes": 8168,
+        "prepared_input_bytes": 0,
+        "retained_payload_bytes": 3870
+      },
+      {
+        "set": 2,
+        "case": "history-large",
+        "variant": "baseline",
+        "milliseconds": 11.822667,
+        "allocations": 156,
+        "allocated_bytes": 251661432,
+        "prepared_input_bytes": 0,
+        "retained_payload_bytes": 62914590
+      },
+      {
+        "set": 2,
+        "case": "history-large",
+        "variant": "changed",
+        "milliseconds": 0.416375,
+        "allocations": 62,
+        "allocated_bytes": 495848,
+        "prepared_input_bytes": 0,
+        "retained_payload_bytes": 262144
+      },
+      {
+        "set": 2,
+        "case": "write-positive",
+        "variant": "baseline",
+        "milliseconds": 0.121708,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 128,
+        "readiness": 0,
+        "fstat": 0,
+        "fcntl": 0,
+        "fpathconf": 0
+      },
+      {
+        "set": 2,
+        "case": "write-positive",
+        "variant": "changed",
+        "milliseconds": 0.1205,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 128,
+        "bytes": 128,
+        "readiness": 0,
+        "fstat": 0,
+        "fcntl": 0,
+        "fpathconf": 0
+      },
+      {
+        "set": 2,
+        "case": "stat-positive",
+        "variant": "baseline",
+        "milliseconds": 0.093083,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 128,
+        "fcntl": 0,
+        "fpathconf": 0
+      },
+      {
+        "set": 2,
+        "case": "stat-positive",
+        "variant": "changed",
+        "milliseconds": 0.093292,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 128,
+        "fcntl": 0,
+        "fpathconf": 0
+      },
+      {
+        "set": 2,
+        "case": "flags-positive",
+        "variant": "baseline",
+        "milliseconds": 0.017125,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0,
+        "fcntl": 128,
+        "fpathconf": 0
+      },
+      {
+        "set": 2,
+        "case": "flags-positive",
+        "variant": "changed",
+        "milliseconds": 0.01725,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0,
+        "fcntl": 128,
+        "fpathconf": 0
+      },
+      {
+        "set": 2,
+        "case": "bounds-positive",
+        "variant": "baseline",
+        "milliseconds": 0.030583,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0,
+        "fcntl": 0,
+        "fpathconf": 128
+      },
+      {
+        "set": 2,
+        "case": "bounds-positive",
+        "variant": "changed",
+        "milliseconds": 0.030917,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0,
+        "fcntl": 0,
+        "fpathconf": 128
+      },
+      {
+        "set": 2,
+        "case": "diagnostics-amplified",
+        "variant": "baseline",
+        "milliseconds": 380.135334,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 200000,
+        "bytes": 4000000,
+        "readiness": 0,
+        "fstat": 200000,
+        "fcntl": 200000,
+        "fpathconf": 0
+      },
+      {
+        "set": 2,
+        "case": "diagnostics-amplified",
+        "variant": "changed",
+        "milliseconds": 382.524583,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 200000,
+        "bytes": 4000000,
+        "readiness": 0,
+        "fstat": 200000,
+        "fcntl": 200000,
+        "fpathconf": 0
+      },
+      {
+        "set": 2,
+        "case": "diagnostics-standalone-amplified",
+        "variant": "baseline",
+        "milliseconds": 386.985667,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 200000,
+        "bytes": 4000000,
+        "readiness": 0,
+        "fstat": 200000,
+        "fcntl": 200000,
+        "fpathconf": 0
+      },
+      {
+        "set": 2,
+        "case": "diagnostics-standalone-amplified",
+        "variant": "changed",
+        "milliseconds": 387.2635,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 200000,
+        "bytes": 4000000,
+        "readiness": 0,
+        "fstat": 200000,
+        "fcntl": 200000,
+        "fpathconf": 0
+      },
+      {
+        "set": 2,
+        "case": "diagnostics-pipe-amplified",
+        "variant": "baseline",
+        "milliseconds": 389.200334,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 200000,
+        "bytes": 4000000,
+        "readiness": 200000,
+        "fstat": 200000,
+        "fcntl": 200000,
+        "fpathconf": 1
+      },
+      {
+        "set": 2,
+        "case": "diagnostics-pipe-amplified",
+        "variant": "changed",
+        "milliseconds": 393.262959,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 200000,
+        "bytes": 4000000,
+        "readiness": 200000,
+        "fstat": 200000,
+        "fcntl": 200000,
+        "fpathconf": 1
+      },
+      {
+        "set": 2,
+        "case": "editor",
+        "variant": "baseline",
+        "milliseconds": 80.255958,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0,
+        "fcntl": 0,
+        "fpathconf": 0
+      },
+      {
+        "set": 2,
+        "case": "editor",
+        "variant": "changed",
+        "milliseconds": 79.760459,
+        "allocations": 0,
+        "allocated_bytes": 0,
+        "writes": 0,
+        "bytes": 0,
+        "readiness": 0,
+        "fstat": 0,
+        "fcntl": 0,
+        "fpathconf": 0
+      },
+      {
+        "set": 2,
+        "case": "export-small-file",
+        "variant": "baseline",
+        "milliseconds": 52.217916,
+        "allocations": 239500,
+        "allocated_bytes": 31487000,
+        "fstat": 50,
+        "fcntl": 50,
+        "fpathconf": 0,
+        "descriptor_writes": 50,
+        "descriptor_bytes": 1320000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 2,
+        "case": "export-small-file",
+        "variant": "changed",
+        "milliseconds": 53.154666,
+        "allocations": 239500,
+        "allocated_bytes": 31487000,
+        "fstat": 50,
+        "fcntl": 50,
+        "fpathconf": 0,
+        "descriptor_writes": 50,
+        "descriptor_bytes": 1320000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 2,
+        "case": "export-large-file",
+        "variant": "baseline",
+        "milliseconds": 276.607208,
+        "allocations": 1500654,
+        "allocated_bytes": 450368064,
+        "fstat": 3,
+        "fcntl": 3,
+        "fpathconf": 0,
+        "descriptor_writes": 474,
+        "descriptor_bytes": 30960000,
+        "stream_flushes": 0
+      },
+      {
+        "set": 2,
+        "case": "export-large-file",
+        "variant": "changed",
+        "milliseconds": 276.332416,
+        "allocations": 1500654,
+        "allocated_bytes": 450368064,
+        "fstat": 3,
+        "fcntl": 3,
+        "fpathconf": 0,
+        "descriptor_writes": 474,
+        "descriptor_bytes": 30960000,
+        "stream_flushes": 0
+      }
+    ],
+    "interpretation": "The helper boundary removes quadratic input preparation and bounds history. A 64 KiB incremental ASCII input prepares 131071 bytes instead of 2147516416; cumulative C++ allocation bytes fall from 8592750241 to 7206468. A 256-redraw workload prepares zero new input bytes and copies only the viewport. Thirty 2 MiB history requests retain 262144 payload bytes instead of 62914590. These are helper/harness measurements, not complete interactive terminal latency. Diagnostic/export counters are unchanged. Small export medians are about 1.9%/1.8% slower; large export medians about 0.6%/0.1% faster. No general diagnostic/export speedup is claimed.",
+    "counter_limits": "C++ operator new and directly interposed native calls; not all libc/libedit allocations or I/O. No timing-based CI thresholds."
+  },
+  "platform_limits": {
+    "linux": "Ubuntu GitHub Actions passed on final production revision.",
+    "native_tiger_runtime": "Unavailable; opt-in acceptance skipped.",
+    "tiger_cross_build": "Compiler and 10.4u SDK unavailable. Pinned unsuffixed wide-curses configuration unchanged.",
+    "native_intel_macos": "Unavailable locally.",
+    "narrow_renderer": "ASCII fallback covered on available renderer through explicit backend selection.",
+    "blocking_tty_cancellation": "Existing limitation remains.",
+    "standalone_and_emergency_diagnostics": "Best effort, no EAGAIN waiting; conservative extra separators after indeterminate failures remain accepted.",
+    "unicode": "No guarantee of visually unique Unicode."
+  },
+  "changed_files_sha256": {
+    "CMakeLists.txt": "789c1d919bcb1e6d75377731a5aa5c9cbe49758cd3b6c3df24e0d5deb9789a38",
+    "docs/UNICODE-LICENSE.txt": "e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96",
+    "include/codet/detail/approval_review.hpp": "6275783e5e2b70c81ef10447b8e3c38e1ad96729172407fc3d7c16e3caddf2a4",
+    "include/codet/detail/approval_unicode.hpp": "81b289def9f7f2453bca3043619e788e61a36765713f30809f1ff149ff9746b7",
+    "include/codet/detail/curses_input.hpp": "0f036f69cac75f36d4addabd75a6a55122353c97d96564cf984fa2c2e8dd17d5",
+    "include/codet/detail/curses_render.hpp": "cbd5b751fd318995a37e97ac34f1dbbec536b94acd7ecdaac217cfe0e9cf3420",
+    "include/codet/detail/curses_text.hpp": "ec448f8a74cc8eec477e6e667d7a8bf754dc2e3574061f38103c2b4428bddfad",
+    "include/codet/detail/diagnostic_stream.hpp": "6f7b00edb9d98829339e5e8fab6b24c9eef6eefd5d9c2d53a98762a77a1c528f",
+    "include/codet/detail/native_output.hpp": "3f88a81bab50db4c8488cb318ccc4f728c394d58ef9c0015db54394408b0820f",
+    "include/codet/detail/request_input.hpp": "162e23a5bb774dc3f82955141696f2876508d87ee6a5e2d3d2b10521eedd8288",
+    "include/codet/detail/ui_history.hpp": "b6c4aee44ecddc775a362558c228225aedb260883a8dc4064d30f9db4d3ef981",
+    "src/modern/cli.cpp": "15ca6aaa43ba6d8e50ec5da056116c4dc6477ca7d8dfb1049bd2f637e3122d7e",
+    "src/modern/platform.cpp": "0f56f2801067e6075b297384e5021cd4eef2580681495bcda3f2222470fc0db9",
+    "tests/approval_render_test.cpp": "0d8b2eb09071f90fbf15539322f3f9577129b8ba2df68dbbde868da0e29a0b36",
+    "tests/cli_diagnostics_test.cpp": "aa079a7838a774f4a5a476b6e7526867a4139928d303bf5ff48f8161a1abb450",
+    "tests/cli_integration.py": "e499d1f0e7e6a6bd97bd91259c13381a03bc7667a56f08a540ab1fd2ad633e8e",
+    "tests/publication_fault_test.cpp": "08dbb5a593260c26902c2e69dceadc7d57835ea8bb118247c34ccb89e74bcf65",
+    "tests/ui_render_bench.cpp": "13a944532fa2968ef530b9c3dd2b80f6bc8624f21da8062560edbac8a22ef90f"
+  }
+}

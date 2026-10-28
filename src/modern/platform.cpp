@@ -327,7 +327,6 @@ bool printable_file_path(const std::string &path) noexcept {
   return true;
 }
 template <class Write> bool escaped_file_path(const std::string &path, Write write) {
-  constexpr char hex[] = "0123456789ABCDEF";
   char buffer[512];
   size_t used = 0;
   for (const auto character : path) {
@@ -340,10 +339,9 @@ template <class Write> bool escaped_file_path(const std::string &path, Write wri
     if (byte >= 0x20 && byte <= 0x7e && byte != '\\')
       buffer[used++] = character;
     else {
-      buffer[used++] = '\\';
-      buffer[used++] = 'x';
-      buffer[used++] = hex[byte >> 4u];
-      buffer[used++] = hex[byte & 15u];
+      const auto escaped = detail::escaped_byte(static_cast<unsigned char>(byte));
+      std::memcpy(buffer + used, escaped.data(), escaped.size());
+      used += escaped.size();
     }
   }
   return write(buffer, used);
@@ -462,7 +460,7 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
     if (!output_ || (file_ && std::ferror(file_)))
       (void)recover_diagnostic_stream(output_);
     NativeDiagnosticRecord record(native, *state_, *destination.owner, attempt);
-    record.begin(newline);
+    record.begin();
     const bool success = record.finish(parts, newline);
     if (!success) {
       try {
@@ -479,17 +477,16 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
   struct Recovery {
     std::ostream &stream;
     bool &pending;
-    bool newline, attempted = false, complete = false;
-    Recovery(std::ostream &out, bool &separator, bool line) noexcept
-        : stream(out), pending(separator), newline(line) {}
+    bool attempted = false, complete = false;
+    Recovery(std::ostream &out, bool &separator) noexcept : stream(out), pending(separator) {}
     ~Recovery() {
       if (!complete) {
-        if (newline && attempted)
+        if (attempted)
           pending = true;
         recover_diagnostic_stream(stream);
       }
     }
-  } recovery{output_, state_->pending, newline};
+  } recovery{output_, state_->pending};
   if ((!output_ || (file_ && std::ferror(file_))) && !recover_diagnostic_stream(output_))
     output_.clear(output_.rdstate()); // Preserve configured exception-mask behavior.
   if (state_->pending) {
@@ -566,7 +563,6 @@ size_t detail::rendered_prefix(std::string_view text, size_t limit) noexcept {
 }
 detail::RenderProgress detail::terminal_text_into(std::string_view text, char *output, size_t limit,
                                                   RenderMode mode) noexcept {
-  constexpr char hex[] = "0123456789ABCDEF";
   size_t offset = 0, used = 0;
   while (offset < text.size() && used < limit) {
     const auto lead = static_cast<unsigned char>(text[offset]);
@@ -600,10 +596,9 @@ detail::RenderProgress detail::terminal_text_into(std::string_view text, char *o
         if (limit - used < 4)
           return {offset, used};
         const auto byte = static_cast<unsigned char>(text[offset++]);
-        output[used++] = '\\';
-        output[used++] = 'x';
-        output[used++] = hex[byte >> 4u];
-        output[used++] = hex[byte & 15u];
+        const auto escaped = escaped_byte(byte);
+        std::memcpy(output + used, escaped.data(), escaped.size());
+        used += escaped.size();
       }
     }
   }
