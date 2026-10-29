@@ -16,6 +16,8 @@ class LinePrompt final : public LineOutputObserver {
   bool internal_ = false, explained_ = false, known_ = true;
   size_t columns_ = 0, painted_ = 0;
   const size_t test_columns_;
+  uint64_t revision_ = 0, request_revision_ = 0;
+  bool guidance_due_ = true;
   std::array<char, 1280> row_{};
   std::array<char, 256> spaces_{};
   struct Internal {
@@ -164,12 +166,17 @@ public:
   void release() noexcept {
     owned_ = false;
   }
-  void request_changed() noexcept {
-    due_ = true;
-    if (!input_.stale())
-      explained_ = false;
-  }
   void flush() {
+    if (revision_ != input_.revision()) {
+      revision_ = input_.revision();
+      due_ = true;
+      if (!input_.stale())
+        explained_ = false;
+    }
+    if (request_revision_ != input_.request_revision()) {
+      request_revision_ = input_.request_revision();
+      guidance_due_ = true;
+    }
     if (!due_)
       return;
     geometry();
@@ -188,6 +195,14 @@ public:
       dirty_ = true;
       explained_ = output_.display({RequestInput::discard_instruction});
       if (explained_)
+        dirty_ = false;
+    }
+    if (!input_.stale() && guidance_due_ && input_.kind() != RequestKind::message &&
+        prefix(columns_ ? columns_ : 80) != input_.guidance()) {
+      separate();
+      dirty_ = true;
+      guidance_due_ = !output_.display({input_.guidance()});
+      if (!guidance_due_)
         dirty_ = false;
     }
     if (dirty_ && !columns_)

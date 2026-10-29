@@ -840,3 +840,15 @@ TEST_F(Runtime, SteeringAtCompletionBecomesPendingForTheSameSession) {
   EXPECT_EQ(input->take_pending(session.id), (std::vector<std::string>{"late steering"}));
 }
 } // namespace
+
+TEST(InteractionAdmission, ExactlyEmptyMessagesAreNeverQueued) {
+  codet::Interaction input;
+  input.begin_turn("session");
+  input.submit("");
+  EXPECT_TRUE(input.take_input().empty());
+  input.submit(" ");
+  EXPECT_EQ(input.take_input(), std::vector<std::string>{" "});
+  input.end_turn();
+  input.submit("");
+  EXPECT_TRUE(input.take_pending("session").empty());
+}

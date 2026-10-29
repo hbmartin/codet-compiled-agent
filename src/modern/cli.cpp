@@ -381,14 +381,10 @@ private:
 public:
   void begin_request(const Json &event) {
     input_.open(detail::ApprovalIdentity::from(event), detail::RequestKind::question);
-    if (line_)
-      line_->request_changed();
   }
   void begin_approval(const Json &event) {
     const auto identity = detail::ApprovalIdentity::from(event);
     input_.open(identity, detail::RequestKind::approval);
-    if (line_)
-      line_->request_changed();
     const auto target =
         event.at("tool").get<std::string>() + ": " + event.at("target").get<std::string>();
     if (!curses_) {
@@ -417,8 +413,6 @@ public:
   }
   void end_approval(std::optional<std::string_view> answer = {}) {
     input_.close();
-    if (line_)
-      line_->request_changed();
     auto finished = std::move(approval_);
     approval_.reset();
 
@@ -562,8 +556,8 @@ public:
         if (closed)
           return std::nullopt;
         if (line) {
-          if (line->action() == detail::InputAction::discard) {
-            discarded_line(line->discard_reason());
+          if (const auto submission = line->classify(); submission.rejection) {
+            discarded_line(*submission.rejection);
             break; // The stale idle line ended; hand the empty prompt back to libedit.
           }
           if (resources_.entries())
@@ -1193,12 +1187,13 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
         }
         if (line) {
           const auto &text = line->text;
-          const auto action = line->action(pending ? &*pending : nullptr);
+          const auto submission = line->classify(pending ? &*pending : nullptr);
+          const auto action = submission.action;
           if (action == detail::InputAction::quit) {
             quit_requested = true;
             cancel.requested = true;
           } else if (action == detail::InputAction::discard) {
-            terminal->discarded_line(line->discard_reason());
+            terminal->discarded_line(*submission.rejection);
           } else if (text == "/model" || text.rfind("/model ", 0) == 0 || text == "/status" ||
                      text == "/compact") {
             terminal->say("Use /model, /status and /compact after the active turn completes.");
@@ -1210,13 +1205,13 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
             pending.reset();
             terminal->end_approval(answered ? std::optional<std::string_view>(text) : std::nullopt);
             if (!answered)
-              terminal->discarded_line(line->discard_reason());
+              terminal->discarded_line(detail::InputDiscard::expired);
           } else if (text.rfind("/permissions", 0) == 0)
             terminal->say("Change permission modes after the active turn completes.");
           else if (text == "/new") {
             new_requested = true;
             terminal->say("Starting a new session after pending messages are handled.");
-          } else {
+          } else if (!text.empty()) {
             try {
               interaction->submit(text);
             } catch (const Error &error) {

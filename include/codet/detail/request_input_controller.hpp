@@ -9,10 +9,17 @@ class RequestInputController {
   RequestInput scope_;
   CursesInput input_;
   RequestKind kind_ = RequestKind::message;
+  uint64_t revision_ = 0, request_revision_ = 0;
 
 public:
   static constexpr std::string_view approval_prompt = "Approve? [y/N]";
   static constexpr std::string_view question_prompt = "Enter a choice number or a text answer.";
+  uint64_t revision() const noexcept {
+    return revision_;
+  }
+  uint64_t request_revision() const noexcept {
+    return request_revision_;
+  }
   bool stale() const noexcept {
     return scope_.stale();
   }
@@ -27,30 +34,36 @@ public:
   }
   void unicode(bool enabled) {
     input_.unicode(enabled);
+    ++revision_;
   }
   bool append(char byte) {
     if (input_.size() == CursesInput::limit)
       return false;
     scope_.edit();
     input_ += byte;
+    ++revision_;
     return true;
   }
   void erase_character() {
     if (input_.empty())
       return;
     input_.erase_character();
+    ++revision_;
     if (input_.empty())
       scope_.edited_empty();
   }
   void presentation_clear() noexcept {
     if (!scope_.stale())
       input_.clear();
+    ++revision_;
   }
   void open(ApprovalIdentity identity, RequestKind kind) {
     const bool was_stale = stale();
     if (scope_.open(std::move(identity)) && !was_stale)
       input_.clear();
     kind_ = kind;
+    ++revision_;
+    ++request_revision_;
   }
   void close() noexcept {
     const bool was_stale = stale();
@@ -58,10 +71,13 @@ public:
     kind_ = RequestKind::message;
     if (!ordinary_draft() && !was_stale)
       input_.clear();
+    ++revision_;
+    ++request_revision_;
   }
   InputLine take(std::string text) {
     auto line = scope_.take(std::move(text));
     input_.clear();
+    ++revision_;
     return line;
   }
   InputLine take() {

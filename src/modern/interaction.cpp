@@ -107,6 +107,8 @@ bool Interaction::current_event(const Json &event) {
           event.value("codet_session_id", "") == session_);
 }
 void Interaction::submit(const std::string &text) {
+  if (text.empty())
+    return;
   std::lock_guard<std::mutex> lock(mutex_);
   if (input_.size() >= 100 || text.size() > 65536)
     throw Error("Pending user input limit exceeded");

@@ -234,9 +234,10 @@ TEST(RequestInput, DiscardReasonDistinguishesFinishedExpiryFromStaleDrafts) {
   const detail::ApprovalIdentity identity{"s", "request", 1};
   detail::InputLine finished{"yes", identity, false}, unfinished{"yes", identity, true};
   EXPECT_EQ(finished.action(), detail::InputAction::discard);
-  EXPECT_EQ(detail::discard_message(finished.discard_reason()),
+  EXPECT_EQ(detail::discard_message(*finished.classify().rejection),
             "Request expired; answer discarded.");
-  EXPECT_EQ(detail::discard_message(unfinished.discard_reason()), "Unfinished input discarded.");
+  EXPECT_EQ(detail::discard_message(*unfinished.classify().rejection),
+            "Unfinished input discarded.");
 }
 TEST(RequestInputController, FreshEmptyAndPresentationClearsHaveDistinctOwnership) {
   detail::RequestInputController input;
@@ -352,7 +353,6 @@ TEST(LinePrompt, ApprovalAndQuestionDraftsSurviveOutputWithoutDuplicatedAnswers)
   for (auto kind : {detail::RequestKind::approval, detail::RequestKind::question}) {
     LineFixture f;
     f.input.open({"s", "request", 1}, kind);
-    f.line->request_changed();
     f.line->flush();
     f.line->append('y');
     f.normal("notice");
@@ -379,6 +379,34 @@ TEST(LinePrompt, RedirectedOutputAndReleasedRecoveryNeverRepaintAnotherPrompt) {
   f.line.reset();
   EXPECT_EQ(f.io.line_output, nullptr);
 }
+TEST(LinePrompt, ControllerMutationsInvalidatePresentationWithoutNotifications) {
+  LineFixture f;
+  f.line->append('x');
+  f.input.open({"s", "first", 1}, detail::RequestKind::approval);
+  f.line->flush();
+  EXPECT_EQ(last_line(f.stream.str()), "discard>");
+  const auto stale = f.input.take();
+  EXPECT_EQ(stale.classify().rejection, detail::InputDiscard::unfinished);
+  f.line->flush();
+  EXPECT_EQ(last_line(f.stream.str()), "Approve? [y/N]");
+  f.line->append('y');
+  f.input.presentation_clear();
+  f.line->flush();
+  EXPECT_EQ(last_line(f.stream.str()), "Approve? [y/N]");
+  f.input.close();
+  f.line->flush();
+  EXPECT_EQ(last_line(f.stream.str()), "discard>");
+}
+TEST(RequestInput, ValidSubmissionHasNoDiscardReason) {
+  detail::InputLine ordinary{"run tests", {}, false};
+  EXPECT_FALSE(ordinary.classify().rejection);
+  EXPECT_EQ(ordinary.classify().action, detail::InputAction::message);
+  const detail::ApprovalIdentity identity{"s", "r", 1};
+  const Json event = {{"codet_session_id", "s"}, {"codet_turn", 1}, {"request_id", "r"}};
+  detail::InputLine answer{"", identity, false};
+  EXPECT_EQ(answer.classify(&event).action, detail::InputAction::answer);
+  EXPECT_FALSE(answer.classify(&event).rejection);
+}
 TEST(LinePrompt, ErasingTheFinalCharacterRemovesTheActiveOrdinaryPrompt) {
   LineFixture f;
   f.line->append('x');
@@ -393,7 +421,6 @@ TEST(LinePrompt, DraftTrafficIsBoundedAndUnknownGeometryUsesSnapshots) {
   LineFixture f;
   for (size_t i = 0; i < 20480; ++i)
     f.input.append('x');
-  f.line->request_changed();
   f.line->flush();
   f.stream.str("");
   for (int i = 0; i < 100; ++i) {
