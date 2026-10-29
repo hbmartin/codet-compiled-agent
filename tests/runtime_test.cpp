@@ -44,6 +44,7 @@ struct Recording : Processes {
   bool running = false, poll_error = false;
   std::string output = "done", capture_error;
   size_t closes = 0;
+  bool stop_error = false;
   ProcessResult run(const ProcessSpec &spec, const Cancellation &) override {
     return hook ? hook(spec) : ProcessResult{};
   }
@@ -60,6 +61,8 @@ struct Recording : Processes {
     return result;
   }
   void stop(const std::string &) override {
+    if (stop_error)
+      throw Error("injected stop failure");
     running = false;
   }
   void write(const std::string &, const std::string &text) override {
@@ -252,6 +255,43 @@ TEST_F(Runtime, PipeEofPublishesFinalOutputAndPtyRejectsBeforeWriting) {
                            cancel)
                   .error);
   EXPECT_TRUE(recording.writes.empty());
+}
+TEST_F(Runtime, WorkerExecCleanupQueuesFixedWarningsAndPreservesTheOriginalFailure) {
+  config.permission_mode = "bypass";
+  for (bool original_failure : {false, true}) {
+    Recording process;
+    process.running = true;
+    auto interaction = std::make_shared<Interaction>();
+    Tools tools(config, files, process, http, clock, {}, {}, {}, interaction);
+    const auto start =
+        tools.execute(call("exec_command", {{"cmd", "cat"}, {"yield_time_ms", 1}}), cancel);
+    ASSERT_FALSE(start.error) << start.content;
+    process.stop_error = true;
+    auto worker = std::async(std::launch::async, [&] {
+      if (original_failure) {
+        process.poll_error = true;
+        const auto result =
+            tools.execute(call("write_stdin", {{"session_id", start.metadata.at("session_id")},
+                                               {"chars", "x"},
+                                               {"yield_time_ms", 1}}),
+                          cancel);
+        EXPECT_TRUE(result.error);
+        EXPECT_THAT(result.content, HasSubstr("injected output collection failure"));
+      } else {
+        tools.cancel_exec();
+        tools.cancel_exec();
+      }
+    });
+    worker.get();
+    size_t count = 0;
+    interaction->drain_warnings([&](std::string_view message) {
+      EXPECT_EQ(message, original_failure ? "Exec cleanup failed; preserving original error"
+                                          : "Exec cleanup failed while stopping owned process");
+      ++count;
+      return true;
+    });
+    EXPECT_EQ(count, 1u);
+  }
 }
 TEST_F(Runtime, EofRetryDoesNotInventExitStatusAfterFailedCollection) {
   Recording process;

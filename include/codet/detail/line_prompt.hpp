@@ -146,6 +146,13 @@ public:
       return false;
     if (descriptor == STDOUT_FILENO)
       destination(value);
+    else if (const auto prompt = output_.presentation_descriptor(); prompt >= 0) {
+      struct stat current {};
+      if (::fstat(prompt, &current) == 0)
+        destination(current);
+      else
+        known_ = false;
+    }
     if (!known_ || !S_ISCHR(value.st_mode) || !same(value, terminal_))
       return false;
     const bool separator = dirty_;

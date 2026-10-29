@@ -773,7 +773,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   const DiagnosticSink main_diagnostic = [diagnostics](const std::string &text) {
     diagnostics->emit_rendered({text});
   };
-  DiagnosticSink diagnostic = [&, diagnostics](const std::string &text) {
+  DiagnosticSink diagnostic = [&](const std::string &text) {
     if (interaction && std::this_thread::get_id() != terminal_thread) {
       try {
         interaction->post({{"type", "codet.diagnostic"}, {"text", text}});

@@ -456,6 +456,48 @@ TEST(LinePrompt, FailedConfiguredSinkUsesTheInvocationGate) {
   const DiagnosticSink exhausted = [](const auto &) { throw std::bad_alloc(); };
   EXPECT_THROW(detail::context_diagnostic(exhausted, errors, {warning}), std::bad_alloc);
 }
+TEST(LinePrompt, InstructionDeliveryIsIndependentOfPromptDelivery) {
+  struct Failing : std::stringbuf {
+    int writes = 0, fail = 0, instructions = 0;
+    std::streamsize xsputn(const char *text, std::streamsize size) override {
+      if (std::string_view(text, static_cast<size_t>(size)) ==
+          detail::RequestInput::discard_instruction)
+        ++instructions;
+      if (++writes == fail) {
+        const auto count = std::min(std::streamsize{3}, size);
+        (void)std::stringbuf::xsputn(text, count);
+        return count;
+      }
+      return std::stringbuf::xsputn(text, size);
+    }
+  };
+  for (int failure : {1, 2}) {
+    Failing buffer;
+    buffer.fail = failure;
+    std::ostream stream(&buffer);
+    detail::CliOutput output(stream);
+    Cancellation cancel;
+    detail::IoContext io(cancel);
+    detail::RequestInputController input;
+    input.append('x');
+    input.open({"s", "r", 1}, detail::RequestKind::approval);
+    struct stat tty {};
+    tty.st_mode = S_IFCHR;
+    const std::string prompt = "codet> ";
+    detail::LinePrompt line(input, output, io, prompt, tty, 80);
+    line.acquire();
+    line.flush();
+    const int attempts = buffer.writes;
+    line.flush();
+    EXPECT_EQ(buffer.writes, attempts);
+    if (line.before_output(STDERR_FILENO, tty))
+      output.echo({"\n"});
+    output.display({"warning"});
+    line.flush();
+    EXPECT_EQ(buffer.instructions, failure == 1 ? 2 : 1);
+    EXPECT_THAT(buffer.str(), HasSubstr("warning"));
+  }
+}
 TEST(LinePrompt, FailedPromptIsSeparatedAndOnlyRetriedOnAnotherEvent) {
   LineFixture f;
   auto *original = f.stream.basic_ios<char>::rdbuf(nullptr);
