@@ -20,9 +20,9 @@ inline int wait_terminal_input(int descriptor, int milliseconds) noexcept {
   fd_set readers;
   FD_ZERO(&readers);
   FD_SET(descriptor, &readers);
-  struct timeval limit {
-    milliseconds / 1000, (milliseconds % 1000) * 1000
-  };
+  struct timeval limit {};
+  limit.tv_sec = milliseconds / 1000;
+  limit.tv_usec = static_cast<decltype(limit.tv_usec)>((milliseconds % 1000) * 1000);
   return ::select(descriptor + 1, &readers, nullptr, nullptr, &limit);
 }
 } // namespace codet::detail
