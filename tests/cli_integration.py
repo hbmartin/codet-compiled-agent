@@ -1410,15 +1410,19 @@ class CliTests(unittest.TestCase):
         import select
         import struct
         import termios
-        for ui in ('line','curses'):
-            with self.subTest(ui=ui):
+        for ui,prompt,flags,expected,answer,done in (
+            ('line','fixture-command',[],b'Approve? [y/N]',b'y\n',b'fixture done'),
+            ('curses','fixture-command',[],b'Approve? [y/N]',b'y\n',b'fixture done'),
+            ('line','fixture-question',['--permission-mode','plan'],b'Enter a choice',b'2\n',b'question answered'),
+            ('curses','fixture-question',['--permission-mode','plan'],b'Enter a choice',b'2\n',b'question answered')):
+            with self.subTest(ui=ui,prompt=prompt):
                 self.server.requests=[]
                 ready,release=threading.Event(),threading.Event()
                 self.server.signal_gate=(ready,release);self.server.releases.append(release)
                 master,slave=pty.openpty()
                 fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
                 process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui',ui,'--color','never',
-                    'fixture-command fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,
+                    *flags,prompt+' fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,
                     env=dict(self.env,TERM='xterm'))
                 received=bytearray()
                 def collect(predicate,master=master,received=received):
@@ -1432,14 +1436,49 @@ class CliTests(unittest.TestCase):
                     collect(lambda received=received:b'old-draft' in re.sub(rb'\x1b(?:\[[0-?]*[ -/]*[@-~]|\([A-Z0-9])',b'',received))
                     received.clear();release.set()
                     collect(lambda received=received:b'discard>' in received)
-                    self.assertNotIn(b'Approve? [y/N]',received)
+                    self.assertNotIn(expected,received)
+                    if ui=='line':self.assertTrue(received.endswith(b'discard> '),bytes(received))
                     received.clear();os.write(master,b'yes\n')
-                    if ui=='line':collect(lambda received=received:b'answer discarded' in received)
+                    if ui=='line':collect(lambda received=received:b'input discarded' in received)
                     self.assertEqual(len(self.server.requests),1)
-                    collect(lambda received=received:b'Approve? [y/N]' in received)
-                    received.clear();os.write(master,b'y\n')
-                    collect(lambda received=received:b'fixture done' in received)
+                    collect(lambda received=received,expected=expected:expected in received)
+                    received.clear();os.write(master,answer)
+                    collect(lambda received=received,done=done:done in received)
                     self.assertGreaterEqual(len(self.server.requests),2)
+                    os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                    self.assertEqual(process.returncode,0,bytes(received))
+                finally:
+                    release.set()
+                    if process.poll() is None:process.kill();process.wait(timeout=5)
+                    os.close(master);os.close(slave)
+
+    def test_line_empty_draft_does_not_delay_a_fresh_request_answer(self):
+        import pty
+        import select
+        for prompt,flags,expected,answer,done in (
+            ('fixture-command',[],b'Approve? [y/N]',b'y\n',b'fixture done'),
+            ('fixture-question',['--permission-mode','plan'],b'Enter a choice',b'2\n',b'question answered')):
+            with self.subTest(prompt=prompt):
+                ready,release=threading.Event(),threading.Event()
+                self.server.signal_gate=(ready,release);self.server.releases.append(release)
+                master,slave=pty.openpty()
+                process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui','line',*flags,
+                    prompt+' fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,
+                    env=dict(self.env,TERM='xterm'))
+                received=bytearray()
+                def collect(predicate,master=master,received=received):
+                    deadline=time.monotonic()+10
+                    while not predicate() and time.monotonic()<deadline:
+                        if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+                    self.assertTrue(predicate(),bytes(received))
+                try:
+                    self.assertTrue(ready.wait(10));os.write(master,b'erase-me')
+                    collect(lambda received=received:b'erase-me' in received)
+                    received.clear();os.write(master,b'\x7f'*8)
+                    collect(lambda received=received:bytes(received).count(b'\b \b')==8)
+                    received.clear();release.set();collect(lambda expected=expected,received=received:expected in received)
+                    self.assertNotIn(b'discard>',received)
+                    os.write(master,answer);collect(lambda done=done,received=received:done in received)
                     os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
                     self.assertEqual(process.returncode,0,bytes(received))
                 finally:
@@ -1478,7 +1517,8 @@ class CliTests(unittest.TestCase):
                     collect(lambda received=received:b'Interrupted' in received)
                     collect(lambda received=received:b'discard>' in received)
                     received.clear();os.write(master,b's\n')
-                    collect(lambda received=received:b'answer discarded' in received)
+                    collect(lambda received=received:b'input discarded' in received)
+                    if ui=='line':collect(lambda received=received:b'codet> [' in received)
                     self.assertEqual(len(self.server.requests),1)
                     received.clear();os.write(master,b'fixture-recovered-output\n')
                     collect(lambda received=received:b'recovered reply' in received)
@@ -1521,8 +1561,9 @@ class CliTests(unittest.TestCase):
                     self.assertFalse(marker.exists())
                     os.write(master,b'yes\n')
                     collect(lambda marker=marker:marker.exists())
-                    self.assertEqual(marker.read_text(),'approved')
+                    # Redirection creates the file before printf writes it; completion owns readiness.
                     collect(lambda received=received:b'fixture done' in received)
+                    self.assertEqual(marker.read_text(),'approved')
                     os.write(master,b'/quit\n')
                     collect(lambda process=process:process.poll() is not None)
                     self.assertEqual(process.returncode,0,bytes(received))

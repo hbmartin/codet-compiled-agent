@@ -98,13 +98,10 @@ TEST(ApprovalCurses, OrdinaryNativeFailuresKeepStateAndNextFrameRecovers) {
         +[](void *p) { return static_cast<Failure *>(p)->stage == 4 ? ERR : ::refresh(); };
     bool dirty = false;
     codet::detail::CursesFrame frame(dirty, ops);
-    EXPECT_NO_THROW(frame.row(1, "retained progress", 80));
+    EXPECT_EQ(frame.row(1, "retained progress", 80), failure == 4);
     EXPECT_FALSE(frame.finish());
     EXPECT_TRUE(dirty);
-    codet::detail::ApprovalReview review("session", 1, "request", "command");
-    review.reshape(10, 80);
     EXPECT_THROW(frame.require_finish(), codet::Error);
-    EXPECT_FALSE(review.approved_review());
     state.stage = -1;
     codet::detail::CursesFrame retry(dirty, ops);
     EXPECT_TRUE(retry.row(1, "retained progress", 80));
@@ -112,6 +109,41 @@ TEST(ApprovalCurses, OrdinaryNativeFailuresKeepStateAndNextFrameRecovers) {
     EXPECT_FALSE(dirty);
     expect_row(1, "retained progress", 80);
   }
+}
+TEST(ApprovalCurses, ReviewCreditRequiresSuccessfulRowsAndRefresh) {
+  Screen native;
+  ASSERT_TRUE(native.open("C"));
+  ASSERT_EQ(::resizeterm(10, 80), OK);
+  for (int stage = 0; stage != 3; ++stage) {
+    codet::detail::CursesDrawOps ops;
+    ops.context = &stage;
+    ops.clear_row = +[](void *p) { return *static_cast<int *>(p) == 0 ? ERR : ::clrtoeol(); };
+    ops.put_text = +[](void *p, std::string_view text) {
+      return *static_cast<int *>(p) == 1 ? ERR
+                                         : ::addnstr(text.data(), static_cast<int>(text.size()));
+    };
+    ops.refresh_screen = +[](void *p) { return *static_cast<int *>(p) == 2 ? ERR : ::refresh(); };
+    codet::detail::ApprovalReview review("s", 1, "r", "command");
+    review.reshape(10, 80);
+    bool dirty = false;
+    const auto draw = [&] {
+      codet::detail::CursesFrame frame(dirty, ops);
+      for (size_t row = 0; row < review.capacity(); ++row)
+        if (!frame.row(static_cast<int>(row) + 1, review.line(row), 80, true))
+          throw codet::Error("Cannot render approval review");
+      frame.require_finish();
+      review.displayed();
+    };
+    EXPECT_THROW(draw(), codet::Error);
+    EXPECT_FALSE(review.approved_review());
+    const auto failed = stage;
+    stage = -1;
+    EXPECT_NO_THROW(draw());
+    EXPECT_TRUE(review.approved_review());
+    stage = failed;
+  }
+  EXPECT_FALSE(codet::detail::curses_draw_row(-1, "invalid row", 80));
+  EXPECT_FALSE(codet::detail::curses_draw_row(0, std::string(80, 'x'), 80, true));
 }
 TEST(ApprovalCurses, PreparedPagesFitRealCellsInCAndUtf8Locales) {
   bool exercised_unicode = false;
@@ -197,7 +229,7 @@ TEST(ApprovalCurses, InvisibleAndExcessCombiningBytesAreExplicitInRealCells) {
   erase();
   mvaddstr(0, 0, "Resize to review; approval disabled");
   const auto input = codet::detail::CursesText::input("!> ", "n", 39, native.unicode);
-  codet::detail::curses_draw_row(0, input, 40, true);
+  ASSERT_TRUE(codet::detail::curses_draw_row(0, input, 40, true));
   EXPECT_EQ(mvinch(0, 4) & A_CHARTEXT, static_cast<chtype>(' '));
 }
 TEST(ApprovalCurses, BackendFallbackEscapesBytesWithoutChangingSupportedLocaleText) {
@@ -221,13 +253,13 @@ TEST(ApprovalCurses, ProseNewlinesAndTabsCannotEscapeTheirAssignedRow) {
   ASSERT_TRUE(native.open("C"));
   ASSERT_EQ(::resizeterm(5, 20), OK);
   erase();
-  codet::detail::curses_draw_row(0, "abc\nnext row", 20);
+  ASSERT_TRUE(codet::detail::curses_draw_row(0, "abc\nnext row", 20));
   EXPECT_EQ(mvinch(1, 0) & A_CHARTEXT, static_cast<chtype>(' '));
-  codet::detail::curses_draw_row(4, "a\tb\tc", 20);
+  ASSERT_TRUE(codet::detail::curses_draw_row(4, "a\tb\tc", 20));
   EXPECT_EQ(mvinch(4, 8) & A_CHARTEXT, static_cast<chtype>('b'));
   EXPECT_EQ(mvinch(4, 16) & A_CHARTEXT, static_cast<chtype>('c'));
   ASSERT_EQ(::resizeterm(1, 8), OK);
-  EXPECT_NO_THROW(codet::detail::curses_draw_row(0, "a\tb", 8));
+  ASSERT_TRUE(codet::detail::curses_draw_row(0, "a\tb", 8));
   EXPECT_EQ(mvinch(0, 7) & A_CHARTEXT, static_cast<chtype>(' '));
 }
 } // namespace

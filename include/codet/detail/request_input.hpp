@@ -35,6 +35,12 @@ public:
       started_ = true;
     }
   }
+  void edited_empty() noexcept {
+    if (!stale_) {
+      draft_.reset();
+      started_ = false;
+    }
+  }
   void close() noexcept {
     if (started_ && draft_)
       stale_ = true;

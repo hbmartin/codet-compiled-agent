@@ -1,5 +1,5 @@
 #pragma once
-#include "codet/detail/diagnostic_stream.hpp"
+#include "codet/detail/history_excerpt.hpp"
 #include <algorithm>
 #include <deque>
 namespace codet::detail {
@@ -9,7 +9,7 @@ class UiHistory {
   size_t bytes_ = 0;
 
 public:
-  static constexpr std::string_view omission = "[UI history excerpt truncated]";
+  static constexpr std::string_view omission = history_omission;
   static constexpr size_t byte_limit = size_t{256} * 1024, line_limit = 1000;
   static constexpr size_t approval_limit = size_t{16} * 1024;
   size_t bytes() const noexcept {
@@ -20,11 +20,8 @@ public:
   }
   void add(std::string_view text, size_t budget = byte_limit) {
     budget = std::min(budget, byte_limit);
-    if (budget <= omission.size() + 1)
-      return;
-    const bool truncated = text.size() + 1 > budget;
-    const auto count =
-        rendered_prefix(text, truncated ? budget - omission.size() - 2 : text.size());
+    const auto excerpt = history_excerpt(text, budget);
+    const auto count = excerpt.prefix;
     // Never construct a full-input copy or an unbounded split collection.
     size_t offset = 0;
     const auto append = [&](std::string_view line) {
@@ -41,7 +38,7 @@ public:
       append(text.substr(offset, next - offset));
       offset = next + 1;
     }
-    if (truncated)
+    if (excerpt.omitted)
       append(omission);
   }
 };

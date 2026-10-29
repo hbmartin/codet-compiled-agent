@@ -104,12 +104,15 @@ public:
     if (raw_.empty())
       return;
     Mutation mutation{*this};
-    size_t start = raw_.size();
-    do {
-      const auto byte = static_cast<unsigned char>(raw_[--start]);
-      if ((byte & 0xc0) != 0x80)
-        break;
-    } while (start);
+    const auto end = raw_.size();
+    size_t start = end - 1;
+    // Inspect at most one scalar. A malformed byte is its own editing unit;
+    // only a validated complete scalar or valid trailing prefix is grouped.
+    while (start && end - start < 4 && (static_cast<unsigned char>(raw_[start]) & 0xc0) == 0x80)
+      --start;
+    const auto lead = static_cast<unsigned char>(raw_[start]);
+    if (lead < 0xc2 || lead > 0xf4 || rendered_token(raw_, start).bytes != end - start)
+      start = end - 1;
     while (!tokens_.empty() && tokens_.back().source_end > start)
       tokens_.pop_back();
     display_.resize(tokens_.empty() ? 0u : tokens_.back().display_end);

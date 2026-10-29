@@ -5,6 +5,7 @@
 #include "codet/detail/curses_input.hpp"
 #include "codet/detail/native_output.hpp"
 #include "codet/detail/request_input.hpp"
+#include "codet/detail/request_input_controller.hpp"
 #include "codet/detail/ui_history.hpp"
 #include "native_io_metrics.hpp"
 #include "process_helper.hpp"
@@ -143,26 +144,24 @@ TEST(CursesInput, IncrementalPreparationPreservesRawBytesAndHasLinearWork) {
   input += 'b';
   EXPECT_EQ(input.size(), detail::CursesInput::limit);
 }
-TEST(CursesInput, CharacterEraseMatchesPriorByteSemanticsWithoutRepeatedTailRebuild) {
-  for (const auto *sample : {"abc雪🙂e\xcc\x81", "\x80\x81", "a\xe9\x9b", "x\xff\x80", "\\xFF"}) {
-    const std::string text(sample);
-    for (size_t bytes = 0; bytes <= text.size(); ++bytes) {
+TEST(CursesInput, CharacterEraseUsesValidatedRawBoundariesAndUpdatesTailOnce) {
+  const std::vector<std::pair<std::string, std::string>> cases{
+      {"abc", "ab"},          {"a雪", "a"},           {"a🙂", "a"},
+      {"ae\xcc\x81", "ae"},   {"a\xe9", "a"},         {"a\xe9\x9b", "a"},
+      {"a\xf0\x9f\x99", "a"}, {"a\x80", "a"},         {"a\x80\x81", "a\x80"},
+      {"x\xff\x80", "x\xff"}, {"a\xe0\x80", "a\xe0"}, {"a\xed\xa0", "a\xed"},
+      {"a\xf4\x90", "a\xf4"}, {"a\xf5\x80", "a\xf5"}, {"雪\x80", "雪"},
+      {"🙂\x80", "🙂"},       {"\\xFF", "\\xF"},      {"\\", ""}};
+  for (bool unicode : {false, true}) {
+    for (const auto &[before, after] : cases) {
       detail::CursesInput input;
-      auto expected = text.substr(0, bytes);
-      for (const char byte : expected)
+      input.unicode(unicode);
+      for (char byte : before)
         input += byte;
-      while (!expected.empty()) {
-        do {
-          const auto byte = static_cast<unsigned char>(expected.back());
-          expected.pop_back();
-          if ((byte & 0xc0) != 0x80)
-            break;
-        } while (!expected.empty());
-        input.erase_character();
-        EXPECT_EQ(input.raw(), expected);
-        EXPECT_EQ(input.view("", 1000), detail::CursesText(detail::literal_text(expected)).text());
-      }
       input.erase_character();
+      EXPECT_EQ(input.raw(), after);
+      EXPECT_EQ(input.view("", 1000),
+                detail::CursesText(detail::literal_text(after), unicode).text());
     }
   }
   detail::CursesInput input;
@@ -172,6 +171,8 @@ TEST(CursesInput, CharacterEraseMatchesPriorByteSemanticsWithoutRepeatedTailRebu
   input.erase_character();
   EXPECT_EQ(input.raw(), "retained");
   EXPECT_EQ(input.rebuilt_bytes(), before);
+  input.clear();
+  EXPECT_NO_THROW(input.erase_character());
 }
 TEST(RequestInput, ExpiryAndReplacementNeverReclassifyDraftAnswers) {
   const detail::ApprovalIdentity first{"session", "first", 1}, second{"session", "second", 1};
@@ -228,6 +229,71 @@ TEST(RequestInput, ClassificationKeepsQuitOutOfBandAndRequiresFreshRequestInput)
   input.close();
   EXPECT_EQ(input.take("run tests").action(), detail::InputAction::message);
 }
+TEST(RequestInputController, FreshEmptyAndPresentationClearsHaveDistinctOwnership) {
+  detail::RequestInputController input;
+  const detail::ApprovalIdentity first{"s", "first", 1}, second{"s", "second", 1};
+  input.append('x');
+  input.erase_character();
+  input.open(first, detail::RequestKind::question);
+  EXPECT_FALSE(input.stale());
+  EXPECT_EQ(input.guidance(), detail::RequestInputController::question_prompt);
+  input.append('y');
+  input.presentation_clear();
+  EXPECT_TRUE(input.input().empty());
+  input.open(second, detail::RequestKind::approval);
+  EXPECT_TRUE(input.stale());
+  EXPECT_EQ(input.guidance(), detail::RequestInput::discard_instruction);
+  input.append('x');
+  input.erase_character();
+  EXPECT_TRUE(input.stale());
+  const auto discarded = input.take();
+  ASSERT_TRUE(discarded.request);
+  EXPECT_EQ(discarded.request->request, "first");
+  EXPECT_TRUE(discarded.discarded);
+  EXPECT_EQ(input.guidance(), "Approve? [y/N]");
+  input.append('y');
+  const auto answer = input.take();
+  ASSERT_TRUE(answer.request);
+  EXPECT_EQ(answer.request->request, "second");
+  EXPECT_FALSE(answer.discarded);
+}
+TEST(RequestInputController, PromptInvalidationDoesNotRepeatOnPollingOrEcho) {
+  detail::RequestInputController input;
+  input.append('x');
+  input.open({"s", "q", 1}, detail::RequestKind::question);
+  EXPECT_TRUE(input.needs_explanation());
+  input.presented(true);
+  EXPECT_FALSE(input.needs_prompt());
+  input.append('x');
+  EXPECT_FALSE(input.needs_prompt());
+  EXPECT_TRUE(input.before_output());
+  EXPECT_TRUE(input.needs_prompt());
+  EXPECT_FALSE(input.needs_explanation());
+  input.presented(true);
+  EXPECT_FALSE(input.needs_prompt());
+  EXPECT_TRUE(input.take().discarded);
+  EXPECT_TRUE(input.needs_prompt());
+  EXPECT_EQ(input.guidance(), detail::RequestInputController::question_prompt);
+  input.presented(false);
+  EXPECT_FALSE(input.needs_prompt());
+  input.before_output();
+  EXPECT_TRUE(input.needs_prompt());
+}
+TEST(RequestInputController, CompletionPreservesOrdinaryDraftAndQuitRemainsOutOfBand) {
+  detail::RequestInputController input;
+  input.append('a');
+  input.close();
+  EXPECT_TRUE(input.ordinary_draft());
+  EXPECT_EQ(input.input().raw(), "a");
+  input.open({"s", "q", 1}, detail::RequestKind::question);
+  input.presentation_clear();
+  input.close();
+  for (char byte : std::string("/quit"))
+    input.append(byte);
+  EXPECT_EQ(input.take().action(), detail::InputAction::quit);
+  EXPECT_TRUE(input.needs_prompt());
+  EXPECT_EQ(input.take("new message").action(), detail::InputAction::message);
+}
 TEST(UiHistory, PreparationIsBoundedBeforeRawAndRenderedHistoryAllocation) {
   const std::string pattern = "雪\r\n\x1b\xff\\x0A\t";
   for (bool unicode : {false, true}) {
@@ -261,6 +327,43 @@ TEST(UiHistory, PreparationIsBoundedBeforeRawAndRenderedHistoryAllocation) {
   history.add(prepared.text);
   EXPECT_LE(history.bytes(), detail::UiHistory::byte_limit);
   EXPECT_EQ(history.lines().back(), detail::UiHistory::omission);
+}
+TEST(UiHistory, PrefixReportsThePreviousCompleteTokenWithoutASecondScan) {
+  const std::string text = "abc\\xFF雪";
+  for (const auto &[limit, expected, previous] : std::vector<std::tuple<size_t, size_t, size_t>>{
+           {0, 0, 0}, {3, 3, 2}, {5, 3, 2}, {7, 7, 3}, {9, 7, 3}, {10, 10, 7}}) {
+    size_t last = 99;
+    EXPECT_EQ(detail::rendered_prefix(text, limit, &last), expected);
+    EXPECT_EQ(last, previous);
+  }
+}
+TEST(UiHistory, PreparedAndDirectInsertionShareExactBudgetAndRowCharges) {
+  for (const std::string &text :
+       {std::string(70, 'x'), std::string(99, 'x'), std::string(100, 'x'),
+        std::string(70, 'x') + "\n", std::string(68, 'x') + "\n" + std::string(100, 'z'),
+        std::string("a\n\nb\n"), std::string("雪\\xFF")}) {
+    for (size_t budget = 0; budget < 160; ++budget) {
+      const auto bounded =
+          detail::CursesText::bounded(text, budget, detail::UiHistory::omission, false);
+      // This fixture is rendered exactly as curses would render in the C locale.
+      const auto prepared = detail::CursesText(text, false, true, false).text();
+      detail::UiHistory direct, pipelined;
+      direct.add(prepared, budget);
+      pipelined.add(bounded.text, budget);
+      EXPECT_EQ(pipelined.lines(), direct.lines()) << "budget " << budget;
+      EXPECT_EQ(pipelined.bytes(), direct.bytes());
+      EXPECT_LE(pipelined.bytes(), budget);
+    }
+  }
+  const auto fitting =
+      detail::CursesText::bounded(std::string(70, 'x'), 100, detail::UiHistory::omission, true);
+  EXPECT_FALSE(fitting.truncated);
+  EXPECT_EQ(fitting.text, std::string(70, 'x'));
+  const auto tiny = detail::CursesText::bounded("a", 2, detail::UiHistory::omission, true);
+  EXPECT_EQ(tiny.text, "a");
+  const auto edge = detail::CursesText::bounded(std::string(68, 'x') + "\n" + std::string(100, 'z'),
+                                                100, detail::UiHistory::omission, true);
+  EXPECT_EQ(edge.text.find("\n\n"), std::string::npos);
 }
 TEST(UiHistory, BoundsBytesBeforeSplittingAndKeepsRecentDecision) {
   detail::UiHistory history;

@@ -132,7 +132,11 @@ including partly typed UTF-8. Preparation is incremental and keeps submitted ans
 Small screens keep denial and quit input visible while approval remains disabled. Draft answers
 remain bound to their request through Enter; expired answers are discarded rather than becoming
 new user messages. An unfinished stale line shows a dedicated `discard>` prompt: press Enter to
-discard it before typing a fresh answer or message. Quit, EOF, and cancellation remain available.
+discard it before typing a fresh answer or message. The current question or approval guidance
+returns after acknowledgement; line prompts return after intervening output. Explicitly deleting a
+live draft to empty permits fresh input, while hidden or stale drafts retain their identity until
+Enter. Backspace removes one validated UTF-8 character or trailing prefix, or one malformed byte.
+Quit, EOF, and cancellation remain available.
 Ordinary curses drawing failures preserve the worker and input and retry on the next UI event;
 approval drawing failures still cancel safely. UI history retains request/context excerpts and associated decisions within
 256 KiB and 1,000 lines, with at most 16 KiB per approval excerpt. The pending review stays complete.

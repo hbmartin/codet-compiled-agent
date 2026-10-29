@@ -549,16 +549,19 @@ detail::RenderedToken detail::rendered_token(std::string_view text, size_t offse
   const auto point = decode_text_point(text, offset);
   return {point.consumed, point.value, point.valid, false};
 }
-size_t detail::rendered_prefix(std::string_view text, size_t limit) noexcept {
-  if (text.size() <= limit)
+size_t detail::rendered_prefix(std::string_view text, size_t limit, size_t *last_token) noexcept {
+  if (!last_token && text.size() <= limit)
     return text.size();
-  size_t offset = 0;
+  size_t offset = 0, previous = 0;
   while (offset < text.size() && offset < limit) {
     const auto width = rendered_token(text, offset).bytes;
     if (width > limit - offset)
       break;
+    previous = offset;
     offset += width;
   }
+  if (last_token)
+    *last_token = previous;
   return offset;
 }
 detail::RenderProgress detail::terminal_text_into(std::string_view text, char *output, size_t limit,

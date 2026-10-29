@@ -692,3 +692,75 @@ Tiger build/runtime is claimed. Existing Tiger library selection, ASCII fallback
 Unicode policy, raw execution/answer/data bytes, storage/journal formats, completed-turn authority,
 terminal cleanup ownership and live-to-cleanup-to-file replay ordering remain unchanged.
 Blocking-TTY cancellation and best-effort standalone/emergency output retain their existing limits.
+
+
+## Request prompts and exact history budgets
+
+Fetched baseline `daabed948d3308d393037bcc7b5f85d4c6261603` contains PR #42.
+Validated/measured production revision `3ef24f30f4f993e9b88a2b65bf64cef983f0ad12` adds one
+controller for cached input, draft/request identity, request kind and prompt presentation.
+Question guidance returns after discard in curses; line prompts return after output batches
+without a trailing newline or insertion into keyboard echo. Acknowledgement is neutral and restores
+the current question, approval or message prompt. Explicit editing of a live draft to empty releases
+its intent; presentation clears and stale drafts retain ownership through Enter. Fresh input cannot
+answer an expired request or become an unintended message.
+
+Preparation and history insertion share exact rendered-row byte charges. Fitting messages stay
+whole; overflow alone reserves the complete omission marker, and a retained LF is reused instead
+of adding a blank row. Tiny budgets retain fitting text but no truncated excerpt when the marker
+cannot fit. Limits remain 256 KiB/1,000 lines, 16 KiB per approval excerpt and 65,536 raw input bytes;
+the complete pending review is independent. Validated raw UTF-8 deletion removes one scalar,
+one valid trailing prefix or one malformed byte and updates the cache tail once. Literal escape
+spelling remains ordinary editable input.
+
+Native drawing tests assert return status and connect review credit to successful rows/refresh.
+Temporary row-status and refresh-check mutants fail the strengthened tests; the control passes.
+Identical boundary probes fail against baseline and pass on the change for fitting-message
+retention and stray-continuation deletion. Ordinary redraws still wait for the next UI event,
+approval remains fail-closed, and scratch-pad acquisition failure retains ASCII fallback.
+
+Final Debug and ASan/UBSan CTest pass 9/9 each: 588 unit cases (two expected opt-in skips),
+65 publication-fault cases and 91 CLI integration methods. Twenty focused sanitizer batches cover
+99 unit cases, 16 fault cases and 17 PTY methods each: 2,640 runs plus subtests. Pinned lint,
+Semgrep, runner checks, Cppcheck and analyzer self-tests pass. Local Clang-Tidy retains exactly
+five source warnings plus one SDK13-incomplete platform translation unit; Clang Analyzer retains
+the baseline division warning. Their nonzero results are recorded, with no weakened checks.
+The required Ubuntu workflow passes the build, all-source analysis and actual UTF-8/wide-curses
+host suite. Native Tiger/PPC SDK/compiler and native Intel runtime are unavailable locally.
+
+Identical Release harnesses use one warm-up and five alternating measured runs, repeated twice,
+without concurrent local tests/analyzers. Median milliseconds (set 1 / set 2):
+
+| Workload | Baseline | Changed |
+| --- | ---: | ---: |
+| presentation-small | 4.677 / 4.726 | 4.672 / 4.748 |
+| presentation-large | 8.982 / 9.319 | 9.849 / 9.955 |
+| presentation-controls | 2.759 / 2.944 | 3.174 / 3.284 |
+| history-large | 0.436 / 0.414 | 0.446 / 0.429 |
+| erase-emoji | 0.042 / 0.042 | 0.063 / 0.064 |
+| input-65536 | 9.900 / 10.052 | 9.928 / 10.293 |
+| input-redraw-65536 | 0.017 / 0.018 | 0.018 / 0.018 |
+| export-large-file | 286.780 / 264.576 | 275.968 / 263.757 |
+
+The first correctness comparison exposed a repeated prefix scan during truncation. The final shared
+scan also returns its previous token boundary, eliminating that second traversal; both initial
+measurement sets remain published. Exact accounting still has a bounded trimming pass, and
+validated deletion adds a bounded raw-token check. The large ASCII/control presentation samples
+remain approximately 7–15% slower than baseline; 4,096 validated emoji deletions take about
+0.063 ms versus 0.042 ms. No general latency improvement is claimed.
+Diagnostics and exports retain identical allocation and directly observed native-operation counts.
+Unchanged redraws prepare zero input bytes; valid emoji deletion still uses one mutation and no
+retained-tail preparation or allocation. History preparation stays bounded by retained output plus
+fixed lookahead. Some Unicode row-allocation counts change because corrected retention keeps a
+different prefix. Counters are C++ allocation/direct-call observations, not peak RSS or complete
+libc/libedit activity; the input harness measures cached boundaries, not end-to-end keystroke latency.
+
+[Commands, hashes, negative controls, baseline findings and limitations](validation/request-prompt-followup.json),
+[final medians](validation/request-prompt-followup-performance.csv),
+[final samples](validation/request-prompt-followup-performance-samples.csv),
+[first correctness medians](validation/request-prompt-followup-first-performance.csv), and
+[first correctness samples](validation/request-prompt-followup-first-performance-samples.csv)
+retain all evidence. Initial PTY/lint development failures are recorded. One later repetition observed the approval
+marker after creation but before its content was ready. The final test waits for turn completion
+before checking the same exact bytes; all 17 PTY methods then pass twenty fresh repetitions.
+Production source is unchanged by that test-readiness correction; the failed log is retained.

@@ -9,7 +9,7 @@
 #include "codet/detail/curses_input.hpp"
 #include "codet/detail/curses_render.hpp"
 #include "codet/detail/native_terminal.hpp"
-#include "codet/detail/request_input.hpp"
+#include "codet/detail/request_input_controller.hpp"
 #include "codet/detail/ui_history.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/interaction.hpp"
@@ -254,12 +254,9 @@ class Terminal final : public detail::CliDiagnosticSurface {
   detail::CursesDrawOps drawing_;
   HistEvent history_event_{};
   detail::UiHistory transcript_;
-  detail::RequestInput input_scope_;
-  bool discard_announced_ = false;
-  std::string request_prompt_;
+  detail::RequestInputController input_;
   std::optional<detail::ApprovalReview> approval_;
   bool curses_unicode_ = true;
-  detail::CursesInput input_;
   std::string status_, progress_;
   std::string prompt_;
   std::map<std::string, int> bindings_{{"submit", 10}, {"quit", 4}, {"backspace", 127}};
@@ -299,39 +296,38 @@ class Terminal final : public detail::CliDiagnosticSurface {
       return 1;
     }
   }
-  // A review-only clear never releases stale line ownership or its quit draft.
   void clear_review_input() {
-    if (!input_scope_.stale())
-      input_.clear();
+    input_.presentation_clear();
   }
   std::string input_view(std::string_view prompt, size_t columns) const {
-    if (input_scope_.stale())
-      return std::string(detail::RequestInput::discard_prompt.substr(0, columns));
     return input_.view(prompt, columns);
   }
-  void announce_discard() {
-    if (!curses_ && input_scope_.stale() && !discard_announced_) {
-      (void)output_.display(
-          {detail::RequestInput::discard_instruction, "\n", detail::RequestInput::discard_prompt});
-      discard_announced_ = true;
-    }
+  void before_line_output() {
+    if (!curses_ && input_.before_output())
+      output_.echo({"\n"});
   }
   detail::InputLine take_input(std::string text) {
-    auto line = input_scope_.take(std::move(text));
-    input_.clear();
-    discard_announced_ = false;
-    return line;
+    return input_.take(std::move(text));
   }
 
 public:
+  void flush_prompt() {
+    if (curses_ || !input_.needs_prompt())
+      return;
+    if (input_.needs_explanation())
+      (void)output_.display({detail::RequestInput::discard_instruction});
+    bool written;
+    if (input_.stale())
+      written = output_.display({detail::RequestInput::discard_prompt}, false);
+    else if (input_.kind() != detail::RequestKind::message)
+      written = output_.display({input_.guidance(), " "}, false);
+    else
+      written = output_.display({prompt_}, false);
+    input_.presented(written);
+  }
   void discarded_line() {
-    say("Expired request answer discarded; enter a fresh message.");
-    if (!curses_) {
-      if (request_prompt_.empty())
-        (void)output_.display({prompt_}, false);
-      else
-        say(request_prompt_);
-    }
+    say("Unfinished input discarded.");
+    flush_prompt();
   }
 
 private:
@@ -350,8 +346,8 @@ private:
       };
       if (!approval_->usable()) {
         if (rows > 1 && cols > 1)
-          draw(0, std::string_view((input_scope_.stale() ? "Enter discards unfinished input"
-                                                         : "Resize to review; approval disabled"))
+          draw(0, std::string_view((input_.stale() ? "Enter discards unfinished input"
+                                                   : "Resize to review; approval disabled"))
                       .substr(0, static_cast<size_t>(cols - 1)));
         if (rows > 0 && cols > 1)
           draw(rows - 1, input_view(rows == 1 ? "!> " : "codet> ", static_cast<size_t>(cols - 1)));
@@ -363,7 +359,7 @@ private:
           draw(static_cast<int>(i) + 1, approval_->line(i));
         const std::string_view navigation = "Space/PgDn: next  PgUp: back  /quit: exit";
         draw(rows - 3, navigation.substr(0, static_cast<size_t>(cols - 1)));
-        const std::string_view prompt = input_scope_.stale() ? "Enter discards unfinished input"
+        const std::string_view prompt = input_.stale() ? "Enter discards unfinished input"
                                         : approval_->approved_review() ? "Approve? [y/N]"
                                                                        : "Read all pages; n denies";
         draw(rows - 2, prompt.substr(0, static_cast<size_t>(cols - 1)));
@@ -372,7 +368,7 @@ private:
       frame.require_finish();
       const bool previously_reviewed = approval_->approved_review();
       approval_->displayed();
-      if (!input_scope_.stale() && !previously_reviewed && approval_->approved_review()) {
+      if (!input_.stale() && !previously_reviewed && approval_->approved_review()) {
         draw(rows - 2, "Approve? [y/N]");
         frame.require_finish();
       }
@@ -384,9 +380,9 @@ private:
       (void)frame.finish();
       return;
     }
-    const auto heading = input_scope_.stale()
-                             ? std::string(detail::RequestInput::discard_instruction)
-                             : status_ + (progress_.empty() ? "" : " | " + progress_);
+    const auto guidance = input_.guidance();
+    const auto heading = guidance.empty() ? status_ + (progress_.empty() ? "" : " | " + progress_)
+                                          : std::string(guidance);
     frame.row(0, heading, cols);
     int y = rows - 3;
     for (auto it = transcript_.lines().rbegin(); it != transcript_.lines().rend() && y > 0;
@@ -397,24 +393,14 @@ private:
   }
 
 public:
-  void begin_request(detail::ApprovalIdentity identity) {
-    const bool already_stale = input_scope_.stale();
-    if (input_scope_.open(std::move(identity)) && !already_stale)
-      input_.clear();
-  }
   void begin_request(const Json &event) {
-    begin_request(detail::ApprovalIdentity::from(event));
-  }
-  void request_prompt(std::string text) {
-    request_prompt_ = std::move(text);
-    if (input_scope_.stale())
-      announce_discard();
-    else
-      say(request_prompt_);
+    before_line_output();
+    input_.open(detail::ApprovalIdentity::from(event), detail::RequestKind::question);
   }
   void begin_approval(const Json &event) {
     const auto identity = detail::ApprovalIdentity::from(event);
-    begin_request(identity);
+    before_line_output();
+    input_.open(identity, detail::RequestKind::approval);
     const auto target =
         event.at("tool").get<std::string>() + ": " + event.at("target").get<std::string>();
     if (!curses_) {
@@ -423,7 +409,6 @@ public:
         say_rendered(
             {detail::CursesText(detail::terminal_text(safe_json(event.at("context")).dump()))
                  .text()});
-      request_prompt("Approve? [y/N]");
       return;
     }
     auto document = detail::literal_text(target);
@@ -443,14 +428,11 @@ public:
            (approval_ && approval_->identity.matches(event) && approval_->approved_review());
   }
   void end_approval(std::optional<std::string_view> answer = {}) {
-    const bool already_stale = input_scope_.stale();
-    input_scope_.close();
-    request_prompt_.clear();
+    before_line_output();
+    input_.close();
     auto finished = std::move(approval_);
     approval_.reset();
-    if (!input_scope_.ordinary_draft() && !already_stale)
-      input_.clear();
-    announce_discard();
+
     if (finished)
       remember(std::string("[Approval ") +
                (!answer                     ? "cancelled"
@@ -520,8 +502,10 @@ public:
   void diagnostic_rendered(detail::RenderedTextView text) override {
     if (curses_)
       say_rendered(text);
-    else
+    else {
+      before_line_output();
       (void)errors_.write({text.text});
+    }
   }
   void set_mode(const std::string &mode) {
     status_ = "Permissions: " + mode + "; no OS shell sandbox";
@@ -530,7 +514,7 @@ public:
       render();
   }
   void remember_bounded(std::string_view text, std::optional<detail::RenderMode> raw = {}) {
-    remember(detail::CursesText::bounded(text, detail::UiHistory::byte_limit - 1,
+    remember(detail::CursesText::bounded(text, detail::UiHistory::byte_limit,
                                          detail::UiHistory::omission, curses_unicode_, raw)
                  .text);
     render();
@@ -554,15 +538,17 @@ public:
   void say_rendered(detail::RenderedTextView text) {
     if (curses_)
       remember_bounded(text.text);
-    else
+    else {
+      before_line_output();
       (void)output_.display({text.text});
+    }
   }
   void remember(const std::string &text) {
     transcript_.add(text);
   }
   std::optional<std::string> read(Cancellation &cancel) {
-    if (!curses_ && (input_scope_.stale() || (input_scope_.ordinary_draft() && !input_.empty()))) {
-      announce_discard();
+    if (!curses_ && (input_.stale() || (input_.ordinary_draft() && !input_.input().empty()))) {
+      flush_prompt();
       begin_active();
       struct Restore {
         Terminal &terminal;
@@ -577,6 +563,7 @@ public:
       for (;;) {
         if (cancel.requested)
           return std::nullopt;
+        flush_prompt();
         bool closed = false;
         auto line = active_input(closed);
         if (closed)
@@ -611,7 +598,7 @@ public:
       }
       return submitted.text;
     }
-    if (!input_scope_.ordinary_draft())
+    if (!input_.ordinary_draft())
       clear_review_input();
     render();
     for (;;) {
@@ -627,7 +614,9 @@ public:
       if (ch == bindings_["quit"])
         return std::nullopt;
       if (ch == bindings_["submit"] || ch == KEY_ENTER) {
-        auto submitted = take_input(input_.raw());
+        if (!curses_)
+          output_.echo({"\n"});
+        auto submitted = take_input(input_.input().raw());
         if (submitted.action() == detail::InputAction::discard) {
           discarded_line();
           continue;
@@ -636,19 +625,18 @@ public:
         return submitted.text;
       }
       if (ch == bindings_["backspace"] || ch == KEY_BACKSPACE || ch == 8) {
-        if (!input_.empty()) {
+        if (!input_.input().empty()) {
           input_.erase_character();
         }
         render();
-      } else if (ch >= 32 && ch <= 255 && input_.size() < 65536) {
-        input_scope_.edit();
-        input_ += static_cast<char>(ch);
+      } else if (ch >= 32 && ch <= 255 && input_.input().size() < 65536) {
+        input_.append(static_cast<char>(ch));
         render();
       }
     }
   }
   void begin_active() {
-    if (!input_scope_.ordinary_draft())
+    if (!input_.ordinary_draft())
       clear_review_input();
     if (!curses_ && resources_.saved()) {
       el_set(resources_.editor(), EL_PREP_TERM, 0);
@@ -682,7 +670,8 @@ public:
       render();
       return {};
     }
-    if (approval_ && (ch == KEY_NPAGE || ch == KEY_PPAGE || (ch == ' ' && input_.empty()))) {
+    if (approval_ &&
+        (ch == KEY_NPAGE || ch == KEY_PPAGE || (ch == ' ' && input_.input().empty()))) {
       clear_review_input();
       if (ch == KEY_PPAGE)
         approval_->previous();
@@ -696,9 +685,10 @@ public:
       return {};
     }
     if (ch == bindings_["submit"] || ch == KEY_ENTER || ch == '\r') {
-      auto submitted = take_input(input_.raw());
+      if (!curses_)
+        output_.echo({"\n"});
+      auto submitted = take_input(input_.input().raw());
       const auto &text = submitted.text;
-      input_.clear();
       if (!submitted.discarded && approval_ && detail::approves(text) &&
           !approval_->approved_review()) {
         render();
@@ -706,27 +696,24 @@ public:
       }
       if (submitted.discarded)
         return submitted;
-      if (!curses_)
-        output_.echo({"\n"});
-      else if (approval_) {
+      if (curses_ && approval_) {
         const auto shown =
             detail::CursesText(detail::literal_text("you> " + text), curses_unicode_).text();
         say_rendered({shown});
-      } else
+      } else if (curses_)
         say("you> " + text);
       render();
       return submitted;
     }
     if (ch == bindings_["backspace"] || ch == KEY_BACKSPACE || ch == 8) {
-      if (!input_.empty()) {
+      if (!input_.input().empty()) {
         input_.erase_character();
-        if (!curses_ && !input_scope_.stale())
+        if (!curses_ && !input_.stale())
           output_.echo({"\b \b"});
       }
-    } else if (ch >= 32 && ch <= 255 && input_.size() < 65536) {
-      input_scope_.edit();
-      input_ += static_cast<char>(ch);
-      if (!curses_ && !input_scope_.stale()) {
+    } else if (ch >= 32 && ch <= 255 && input_.input().size() < 65536) {
+      input_.append(static_cast<char>(ch));
+      if (!curses_ && !input_.stale()) {
         const auto character = static_cast<char>(ch);
         output_.echo({std::string_view(&character, 1)});
       }
@@ -1168,7 +1155,6 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
               const auto options = event.at("options").get<std::vector<std::string>>();
               for (size_t i = 0; i < options.size(); ++i)
                 terminal->say(std::to_string(i + 1) + ". " + options[i]);
-              terminal->request_prompt("Enter a choice number or a text answer.");
               pending = event;
             } else if (type == "codet.user_input.requested") {
               for (const auto &q : event.at("questions")) {
@@ -1186,6 +1172,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
               terminal->progress(event);
           },
           diagnostic, recovering);
+      terminal->flush_prompt();
     };
     try {
       terminal->begin_active();
@@ -1200,6 +1187,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
           terminal->end_approval();
           terminal->say("Request expired; any unfinished answer is discarded at Enter.");
         }
+        terminal->flush_prompt();
         bool closed = false;
         const auto line = terminal->active_input(closed);
         if (closed) {
