@@ -32,6 +32,7 @@ template <class Report> void secondary_diagnostic(Report report) noexcept {
 // Bind the fallback explicitly to this invocation; preserve the public bad_alloc contract.
 inline void context_diagnostic(const DiagnosticSink &sink, DiagnosticWriter &fallback,
                                RenderedTextView text) {
+  const auto write = [&] { secondary_diagnostic([&] { (void)fallback.write({text.text}); }); };
   if (sink)
     try {
       sink(text.text);
@@ -39,9 +40,10 @@ inline void context_diagnostic(const DiagnosticSink &sink, DiagnosticWriter &fal
     } catch (const std::bad_alloc &) {
       throw;
     } catch (...) {
-      // Fall through without invoking the standalone, context-free stderr writer.
+      write(); // Keep this invocation's output gate, including exception-mask recovery.
+      return;
     }
-  secondary_diagnostic([&] { (void)fallback.write({text.text}); });
+  write();
 }
 template <class Result, class Restore, class Drain, class Report>
 [[noreturn]] void recover_turn(const std::exception_ptr &failure, Cancellation &cancel,

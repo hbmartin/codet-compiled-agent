@@ -8,7 +8,7 @@ inline std::string_view discard_message(InputDiscard reason) noexcept {
 }
 enum class InputAction : uint8_t { quit, discard, answer, message };
 struct InputSubmission {
-  InputAction action;
+  InputAction action = InputAction::message;
   std::optional<InputDiscard> rejection;
 };
 struct InputLine {

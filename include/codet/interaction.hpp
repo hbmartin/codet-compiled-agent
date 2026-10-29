@@ -23,7 +23,7 @@ class Interaction {
   std::map<std::string, uint64_t> requests_;
 
 public:
-  enum class Warning : unsigned { exec_stop = 1, exec_original = 2, event_render = 4 };
+  enum class Warning : uint8_t { exec_stop = 1, exec_original = 2, event_render = 4 };
   // Producers never format, allocate, or invoke a renderer. One pending bit per warning kind.
   void warn(Warning kind) noexcept {
     warnings_.fetch_or(static_cast<unsigned>(kind), std::memory_order_relaxed);

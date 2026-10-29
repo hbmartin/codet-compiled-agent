@@ -53,8 +53,8 @@ class CursesInput {
 public:
   struct Tail {
     std::string_view text;
-    size_t columns;
-    bool omitted;
+    size_t columns = 0;
+    bool omitted = false;
   };
   static constexpr size_t limit = 65536;
   const std::string &raw() const noexcept {
