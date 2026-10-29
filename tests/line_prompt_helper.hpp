@@ -27,6 +27,8 @@ inline int line_viewport_helper(int release, int notify, int replacement) {
     return 5;
   if (replacement >= 0 && ::dup2(replacement, STDOUT_FILENO) < 0)
     return 6;
+  if (replacement >= 0)
+    line.flush(); // Repaint the new destination before old-channel output.
   const DiagnosticSink broken = [](const auto &) { throw Error("configured sink failed"); };
   const std::string text = "context fallback";
   detail::context_diagnostic(broken, errors, {text});

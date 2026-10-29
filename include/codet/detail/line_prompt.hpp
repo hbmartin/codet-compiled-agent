@@ -11,9 +11,11 @@ class LinePrompt final : public LineOutputObserver {
   IoContext &io_;
   const std::string &prompt_;
   struct stat terminal_ {};
+  struct stat abandoned_ {};
   LineOutputObserver *previous_;
   bool owned_ = false, dirty_ = false, visible_ = false, due_ = true;
   bool internal_ = false, explained_ = false, known_ = true;
+  bool abandoned_dirty_ = false;
   size_t columns_ = 0, painted_ = 0;
   const size_t test_columns_;
   uint64_t revision_ = 0, request_revision_ = 0;
@@ -47,11 +49,25 @@ class LinePrompt final : public LineOutputObserver {
     visible_ = false;
     painted_ = 0;
   }
+  void abandon_geometry() noexcept {
+    if (known_ && dirty_) {
+      abandoned_ = terminal_;
+      abandoned_dirty_ = true;
+    }
+    dirty_ = visible_ = false;
+    painted_ = columns_ = 0;
+  }
   void destination(const struct stat &value) noexcept {
     if (!known_ || !same(terminal_, value)) {
+      const bool resumed = abandoned_dirty_ && same(abandoned_, value);
+      const bool retained = known_ && dirty_;
+      abandon_geometry();
+      if (resumed && !retained)
+        abandoned_dirty_ = false;
       terminal_ = value;
       known_ = true;
-      dirty_ = visible_ = explained_ = false;
+      dirty_ = resumed;
+      visible_ = explained_ = false;
       painted_ = columns_ = 0;
       due_ = true;
     }
@@ -67,9 +83,8 @@ class LinePrompt final : public LineOutputObserver {
         columns =
             S_ISCHR(value.st_mode) && ::ioctl(descriptor, TIOCGWINSZ, &size) == 0 ? size.ws_col : 0;
       } else {
+        abandon_geometry();
         known_ = false;
-        dirty_ = visible_ = false;
-        painted_ = 0;
         columns = 0;
       }
     }
@@ -150,8 +165,16 @@ public:
       struct stat current {};
       if (::fstat(prompt, &current) == 0)
         destination(current);
-      else
+      else {
+        abandon_geometry();
         known_ = false;
+      }
+    }
+    // Retain only a boundary for the last abandoned row, never its cursor geometry.
+    // A stderr still targeting that terminal must not invalidate the new stdout row.
+    if (abandoned_dirty_ && same(value, abandoned_)) {
+      abandoned_dirty_ = false;
+      return true;
     }
     if (!known_ || !S_ISCHR(value.st_mode) || !same(value, terminal_))
       return false;

@@ -1429,6 +1429,9 @@ class CliTests(unittest.TestCase):
                             changed=bytearray()
                             collect_pty(self,second,changed,lambda changed=changed:br'\xFF' in changed)
                             self.assertFalse(changed.startswith(b'\r'),changed)
+                            collect(lambda received=received:b'context fallback' in received)
+                            self.assertIn('context fallback',line_cells(received))
+                            self.assertEqual(bytes(changed).count(b'codet>'),1,changed)
                         else:
                             collect(lambda received=received:b'context fallback' in received)
                             rows=line_cells(received)
@@ -1461,6 +1464,37 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'hllo')
                 os.write(input_master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
                 self.assertEqual(process.returncode,0,received)
+
+    def test_line_unicode_cells_use_safe_cache_and_preserve_answer_bytes(self):
+        import unicodedata
+        ready,release=threading.Event(),threading.Event()
+        self.server.signal_gate=(ready,release);self.server.releases.append(release)
+        with PtyProcess() as resources:
+            master,slave=resources.openpty()
+            locale='en_US.UTF-8' if sys.platform=='darwin' else 'C.UTF-8'
+            process=resources.start([BIN,'-C',str(self.workspace),'--ui=line','--color=never','fixture-signal-wait'],
+                stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='dumb',LC_ALL=locale))
+            received=bytearray();collect=partial(collect_pty,self,master,received)
+            self.assertTrue(ready.wait(10))
+            raw='e\u0301雪\u009b\u202e\\x41'.encode()
+            os.write(master,raw+b'\xff')
+            collect(lambda:br'\xFF' in received)
+            row=line_cells(received)[-1]
+            self.assertIn('雪',row)
+            self.assertIn(r'e\xCC\x81',row)
+            self.assertIn(r'\xC2\x9B\xE2\x80\xAE\x5Cx41\xFF',row)
+            self.assertNotIn('\u009b'.encode(),received)
+            self.assertNotIn('\u202e'.encode(),received)
+            self.assertLessEqual(sum(2 if unicodedata.east_asian_width(c) in ('W','F') else 1 for c in row),79)
+            received.clear();os.write(master,b'\x7f')
+            collect(lambda:line_cells(received)[-1].endswith(r'\x5Cx41'))
+            release.set();collect(lambda:b'fixture done' in received)
+            collect(lambda:line_cells(received)[-1].endswith(r'\x5Cx41'))
+            received.clear();os.write(master,b'\n')
+            collect(lambda:b'fixture done' in received)
+            self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],raw.decode())
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,received)
 
     def test_active_empty_enter_never_persists_or_requests_another_turn(self):
         ready,release=threading.Event(),threading.Event()

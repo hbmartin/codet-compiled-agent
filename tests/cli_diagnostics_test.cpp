@@ -407,6 +407,21 @@ TEST(RequestInput, ValidSubmissionHasNoDiscardReason) {
   EXPECT_EQ(answer.classify(&event).action, detail::InputAction::answer);
   EXPECT_FALSE(answer.classify(&event).rejection);
 }
+TEST(LinePrompt, OldDestinationKeepsOnlyASeparatorAndCannotRepaintTheNewRow) {
+  LineFixture f;
+  f.line->append('x');
+  auto next = f.tty;
+  next.st_ino = 7;
+  next.st_rdev = 8;
+  EXPECT_FALSE(f.line->before_output(STDOUT_FILENO, next));
+  f.line->flush();
+  const auto before = f.stream.str();
+  EXPECT_TRUE(f.line->before_output(STDERR_FILENO, f.tty));
+  f.line->flush();
+  EXPECT_EQ(f.stream.str(), before);
+  EXPECT_FALSE(f.line->before_output(STDERR_FILENO, f.tty));
+  EXPECT_TRUE(f.line->before_output(STDERR_FILENO, next));
+}
 TEST(LinePrompt, ErasingTheFinalCharacterRemovesTheActiveOrdinaryPrompt) {
   LineFixture f;
   f.line->append('x');
