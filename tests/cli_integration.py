@@ -1411,8 +1411,9 @@ class CliTests(unittest.TestCase):
                             stdin=source,stdout=slave,stderr=log_write,pass_fds=passed,env=dict(self.env,LC_ALL='C'))
                         received=bytearray();collect=partial(collect_pty,self,master,received)
                         collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]));self.assertEqual(os.read(notice,1),b'r')
-                        # Drain the complete initial row before allowing any other output.
-                        collect(lambda received=received:br'\xFF' in received)
+                        # The gate follows the write; PTY reads may still split its final newline.
+                        frame_end=br'\xFF'+(b'\r\n' if columns<10 else b'')
+                        collect(lambda received=received,frame_end=frame_end:frame_end in received)
                         self.assertNotIn(b'\x9b',received);self.assertNotIn(b'\xe2\x80\xae',received)
                         self.assertNotIn(b'\b',received)
                         if columns>=10:
