@@ -1,0 +1,1095 @@
+{
+  "baseline": "a42be250258ce4d07d94ad84a86ad4fe186af44c",
+  "validated_ref": "bb2f593e0a3098ad9a996365e100b401d546ecf9",
+  "branch": "codex/line-prompt-followup",
+  "date": "2026-10-29",
+  "environment": {
+    "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+    "platform": "macOS 27 arm64",
+    "release_flags": "-O3 -DNDEBUG -arch arm64",
+    "benchmark_only_exceptions": "-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+    "strict_release_baseline_failure": "line-prompt-followup-strict-release-failure.log"
+  },
+  "behavior": {
+    "line_coordination": "Main-thread LinePrompt borrows the invocation I/O context and input controller. Resolved native stdout/stderr destinations matching the input terminal invalidate the visible line, including raw echo and failed prompt attempts. Display, file notice and recovery writers share that observer; prompt/echo writes are guarded against recursion. Redirected logs do not invalidate the input terminal. Outer event batches and real input boundaries restore the prompt plus surviving raw draft once.",
+    "prompt_policy": "During active work: requests, discard acknowledgement or a live ordinary draft only. Empty idle input belongs to libedit; stale-line acknowledgement returns ownership to libedit. No empty steering prompt at turn start or between progress records.",
+    "discard": "Unfinished input discarded. identifies stale-line acknowledgement. Request expired; answer discarded. identifies a completed rejected/mismatched answer. Rejected answers never become messages.",
+    "budgets": {
+      "history_bytes": 262144,
+      "history_lines": 1000,
+      "approval_excerpt_bytes": 16384,
+      "input_bytes": 65536,
+      "production_parameter_tests": true
+    },
+    "width": "Reject invalid, disabled-Unicode or strictly invisible tokens before locale width conversion. Public interfaces and output bytes remain unchanged."
+  },
+  "checks": [
+    {
+      "name": "deps",
+      "command": [
+        "python3",
+        "scripts/fetch-deps.py",
+        "--offline"
+      ],
+      "exit": 0,
+      "seconds": 0.5337137499591336,
+      "log": "build/line-prompt-followup/delivery/deps.log"
+    },
+    {
+      "name": "debug-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/host",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 0.0759590829256922,
+      "log": "build/line-prompt-followup/delivery/debug-build.log"
+    },
+    {
+      "name": "sanitize-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/sanitize",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 4.051962500088848,
+      "log": "build/line-prompt-followup/delivery/sanitize-build.log"
+    },
+    {
+      "name": "debug-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/host",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 105.19549304107204,
+      "log": "build/line-prompt-followup/delivery/debug-ctest.log"
+    },
+    {
+      "name": "sanitize-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/sanitize",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 168.83558095805347,
+      "log": "build/line-prompt-followup/delivery/sanitize-ctest.log"
+    },
+    {
+      "name": "repeat-unit",
+      "command": [
+        "build/sanitize/codet_tests",
+        "--gtest_filter=Approval*.*:CursesInput.*:LinePrompt.*:RequestInput*.*:UiHistory.*:DiagnosticWriter.*:FileDiagnostics.*:CliDiagnosticsTest.*:TerminalResources.*:CliOutput.*",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 208.2910475829849,
+      "log": "build/line-prompt-followup/delivery/repeat-unit.log"
+    },
+    {
+      "name": "repeat-fault",
+      "command": [
+        "build/sanitize/codet_publication_fault_tests",
+        "--gtest_filter=FileDiagnosticsFault.*:UiBudgetFault.*",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 8.22316699998919,
+      "log": "build/line-prompt-followup/delivery/repeat-fault.log"
+    },
+    {
+      "name": "repeat-pty-0",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 10.9141420830274,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-0.log"
+    },
+    {
+      "name": "repeat-pty-1",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 10.971588500076905,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-1.log"
+    },
+    {
+      "name": "repeat-pty-2",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 10.852662874967791,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-2.log"
+    },
+    {
+      "name": "repeat-pty-3",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 10.999792415997945,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-3.log"
+    },
+    {
+      "name": "repeat-pty-4",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 11.09471904207021,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-4.log"
+    },
+    {
+      "name": "repeat-pty-5",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 11.097329374984838,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-5.log"
+    },
+    {
+      "name": "repeat-pty-6",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 10.749660040950403,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-6.log"
+    },
+    {
+      "name": "repeat-pty-7",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 11.06609358289279,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-7.log"
+    },
+    {
+      "name": "repeat-pty-8",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 11.006986749940552,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-8.log"
+    },
+    {
+      "name": "repeat-pty-9",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 11.080845332937315,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-9.log"
+    },
+    {
+      "name": "repeat-pty-10",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 10.922692624968477,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-10.log"
+    },
+    {
+      "name": "repeat-pty-11",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 10.872111625038087,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-11.log"
+    },
+    {
+      "name": "repeat-pty-12",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 11.038638125057332,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-12.log"
+    },
+    {
+      "name": "repeat-pty-13",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 11.019327583024278,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-13.log"
+    },
+    {
+      "name": "repeat-pty-14",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 10.97507854201831,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-14.log"
+    },
+    {
+      "name": "repeat-pty-15",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 10.864117750083096,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-15.log"
+    },
+    {
+      "name": "repeat-pty-16",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 10.793607500032522,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-16.log"
+    },
+    {
+      "name": "repeat-pty-17",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 10.952725499984808,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-17.log"
+    },
+    {
+      "name": "repeat-pty-18",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 10.914079415961169,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-18.log"
+    },
+    {
+      "name": "repeat-pty-19",
+      "command": [
+        "python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_approval_curses_failure_cancels_without_running_the_tool",
+        "CliTests.test_ordinary_curses_failure_preserves_worker_and_partial_input",
+        "CliTests.test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer",
+        "CliTests.test_line_empty_draft_does_not_delay_a_fresh_request_answer",
+        "CliTests.test_ordinary_draft_survives_worker_completion",
+        "CliTests.test_line_prompt_restores_visible_draft_without_abandoned_prompts",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once",
+        "CliTests.test_live_permission_modes_in_both_terminals",
+        "CliTests.test_expired_approval_draft_is_discarded_before_next_turn",
+        "CliTests.test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged",
+        "CliTests.test_curses_empty_answer_records_denial_in_history",
+        "CliTests.test_curses_c_locale_review_survives_partial_input_and_retains_history",
+        "CliTests.test_curses_small_approval_echoes_quit_without_unlocking",
+        "CliTests.test_curses_pending_review_can_quit_or_cancel_without_granting_permission",
+        "CliTests.test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize",
+        "CliTests.test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available",
+        "CliTests.test_background_close_preserves_foreground_modes_and_queued_input",
+        "CliTests.test_background_partial_acquisition_preserves_foreground_owner",
+        "CliTests.test_active_background_restoration_respects_foreground_job_control"
+      ],
+      "exit": 0,
+      "seconds": 11.013102125027217,
+      "log": "build/line-prompt-followup/delivery/repeat-pty-19.log"
+    },
+    {
+      "name": "lint",
+      "command": [
+        "make",
+        "check-lint",
+        "CHECK_PYTHON=build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 1.3444994589081034,
+      "log": "build/line-prompt-followup/delivery/lint.log"
+    },
+    {
+      "name": "runner-tests",
+      "command": [
+        "make",
+        "test-lint-runners",
+        "test-modern-analysis-runner",
+        "CHECK_PYTHON=build/lint-venv/bin/python",
+        "ANALYSIS_PYTHON=build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 5.390903958003037,
+      "log": "build/line-prompt-followup/delivery/runner-tests.log"
+    },
+    {
+      "name": "semgrep",
+      "command": [
+        "make",
+        "check-semgrep",
+        "CHECK_PYTHON=build/lint-venv/bin/python",
+        "SEMGREP=build/semgrep-venv/bin/pysemgrep"
+      ],
+      "exit": 0,
+      "seconds": 7.151742957998067,
+      "log": "build/line-prompt-followup/delivery/semgrep.log"
+    },
+    {
+      "name": "cppcheck",
+      "command": [
+        "build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "build/line-prompt-followup/delivery/cppcheck-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--tool",
+        "cppcheck"
+      ],
+      "exit": 0,
+      "seconds": 69.0060115000233,
+      "log": "build/line-prompt-followup/delivery/cppcheck.log"
+    },
+    {
+      "name": "clang-tidy",
+      "command": [
+        "build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "build/line-prompt-followup/delivery/clang-tidy-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--tool",
+        "clang-tidy"
+      ],
+      "exit": 1,
+      "seconds": 38.108567749965005,
+      "log": "build/line-prompt-followup/delivery/clang-tidy.log"
+    },
+    {
+      "name": "clang-analyzer",
+      "command": [
+        "build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "build/line-prompt-followup/delivery/clang-analyzer-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--tool",
+        "clang-analyzer"
+      ],
+      "exit": 1,
+      "seconds": 55.679171000025235,
+      "log": "build/line-prompt-followup/delivery/clang-analyzer.log"
+    },
+    {
+      "name": "selftest",
+      "command": [
+        "build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "build/line-prompt-followup/delivery/selftest-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--selftest"
+      ],
+      "exit": 0,
+      "seconds": 1.3676500410074368,
+      "log": "build/line-prompt-followup/delivery/selftest.log"
+    }
+  ],
+  "full_suites": {
+    "debug_ctest": "9/9 pass",
+    "asan_ubsan_ctest": "9/9 pass",
+    "unit_cases": 593,
+    "publication_fault_cases": 65,
+    "cli_integration_methods": 93,
+    "expected_skips": [
+      "NetworkOptIn.TlsHandshake",
+      "Contracts.NativeTigerDesktopAcceptance"
+    ]
+  },
+  "repetitions": {
+    "batches": 20,
+    "unit_cases_per_batch": 104,
+    "fault_cases_per_batch": 16,
+    "pty_methods_per_batch": 19,
+    "total": 2780
+  },
+  "static_analysis": {
+    "baseline_comparison": {
+      "cppcheck": {
+        "findings": 0,
+        "completed": 25,
+        "expected": 25,
+        "current_input_hash_mismatches": [],
+        "diagnostic_multiset_equal_to_baseline": true,
+        "findings_detail": []
+      },
+      "clang-tidy": {
+        "findings": 6,
+        "completed": 24,
+        "expected": 25,
+        "current_input_hash_mismatches": [],
+        "diagnostic_multiset_equal_to_baseline": true,
+        "findings_detail": [
+          [
+            "bugprone-narrowing-conversions",
+            "src/modern/images.cpp",
+            "narrowing conversion from 'unsigned long' to 'double'"
+          ],
+          [
+            "bugprone-narrowing-conversions",
+            "src/modern/images.cpp",
+            "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+          ],
+          [
+            "bugprone-narrowing-conversions",
+            "src/modern/images.cpp",
+            "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+          ],
+          [
+            "bugprone-exception-escape",
+            "src/modern/main.cpp",
+            "an exception may be thrown in function 'main' which should not throw exceptions"
+          ],
+          [
+            "clang-diagnostic-error",
+            "src/modern/platform.cpp",
+            "implicit instantiation of undefined template 'std::basic_istringstream<char>'"
+          ],
+          [
+            "bugprone-exception-escape",
+            "src/modern/state.cpp",
+            "an exception may be thrown in function 'operator()' which should not throw exceptions"
+          ]
+        ]
+      },
+      "clang-analyzer": {
+        "findings": 1,
+        "completed": 25,
+        "expected": 25,
+        "current_input_hash_mismatches": [],
+        "diagnostic_multiset_equal_to_baseline": true,
+        "findings_detail": [
+          [
+            "core.DivideZero",
+            "src/modern/context.cpp",
+            "Division by zero",
+            "project_history",
+            "b7fd78895b63841553e144fd774a0954"
+          ]
+        ]
+      }
+    },
+    "interpretation": "Local Clang findings exactly equal the previously recorded baseline: five source warnings, one SDK13-incomplete translation unit and the context division warning. Required Ubuntu Clang analysis passes. No required checks or suppressions were weakened."
+  },
+  "linux_ci": [
+    {
+      "conclusion": "success",
+      "databaseId": 40803571517,
+      "headSha": "bb2f593e0a3098ad9a996365e100b401d546ecf9",
+      "status": "completed",
+      "url": "https://github.com/hbmartin/codet-compiled-agent/actions/runs/40803571517"
+    },
+    {
+      "conclusion": "cancelled",
+      "databaseId": 40803471176,
+      "headSha": "fb2d81274c894a37a1c9483f36f587c6ac2e5b51",
+      "status": "completed",
+      "url": "https://github.com/hbmartin/codet-compiled-agent/actions/runs/40803471176"
+    },
+    {
+      "conclusion": "cancelled",
+      "databaseId": 40803089081,
+      "headSha": "182ced71d9ca0e35ae8bb9c5dbf654f222c692b4",
+      "status": "completed",
+      "url": "https://github.com/hbmartin/codet-compiled-agent/actions/runs/40803089081"
+    }
+  ],
+  "failure_evidence": [
+    {
+      "issue": "Idle stale-input acknowledgement did not hand control back to libedit; full Debug and sanitizer integrations failed the existing prompt-restoration assertions for both approval and question expiry.",
+      "log": "line-prompt-followup-initial-debug-failure.log",
+      "fix": "fb2d812",
+      "focused_regressions": "build/line-prompt-followup/handoff-pty.log"
+    },
+    {
+      "issue": "New PTY callbacks did not bind loop variables; pinned Ruff B023 rejected them.",
+      "log": "line-prompt-followup-initial-lint-failure.log",
+      "fix": "bb2f593"
+    },
+    {
+      "issue": "Strict Release baseline fails existing images.cpp integer-to-double conversion warnings on the local Apple compiler.",
+      "log": "line-prompt-followup-strict-release-failure.log",
+      "handling": "Identical benchmark-only warning settings on every variant; required Debug, sanitizer, lint and analysis settings unchanged."
+    }
+  ],
+  "performance": {
+    "method": "Identical Release harnesses, 262144-byte production budget, one warm-up and five alternating measured runs in each of two sets, without concurrent task tests/analyzers. C++ allocations and direct native calls only; not peak RSS or complete libc activity.",
+    "variants": [
+      {
+        "name": "baseline",
+        "ref": "a42be250258ce4d07d94ad84a86ad4fe186af44c",
+        "configure": [
+          "cmake",
+          "-S",
+          "build/line-prompt-followup/baseline-src",
+          "-B",
+          "build/line-prompt-followup/baseline-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+          "-DCODET_DEPENDENCY_ROOT=.deps"
+        ],
+        "harness_hashes": {
+          "CMakeLists.txt": "d083ffffba9fc637a8a2acecb0a46ef6416d45fa19889d3adb1fcf8249ad1058",
+          "tests/ui_render_bench.cpp": "abbf52038a9d40477440f74cd5b1fb3d28d9f5b329635158fe1c59fc3e5ebef7",
+          "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+          "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+          "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+          "tests/native_stat_interposer.hpp": "1b18a6ad90b78d614d8665cfaeacd490b543071541cb63857ce919e1fdcc51ef",
+          "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6"
+        },
+        "rendering_hash": "dc2888c2c22018d89fa77947e92cf270ab54c20254a0497c1dd5f17af3f2b47c"
+      },
+      {
+        "name": "correctness",
+        "ref": "2ad0d19",
+        "configure": [
+          "cmake",
+          "-S",
+          "build/line-prompt-followup/correctness-src",
+          "-B",
+          "build/line-prompt-followup/correctness-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+          "-DCODET_DEPENDENCY_ROOT=.deps"
+        ],
+        "harness_hashes": {
+          "CMakeLists.txt": "d083ffffba9fc637a8a2acecb0a46ef6416d45fa19889d3adb1fcf8249ad1058",
+          "tests/ui_render_bench.cpp": "abbf52038a9d40477440f74cd5b1fb3d28d9f5b329635158fe1c59fc3e5ebef7",
+          "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+          "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+          "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+          "tests/native_stat_interposer.hpp": "1b18a6ad90b78d614d8665cfaeacd490b543071541cb63857ce919e1fdcc51ef",
+          "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6"
+        },
+        "rendering_hash": "dc2888c2c22018d89fa77947e92cf270ab54c20254a0497c1dd5f17af3f2b47c",
+        "final_cli_hash": "bd68ca428afa0506348373bfb563bebe231d2ca513725d99490abda43d3ea51d"
+      },
+      {
+        "name": "width",
+        "ref": "7296c39",
+        "configure": [
+          "cmake",
+          "-S",
+          "build/line-prompt-followup/width-src",
+          "-B",
+          "build/line-prompt-followup/width-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+          "-DCODET_DEPENDENCY_ROOT=.deps"
+        ],
+        "harness_hashes": {
+          "CMakeLists.txt": "d083ffffba9fc637a8a2acecb0a46ef6416d45fa19889d3adb1fcf8249ad1058",
+          "tests/ui_render_bench.cpp": "abbf52038a9d40477440f74cd5b1fb3d28d9f5b329635158fe1c59fc3e5ebef7",
+          "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+          "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+          "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+          "tests/native_stat_interposer.hpp": "1b18a6ad90b78d614d8665cfaeacd490b543071541cb63857ce919e1fdcc51ef",
+          "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6"
+        },
+        "rendering_hash": "d8c2750f6d332e9f3b1e51c15ada0851dcc23bdfedf7aca4baf8cdb63fed0bce",
+        "final_cli_hash": "bd68ca428afa0506348373bfb563bebe231d2ca513725d99490abda43d3ea51d"
+      },
+      {
+        "name": "trim",
+        "ref": "7296c39",
+        "configure": [
+          "cmake",
+          "-S",
+          "build/line-prompt-followup/trim-src",
+          "-B",
+          "build/line-prompt-followup/trim-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+          "-DCODET_DEPENDENCY_ROOT=.deps"
+        ],
+        "harness_hashes": {
+          "CMakeLists.txt": "d083ffffba9fc637a8a2acecb0a46ef6416d45fa19889d3adb1fcf8249ad1058",
+          "tests/ui_render_bench.cpp": "abbf52038a9d40477440f74cd5b1fb3d28d9f5b329635158fe1c59fc3e5ebef7",
+          "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+          "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+          "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+          "tests/native_stat_interposer.hpp": "1b18a6ad90b78d614d8665cfaeacd490b543071541cb63857ce919e1fdcc51ef",
+          "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6"
+        },
+        "rendering_hash": "d689bc93436a22ab4e881756774e78956cd9b3ce1b9732f0393a96e64b1cc818",
+        "final_cli_hash": "bd68ca428afa0506348373bfb563bebe231d2ca513725d99490abda43d3ea51d"
+      }
+    ],
+    "samples": 1248,
+    "workloads": 26,
+    "medians": "line-prompt-followup-performance.csv",
+    "every_sample": "line-prompt-followup-performance-samples.csv",
+    "first_candidate_medians": "line-prompt-followup-first-performance.csv",
+    "first_candidate_samples": "line-prompt-followup-first-performance-samples.csv",
+    "counter_checks": "Allocation, locale-conversion, write/stat/flags/pipe-bound positive controls pass. Checksums match. Diagnostics and exports have equal allocation and directly observed native-operation counts across variants. Unchanged cached redraws prepare zero source bytes.",
+    "retained": "Lazy width conversion removes 100000 unnecessary mbrtowc calls per targeted workload with zero new allocations; both targeted median sets improve.",
+    "omitted": "First in-loop trim tracker regressed small presentations. Guaranteed-fit specialization improves large presentation modes, but small-file exports are 6.74%/5.32% slower than width-only in the final two sets. Omitted under the no-repeatable-unrelated-regression gate; the existing bounded trimming traversal remains.",
+    "omitted_candidate_sha256": "d689bc93436a22ab4e881756774e78956cd9b3ce1b9732f0393a96e64b1cc818",
+    "final_source_note": "Measured mandatory CLI overlay precedes the one-line idle-discard handoff correction fb2d812. That correction is outside the cached-input, rendering, native-output and headless-export paths measured here. Final inline rendering headers and benchmark harnesses match the published hashes. The final handoff and callbacks are covered by both full suites, 20 repetitions and required Ubuntu CI. No end-to-end line-editor or general latency claim."
+  },
+  "platform_limits": {
+    "native_tiger_runtime": false,
+    "tiger_compiler": false,
+    "tiger_sdk": false,
+    "docker": false,
+    "native_intel_runtime": false,
+    "linux": "Required Ubuntu wide-curses/UTF-8 build, analysis and CTest pass on bb2f593."
+  },
+  "unchanged": [
+    "Public diagnostic/CLI constructors, raw submitted/data bytes, Unicode policies, strict complete approval review.",
+    "Durable completion, cancellation precedence, replay order, terminal ownership and storage/journal formats.",
+    "Existing blocking-TTY limitation and standalone/emergency best-effort policy."
+  ]
+}

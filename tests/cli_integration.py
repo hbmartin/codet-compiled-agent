@@ -1329,6 +1329,72 @@ class CliTests(unittest.TestCase):
                     if process.poll() is None:process.kill();process.wait(timeout=5)
                     os.close(master);os.close(slave)
 
+    def test_native_notices_and_cleanup_restore_request_drafts_once(self):
+        import pty
+        import select
+        for kind in ('approval','question'):
+            with self.subTest(kind=kind):
+                master,slave=pty.openpty();arm,trigger=os.pipe();notice,notify=os.pipe()
+                helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+                process=subprocess.Popen([helper,'--codet-line-prompt-helper',kind,str(arm),str(notify)],
+                    stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=self.env)
+                received=bytearray()
+                def collect(predicate,master=master,received=received):
+                    deadline=time.monotonic()+10
+                    while not predicate() and time.monotonic()<deadline:
+                        if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+                    self.assertTrue(predicate(),bytes(received))
+                try:
+                    collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
+                    self.assertEqual(os.read(notice,1),b'r')
+                    os.write(trigger,b'g')
+                    collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
+                    self.assertEqual(os.read(notice,1),b'd')
+                    prefix=b'Approve? [y/N] ' if kind=='approval' else b'Enter a choice number or a text answer. '
+                    collect(lambda received=received,prefix=prefix:bytes(received).count(prefix+b'y')==3)
+                    expected=(prefix+b'y\r\nwarning\r\nUncommitted tool result preserved at /complete/path\r\n'+
+                        prefix+b'y\r\nWorker events could not be drained during cleanup\r\n'+prefix+b'y')
+                    self.assertEqual(bytes(received),expected)
+                    os.write(trigger,b'g');collect(lambda process=process:process.poll() is not None)
+                    self.assertEqual(process.returncode,0,received)
+                finally:
+                    if process.poll() is None:process.kill();process.wait(timeout=5)
+                    for fd in (master,slave,arm,trigger,notice,notify):os.close(fd)
+
+    def test_line_prompt_restores_visible_draft_without_abandoned_prompts(self):
+        import pty
+        import select
+        ready,release=threading.Event(),threading.Event()
+        self.server.signal_gate=(ready,release);self.server.releases.append(release)
+        master,slave=pty.openpty()
+        process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui=line','--color=never',
+            'fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+        received=bytearray()
+        def collect(predicate):
+            deadline=time.monotonic()+10
+            while not predicate() and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+            self.assertTrue(predicate(),bytes(received))
+        try:
+            self.assertTrue(ready.wait(10))
+            os.write(master,b'he');collect(lambda:b'codet> [default] he' in received)
+            release.set()
+            collect(lambda:b'fixture done\r\ncodet> [default] he' in received)
+            self.assertNotIn(b'hefixture done',received)
+            received.clear();os.write(master,b'\x7fllo\n')
+            collect(lambda:b'fixture done\r\ncodet> [default] ' in received)
+            self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'hllo')
+            self.assertNotIn(b'codet> [default] \r\nfixture done',received)
+            received.clear();os.write(master,b'plain message\n')
+            collect(lambda:b'fixture done\r\ncodet> [default] ' in received)
+            self.assertEqual(bytes(received).count(b'codet> [default] '),1,received)
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,received)
+        finally:
+            release.set()
+            if process.poll() is None:process.kill();process.wait(timeout=5)
+            os.close(master);os.close(slave)
+
     def test_approval_curses_failure_cancels_without_running_the_tool(self):
         import fcntl
         import pty

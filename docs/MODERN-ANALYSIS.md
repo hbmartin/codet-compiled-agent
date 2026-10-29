@@ -764,3 +764,62 @@ retain all evidence. Initial PTY/lint development failures are recorded. One lat
 marker after creation but before its content was ready. The final test waits for turn completion
 before checking the same exact bytes; all 17 PTY methods then pass twenty fresh repetitions.
 Production source is unchanged by that test-readiness correction; the failed log is retained.
+
+
+## Coherent line prompts and production-budget coverage
+
+Fetched baseline `a42be250` contains PR #43. Validated source `bb2f593e0a3098ad9a996365e100b401d546ecf9` coordinates
+line prompts, surviving drafts and native terminal-bound display/diagnostic output. A batch separates
+the echoed line before output, then restores the prompt plus complete draft once. Active turns show
+requests, discard acknowledgement or a live draft; idle empty prompts belong to libedit. Completed
+expired answers receive an expiry explanation, while stale-line acknowledgement remains distinct.
+
+The original PTY probe printed `hefixture done`, then a blank prompt while retaining `he`. Backspace
+plus `llo` submitted `hllo`. The fixed probe shows `he` after restoration; plain messages no longer
+leave abandoned steering prompts. Native PTYs verify warning/file-notice batches and recovery
+reporting preserve approval/question drafts, original exception identity and cancellation reset.
+
+Full Debug and ASan/UBSan CTest pass 9/9 each: 593 unit cases, 65 fault cases and 93 integration
+methods. Twenty focused sanitizer batches cover 104 unit cases, 16 fault cases and 19 PTY methods
+each (2,780 runs plus subtests). Pinned lint, Semgrep, runners, Cppcheck and analyzer self-tests
+pass. Local Clang findings exactly match the recorded baseline; the required Ubuntu workflow
+passes wide-curses/UTF-8 tests and all-source analysis on the final source/test revision.
+
+Production-budget tests and identical Release harnesses now use 262144 bytes, including row
+charges, exact fits, newlines, Unicode/escape boundaries, omission markers and allocation failure.
+One warm-up plus five alternating runs, repeated twice without concurrent task tests/analyzers,
+compare baseline, correctness, lazy-width and omitted-trim variants. Median milliseconds
+(set 1 / set 2):
+
+| Workload | Correctness | Retained width change | Omitted trim candidate |
+| --- | ---: | ---: | ---: |
+| input-narrow | 1.940 / 1.916 | 1.642 / 1.611 | 1.958 / 1.609 |
+| approval-invisible | 2.381 / 2.466 | 2.165 / 2.247 | 2.167 / 2.269 |
+| presentation-small | 5.056 / 4.854 | 5.179 / 5.284 | 5.019 / 5.309 |
+| presentation-large | 10.356 / 10.489 | 10.432 / 12.914 | 10.061 / 10.435 |
+| presentation-controls | 3.256 / 3.200 | 3.466 / 3.923 | 3.072 / 3.079 |
+| export-small-file | 65.607 / 63.337 | 62.229 / 58.149 | 66.421 / 61.244 |
+
+Lazy rejection eliminates 100,000 locale conversions in each targeted workload without adding
+allocations. The first trim tracker slowed small presentations; its guaranteed-fit refinement
+improved large presentation modes but small-file exports regressed in both sets. The trimming
+optimization is omitted; all candidate samples remain published. Diagnostics and exports retain
+equal observed allocation/native-operation counts. These are cached-boundary/direct-call
+measurements, not complete libc activity or end-to-end editor latency; no general speedup is claimed.
+
+An initial full run exposed the idle discard handoff bug; returning to libedit fixed the existing
+expiry assertions. Pinned lint also caught unbound PTY loop callbacks, which are now bound explicitly.
+Strict Release baseline warnings remain documented; identical benchmark-only compiler settings
+were used throughout. Required checks were not weakened. Native Tiger/PPC SDK/compiler and Intel
+runtime coverage are unavailable. The final one-line idle handoff correction is outside the measured
+paths and is covered by final full suites, repetitions and Ubuntu CI.
+
+[Commands, hashes, baseline findings, CI and limitations](validation/line-prompt-followup.json),
+[final medians](validation/line-prompt-followup-performance.csv),
+[final samples](validation/line-prompt-followup-performance-samples.csv),
+[first candidate medians](validation/line-prompt-followup-first-performance.csv),
+[first candidate samples](validation/line-prompt-followup-first-performance-samples.csv),
+[initial full-suite failure](validation/line-prompt-followup-initial-debug-failure.log),
+[initial lint failure](validation/line-prompt-followup-initial-lint-failure.log), and
+[strict Release baseline limitation](validation/line-prompt-followup-strict-release-failure.log)
+retain the evidence.

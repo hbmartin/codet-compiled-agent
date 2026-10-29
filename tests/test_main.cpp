@@ -7,6 +7,7 @@
 #include "native_symbol.hpp"
 #endif
 #include "codet/output.hpp"
+#include "line_prompt_helper.hpp"
 #include "native_io_metrics.hpp"
 #include "native_terminal_metrics.hpp"
 #include "process_helper.hpp"
@@ -387,6 +388,13 @@ int main(int argc, char **argv) {
       codet::report_diagnostic({}, "final output failure");
       (void)::fflush(stdout);
       return output.status(0);
+    }
+    if (argc > 1 && std::string(argv[1]) == "--codet-line-prompt-helper") {
+      if (argc != 5) {
+        std::fputs("line-prompt helper expects MODE RELEASE_FD NOTIFY_FD\n", stderr);
+        return 2;
+      }
+      return codet::test::line_prompt_helper(argv[2], std::stoi(argv[3]), std::stoi(argv[4]));
     }
     if (argc > 1 && std::string(argv[1]) == "--codet-line-output-helper") {
       if (argc < 4) {

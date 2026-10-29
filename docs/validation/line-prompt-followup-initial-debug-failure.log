@@ -1,0 +1,114 @@
+Test project build/host
+    Start 1: codet.publication-faults
+1/9 Test #1: codet.publication-faults .........   Passed    2.68 sec
+    Start 2: codet.unit
+2/9 Test #2: codet.unit .......................   Passed   62.57 sec
+    Start 3: codet.cli
+3/9 Test #3: codet.cli ........................   Passed    0.13 sec
+    Start 4: codet.integration
+4/9 Test #4: codet.integration ................***Failed   69.85 sec
+..................................FF...................../opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a5db920>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a5db840>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a142420>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a5db4c0>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a143060>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+....................../opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a5dbd80>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a5dbe60>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a5dbca0>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a5db5a0>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a665540>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a6657e0>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a6651c0>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a665380>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a665d20>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a666420>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a6665e0>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a665ee0>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a666340>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py:374: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10a666500>
+  obj, end = self.scan_once(s, idx)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+...............
+======================================================================
+FAIL: test_expired_approval_draft_is_discarded_before_next_turn (__main__.CliTests.test_expired_approval_draft_is_discarded_before_next_turn) (ui='line', prompt='fixture-command')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "tests/cli_integration.py", line 1587, in test_expired_approval_draft_is_discarded_before_next_turn
+    if ui=='line':collect(lambda received=received:b'codet> [' in received)
+                  ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "tests/cli_integration.py", line 1577, in collect
+    self.assertTrue(predicate(),bytes(received))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : b'\r\nUnfinished input discarded.\r\n'
+
+======================================================================
+FAIL: test_expired_approval_draft_is_discarded_before_next_turn (__main__.CliTests.test_expired_approval_draft_is_discarded_before_next_turn) (ui='line', prompt='fixture-question')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "tests/cli_integration.py", line 1587, in test_expired_approval_draft_is_discarded_before_next_turn
+    if ui=='line':collect(lambda received=received:b'codet> [' in received)
+                  ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "tests/cli_integration.py", line 1577, in collect
+    self.assertTrue(predicate(),bytes(received))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : b'\r\nUnfinished input discarded.\r\n'
+
+----------------------------------------------------------------------
+Ran 93 tests in 69.681s
+
+FAILED (failures=2)
+
+    Start 5: codet.prompts
+5/9 Test #5: codet.prompts ....................   Passed    0.41 sec
+    Start 6: codet.build-integrity
+6/9 Test #6: codet.build-integrity ............   Passed    0.16 sec
+    Start 7: codet.semgrep-report
+7/9 Test #7: codet.semgrep-report .............   Passed    0.56 sec
+    Start 8: codet.lint-runner
+8/9 Test #8: codet.lint-runner ................   Passed    1.71 sec
+    Start 9: codet.hermetic
+9/9 Test #9: codet.hermetic ...................   Passed    0.19 sec
+
+89% tests passed, 1 tests failed out of 9
+
+Total Test time (real) = 138.26 sec
+
+The following tests FAILED:
+	  4 - codet.integration (Failed)
+Errors while running CTest

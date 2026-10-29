@@ -8,6 +8,7 @@
 #include "codet/detail/cli_output.hpp"
 #include "codet/detail/curses_input.hpp"
 #include "codet/detail/curses_render.hpp"
+#include "codet/detail/line_prompt.hpp"
 #include "codet/detail/native_terminal.hpp"
 #include "codet/detail/request_input_controller.hpp"
 #include "codet/detail/ui_history.hpp"
@@ -259,6 +260,7 @@ class Terminal final : public detail::CliDiagnosticSurface {
   bool curses_unicode_ = true;
   std::string status_, progress_;
   std::string prompt_;
+  std::optional<detail::LinePrompt> line_;
   std::map<std::string, int> bindings_{{"submit", 10}, {"quit", 4}, {"backspace", 127}};
   const Cancellation *read_cancel_ = nullptr;
   // Release native callbacks before destroying the prompt/history data they can reference.
@@ -302,31 +304,14 @@ class Terminal final : public detail::CliDiagnosticSurface {
   std::string input_view(std::string_view prompt, size_t columns) const {
     return input_.view(prompt, columns);
   }
-  void before_line_output() {
-    if (!curses_ && input_.before_output())
-      output_.echo({"\n"});
-  }
-  detail::InputLine take_input(std::string text) {
-    return input_.take(std::move(text));
-  }
 
 public:
   void flush_prompt() {
-    if (curses_ || !input_.needs_prompt())
-      return;
-    if (input_.needs_explanation())
-      (void)output_.display({detail::RequestInput::discard_instruction});
-    bool written;
-    if (input_.stale())
-      written = output_.display({detail::RequestInput::discard_prompt}, false);
-    else if (input_.kind() != detail::RequestKind::message)
-      written = output_.display({input_.guidance(), " "}, false);
-    else
-      written = output_.display({prompt_}, false);
-    input_.presented(written);
+    if (line_)
+      line_->flush();
   }
-  void discarded_line() {
-    say("Unfinished input discarded.");
+  void discarded_line(detail::InputDiscard reason = detail::InputDiscard::unfinished) {
+    say(std::string(detail::discard_message(reason)));
     flush_prompt();
   }
 
@@ -360,8 +345,9 @@ private:
         const std::string_view navigation = "Space/PgDn: next  PgUp: back  /quit: exit";
         draw(rows - 3, navigation.substr(0, static_cast<size_t>(cols - 1)));
         const std::string_view prompt = input_.stale() ? "Enter discards unfinished input"
-                                        : approval_->approved_review() ? "Approve? [y/N]"
-                                                                       : "Read all pages; n denies";
+                                        : approval_->approved_review()
+                                            ? detail::RequestInputController::approval_prompt
+                                            : "Read all pages; n denies";
         draw(rows - 2, prompt.substr(0, static_cast<size_t>(cols - 1)));
         draw(rows - 1, input_view("codet> ", static_cast<size_t>(cols - 1)));
       }
@@ -369,7 +355,7 @@ private:
       const bool previously_reviewed = approval_->approved_review();
       approval_->displayed();
       if (!input_.stale() && !previously_reviewed && approval_->approved_review()) {
-        draw(rows - 2, "Approve? [y/N]");
+        draw(rows - 2, detail::RequestInputController::approval_prompt);
         frame.require_finish();
       }
       return;
@@ -394,13 +380,15 @@ private:
 
 public:
   void begin_request(const Json &event) {
-    before_line_output();
     input_.open(detail::ApprovalIdentity::from(event), detail::RequestKind::question);
+    if (line_)
+      line_->request_changed();
   }
   void begin_approval(const Json &event) {
     const auto identity = detail::ApprovalIdentity::from(event);
-    before_line_output();
     input_.open(identity, detail::RequestKind::approval);
+    if (line_)
+      line_->request_changed();
     const auto target =
         event.at("tool").get<std::string>() + ": " + event.at("target").get<std::string>();
     if (!curses_) {
@@ -428,8 +416,9 @@ public:
            (approval_ && approval_->identity.matches(event) && approval_->approved_review());
   }
   void end_approval(std::optional<std::string_view> answer = {}) {
-    before_line_output();
     input_.close();
+    if (line_)
+      line_->request_changed();
     auto finished = std::move(approval_);
     approval_.reset();
 
@@ -442,7 +431,8 @@ public:
     render();
   }
   Terminal(const Config &c, const std::string &color, detail::CliOutput &output,
-           detail::DiagnosticWriter &errors, const detail::CursesDrawOps &drawing)
+           detail::DiagnosticWriter &errors, const detail::CursesDrawOps &drawing,
+           detail::IoContext &io)
       : output_(output), errors_(errors), drawing_(drawing) {
     curses_ =
         (c.ui == "curses" || (c.ui == "auto" && env("TERM") != "dumb" && !env("TERM").empty()));
@@ -468,6 +458,11 @@ public:
       render();
     } else {
       resources_.start_editor();
+      struct stat destination {};
+      detail::OutputAttempt inspection(io.cancel, detail::OutputMode::diagnostic);
+      if (inspection.inspect([&] { return ::fstat(STDIN_FILENO, &destination); }) < 0)
+        throw Error("Cannot inspect input terminal");
+      line_.emplace(input_, output_, io, prompt_, destination);
       el_set(
           resources_.editor(), EL_PROMPT, +[](EditLine *edit) -> const char * {
             void *data = nullptr;
@@ -503,7 +498,6 @@ public:
     if (curses_)
       say_rendered(text);
     else {
-      before_line_output();
       (void)errors_.write({text.text});
     }
   }
@@ -539,7 +533,6 @@ public:
     if (curses_)
       remember_bounded(text.text);
     else {
-      before_line_output();
       (void)output_.display({text.text});
     }
   }
@@ -548,8 +541,8 @@ public:
   }
   std::optional<std::string> read(Cancellation &cancel) {
     if (!curses_ && (input_.stale() || (input_.ordinary_draft() && !input_.input().empty()))) {
-      flush_prompt();
       begin_active();
+      flush_prompt();
       struct Restore {
         Terminal &terminal;
         ~Restore() {
@@ -570,8 +563,8 @@ public:
           return std::nullopt;
         if (line) {
           if (line->action() == detail::InputAction::discard) {
-            discarded_line();
-            continue;
+            discarded_line(line->discard_reason());
+            break; // The stale idle line ended; hand the empty prompt back to libedit.
           }
           if (resources_.entries())
             history(resources_.entries(), &history_event_, H_ENTER, line->text.c_str());
@@ -580,6 +573,8 @@ public:
       }
     }
     if (!curses_) {
+      if (line_)
+        line_->editor();
       read_cancel_ = &cancel;
       el_set(resources_.editor(), EL_PREP_TERM, 1);
       int count = 0;
@@ -591,7 +586,7 @@ public:
         line.pop_back();
       if (resources_.entries())
         history(resources_.entries(), &history_event_, H_ENTER, line.c_str());
-      const auto submitted = take_input(std::move(line));
+      const auto submitted = input_.take(std::move(line));
       if (submitted.action() == detail::InputAction::discard) {
         discarded_line();
         return read(cancel);
@@ -614,9 +609,7 @@ public:
       if (ch == bindings_["quit"])
         return std::nullopt;
       if (ch == bindings_["submit"] || ch == KEY_ENTER) {
-        if (!curses_)
-          output_.echo({"\n"});
-        auto submitted = take_input(input_.input().raw());
+        auto submitted = input_.take(input_.input().raw());
         if (submitted.action() == detail::InputAction::discard) {
           discarded_line();
           continue;
@@ -629,13 +622,15 @@ public:
           input_.erase_character();
         }
         render();
-      } else if (ch >= 32 && ch <= 255 && input_.input().size() < 65536) {
+      } else if (ch >= 32 && ch <= 255) {
         input_.append(static_cast<char>(ch));
         render();
       }
     }
   }
   void begin_active() {
+    if (line_)
+      line_->acquire();
     if (!input_.ordinary_draft())
       clear_review_input();
     if (!curses_ && resources_.saved()) {
@@ -647,6 +642,8 @@ public:
     if (!curses_ && resources_.saved())
       resources_.end_active();
     end_approval();
+    if (line_)
+      line_->release();
   }
   std::optional<detail::InputLine> active_input(bool &closed) {
     int ch = ERR;
@@ -685,9 +682,9 @@ public:
       return {};
     }
     if (ch == bindings_["submit"] || ch == KEY_ENTER || ch == '\r') {
-      if (!curses_)
-        output_.echo({"\n"});
-      auto submitted = take_input(input_.input().raw());
+      if (line_)
+        line_->submitted();
+      auto submitted = input_.take(input_.input().raw());
       const auto &text = submitted.text;
       if (!submitted.discarded && approval_ && detail::approves(text) &&
           !approval_->approved_review()) {
@@ -707,16 +704,16 @@ public:
     }
     if (ch == bindings_["backspace"] || ch == KEY_BACKSPACE || ch == 8) {
       if (!input_.input().empty()) {
-        input_.erase_character();
-        if (!curses_ && !input_.stale())
-          output_.echo({"\b \b"});
+        if (line_)
+          line_->erase_character();
+        else
+          input_.erase_character();
       }
-    } else if (ch >= 32 && ch <= 255 && input_.input().size() < 65536) {
-      input_.append(static_cast<char>(ch));
-      if (!curses_ && !input_.stale()) {
-        const auto character = static_cast<char>(ch);
-        output_.echo({std::string_view(&character, 1)});
-      }
+    } else if (ch >= 32 && ch <= 255) {
+      if (line_)
+        line_->append(static_cast<char>(ch));
+      else
+        input_.append(static_cast<char>(ch));
     }
     render();
     return {};
@@ -1041,7 +1038,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   detail::TerminalDiagnosticsScope<Terminal> restore_diagnostics{terminal, diagnostics, state};
   if (interactive) {
     restore_diagnostics.activate(
-        std::make_shared<Terminal>(config, o.color, output, errors, drawing));
+        std::make_shared<Terminal>(config, o.color, output, errors, drawing, io));
     terminal->set_mode(config.permission_mode);
   }
   interaction = terminal ? std::make_shared<Interaction>() : std::shared_ptr<Interaction>{};
@@ -1172,7 +1169,6 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
               terminal->progress(event);
           },
           diagnostic, recovering);
-      terminal->flush_prompt();
     };
     try {
       terminal->begin_active();
@@ -1202,7 +1198,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
             quit_requested = true;
             cancel.requested = true;
           } else if (action == detail::InputAction::discard) {
-            terminal->discarded_line();
+            terminal->discarded_line(line->discard_reason());
           } else if (text == "/model" || text.rfind("/model ", 0) == 0 || text == "/status" ||
                      text == "/compact") {
             terminal->say("Use /model, /status and /compact after the active turn completes.");
@@ -1214,7 +1210,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
             pending.reset();
             terminal->end_approval(answered ? std::optional<std::string_view>(text) : std::nullopt);
             if (!answered)
-              terminal->discarded_line();
+              terminal->discarded_line(line->discard_reason());
           } else if (text.rfind("/permissions", 0) == 0)
             terminal->say("Change permission modes after the active turn completes.");
           else if (text == "/new") {

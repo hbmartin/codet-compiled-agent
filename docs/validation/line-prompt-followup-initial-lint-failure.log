@@ -1,0 +1,103 @@
+build/lint-venv/bin/python scripts/lint.py all
+B023 Function definition does not bind loop variable `master`
+    --> tests/cli_integration.py:1345:43
+     |
+1343 |                     deadline=time.monotonic()+10
+1344 |                     while not predicate() and time.monotonic()<deadline:
+1345 |                         if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+     |                                           ^^^^^^
+1346 |                     self.assertTrue(predicate(),bytes(received))
+1347 |                 try:
+     |
+
+B023 Function definition does not bind loop variable `received`
+    --> tests/cli_integration.py:1345:65
+     |
+1343 |                     deadline=time.monotonic()+10
+1344 |                     while not predicate() and time.monotonic()<deadline:
+1345 |                         if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+     |                                                                 ^^^^^^^^
+1346 |                     self.assertTrue(predicate(),bytes(received))
+1347 |                 try:
+     |
+
+B023 Function definition does not bind loop variable `master`
+    --> tests/cli_integration.py:1345:89
+     |
+1343 |                     deadline=time.monotonic()+10
+1344 |                     while not predicate() and time.monotonic()<deadline:
+1345 |                         if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+     |                                                                                         ^^^^^^
+1346 |                     self.assertTrue(predicate(),bytes(received))
+1347 |                 try:
+     |
+
+B023 Function definition does not bind loop variable `received`
+    --> tests/cli_integration.py:1346:55
+     |
+1344 |                     while not predicate() and time.monotonic()<deadline:
+1345 |                         if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+1346 |                     self.assertTrue(predicate(),bytes(received))
+     |                                                       ^^^^^^^^
+1347 |                 try:
+1348 |                     collect(lambda:bool(select.select([notice],[],[],0)[0]))
+     |
+
+B023 Function definition does not bind loop variable `notice`
+    --> tests/cli_integration.py:1348:56
+     |
+1346 |                     self.assertTrue(predicate(),bytes(received))
+1347 |                 try:
+1348 |                     collect(lambda:bool(select.select([notice],[],[],0)[0]))
+     |                                                        ^^^^^^
+1349 |                     self.assertEqual(os.read(notice,1),b'r')
+1350 |                     os.write(trigger,b'g')
+     |
+
+B023 Function definition does not bind loop variable `notice`
+    --> tests/cli_integration.py:1351:56
+     |
+1349 |                     self.assertEqual(os.read(notice,1),b'r')
+1350 |                     os.write(trigger,b'g')
+1351 |                     collect(lambda:bool(select.select([notice],[],[],0)[0]))
+     |                                                        ^^^^^^
+1352 |                     self.assertEqual(os.read(notice,1),b'd')
+1353 |                     prefix=b'Approve? [y/N] ' if kind=='approval' else b'Enter a choice number or a text answer. '
+     |
+
+B023 Function definition does not bind loop variable `received`
+    --> tests/cli_integration.py:1354:42
+     |
+1352 |                     self.assertEqual(os.read(notice,1),b'd')
+1353 |                     prefix=b'Approve? [y/N] ' if kind=='approval' else b'Enter a choice number or a text answer. '
+1354 |                     collect(lambda:bytes(received).count(prefix+b'y')==3)
+     |                                          ^^^^^^^^
+1355 |                     expected=(prefix+b'y\r\nwarning\r\nUncommitted tool result preserved at /complete/path\r\n'+
+1356 |                         prefix+b'y\r\nWorker events could not be drained during cleanup\r\n'+prefix+b'y')
+     |
+
+B023 Function definition does not bind loop variable `prefix`
+    --> tests/cli_integration.py:1354:58
+     |
+1352 |                     self.assertEqual(os.read(notice,1),b'd')
+1353 |                     prefix=b'Approve? [y/N] ' if kind=='approval' else b'Enter a choice number or a text answer. '
+1354 |                     collect(lambda:bytes(received).count(prefix+b'y')==3)
+     |                                                          ^^^^^^
+1355 |                     expected=(prefix+b'y\r\nwarning\r\nUncommitted tool result preserved at /complete/path\r\n'+
+1356 |                         prefix+b'y\r\nWorker events could not be drained during cleanup\r\n'+prefix+b'y')
+     |
+
+B023 Function definition does not bind loop variable `process`
+    --> tests/cli_integration.py:1358:59
+     |
+1356 |                         prefix+b'y\r\nWorker events could not be drained during cleanup\r\n'+prefix+b'y')
+1357 |                     self.assertEqual(bytes(received),expected)
+1358 |                     os.write(trigger,b'g');collect(lambda:process.poll() is not None)
+     |                                                           ^^^^^^^
+1359 |                     self.assertEqual(process.returncode,0,received)
+1360 |                 finally:
+     |
+
+Found 9 errors.
+No findings to report. Good job! (3 suppressed)
+make: *** [check-lint] Error 1

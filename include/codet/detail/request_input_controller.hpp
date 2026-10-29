@@ -9,9 +9,9 @@ class RequestInputController {
   RequestInput scope_;
   CursesInput input_;
   RequestKind kind_ = RequestKind::message;
-  bool prompt_visible_ = false, prompt_due_ = false, discard_explained_ = false;
 
 public:
+  static constexpr std::string_view approval_prompt = "Approve? [y/N]";
   static constexpr std::string_view question_prompt = "Enter a choice number or a text answer.";
   bool stale() const noexcept {
     return scope_.stale();
@@ -28,11 +28,12 @@ public:
   void unicode(bool enabled) {
     input_.unicode(enabled);
   }
-  void append(char byte) {
+  bool append(char byte) {
     if (input_.size() == CursesInput::limit)
-      return;
+      return false;
     scope_.edit();
     input_ += byte;
+    return true;
   }
   void erase_character() {
     if (input_.empty())
@@ -50,8 +51,6 @@ public:
     if (scope_.open(std::move(identity)) && !was_stale)
       input_.clear();
     kind_ = kind;
-    prompt_visible_ = false;
-    prompt_due_ = true;
   }
   void close() noexcept {
     const bool was_stale = stale();
@@ -59,14 +58,10 @@ public:
     kind_ = RequestKind::message;
     if (!ordinary_draft() && !was_stale)
       input_.clear();
-    prompt_visible_ = false;
-    prompt_due_ = true;
   }
   InputLine take(std::string text) {
     auto line = scope_.take(std::move(text));
     input_.clear();
-    prompt_visible_ = discard_explained_ = false;
-    prompt_due_ = true;
     return line;
   }
   InputLine take() {
@@ -80,26 +75,8 @@ public:
     if (stale())
       return RequestInput::discard_instruction;
     if (kind_ == RequestKind::approval)
-      return "Approve? [y/N]";
+      return approval_prompt;
     return kind_ == RequestKind::question ? question_prompt : std::string_view{};
-  }
-  bool before_output() noexcept {
-    const bool visible = prompt_visible_;
-    prompt_visible_ = false;
-    prompt_due_ = true;
-    return visible;
-  }
-  bool needs_prompt() const noexcept {
-    return prompt_due_ && !prompt_visible_;
-  }
-  bool needs_explanation() const noexcept {
-    return stale() && !discard_explained_;
-  }
-  void presented(bool success) noexcept {
-    prompt_visible_ = success;
-    prompt_due_ = false;
-    if (success && stale())
-      discard_explained_ = true;
   }
 };
 } // namespace codet::detail
