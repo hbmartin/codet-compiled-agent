@@ -564,7 +564,7 @@ public:
         if (line) {
           if (line->action() == detail::InputAction::discard) {
             discarded_line(line->discard_reason());
-            continue;
+            break; // The stale idle line ended; hand the empty prompt back to libedit.
           }
           if (resources_.entries())
             history(resources_.entries(), &history_event_, H_ENTER, line->text.c_str());
