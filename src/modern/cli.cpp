@@ -543,7 +543,9 @@ public:
           try {
             terminal.end_active();
           } catch (...) {
-            (void)detail::immediate_stderr({"Terminal active-mode restoration also failed"});
+            detail::secondary_diagnostic([&] {
+              (void)terminal.errors_.write({"Terminal active-mode restoration also failed"});
+            });
           }
         }
       } restore{*this};
@@ -768,11 +770,20 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   // Keep session ownership until background-process destruction has finished.
   std::shared_ptr<void> lifecycle_owner, current_owner;
   auto diagnostics = std::make_shared<detail::CliDiagnostics>(std::cerr, &io);
+  const DiagnosticSink main_diagnostic = [diagnostics](const std::string &text) {
+    diagnostics->emit_rendered({text});
+  };
   DiagnosticSink diagnostic = [&, diagnostics](const std::string &text) {
-    if (interaction && std::this_thread::get_id() != terminal_thread)
-      interaction->post({{"type", "codet.diagnostic"}, {"text", text}});
-    else
-      diagnostics->emit_rendered({text});
+    if (interaction && std::this_thread::get_id() != terminal_thread) {
+      try {
+        interaction->post({{"type", "codet.diagnostic"}, {"text", text}});
+      } catch (const std::bad_alloc &) {
+        throw;
+      } catch (...) {
+        interaction->warn(Interaction::Warning::event_render);
+      }
+    } else
+      detail::context_diagnostic(main_diagnostic, errors, {text});
   };
   std::string home = env("CODET_HOME");
   if (home.empty()) {
@@ -1130,7 +1141,20 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     interaction->begin_turn(session.id);
     std::future<RunResult> work;
     std::optional<Json> pending;
+    const auto drain_warnings = [&] {
+      interaction->drain_warnings([&](std::string_view text) {
+        const std::string owned(text);
+        diagnostics->emit_rendered({owned});
+        return true;
+      });
+    };
     const auto deliver = [&](bool recovering = false) {
+      struct DrainWarnings {
+        const decltype(drain_warnings) &drain;
+        ~DrainWarnings() {
+          drain();
+        }
+      } warnings{drain_warnings};
       diagnostics->deliver_files();
       interaction->deliver(
           [&](const Json &event) {

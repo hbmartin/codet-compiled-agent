@@ -8,6 +8,7 @@
 #include "codet/detail/terminal_resources.hpp"
 #include "codet/detail/ui_history.hpp"
 #include "codet/diagnostics.hpp"
+#include "codet/interaction.hpp"
 #include "codet/prompt.hpp"
 #include "journal_fixture.hpp"
 #include "journal_metrics.hpp"
@@ -209,6 +210,21 @@ extern "C" int sqlite3_step(sqlite3_stmt *statement) {
   return result;
 }
 namespace {
+TEST(InteractionWarningFault, ProducerAndFixedConsumerNeedNoAllocation) {
+  Interaction input;
+  fault::fired = false;
+  fault::countdown = 0;
+  input.warn(Interaction::Warning::exec_stop);
+  input.warn(Interaction::Warning::exec_stop);
+  size_t calls = 0;
+  input.drain_warnings([&](std::string_view) noexcept {
+    ++calls;
+    return true;
+  });
+  fault::countdown = -1;
+  EXPECT_FALSE(fault::fired);
+  EXPECT_EQ(calls, 1u);
+}
 TEST(UiBudgetFault, BoundedRawPreparationCapsAllocationsAndPropagatesFailure) {
   const std::string huge(16 * 1024 * 1024, '\x1b');
   fault::largest_allocation = 0;

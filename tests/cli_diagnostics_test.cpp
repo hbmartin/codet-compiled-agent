@@ -441,6 +441,21 @@ TEST(LinePrompt, DraftTrafficIsBoundedAndUnknownGeometryUsesSnapshots) {
     EXPECT_LE(f.stream.str().size(), 81u);
   }
 }
+TEST(LinePrompt, FailedConfiguredSinkUsesTheInvocationGate) {
+  LineFixture f;
+  f.line->append('y');
+  detail::DiagnosticWriter errors(f.stream, &f.io);
+  const DiagnosticSink broken = [](const auto &) { throw Error("sink failed"); };
+  const std::string warning = "fallback";
+  // Injected destinations have no native identity: explicitly exercise the shared gate.
+  if (f.line->before_output(STDERR_FILENO, f.tty))
+    f.output.echo({"\n"});
+  detail::context_diagnostic(broken, errors, {warning});
+  f.line->flush();
+  EXPECT_THAT(f.stream.str(), HasSubstr("\nfallback\ncodet> y"));
+  const DiagnosticSink exhausted = [](const auto &) { throw std::bad_alloc(); };
+  EXPECT_THROW(detail::context_diagnostic(exhausted, errors, {warning}), std::bad_alloc);
+}
 TEST(LinePrompt, FailedPromptIsSeparatedAndOnlyRetriedOnAnotherEvent) {
   LineFixture f;
   auto *original = f.stream.basic_ios<char>::rdbuf(nullptr);

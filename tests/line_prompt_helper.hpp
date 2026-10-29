@@ -35,13 +35,18 @@ inline int line_prompt_helper(const std::string &mode, int release, int notify) 
   diagnostics.files->submit(std::move(notice));
   diagnostics.deliver_files();
   line.flush();
-  // A cleanup drain may fail after restoring the prompt. Its report uses the same gate.
+  // Production closes the request and releases repaint ownership before the cleanup drain.
   auto worker = std::async(std::launch::async, [] { return 0; });
   const auto original = std::make_exception_ptr(Error("original"));
   const bool quitting = false;
   try {
     detail::recover_turn(
-        original, cancel, quitting, worker, [] {}, [] { throw Error("drain failed"); },
+        original, cancel, quitting, worker,
+        [&] {
+          input.close();
+          line.release();
+        },
+        [] { throw Error("drain failed"); },
         [&](std::string_view text) { (void)errors.write({text}); });
   } catch (...) {
     if (std::current_exception() != original || cancel.requested)

@@ -852,3 +852,42 @@ TEST(InteractionAdmission, ExactlyEmptyMessagesAreNeverQueued) {
   input.submit("");
   EXPECT_TRUE(input.take_pending("session").empty());
 }
+
+TEST(InteractionWarnings, CoalescesWorkerFailuresAndRetriesOnMainThreadOnly) {
+  codet::Interaction input;
+  auto producer = std::async(std::launch::async, [&] {
+    for (int i = 0; i < 1000; ++i) {
+      input.warn(codet::Interaction::Warning::exec_stop);
+      input.warn(codet::Interaction::Warning::exec_original);
+    }
+  });
+  producer.get();
+  size_t attempts = 0;
+  input.drain_warnings([&](std::string_view) {
+    ++attempts;
+    return false;
+  });
+  EXPECT_EQ(attempts, 2u);
+  std::vector<std::string> received;
+  input.drain_warnings([&](std::string_view message) {
+    received.emplace_back(message);
+    return true;
+  });
+  ASSERT_EQ(received.size(), 2u);
+  EXPECT_EQ(received[0], "Exec cleanup failed while stopping owned process");
+  EXPECT_EQ(received[1], "Exec cleanup failed; preserving original error");
+  input.drain_warnings([](std::string_view) {
+    ADD_FAILURE();
+    return true;
+  });
+  input.post({{"type", "invalid"}, {"text", 42}});
+  input.deliver([](const codet::Json &event) { (void)event.at("text").get<std::string>(); },
+                [](const std::string &) { throw std::bad_alloc(); });
+  attempts = 0;
+  input.drain_warnings([&](std::string_view warning) {
+    EXPECT_EQ(warning, "Worker event diagnostic could not be displayed");
+    ++attempts;
+    return true;
+  });
+  EXPECT_EQ(attempts, 1u);
+}
