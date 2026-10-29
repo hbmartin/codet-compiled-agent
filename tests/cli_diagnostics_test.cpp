@@ -512,6 +512,38 @@ TEST(LinePrompt, InstructionDeliveryIsIndependentOfPromptDelivery) {
     EXPECT_THAT(buffer.str(), HasSubstr("warning"));
   }
 }
+TEST(LinePrompt, KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure) {
+  struct Refuse : std::stringbuf {
+    bool fail = false;
+    std::streamsize xsputn(const char *p, std::streamsize n) override {
+      return fail ? 0 : std::stringbuf::xsputn(p, n);
+    }
+  } buffer;
+  std::ostream stream(&buffer);
+  detail::CliOutput output(stream);
+  Cancellation cancel;
+  detail::IoContext io(cancel);
+  detail::RequestInputController input;
+  struct stat tty {};
+  tty.st_mode = S_IFCHR;
+  const std::string prompt = "codet> ";
+  detail::LinePrompt line(input, output, io, prompt, tty, 80);
+  line.acquire();
+  line.append('x');
+  ASSERT_FALSE(output.failed());
+  buffer.fail = true;
+  line.append('y');
+  line.erase_character();
+  line.erase_character();
+  EXPECT_FALSE(output.failed());
+  EXPECT_TRUE(input.input().empty());
+  (void)output.display({"required display"});
+  EXPECT_TRUE(output.failed());
+  buffer.fail = false;
+  line.append('z');
+  line.erase_character();
+  EXPECT_TRUE(output.failed());
+}
 TEST(LinePrompt, FailedPromptIsSeparatedAndOnlyRetriedOnAnotherEvent) {
   LineFixture f;
   auto *original = f.stream.basic_ios<char>::rdbuf(nullptr);

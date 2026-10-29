@@ -103,13 +103,16 @@ public:
         return;
       }
   }
-  void echo(std::initializer_list<std::string_view> parts) {
+  bool echo_attempt(std::initializer_list<std::string_view> parts, bool newline = false) {
     // Keyboard echo is not a required reply, and never clears an earlier delivery failure.
     try {
-      (void)writer_.write(parts, false, true);
+      return writer_.write(parts, newline, true);
     } catch (const std::ios_base::failure &) {
-      return;
+      return false;
     }
+  }
+  void echo(std::initializer_list<std::string_view> parts) {
+    (void)echo_attempt(parts);
   }
 };
 // One bounded application buffer for a complete text export. Destruction never publishes it.

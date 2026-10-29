@@ -15,6 +15,7 @@ class LinePrompt final : public LineOutputObserver {
   LineOutputObserver *previous_;
   bool owned_ = false, dirty_ = false, visible_ = false, due_ = true;
   bool internal_ = false, explained_ = false, known_ = true;
+  bool echo_update_ = false;
   bool abandoned_dirty_ = false;
   size_t columns_ = 0, painted_ = 0;
   const size_t test_columns_;
@@ -107,6 +108,10 @@ class LinePrompt final : public LineOutputObserver {
                                                     : "q> ";
   }
   void paint() {
+    const bool keyboard = echo_update_ && (visible_ || dirty_);
+    const auto present = [&](std::initializer_list<std::string_view> parts, bool newline) {
+      return keyboard ? output_.echo_attempt(parts, newline) : output_.display(parts, newline);
+    };
     const size_t width = columns_ ? columns_ : 80;
     auto label = prefix(width);
     size_t bytes = 0, used = label.size();
@@ -131,12 +136,12 @@ class LinePrompt final : public LineOutputObserver {
     const bool was_dirty = dirty_;
     dirty_ = true; // Even failure may have emitted part of the row.
     if (columns_) {
-      visible_ = output_.display({was_dirty ? "\r" : "", std::string_view(spaces_.data(), painted_),
-                                  painted_ ? "\r" : "", std::string_view(row_.data(), bytes)},
-                                 false);
+      visible_ = present({was_dirty ? "\r" : "", std::string_view(spaces_.data(), painted_),
+                          painted_ ? "\r" : "", std::string_view(row_.data(), bytes)},
+                         false);
       painted_ = used;
     } else {
-      visible_ = output_.display({std::string_view(row_.data(), bytes)});
+      visible_ = present({std::string_view(row_.data(), bytes)}, true);
       dirty_ = !visible_;
       painted_ = 0;
     }
@@ -213,7 +218,12 @@ public:
     Internal guard(internal_);
     if (!eligible()) {
       if (owned_ && dirty_ && columns_) {
-        (void)output_.display({"\r", std::string_view(spaces_.data(), painted_), "\r"}, false);
+        const auto parts = {std::string_view("\r"), std::string_view(spaces_.data(), painted_),
+                            std::string_view("\r")};
+        if (echo_update_)
+          output_.echo(parts);
+        else
+          (void)output_.display(parts, false);
         dirty_ = visible_ = false;
         painted_ = 0;
       }
@@ -243,6 +253,7 @@ public:
   void append(char byte) {
     if (!input_.append(byte))
       return;
+    Internal echo(echo_update_);
     due_ = true;
     flush();
   }
@@ -250,6 +261,7 @@ public:
     if (input_.input().empty())
       return;
     input_.erase_character();
+    Internal echo(echo_update_);
     due_ = true;
     flush();
   }
