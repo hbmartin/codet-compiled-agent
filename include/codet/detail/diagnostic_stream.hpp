@@ -18,7 +18,8 @@ struct IoContext;
 class LineOutputObserver {
 public:
   virtual ~LineOutputObserver() = default;
-  virtual void before_output(const struct stat &) = 0;
+  // Return true to request a separator on this destination, shared with failed-record recovery.
+  virtual bool before_output(int descriptor, const struct stat &) = 0;
 };
 // Internal trust boundary: the referenced text has already been rendered for humans.
 struct RenderedTextView {
@@ -66,6 +67,7 @@ public:
   DiagnosticWriter(const DiagnosticWriter &) = delete;
   DiagnosticWriter &operator=(const DiagnosticWriter &) = delete;
   bool write(std::initializer_list<std::string_view>, bool newline = true, bool flush = false);
+  int native_descriptor() const noexcept;
   void file(const std::string &);
 };
 std::string terminal_text(const std::string &);

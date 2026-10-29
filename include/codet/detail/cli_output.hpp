@@ -36,6 +36,9 @@ public:
   bool failed() const noexcept {
     return failed_;
   }
+  int presentation_descriptor() const noexcept {
+    return writer_.native_descriptor();
+  }
   int status(int prior) const noexcept {
     return prior ? prior : cancelled_ ? 130 : failed_ ? 1 : 0;
   }

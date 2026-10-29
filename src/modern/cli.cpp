@@ -460,8 +460,8 @@ public:
       resources_.start_editor();
       struct stat destination {};
       detail::OutputAttempt inspection(io.cancel, detail::OutputMode::diagnostic);
-      if (inspection.inspect([&] { return ::fstat(STDIN_FILENO, &destination); }) < 0)
-        throw Error("Cannot inspect input terminal");
+      if (inspection.inspect([&] { return ::fstat(STDOUT_FILENO, &destination); }) < 0)
+        throw Error("Cannot inspect prompt terminal");
       line_.emplace(input_, output_, io, prompt_, destination);
       el_set(
           resources_.editor(), EL_PROMPT, +[](EditLine *edit) -> const char * {

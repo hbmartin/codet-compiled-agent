@@ -16,7 +16,7 @@ inline int line_prompt_helper(const std::string &mode, int release, int notify) 
   input.open({"s", "request", 1},
              mode == "approval" ? detail::RequestKind::approval : detail::RequestKind::question);
   struct stat terminal {};
-  if (::fstat(STDIN_FILENO, &terminal) < 0)
+  if (::fstat(STDOUT_FILENO, &terminal) < 0)
     return 3;
   const std::string prompt = "codet> ";
   detail::LinePrompt line(input, output, io, prompt, terminal);
