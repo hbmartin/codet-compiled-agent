@@ -1,0 +1,65 @@
+{
+  "cached_echo": {
+    "deletion": [
+      {
+        "input": "e\u0301",
+        "output": "codet> e\u0301\b \b",
+        "raw_after": "e"
+      },
+      {
+        "input": "\u96ea",
+        "output": "codet> \u96ea\b \b",
+        "raw_after": ""
+      }
+    ],
+    "empty_draft": "codet> x\b \b\nprogress\n",
+    "partial_discard": "Unfinished input must be discarded. Press Enter, then type a fresh answer.\ndi\n\nwarning\nUnfinished input must be discarded. Press Enter, then type a fresh answer.\ndiscard> ",
+    "raw_controls": "codet> \u009b\u202e\nprogress\ncodet> \u009b\u202e",
+    "redraw_100_batches": {
+      "draft_bytes": 20480,
+      "emitted_bytes": 2049700,
+      "write_operations": 500
+    },
+    "released": "codet> y\ncleanup\n",
+    "released_hook_attached": true
+  },
+  "real_pty": [
+    {
+      "mode": "fallback",
+      "split_ttys": false,
+      "output": "b'Approve? [y/N] yfallback\\r\\n'",
+      "exit": 0
+    },
+    {
+      "mode": "ordinary",
+      "split_ttys": false,
+      "output": "b'Approve? [y/N] y\\r\\nwarning\\r\\nApprove? [y/N] y'",
+      "exit": 0
+    },
+    {
+      "mode": "ordinary",
+      "split_ttys": true,
+      "output": "b'Approve? [y/N] ywarning\\r\\n'",
+      "exit": 0
+    },
+    {
+      "mode": "empty-active-enter",
+      "requests": 2,
+      "last_request_user_messages": [
+        {
+          "content": "fixture-signal-wait",
+          "role": "user"
+        },
+        {
+          "content": "",
+          "role": "user"
+        }
+      ]
+    }
+  ],
+  "startup_descriptors": {
+    "error": "injected startup failure",
+    "leaked_descriptors": 6
+  },
+  "source_equivalence": "PR #44 review target df995a6 has identical production files to fetched main 60b8c4e."
+}
