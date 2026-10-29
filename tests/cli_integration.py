@@ -1339,23 +1339,23 @@ class CliTests(unittest.TestCase):
                 process=subprocess.Popen([helper,'--codet-line-prompt-helper',kind,str(arm),str(notify)],
                     stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=self.env)
                 received=bytearray()
-                def collect(predicate):
+                def collect(predicate,master=master,received=received):
                     deadline=time.monotonic()+10
                     while not predicate() and time.monotonic()<deadline:
                         if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
                     self.assertTrue(predicate(),bytes(received))
                 try:
-                    collect(lambda:bool(select.select([notice],[],[],0)[0]))
+                    collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
                     self.assertEqual(os.read(notice,1),b'r')
                     os.write(trigger,b'g')
-                    collect(lambda:bool(select.select([notice],[],[],0)[0]))
+                    collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
                     self.assertEqual(os.read(notice,1),b'd')
                     prefix=b'Approve? [y/N] ' if kind=='approval' else b'Enter a choice number or a text answer. '
-                    collect(lambda:bytes(received).count(prefix+b'y')==3)
+                    collect(lambda received=received,prefix=prefix:bytes(received).count(prefix+b'y')==3)
                     expected=(prefix+b'y\r\nwarning\r\nUncommitted tool result preserved at /complete/path\r\n'+
                         prefix+b'y\r\nWorker events could not be drained during cleanup\r\n'+prefix+b'y')
                     self.assertEqual(bytes(received),expected)
-                    os.write(trigger,b'g');collect(lambda:process.poll() is not None)
+                    os.write(trigger,b'g');collect(lambda process=process:process.poll() is not None)
                     self.assertEqual(process.returncode,0,received)
                 finally:
                     if process.poll() is None:process.kill();process.wait(timeout=5)
