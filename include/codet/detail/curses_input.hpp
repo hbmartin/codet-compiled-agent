@@ -136,7 +136,8 @@ public:
         used -= tokens_[start++].columns;
     }
     const auto offset = start ? tokens_[start - 1].display_end : 0u;
-    return {std::string_view(display_).substr(offset), used, start != 0};
+    // Token offsets belong to display_; avoid a throwing bounds-checked substr in this view.
+    return {std::string_view(display_.data() + offset, display_.size() - offset), used, start != 0};
   }
   std::string view(std::string_view prompt, size_t columns) const {
     std::string result(prompt.substr(0, columns));
