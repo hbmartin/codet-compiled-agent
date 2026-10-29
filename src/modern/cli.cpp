@@ -676,9 +676,7 @@ public:
       return {};
     }
     if (ch == bindings_["submit"] || ch == KEY_ENTER || ch == '\r') {
-      if (line_)
-        line_->submitted();
-      auto submitted = input_.take(input_.input().raw());
+      auto submitted = line_ ? line_->take() : input_.take();
       const auto &text = submitted.text;
       if (!submitted.discarded && approval_ && detail::approves(text) &&
           !approval_->approved_review()) {

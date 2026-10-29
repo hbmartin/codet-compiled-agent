@@ -261,5 +261,9 @@ public:
     painted_ = 0;
     due_ = true;
   }
+  InputLine take() {
+    submitted();
+    return input_.take();
+  }
 };
 } // namespace codet::detail

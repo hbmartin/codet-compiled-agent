@@ -328,8 +328,7 @@ TEST(LinePrompt, RestoresTheSafeDraftAndDeletionMatchesSubmittedBytes) {
   for (char byte : std::string("llo"))
     f.line->append(byte);
   EXPECT_EQ(last_line(f.stream.str()), "codet> hllo");
-  f.line->submitted();
-  EXPECT_EQ(f.input.take().text, "hllo");
+  EXPECT_EQ(f.line->take().text, "hllo");
 }
 TEST(LinePrompt, CachedTokensReplaceRawEchoAndOneColumnBackspace) {
   for (const std::string &text : {std::string("e\xcc\x81"), std::string("雪"),
