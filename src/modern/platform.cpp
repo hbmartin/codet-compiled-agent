@@ -457,6 +457,8 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
   state_ = &destination.state;
   const int native = destination.native;
   if (native >= 0) {
+    if (io_ && io_->line_output && destination.owner->inspected)
+      io_->line_output->before_output(destination.owner->identity);
     if (!output_ || (file_ && std::ferror(file_)))
       (void)recover_diagnostic_stream(output_);
     NativeDiagnosticRecord record(native, *state_, *destination.owner, attempt);

@@ -1329,6 +1329,40 @@ class CliTests(unittest.TestCase):
                     if process.poll() is None:process.kill();process.wait(timeout=5)
                     os.close(master);os.close(slave)
 
+    def test_line_prompt_restores_visible_draft_without_abandoned_prompts(self):
+        import pty
+        import select
+        ready,release=threading.Event(),threading.Event()
+        self.server.signal_gate=(ready,release);self.server.releases.append(release)
+        master,slave=pty.openpty()
+        process=subprocess.Popen([BIN,'-C',str(self.workspace),'--ui=line','--color=never',
+            'fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+        received=bytearray()
+        def collect(predicate):
+            deadline=time.monotonic()+10
+            while not predicate() and time.monotonic()<deadline:
+                if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+            self.assertTrue(predicate(),bytes(received))
+        try:
+            self.assertTrue(ready.wait(10))
+            os.write(master,b'he');collect(lambda:b'codet> [default] he' in received)
+            release.set()
+            collect(lambda:b'fixture done\r\ncodet> [default] he' in received)
+            self.assertNotIn(b'hefixture done',received)
+            received.clear();os.write(master,b'\x7fllo\n')
+            collect(lambda:b'fixture done\r\ncodet> [default] ' in received)
+            self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'hllo')
+            self.assertNotIn(b'codet> [default] \r\nfixture done',received)
+            received.clear();os.write(master,b'plain message\n')
+            collect(lambda:b'fixture done\r\ncodet> [default] ' in received)
+            self.assertEqual(bytes(received).count(b'codet> [default] '),1,received)
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,received)
+        finally:
+            release.set()
+            if process.poll() is None:process.kill();process.wait(timeout=5)
+            os.close(master);os.close(slave)
+
     def test_approval_curses_failure_cancels_without_running_the_tool(self):
         import fcntl
         import pty

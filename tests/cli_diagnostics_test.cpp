@@ -3,6 +3,7 @@
 #include "codet/detail/cleanup_diagnostics.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
 #include "codet/detail/curses_input.hpp"
+#include "codet/detail/line_prompt.hpp"
 #include "codet/detail/native_output.hpp"
 #include "codet/detail/request_input.hpp"
 #include "codet/detail/request_input_controller.hpp"
@@ -257,27 +258,89 @@ TEST(RequestInputController, FreshEmptyAndPresentationClearsHaveDistinctOwnershi
   EXPECT_EQ(answer.request->request, "second");
   EXPECT_FALSE(answer.discarded);
 }
-TEST(RequestInputController, PromptInvalidationDoesNotRepeatOnPollingOrEcho) {
+struct LineFixture {
+  Cancellation cancel;
+  detail::IoContext io{cancel};
   detail::RequestInputController input;
-  input.append('x');
-  input.open({"s", "q", 1}, detail::RequestKind::question);
-  EXPECT_TRUE(input.needs_explanation());
-  input.presented(true);
-  EXPECT_FALSE(input.needs_prompt());
-  input.append('x');
-  EXPECT_FALSE(input.needs_prompt());
-  EXPECT_TRUE(input.before_output());
-  EXPECT_TRUE(input.needs_prompt());
-  EXPECT_FALSE(input.needs_explanation());
-  input.presented(true);
-  EXPECT_FALSE(input.needs_prompt());
-  EXPECT_TRUE(input.take().discarded);
-  EXPECT_TRUE(input.needs_prompt());
-  EXPECT_EQ(input.guidance(), detail::RequestInputController::question_prompt);
-  input.presented(false);
-  EXPECT_FALSE(input.needs_prompt());
-  input.before_output();
-  EXPECT_TRUE(input.needs_prompt());
+  std::ostringstream stream;
+  detail::CliOutput output{stream};
+  std::string prompt = "codet> ";
+  struct stat tty {};
+  std::optional<detail::LinePrompt> line;
+  LineFixture() {
+    tty.st_mode = S_IFCHR;
+    tty.st_dev = 1;
+    tty.st_rdev = 2;
+    line.emplace(input, output, io, prompt, tty);
+    line->acquire();
+  }
+  void normal(std::string_view text) {
+    line->before_output(tty);
+    output.display({text});
+  }
+};
+TEST(LinePrompt, RestoresTheVisibleDraftAndBackspaceMatchesSubmittedBytes) {
+  LineFixture f;
+  f.line->flush();
+  EXPECT_TRUE(f.stream.str().empty());
+  f.line->append('h');
+  f.line->append('e');
+  f.normal("done");
+  f.normal("second record");
+  f.line->flush();
+  f.line->flush();
+  EXPECT_EQ(f.stream.str(), "codet> he\ndone\nsecond record\ncodet> he");
+  f.line->erase_character();
+  for (char byte : std::string("llo"))
+    f.line->append(byte);
+  f.line->submitted();
+  EXPECT_EQ(f.input.take().text, "hllo");
+  const auto before = f.stream.str();
+  f.line->flush();
+  EXPECT_EQ(f.stream.str(), before);
+}
+TEST(LinePrompt, ApprovalAndQuestionDraftsSurviveOutputWithoutDuplicatedAnswers) {
+  for (auto kind : {detail::RequestKind::approval, detail::RequestKind::question}) {
+    LineFixture f;
+    f.input.open({"s", "request", 1}, kind);
+    f.line->request_changed();
+    f.line->flush();
+    f.line->append('y');
+    f.normal("notice");
+    f.line->flush();
+    EXPECT_EQ(f.stream.str().substr(f.stream.str().size() - 2), " y");
+    f.line->submitted();
+    EXPECT_EQ(f.input.take().text, "y");
+  }
+}
+TEST(LinePrompt, RedirectedOutputDoesNotInvalidateTheInputTerminal) {
+  LineFixture f;
+  f.line->append('x');
+  struct stat log {};
+  log.st_mode = S_IFREG;
+  f.line->before_output(log);
+  f.line->flush();
+  EXPECT_EQ(f.stream.str(), "codet> x");
+  f.line->release();
+  f.normal("done");
+  f.line->flush();
+  EXPECT_EQ(f.stream.str(), "codet> x\ndone\n");
+  f.line.reset();
+  EXPECT_EQ(f.io.line_output, nullptr);
+}
+TEST(LinePrompt, FailedPromptIsSeparatedAndOnlyRetriedOnAnotherEvent) {
+  LineFixture f;
+  f.stream.setstate(std::ios::badbit);
+  // A missing buffer persistently fails even after stream recovery.
+  auto *original = f.stream.basic_ios<char>::rdbuf(nullptr);
+  f.line->append('h');
+  f.line->flush();
+  EXPECT_TRUE(f.output.failed());
+  f.stream.basic_ios<char>::rdbuf(original);
+  f.stream.clear();
+  f.normal("warning");
+  f.line->flush();
+  EXPECT_THAT(f.stream.str(), HasSubstr("warning\ncodet> h"));
 }
 TEST(RequestInputController, CompletionPreservesOrdinaryDraftAndQuitRemainsOutOfBand) {
   detail::RequestInputController input;
@@ -291,7 +354,6 @@ TEST(RequestInputController, CompletionPreservesOrdinaryDraftAndQuitRemainsOutOf
   for (char byte : std::string("/quit"))
     input.append(byte);
   EXPECT_EQ(input.take().action(), detail::InputAction::quit);
-  EXPECT_TRUE(input.needs_prompt());
   EXPECT_EQ(input.take("new message").action(), detail::InputAction::message);
 }
 TEST(UiHistory, PreparationIsBoundedBeforeRawAndRenderedHistoryAllocation) {

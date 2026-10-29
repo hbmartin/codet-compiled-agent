@@ -6,6 +6,7 @@
 #include <iosfwd>
 #include <string>
 #include <string_view>
+struct stat;
 
 namespace codet::detail {
 inline std::array<char, 4> escaped_byte(unsigned char byte) noexcept {
@@ -13,6 +14,12 @@ inline std::array<char, 4> escaped_byte(unsigned char byte) noexcept {
   return {'\\', 'x', hex[byte >> 4u], hex[byte & 15u]};
 }
 struct IoContext;
+// Borrowed for one invocation; called only for a resolved native output destination.
+class LineOutputObserver {
+public:
+  virtual ~LineOutputObserver() = default;
+  virtual void before_output(const struct stat &) = 0;
+};
 // Internal trust boundary: the referenced text has already been rendered for humans.
 struct RenderedTextView {
   const std::string &text;
