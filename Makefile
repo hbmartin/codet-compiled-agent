@@ -46,7 +46,7 @@ MODERN_ANALYSIS = $(ANALYSIS_PYTHON) scripts/analyze-modern.py --build-dir $(MOD
 .PHONY: modern-analysis-configure modern-analysis-host fetch-analysis-tools build-analysis-tools analyze-modern analyze-modern-clang-tidy analyze-modern-cppcheck \
 	analyze-modern-clang-analyzer analyze-modern-selftest test-modern-analysis-runner
 modern-analysis-host: modern-analysis-configure
-	cmake --build $(MODERN_ANALYSIS_BUILD) --target all codet_persistence_bench codet_sanitization_bench -j$(MODERN_ANALYSIS_JOBS)
+	cmake --build $(MODERN_ANALYSIS_BUILD) --target all codet_persistence_bench codet_sanitization_bench codet_line_input_bench -j$(MODERN_ANALYSIS_JOBS)
 modern-analysis-configure:
 	cmake -S . -B $(MODERN_ANALYSIS_BUILD) -G Ninja -DCMAKE_BUILD_TYPE=Debug \
 	  -DCMAKE_C_COMPILER=$(MODERN_CC) -DCMAKE_CXX_COMPILER=$(MODERN_CXX) \
