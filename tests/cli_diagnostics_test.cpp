@@ -388,15 +388,43 @@ TEST(UiHistory, PreparationIsBoundedBeforeRawAndRenderedHistoryAllocation) {
   }
   const std::string huge(8 * 1024 * 1024, 'x');
   size_t processed = 0;
-  const auto prepared = detail::CursesText::bounded(huge, detail::UiHistory::byte_limit - 1,
-                                                    detail::UiHistory::omission, true,
-                                                    detail::RenderMode::prose, &processed);
+  const auto prepared =
+      detail::CursesText::bounded(huge, detail::UiHistory::byte_limit, detail::UiHistory::omission,
+                                  true, detail::RenderMode::prose, &processed);
   EXPECT_TRUE(prepared.truncated);
   EXPECT_LE(processed, detail::UiHistory::byte_limit + 512);
   detail::UiHistory history;
   history.add(prepared.text);
   EXPECT_LE(history.bytes(), detail::UiHistory::byte_limit);
   EXPECT_EQ(history.lines().back(), detail::UiHistory::omission);
+}
+TEST(UiHistory, ProductionBudgetPreparationAndDirectInsertionAgreeAtEveryEdge) {
+  constexpr auto budget = detail::UiHistory::byte_limit;
+  for (const auto &tail : {std::string("x"), std::string("\n"), std::string("雪"),
+                           std::string("\\xFF"), std::string("🙂\n")}) {
+    for (size_t padding = budget - 8; padding <= budget + 2; ++padding) {
+      const std::string source = std::string(padding, 'a') + tail;
+      const auto prepared =
+          detail::CursesText::bounded(source, budget, detail::UiHistory::omission, true);
+      detail::UiHistory actual, expected;
+      actual.add(prepared.text);
+      expected.add(detail::CursesText(source, true, true, false).text());
+      EXPECT_EQ(actual.lines(), expected.lines()) << padding << " tail=" << tail;
+      EXPECT_EQ(actual.bytes(), expected.bytes());
+      EXPECT_LE(actual.bytes(), budget);
+      EXPECT_EQ(detail::rendered_prefix(prepared.text, prepared.text.size()), prepared.text.size());
+    }
+  }
+  for (const auto mode : {detail::RenderMode::prose, detail::RenderMode::literal}) {
+    const std::string source(budget, '\x1b');
+    const auto prepared =
+        detail::CursesText::bounded(source, budget, detail::UiHistory::omission, false, mode);
+    detail::UiHistory actual, expected;
+    actual.add(prepared.text);
+    expected.add(detail::CursesText(detail::terminal_text(source), false, true, false).text());
+    EXPECT_EQ(actual.lines(), expected.lines());
+    EXPECT_EQ(actual.bytes(), expected.bytes());
+  }
 }
 TEST(UiHistory, PrefixReportsThePreviousCompleteTokenWithoutASecondScan) {
   const std::string text = "abc\\xFF雪";

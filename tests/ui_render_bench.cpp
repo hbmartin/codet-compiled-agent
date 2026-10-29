@@ -48,10 +48,10 @@ namespace {
 constexpr std::string_view marker = "[UI history excerpt truncated]";
 template <class Text>
 auto history_text(const std::string &source, size_t &work, bool rendered,
-                  int) -> decltype(Text::bounded(source, size_t{262143}, marker, true)) {
+                  int) -> decltype(Text::bounded(source, size_t{262144}, marker, true)) {
   size_t processed = 0;
   auto result = Text::bounded(
-      source, 262143, marker, true,
+      source, 262144, marker, true,
       rendered ? std::optional<codet::detail::RenderMode>{}
                : std::optional<codet::detail::RenderMode>{codet::detail::RenderMode::prose},
       &processed);
