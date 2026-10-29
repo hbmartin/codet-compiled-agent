@@ -93,7 +93,8 @@ public:
     due_ = false; // Retry only after another edit, request change or output event.
   }
   void append(char byte) {
-    input_.append(byte);
+    if (!input_.append(byte))
+      return;
     if (input_.stale())
       return;
     if (!visible_) {

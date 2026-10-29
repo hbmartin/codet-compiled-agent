@@ -11,6 +11,7 @@ class RequestInputController {
   RequestKind kind_ = RequestKind::message;
 
 public:
+  static constexpr std::string_view approval_prompt = "Approve? [y/N]";
   static constexpr std::string_view question_prompt = "Enter a choice number or a text answer.";
   bool stale() const noexcept {
     return scope_.stale();
@@ -27,11 +28,12 @@ public:
   void unicode(bool enabled) {
     input_.unicode(enabled);
   }
-  void append(char byte) {
+  bool append(char byte) {
     if (input_.size() == CursesInput::limit)
-      return;
+      return false;
     scope_.edit();
     input_ += byte;
+    return true;
   }
   void erase_character() {
     if (input_.empty())
@@ -73,7 +75,7 @@ public:
     if (stale())
       return RequestInput::discard_instruction;
     if (kind_ == RequestKind::approval)
-      return "Approve? [y/N]";
+      return approval_prompt;
     return kind_ == RequestKind::question ? question_prompt : std::string_view{};
   }
 };

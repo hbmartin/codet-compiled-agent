@@ -1,11 +1,19 @@
 #pragma once
 #include "codet/detail/approval_identity.hpp"
 namespace codet::detail {
+enum class InputDiscard : uint8_t { unfinished, expired };
+inline std::string_view discard_message(InputDiscard reason) noexcept {
+  return reason == InputDiscard::unfinished ? "Unfinished input discarded."
+                                            : "Request expired; answer discarded.";
+}
 enum class InputAction : uint8_t { quit, discard, answer, message };
 struct InputLine {
   std::string text;
   std::optional<ApprovalIdentity> request;
   bool discarded = false;
+  InputDiscard discard_reason() const noexcept {
+    return discarded ? InputDiscard::unfinished : InputDiscard::expired;
+  }
   InputAction action(const Json *pending = nullptr) const {
     if (text == "/quit" || text == "/exit")
       return InputAction::quit;

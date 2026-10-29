@@ -230,6 +230,14 @@ TEST(RequestInput, ClassificationKeepsQuitOutOfBandAndRequiresFreshRequestInput)
   input.close();
   EXPECT_EQ(input.take("run tests").action(), detail::InputAction::message);
 }
+TEST(RequestInput, DiscardReasonDistinguishesFinishedExpiryFromStaleDrafts) {
+  const detail::ApprovalIdentity identity{"s", "request", 1};
+  detail::InputLine finished{"yes", identity, false}, unfinished{"yes", identity, true};
+  EXPECT_EQ(finished.action(), detail::InputAction::discard);
+  EXPECT_EQ(detail::discard_message(finished.discard_reason()),
+            "Request expired; answer discarded.");
+  EXPECT_EQ(detail::discard_message(unfinished.discard_reason()), "Unfinished input discarded.");
+}
 TEST(RequestInputController, FreshEmptyAndPresentationClearsHaveDistinctOwnership) {
   detail::RequestInputController input;
   const detail::ApprovalIdentity first{"s", "first", 1}, second{"s", "second", 1};

@@ -304,17 +304,14 @@ class Terminal final : public detail::CliDiagnosticSurface {
   std::string input_view(std::string_view prompt, size_t columns) const {
     return input_.view(prompt, columns);
   }
-  detail::InputLine take_input(std::string text) {
-    return input_.take(std::move(text));
-  }
 
 public:
   void flush_prompt() {
     if (line_)
       line_->flush();
   }
-  void discarded_line() {
-    say("Unfinished input discarded.");
+  void discarded_line(detail::InputDiscard reason = detail::InputDiscard::unfinished) {
+    say(std::string(detail::discard_message(reason)));
     flush_prompt();
   }
 
@@ -348,8 +345,9 @@ private:
         const std::string_view navigation = "Space/PgDn: next  PgUp: back  /quit: exit";
         draw(rows - 3, navigation.substr(0, static_cast<size_t>(cols - 1)));
         const std::string_view prompt = input_.stale() ? "Enter discards unfinished input"
-                                        : approval_->approved_review() ? "Approve? [y/N]"
-                                                                       : "Read all pages; n denies";
+                                        : approval_->approved_review()
+                                            ? detail::RequestInputController::approval_prompt
+                                            : "Read all pages; n denies";
         draw(rows - 2, prompt.substr(0, static_cast<size_t>(cols - 1)));
         draw(rows - 1, input_view("codet> ", static_cast<size_t>(cols - 1)));
       }
@@ -357,7 +355,7 @@ private:
       const bool previously_reviewed = approval_->approved_review();
       approval_->displayed();
       if (!input_.stale() && !previously_reviewed && approval_->approved_review()) {
-        draw(rows - 2, "Approve? [y/N]");
+        draw(rows - 2, detail::RequestInputController::approval_prompt);
         frame.require_finish();
       }
       return;
@@ -563,7 +561,7 @@ public:
           return std::nullopt;
         if (line) {
           if (line->action() == detail::InputAction::discard) {
-            discarded_line();
+            discarded_line(line->discard_reason());
             continue;
           }
           if (resources_.entries())
@@ -586,7 +584,7 @@ public:
         line.pop_back();
       if (resources_.entries())
         history(resources_.entries(), &history_event_, H_ENTER, line.c_str());
-      const auto submitted = take_input(std::move(line));
+      const auto submitted = input_.take(std::move(line));
       if (submitted.action() == detail::InputAction::discard) {
         discarded_line();
         return read(cancel);
@@ -609,7 +607,7 @@ public:
       if (ch == bindings_["quit"])
         return std::nullopt;
       if (ch == bindings_["submit"] || ch == KEY_ENTER) {
-        auto submitted = take_input(input_.input().raw());
+        auto submitted = input_.take(input_.input().raw());
         if (submitted.action() == detail::InputAction::discard) {
           discarded_line();
           continue;
@@ -622,7 +620,7 @@ public:
           input_.erase_character();
         }
         render();
-      } else if (ch >= 32 && ch <= 255 && input_.input().size() < 65536) {
+      } else if (ch >= 32 && ch <= 255) {
         input_.append(static_cast<char>(ch));
         render();
       }
@@ -684,7 +682,7 @@ public:
     if (ch == bindings_["submit"] || ch == KEY_ENTER || ch == '\r') {
       if (line_)
         line_->submitted();
-      auto submitted = take_input(input_.input().raw());
+      auto submitted = input_.take(input_.input().raw());
       const auto &text = submitted.text;
       if (!submitted.discarded && approval_ && detail::approves(text) &&
           !approval_->approved_review()) {
@@ -709,7 +707,7 @@ public:
         else
           input_.erase_character();
       }
-    } else if (ch >= 32 && ch <= 255 && input_.input().size() < 65536) {
+    } else if (ch >= 32 && ch <= 255) {
       if (line_)
         line_->append(static_cast<char>(ch));
       else
@@ -1199,7 +1197,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
             quit_requested = true;
             cancel.requested = true;
           } else if (action == detail::InputAction::discard) {
-            terminal->discarded_line();
+            terminal->discarded_line(line->discard_reason());
           } else if (text == "/model" || text.rfind("/model ", 0) == 0 || text == "/status" ||
                      text == "/compact") {
             terminal->say("Use /model, /status and /compact after the active turn completes.");
@@ -1211,7 +1209,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
             pending.reset();
             terminal->end_approval(answered ? std::optional<std::string_view>(text) : std::nullopt);
             if (!answered)
-              terminal->discarded_line();
+              terminal->discarded_line(line->discard_reason());
           } else if (text.rfind("/permissions", 0) == 0)
             terminal->say("Change permission modes after the active turn completes.");
           else if (text == "/new") {
