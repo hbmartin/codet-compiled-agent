@@ -1460,6 +1460,7 @@ class CliTests(unittest.TestCase):
                 release.set()
                 collect(lambda received=received:b'fixture done' in received)
                 collect(lambda received=received:line_cells(received)[-1].endswith('codet> [default] he'))
+                self.assertIn('fixture done',line_cells(received))
                 received.clear();os.write(input_master,b'\x7fllo\n')
                 collect(lambda received=received:b'fixture done' in received)
                 self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'hllo')
