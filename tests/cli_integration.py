@@ -1329,6 +1329,38 @@ class CliTests(unittest.TestCase):
                     if process.poll() is None:process.kill();process.wait(timeout=5)
                     os.close(master);os.close(slave)
 
+    def test_native_notices_and_cleanup_restore_request_drafts_once(self):
+        import pty
+        import select
+        for kind in ('approval','question'):
+            with self.subTest(kind=kind):
+                master,slave=pty.openpty();arm,trigger=os.pipe();notice,notify=os.pipe()
+                helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+                process=subprocess.Popen([helper,'--codet-line-prompt-helper',kind,str(arm),str(notify)],
+                    stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=self.env)
+                received=bytearray()
+                def collect(predicate):
+                    deadline=time.monotonic()+10
+                    while not predicate() and time.monotonic()<deadline:
+                        if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+                    self.assertTrue(predicate(),bytes(received))
+                try:
+                    collect(lambda:bool(select.select([notice],[],[],0)[0]))
+                    self.assertEqual(os.read(notice,1),b'r')
+                    os.write(trigger,b'g')
+                    collect(lambda:bool(select.select([notice],[],[],0)[0]))
+                    self.assertEqual(os.read(notice,1),b'd')
+                    prefix=b'Approve? [y/N] ' if kind=='approval' else b'Enter a choice number or a text answer. '
+                    collect(lambda:bytes(received).count(prefix+b'y')==3)
+                    expected=(prefix+b'y\r\nwarning\r\nUncommitted tool result preserved at /complete/path\r\n'+
+                        prefix+b'y\r\nWorker events could not be drained during cleanup\r\n'+prefix+b'y')
+                    self.assertEqual(bytes(received),expected)
+                    os.write(trigger,b'g');collect(lambda:process.poll() is not None)
+                    self.assertEqual(process.returncode,0,received)
+                finally:
+                    if process.poll() is None:process.kill();process.wait(timeout=5)
+                    for fd in (master,slave,arm,trigger,notice,notify):os.close(fd)
+
     def test_line_prompt_restores_visible_draft_without_abandoned_prompts(self):
         import pty
         import select

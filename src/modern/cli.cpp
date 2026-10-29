@@ -459,8 +459,10 @@ public:
     } else {
       resources_.start_editor();
       struct stat destination {};
-      if (::fstat(STDIN_FILENO, &destination) == 0)
-        line_.emplace(input_, output_, io, prompt_, destination);
+      detail::OutputAttempt inspection(io.cancel, detail::OutputMode::diagnostic);
+      if (inspection.inspect([&] { return ::fstat(STDIN_FILENO, &destination); }) < 0)
+        throw Error("Cannot inspect input terminal");
+      line_.emplace(input_, output_, io, prompt_, destination);
       el_set(
           resources_.editor(), EL_PROMPT, +[](EditLine *edit) -> const char * {
             void *data = nullptr;
@@ -1167,7 +1169,6 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
               terminal->progress(event);
           },
           diagnostic, recovering);
-      terminal->flush_prompt();
     };
     try {
       terminal->begin_active();
