@@ -1352,7 +1352,7 @@ class CliTests(unittest.TestCase):
                     self.assertIn('warning',rows)
                     self.assertIn('Uncommitted tool result preserved at /complete/path',rows)
                     cleanup=rows.index('Worker events could not be drained during cleanup')
-                    self.assertFalse(any(prefix in row for row in rows[cleanup+1:]),rows)
+                    self.assertTrue(all(not row for row in rows[cleanup+1:]),rows)
                     os.write(trigger,b'g');collect(lambda process=process:process.poll() is not None)
                     self.assertEqual(process.returncode,0,received)
                 finally:
@@ -1434,6 +1434,30 @@ class CliTests(unittest.TestCase):
                             self.assertTrue(any(br'\xFF' in row.encode() for row in rows))
                         os.write(trigger,b'g');collect(lambda process=process:process.poll() is not None)
                         self.assertEqual(process.returncode,0,received)
+
+    def test_line_prompts_follow_stdout_with_separate_input_and_devtty(self):
+        for alias in (False,True):
+            with self.subTest(alias=alias),PtyProcess() as resources:
+                ready,release=threading.Event(),threading.Event()
+                self.server.signal_gate=(ready,release);self.server.releases.append(release)
+                input_master,input_slave=resources.openpty()
+                master,slave=resources.openpty()
+                command=[BIN,'-C',str(self.workspace),'--ui=line','--color=never','fixture-signal-wait']
+                if alias:
+                    command=[sys.executable,str(pathlib.Path(__file__).with_name('terminal_cli_helper.py')),'stdin-devtty',*command]
+                process=resources.start(command,stdin=input_slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+                received=bytearray();collect=partial(collect_pty,self,master,received)
+                self.assertTrue(ready.wait(10))
+                os.write(input_master,b'he')
+                collect(lambda received=received:line_cells(received)[-1].endswith('codet> [default] he'))
+                release.set()
+                collect(lambda received=received:b'fixture done' in received)
+                collect(lambda received=received:line_cells(received)[-1].endswith('codet> [default] he'))
+                received.clear();os.write(input_master,b'\x7fllo\n')
+                collect(lambda received=received:b'fixture done' in received)
+                self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'hllo')
+                os.write(input_master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                self.assertEqual(process.returncode,0,received)
 
     def test_active_empty_enter_never_persists_or_requests_another_turn(self):
         ready,release=threading.Event(),threading.Event()
