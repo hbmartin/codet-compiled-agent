@@ -7,6 +7,7 @@
 #include "codet/detail/ui_history.hpp"
 #define CODET_CACHED_UI 1
 #endif
+#include "native_symbol.hpp"
 #include <clocale>
 #include <cstdlib>
 #include <fstream>
@@ -15,7 +16,7 @@
 #include <sstream>
 namespace {
 bool observing = false;
-size_t allocations = 0, allocated = 0;
+size_t allocations = 0, allocated = 0, conversions = 0;
 void *allocate(size_t size) {
   if (observing) {
     ++allocations;
@@ -26,6 +27,15 @@ void *allocate(size_t size) {
   throw std::bad_alloc();
 }
 } // namespace
+extern "C" size_t
+mbrtowc(wchar_t *point, const char *text, size_t bytes,
+        mbstate_t *state) noexcept(noexcept(::mbrtowc(point, text, bytes, state))) {
+  using Function = size_t (*)(wchar_t *, const char *, size_t, mbstate_t *);
+  static auto native = reinterpret_cast<Function>(codet::test::native_symbol("mbrtowc"));
+  if (observing)
+    ++conversions;
+  return native(point, text, bytes, state);
+}
 void *operator new(size_t n) {
   return allocate(n);
 }
@@ -152,7 +162,19 @@ int main(int argc, char **argv) {
 #endif
   observing = true;
   const auto start = std::chrono::steady_clock::now();
-  if (mode == "allocation-positive") {
+  if (mode == "width-positive") {
+    for (size_t i = 0; i < 128; ++i) {
+      wchar_t point{};
+      std::mbstate_t state{};
+      checksum += std::mbrtowc(&point, "x", 1, &state);
+    }
+  } else if (mode == "approval-invisible" || mode == "input-narrow") {
+    for (size_t i = 0; i < 100000; ++i) {
+      const codet::detail::CursesText text(mode == "input-narrow" ? "雪" : "\u200d",
+                                           mode != "input-narrow");
+      checksum += text.text().size();
+    }
+  } else if (mode == "allocation-positive") {
     auto *memory = ::operator new(4096);
     ::operator delete(memory);
   } else if (mode.rfind("presentation-", 0) == 0) {
@@ -218,6 +240,8 @@ int main(int argc, char **argv) {
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
   observing = false;
   const codet::Json result = {{"milliseconds", elapsed},
+                              {"locale_conversions", conversions},
+                              {"history_budget", 262144},
                               {"allocations", allocations},
                               {"allocated_bytes", allocated},
                               {"prepared_input_bytes", work},
