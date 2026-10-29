@@ -1346,6 +1346,8 @@ class CliTests(unittest.TestCase):
                     collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
                     self.assertEqual(os.read(notice,1),b'd')
                     collect(lambda received=received:b'Worker events could not be drained during cleanup' in received)
+                    # The child is gated after its final write: inspect all queued presentation.
+                    while select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
                     rows=line_cells(received)
                     prefix='Approve? [y/N]' if kind=='approval' else 'Enter a choice number or a text answer.'
                     self.assertIn(prefix+' y',rows)
