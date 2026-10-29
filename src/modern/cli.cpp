@@ -11,6 +11,7 @@
 #include "codet/detail/line_prompt.hpp"
 #include "codet/detail/native_terminal.hpp"
 #include "codet/detail/request_input_controller.hpp"
+#include "codet/detail/terminal_input.hpp"
 #include "codet/detail/ui_history.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/interaction.hpp"
@@ -273,10 +274,7 @@ class Terminal final : public detail::CliDiagnosticSurface {
     for (;;) {
       if (terminal && terminal->read_cancel_ && terminal->read_cancel_->requested)
         return 0;
-      struct pollfd descriptor {
-        STDIN_FILENO, POLLIN, 0
-      };
-      const int ready = ::poll(&descriptor, 1, 100);
+      const int ready = detail::wait_terminal_input(STDIN_FILENO, 100);
       if (ready < 0) {
         if (errno == EINTR)
           continue;
@@ -646,8 +644,7 @@ public:
     if (curses_)
       ch = getch();
     else {
-      pollfd fd{STDIN_FILENO, POLLIN, 0};
-      const auto ready = ::poll(&fd, 1, 50);
+      const auto ready = detail::wait_terminal_input(STDIN_FILENO, 50);
       if (ready > 0) {
         unsigned char c = 0;
         const auto n = ::read(STDIN_FILENO, &c, 1);
@@ -655,7 +652,8 @@ public:
           ch = c;
         else if (n == 0)
           closed = true;
-      }
+      } else if (ready < 0 && errno != EINTR)
+        closed = true;
     }
     if (ch == ERR)
       return {};

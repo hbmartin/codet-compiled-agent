@@ -1447,7 +1447,8 @@ class CliTests(unittest.TestCase):
                     command=[sys.executable,str(pathlib.Path(__file__).with_name('terminal_cli_helper.py')),'stdin-devtty',*command]
                 process=resources.start(command,stdin=input_slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
                 received=bytearray();collect=partial(collect_pty,self,master,received)
-                self.assertTrue(ready.wait(10))
+                collect(lambda ready=ready,process=process:ready.is_set() or process.poll() is not None)
+                self.assertTrue(ready.is_set(),(process.poll(),bytes(received)))
                 os.write(input_master,b'he')
                 collect(lambda received=received:line_cells(received)[-1].endswith('codet> [default] he'))
                 release.set()
