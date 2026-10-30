@@ -42,11 +42,11 @@ struct Discard : std::streambuf {
   }
 };
 template <class Prompt, class... Args>
-auto prompt(int, Args &&...args)
+auto prompt(int, size_t columns, Args &&...args)
     -> std::enable_if_t<std::is_constructible_v<Prompt, Args..., size_t>, std::unique_ptr<Prompt>> {
-  return std::make_unique<Prompt>(std::forward<Args>(args)..., 80);
+  return std::make_unique<Prompt>(std::forward<Args>(args)..., columns);
 }
-template <class Prompt, class... Args> auto prompt(long, Args &&...args) {
+template <class Prompt, class... Args> auto prompt(long, size_t, Args &&...args) {
   return std::make_unique<Prompt>(std::forward<Args>(args)...);
 }
 template <class Prompt>
@@ -124,7 +124,9 @@ int main(int argc, char **argv) {
     return 2;
   (void)std::setlocale(LC_ALL, "C");
   const std::string mode = argv[1];
-  const bool native = mode == "native-busy";
+  const bool native = mode == "native-busy" || mode == "native-editing";
+  const bool editing = mode == "editing" || mode == "editing-basic" ||
+                       mode == "editing-patterned" || mode == "native-editing";
   int child = -1;
   struct stat tty {};
   tty.st_mode = S_IFCHR;
@@ -159,18 +161,16 @@ int main(int argc, char **argv) {
   detail::CliOutput injected(stream), terminal(io);
   auto &output = native ? terminal : injected;
   detail::RequestInputController input;
-  if (mode != "editing" && mode != "allocation-positive" && mode != "geometry-positive")
+  if (!editing && mode != "allocation-positive" && mode != "geometry-positive")
     for (size_t i = 0; i < (mode == "unchanged" ? 65536u : 20480u); ++i)
       input.append('x');
   const std::string label = "codet> ";
-  auto line = prompt<detail::LinePrompt>(0, input, output, io, label, tty);
+  auto line = prompt<detail::LinePrompt>(0, mode == "editing-basic" ? 0u : 80u, input, output, io,
+                                         label, tty);
   line->acquire();
   line->flush();
   const auto initial = input.input().rebuilt_bytes();
-  const size_t count = mode == "editing"     ? 20480
-                       : mode == "unchanged" ? 10000
-                       : native              ? 100
-                                             : 1000;
+  const size_t count = editing ? 20480 : mode == "unchanged" ? 10000 : native ? 100 : 1000;
   allocations = allocated = operations = bytes = geometry = 0;
   test::descriptor_bench::stats = test::descriptor_bench::flags = test::descriptor_bench::bounds =
       0;
@@ -183,8 +183,8 @@ int main(int argc, char **argv) {
     } else if (mode == "geometry-positive") {
       struct winsize value {};
       (void)::ioctl(STDOUT_FILENO, TIOCGWINSZ, &value);
-    } else if (mode == "editing")
-      line->append('x');
+    } else if (editing)
+      line->append(mode == "editing-patterned" ? static_cast<char>('a' + i % 26) : 'x');
     else if (mode == "deletion")
       line->erase_character();
     else if (mode == "unchanged")

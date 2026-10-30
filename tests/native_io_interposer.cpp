@@ -41,6 +41,11 @@ extern "C" int poll(pollfd *descriptors, nfds_t count, int timeout) {
   using Poll = int (*)(pollfd *, nfds_t, int);
   static const auto original = reinterpret_cast<Poll>(codet::test::native_symbol("poll"));
   auto &metrics = codet::test::native_io_metrics;
+  if (count == 1 && descriptors[0].fd == metrics.interrupt_fd && metrics.input_polls_failed) {
+    --metrics.input_polls_failed;
+    errno = metrics.input_error;
+    return -1;
+  }
   if (count == 1 && descriptors[0].fd == metrics.interrupt_fd && metrics.polls_interrupted) {
     --metrics.polls_interrupted;
     errno = EINTR;
@@ -73,6 +78,18 @@ extern "C" ssize_t writev(int descriptor, const iovec *parts, int count) {
   auto &metrics = codet::test::native_io_metrics;
   if (descriptor == metrics.interrupt_fd) {
     ++metrics.vectors;
+    if (metrics.vector_partial && count) {
+      metrics.vector_partial = false;
+      metrics.vector_failure = true;
+      iovec part = parts[0];
+      part.iov_len = std::min(part.iov_len, size_t{2});
+      return original(descriptor, &part, 1);
+    }
+    if (metrics.vector_failure) {
+      metrics.vector_failure = false;
+      errno = EIO;
+      return -1;
+    }
     if (metrics.vectors_interrupted) {
       --metrics.vectors_interrupted;
       errno = EINTR;

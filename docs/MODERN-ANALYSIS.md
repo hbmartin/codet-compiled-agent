@@ -885,3 +885,57 @@ retained. Blocking TTY output and irrecoverable emergency delivery retain their 
 [baseline reproductions](validation/line-input-rendering-followup-reproductions.json), and
 [development failures and negative control](validation/line-input-rendering-followup-development-failures.log)
 retain the evidence. Historical measurements are unchanged.
+
+## Incremental line input and diagnostic boundaries
+
+The line-presentation follow-up starts at fetched main `d42140f` and validates runtime
+`6c2334b`. Transient terminal input failures retry without being mistaken for EOF; permanent
+failures use the existing operation/error recovery paths. Prepared input supports append-only
+presentation when its prefix remains valid. Basic terminals hold incomplete UTF-8 and use bounded
+snapshots for destructive edits, rather than emitting a new snapshot for every typed byte.
+Two fixed channel records preserve guidance and unfinished-row boundaries across stdout/stderr
+replacement, including aliases. Retained worker warnings cannot repeatedly enter history after
+refresh failure. Fourteen scoped PTY users also work with Python 3.9, including acquisition failures.
+
+Full Debug and ASan/UBSan CTest each pass 9/9 groups: 613 unit cases (two existing opt-in skips),
+67 publication-fault cases, and 99 integration methods. Twenty focused sanitizer repetitions and
+twenty Python 3.9 PTY batches pass; each PTY batch includes 24 idle/active input-fault combinations.
+The injected drawing checks cover 104 row-write positions and 38 guidance cuts, with an additional
+fresh-process partial-stderr-to-stdout alias regression. Pinned lint, runner tests, Semgrep,
+Cppcheck and analyzer selftests pass. Local Clang findings match the recorded baseline exactly
+(six tidy findings including the SDK13 platform-header limitation; one analyzer context finding).
+The [Ubuntu workflow](https://github.com/hbmartin/codet-compiled-agent/actions/runs/41111643033)
+passes all required checks, including strict native analysis and wide-curses Unicode coverage.
+No native Tiger/PPC compiler, SDK or runtime is available here; the local Docker command is a
+broken symlink. No Tiger pass is inferred from host results.
+
+Identical Release harnesses use one warm-up and five alternating measured runs, repeated twice
+without concurrent local analyzers/tests. The final comparison has 768 samples. A separate
+1,152-sample comparison retains the discarded metadata-sharing experiment. After the last
+CLI-only exception-boundary change altered linked binary hashes, both final measurement sets
+were rerun; no binary-equivalence assumption is used.
+
+| Workload | Baseline output bytes | Final output bytes | Baseline → final median ms, sets 1 / 2 |
+| --- | ---: | ---: | --- |
+| 20 KiB basic-terminal ASCII typing | 1,656,252 | 20,487 | 3.089 → 2.437 / 3.080 → 2.414 |
+| 20 KiB repeated ASCII, known-width row | 3,271,607 | 239 | 3.245 → 2.754 / 3.248 → 2.698 |
+| Native repeated-ASCII editing | 3,271,607 | 239 | 85.998 → 20.093 / 85.815 → 20.394 |
+| Patterned input with a moving viewport | 3,271,607 | 3,265,359 | 3.184 → 3.529 / 3.314 → 3.474 |
+
+The repeated-character workload stops repainting once its displayed tail is unchanged; it does
+not represent arbitrary long input. Patterned viewport movement still repaints and is about
+5–11% slower in these runs. No general typing or export speedup is claimed. Editing allocation
+counts remain 36, unchanged redraws perform no output/geometry queries/allocation/preparation,
+and native editing retains one geometry query per edit. Row storage is fixed (two 1,280-byte
+buffers plus 256 erase spaces); complete raw input and token storage retain the existing bound.
+
+Scoped metadata sharing reduced `fstat` from 300 to 200 per 100 native busy-output batches, but
+diagnostic/small-export medians did not satisfy the repeatability/no-regression gate. It was
+reverted. These results preserve fresh destination inspection rather than restoring a lazy cache.
+
+The [validation record](validation/line-presentation-recovery-followup.json),
+[reproduction assertions](validation/line-presentation-recovery-followup-reproductions.json),
+[median metrics](validation/line-presentation-recovery-followup-performance.csv),
+[all samples](validation/line-presentation-recovery-followup-performance-samples.csv), and
+[development failure evidence](validation/line-presentation-recovery-followup-development-failures.log)
+record the passing checks, exact build refs/harness hashes, existing limitations, and rejected work.

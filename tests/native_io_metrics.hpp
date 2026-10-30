@@ -7,10 +7,13 @@ struct NativeIoMetrics {
   size_t chunk = 2;
   int interrupt_fd = -1;
   unsigned writes_interrupted = 0, vectors_interrupted = 0, polls_interrupted = 0;
+  unsigned input_polls_failed = 0;
+  int input_error = 0;
   unsigned stats_interrupted = 0, bounds_interrupted = 0;
   unsigned writes = 0, vectors = 0, inspections = 0;
   unsigned bound_queries = 0;
   bool bound_indeterminate = false;
+  bool vector_partial = false, vector_failure = false;
 };
 extern thread_local NativeIoMetrics native_io_metrics;
 } // namespace codet::test

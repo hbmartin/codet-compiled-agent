@@ -11,6 +11,15 @@ public:
   virtual void diagnostic_rendered(RenderedTextView text) {
     diagnostic(text.text);
   }
+  // Acceptance is distinct from refreshing an already-retained warning.
+  virtual bool warning_rendered(RenderedTextView text) noexcept {
+    try {
+      diagnostic_rendered(text);
+      return true;
+    } catch (...) {
+      return false;
+    }
+  }
 };
 
 class CliDiagnostics {
@@ -76,6 +85,29 @@ public:
         live.add_rendered(text);
     } else
       (void)writer_->write({text.text});
+  }
+  bool warning_rendered(RenderedTextView text) noexcept {
+    try {
+      if (buffering) {
+        cleanup.add_rendered(text);
+        return true;
+      }
+      if (auto terminal = screen_.lock()) {
+        if (!terminal->warning_rendered(text))
+          return false;
+        // History owns the warning now. A failed optional replay copy must not admit it again.
+        if (terminal->fullscreen())
+          try {
+            live.add_rendered(text);
+          } catch (...) {
+            return true;
+          }
+        return true;
+      }
+      return writer_->write({text.text});
+    } catch (...) {
+      return false;
+    }
   }
   void deliver_files() noexcept {
     if (auto terminal = screen_.lock(); terminal && terminal->fullscreen())

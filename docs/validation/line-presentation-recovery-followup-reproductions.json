@@ -1,0 +1,61 @@
+{
+  "baseline": "d42140f0c0d7b4a9c144749e2e820c45d8131025",
+  "input_errors": {
+    "test": "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+    "cases": 24,
+    "stages": [
+      "poll",
+      "select",
+      "read"
+    ],
+    "errors": [
+      "EINTR",
+      "EAGAIN",
+      "ENOMEM",
+      "EBADF"
+    ],
+    "modes": [
+      "idle-libedit",
+      "active-byte-input"
+    ],
+    "result": "pass under Python3.9 and sanitizer repeats",
+    "permanent_error": "Idle reports error/exit1; active reports the failed turn and remains usable until quit."
+  },
+  "presentation": {
+    "tests": [
+      "LinePrompt.SafeAppendsUseOnlyTheNewPreparedBytes",
+      "LinePrompt.UnknownWidthHoldsIncompleteUtf8AndKeepsSnapshotsBounded",
+      "CliTests.test_prepared_line_viewport_and_stdout_binding"
+    ],
+    "geometry_routes": 20,
+    "raw_bytes_preserved": true
+  },
+  "destinations": {
+    "test": "LinePrompt.MultipleStdoutChangesPreserveTheReachableStderrBoundaryAndGuidance",
+    "transition": "stdout A -> B -> C; stderr remains A",
+    "records": 2,
+    "result": "A boundary remains owed once, each new compact approval destination receives full guidance"
+  },
+  "row_failures": {
+    "test": "LinePrompt.FailedRowsAndGuidanceUseTheSharedRecoveryNewline",
+    "row_cases": 104,
+    "guidance_cases": 38,
+    "result": "No old visible suffix after subsequent successful rendering"
+  },
+  "native_alias": {
+    "test": "DiagnosticWriter.NativeAliasesSeparatePartialRecordsWithoutDuplicatingTheirBoundary",
+    "actual": "wa\nnext\nlast\n",
+    "result": "Partial stderr followed by stdout and stderr shares one recovery separator"
+  },
+  "warnings": {
+    "tests": [
+      "InteractionWarnings.RetainedWarningsAreNotReadmittedAfterRefreshThrows",
+      "InteractionWarnings.FailedAdmissionRemainsPendingWithoutReplacingTheOperationException"
+    ],
+    "result": "Accepted warning survives failed refresh once; failed admission remains pending; new occurrences remain admissible"
+  },
+  "ownership": {
+    "test": "CliTests.test_pty_resources_close_after_acquisition_and_spawn_failures",
+    "result": "Fresh process forces numeric fd reuse, observes exactly one close per owned fd, and keeps unrelated reused fd open"
+  }
+}

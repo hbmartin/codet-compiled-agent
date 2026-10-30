@@ -2,6 +2,7 @@
 #include "codet/detail/cli_output.hpp"
 #include "codet/detail/curses_render.hpp"
 #include "codet/detail/native_terminal.hpp"
+#include "codet/detail/terminal_input.hpp"
 #include "codet/diagnostics.hpp"
 #ifdef CODET_NATIVE_TERMINAL_METRICS
 #include "native_symbol.hpp"
@@ -23,6 +24,38 @@
 
 std::string codet::test::executable;
 namespace {
+struct InputFailure {
+  std::string stage;
+  int error;
+  unsigned remaining = 1;
+  inline static thread_local InputFailure *current = nullptr;
+  static bool fail(const char *operation) {
+    if (!current || current->stage != operation || !current->remaining)
+      return false;
+    --current->remaining;
+    errno = current->error;
+    return true;
+  }
+  static int poll(pollfd *fds, nfds_t count, int milliseconds) {
+    if (count == 1 && fds[0].fd == STDIN_FILENO) {
+      if (fail("poll"))
+        return -1;
+      if (current && current->stage == "select") {
+        fds[0].revents = POLLNVAL;
+        return 1;
+      }
+    }
+    return ::poll(fds, count, milliseconds);
+  }
+  static int select(int count, fd_set *reads, fd_set *writes, fd_set *errors, timeval *limit) {
+    if (fail("select"))
+      return -1;
+    return ::select(count, reads, writes, errors, limit);
+  }
+  static ssize_t read(int fd, void *data, size_t size) {
+    return fd == STDIN_FILENO && fail("read") ? -1 : ::read(fd, data, size);
+  }
+};
 class MutatingFailureOps final : public codet::detail::TerminalResourceOps {
   codet::detail::NativeTerminalResourceOps native_;
 
@@ -67,6 +100,42 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc == 3 && std::string(argv[1]) == "--codet-alias-diagnostic-helper") {
+      const int descriptor = std::stoi(argv[2]);
+      if (::dup2(descriptor, STDOUT_FILENO) < 0 || ::dup2(descriptor, STDERR_FILENO) < 0)
+        return 2;
+      ::close(descriptor);
+      codet::Cancellation cancel;
+      codet::detail::IoContext io(cancel);
+      codet::detail::DiagnosticWriter errors(std::cerr, &io), output(std::cout, &io);
+      auto &metrics = codet::test::native_io_metrics;
+      metrics.interrupt_fd = STDERR_FILENO;
+      metrics.vector_partial = true;
+      if (errors.write({"warning"}))
+        return 3;
+      return output.write({"next"}) && errors.write({"last"}) ? 0 : 4;
+    }
+    if (argc > 4 && std::string(argv[1]) == "--codet-input-recovery-helper") {
+      const std::string error(argv[3]);
+      const int number = error == "EAGAIN"   ? EAGAIN
+                         : error == "ENOMEM" ? ENOMEM
+                         : error == "EINTR"  ? EINTR
+                         : error == "EBADF"  ? EBADF
+                                             : 0;
+      const std::string stage(argv[2]);
+      if (!number || (stage != "poll" && stage != "select" && stage != "read"))
+        return 2;
+      InputFailure failure{stage, number};
+      InputFailure::current = &failure;
+      const codet::detail::TerminalInputOps ops{InputFailure::poll, InputFailure::select,
+                                                InputFailure::read};
+      codet::Cancellation cancel;
+      codet::detail::IoContext io(cancel);
+      io.terminal_input = &ops;
+      std::vector<std::string> arguments(argv + 4, argv + argc);
+      const auto result = codet::detail::cli_main(arguments, cancel, io);
+      return failure.remaining ? 87 : result;
+    }
     if (argc > 1 && std::string(argv[1]) == "--codet-redraw-helper") {
       if (argc < 6)
         return 2;
