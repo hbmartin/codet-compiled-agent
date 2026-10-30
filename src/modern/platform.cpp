@@ -256,16 +256,6 @@ struct DescriptorDiagnosticState {
   bool known = false, inspected = false;
   size_t pipe_limit = 0;
   detail::DiagnosticState state;
-  detail::DiagnosticState &bind(const struct stat &current) noexcept {
-    inspected = true;
-    if (!known || !detail::same_destination(current, identity)) {
-      state.reset(nullptr);
-      pipe_limit = 0;
-    }
-    known = true;
-    identity = current;
-    return state;
-  }
   detail::DiagnosticState &bind(int descriptor, detail::OutputAttempt &attempt) noexcept {
     struct stat current {};
     const auto status = attempt.inspect([&] { return ::fstat(descriptor, &current); });
@@ -273,7 +263,13 @@ struct DescriptorDiagnosticState {
     if (!inspected)
       return state; // An interruption cannot establish a different destination or erase its
                     // boundary.
-    return bind(current);
+    if (!known || !detail::same_destination(current, identity)) {
+      state.reset(nullptr);
+      pipe_limit = 0;
+    }
+    known = true;
+    identity = current;
+    return state;
   }
   void reset() noexcept {
     known = false;
@@ -293,16 +289,14 @@ int native_diagnostic_descriptor(std::ostream &output) noexcept {
                                                                            : -1;
 }
 DiagnosticDestination diagnostic_destination(std::ostream &output, detail::DiagnosticState &local,
-                                             detail::OutputAttempt &attempt,
-                                             const struct stat *presentation = nullptr) noexcept {
+                                             detail::OutputAttempt &attempt) noexcept {
   const int native = native_diagnostic_descriptor(output);
   if (native == STDERR_FILENO)
     return {stderr_descriptor_state.bind(STDERR_FILENO, attempt), STDERR_FILENO,
             &stderr_descriptor_state};
   if (native == STDOUT_FILENO)
-    return {presentation ? stdout_descriptor_state.bind(*presentation)
-                         : stdout_descriptor_state.bind(STDOUT_FILENO, attempt),
-            STDOUT_FILENO, &stdout_descriptor_state};
+    return {stdout_descriptor_state.bind(STDOUT_FILENO, attempt), STDOUT_FILENO,
+            &stdout_descriptor_state};
   auto &state = &output == &std::cerr   ? stderr_stream_state
                 : &output == &std::cout ? stdout_stream_state
                                         : local;
@@ -466,8 +460,7 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
                                      bool flush) {
   const auto mode = io_ ? OutputMode::diagnostic : OutputMode::immediate;
   OutputAttempt attempt(io_ ? io_->cancel : nullptr, mode);
-  const auto destination =
-      diagnostic_destination(output_, local_, attempt, io_ ? io_->presentation_identity : nullptr);
+  const auto destination = diagnostic_destination(output_, local_, attempt);
   state_ = &destination.state;
   const int native = destination.native;
   if (native >= 0) {

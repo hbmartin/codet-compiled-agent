@@ -21,8 +21,6 @@ struct IoContext {
   LineOutputObserver *line_output = nullptr;
   LineDestinations line_destinations;
   const TerminalInputOps *terminal_input = nullptr;
-  // Borrowed only inside a line-presenting write, never cached across UI events.
-  const struct stat *presentation_identity = nullptr;
   explicit IoContext(const Cancellation &value) noexcept : cancel(&value) {}
 };
 // One logical delivery owns its interruption budget, including inspection and streamed chunks.

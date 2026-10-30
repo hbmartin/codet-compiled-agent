@@ -109,15 +109,6 @@ class LinePrompt final : public LineOutputObserver {
   void paint() {
     const bool keyboard = echo_update_ && (visible_ || dirty_);
     const auto present = [&](std::initializer_list<std::string_view> parts, bool newline) {
-      struct Inspection {
-        IoContext &io;
-        const struct stat *previous;
-        ~Inspection() {
-          io.presentation_identity = previous;
-        }
-      } inspection{io_, io_.presentation_identity};
-      if (known_ && output_.presentation_descriptor() == STDOUT_FILENO)
-        io_.presentation_identity = &terminal_;
       return keyboard ? output_.echo_attempt(parts, newline) : output_.display(parts, newline);
     };
     if (!columns_ && append_update_ && visible_ && !input_.stale() &&
