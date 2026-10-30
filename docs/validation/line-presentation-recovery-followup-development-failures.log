@@ -1,5 +1,5 @@
 FILE input-pty.log
-test_terminal_input_errors_retry_and_permanent_failures_are_not_eof (__main__.CliTests) ... 
+test_terminal_input_errors_retry_and_permanent_failures_are_not_eof (__main__.CliTests) ...
 ======================================================================
 FAIL: test_terminal_input_errors_retry_and_permanent_failures_are_not_eof (__main__.CliTests) (active=True, stage='poll', error='EBADF')
 ----------------------------------------------------------------------
