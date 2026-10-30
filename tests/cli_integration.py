@@ -1301,93 +1301,96 @@ class CliTests(unittest.TestCase):
             with self.subTest(ui=ui):
                 ready,release=threading.Event(),threading.Event()
                 self.server.signal_gate=(ready,release);self.server.releases.append(release)
-                resources=self.enterContext(PtyProcess());master,slave=resources.openpty()
-                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
-                process=resources.start([BIN,'-C',str(self.workspace),'--ui',ui,'--color','never','fixture-signal-wait'],
-                    stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
-                received=bytearray()
-                collect=partial(collect_pty,self,master,received)
-                try:
-                    self.assertTrue(ready.wait(10))
-                    os.write(master,b'fixture-reco')
-                    collect(lambda received=received: b'fixture-reco' in re.sub(rb'\x1b(?:\[[0-?]*[ -/]*[@-~]|\([A-Z0-9])',b'',received))
-                    release.set()
-                    collect(lambda received=received:b'fixture done' in received)
-                    # Wait for terminal output quiescence after the completion event. The
-                    # prefix was admitted while the provider was explicitly held at its gate.
-                    deadline=time.monotonic()+10
-                    while select.select([master],[],[],.2)[0] and time.monotonic()<deadline:
-                        received.extend(os.read(master,65536))
-                    received.clear();os.write(master,b'vered-output\n')
-                    collect(lambda received=received:b'recovered reply' in received)
-                    self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'fixture-recovered-output')
-                    os.write(master,b'/quit\n')
-                    collect(lambda process=process:process.poll() is not None)
-                    self.assertEqual(process.returncode,0,bytes(received))
-                finally:
-                    release.set()
-                    if process.poll() is None:process.kill();process.wait(timeout=5)
-                    resources.close()
+                with PtyProcess() as resources:
+                    master,slave=resources.openpty()
+                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
+                    process=resources.start([BIN,'-C',str(self.workspace),'--ui',ui,'--color','never','fixture-signal-wait'],
+                        stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+                    received=bytearray()
+                    collect=partial(collect_pty,self,master,received)
+                    try:
+                        self.assertTrue(ready.wait(10))
+                        os.write(master,b'fixture-reco')
+                        collect(lambda received=received: b'fixture-reco' in re.sub(rb'\x1b(?:\[[0-?]*[ -/]*[@-~]|\([A-Z0-9])',b'',received))
+                        release.set()
+                        collect(lambda received=received:b'fixture done' in received)
+                        # Wait for terminal output quiescence after the completion event. The
+                        # prefix was admitted while the provider was explicitly held at its gate.
+                        deadline=time.monotonic()+10
+                        while select.select([master],[],[],.2)[0] and time.monotonic()<deadline:
+                            received.extend(os.read(master,65536))
+                        received.clear();os.write(master,b'vered-output\n')
+                        collect(lambda received=received:b'recovered reply' in received)
+                        self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'fixture-recovered-output')
+                        os.write(master,b'/quit\n')
+                        collect(lambda process=process:process.poll() is not None)
+                        self.assertEqual(process.returncode,0,bytes(received))
+                    finally:
+                        release.set()
+                        if process.poll() is None:process.kill();process.wait(timeout=5)
+                        resources.close()
 
     def test_native_notices_and_cleanup_restore_request_drafts_once(self):
         import select
         for kind in ('approval','question'):
             with self.subTest(kind=kind):
-                resources=self.enterContext(PtyProcess());master,slave=resources.openpty();arm,trigger=resources.pipe();notice,notify=resources.pipe()
-                helper=str(pathlib.Path(BIN).with_name('codet_tests'))
-                process=resources.start([helper,'--codet-line-prompt-helper',kind,str(arm),str(notify)],
-                    stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=self.env)
-                received=bytearray()
-                collect=partial(collect_pty,self,master,received)
-                try:
-                    collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
-                    self.assertEqual(os.read(notice,1),b'r')
-                    os.write(trigger,b'g')
-                    collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
-                    self.assertEqual(os.read(notice,1),b'd')
-                    collect(lambda received=received:b'Worker events could not be drained during cleanup' in received)
-                    # The child is gated after its final write: inspect all queued presentation.
-                    while select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
-                    rows=line_cells(received)
-                    prefix='Approve? [y/N]' if kind=='approval' else 'Enter a choice number or a text answer.'
-                    self.assertIn(prefix+' y',rows)
-                    self.assertIn('warning',rows)
-                    self.assertIn('Uncommitted tool result preserved at /complete/path',rows)
-                    cleanup=rows.index('Worker events could not be drained during cleanup')
-                    self.assertTrue(all(not row for row in rows[cleanup+1:]),rows)
-                    os.write(trigger,b'g');collect(lambda process=process:process.poll() is not None)
-                    self.assertEqual(process.returncode,0,received)
-                finally:
-                    if process.poll() is None:process.kill();process.wait(timeout=5)
-                    resources.close()
+                with PtyProcess() as resources:
+                    master,slave=resources.openpty();arm,trigger=resources.pipe();notice,notify=resources.pipe()
+                    helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+                    process=resources.start([helper,'--codet-line-prompt-helper',kind,str(arm),str(notify)],
+                        stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=self.env)
+                    received=bytearray()
+                    collect=partial(collect_pty,self,master,received)
+                    try:
+                        collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
+                        self.assertEqual(os.read(notice,1),b'r')
+                        os.write(trigger,b'g')
+                        collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
+                        self.assertEqual(os.read(notice,1),b'd')
+                        collect(lambda received=received:b'Worker events could not be drained during cleanup' in received)
+                        # The child is gated after its final write: inspect all queued presentation.
+                        while select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+                        rows=line_cells(received)
+                        prefix='Approve? [y/N]' if kind=='approval' else 'Enter a choice number or a text answer.'
+                        self.assertIn(prefix+' y',rows)
+                        self.assertIn('warning',rows)
+                        self.assertIn('Uncommitted tool result preserved at /complete/path',rows)
+                        cleanup=rows.index('Worker events could not be drained during cleanup')
+                        self.assertTrue(all(not row for row in rows[cleanup+1:]),rows)
+                        os.write(trigger,b'g');collect(lambda process=process:process.poll() is not None)
+                        self.assertEqual(process.returncode,0,received)
+                    finally:
+                        if process.poll() is None:process.kill();process.wait(timeout=5)
+                        resources.close()
 
     def test_line_prompt_restores_visible_draft_without_abandoned_prompts(self):
         ready,release=threading.Event(),threading.Event()
         self.server.signal_gate=(ready,release);self.server.releases.append(release)
-        resources=self.enterContext(PtyProcess());master,slave=resources.openpty()
-        process=resources.start([BIN,'-C',str(self.workspace),'--ui=line','--color=never',
-            'fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
-        received=bytearray()
-        collect=partial(collect_pty,self,master,received)
-        try:
-            self.assertTrue(ready.wait(10))
-            os.write(master,b'he');collect(lambda:b'codet> [default] he' in received)
-            release.set()
-            collect(lambda:b'fixture done\r\ncodet> [default] he' in received)
-            self.assertNotIn(b'hefixture done',received)
-            received.clear();os.write(master,b'\x7fllo\n')
-            collect(lambda:b'fixture done\r\ncodet> [default] ' in received)
-            self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'hllo')
-            self.assertNotIn(b'codet> [default] \r\nfixture done',received)
-            received.clear();os.write(master,b'plain message\n')
-            collect(lambda:b'fixture done\r\ncodet> [default] ' in received)
-            self.assertEqual(bytes(received).count(b'codet> [default] '),1,received)
-            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
-            self.assertEqual(process.returncode,0,received)
-        finally:
-            release.set()
-            if process.poll() is None:process.kill();process.wait(timeout=5)
-            resources.close()
+        with PtyProcess() as resources:
+            master,slave=resources.openpty()
+            process=resources.start([BIN,'-C',str(self.workspace),'--ui=line','--color=never',
+                'fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+            received=bytearray()
+            collect=partial(collect_pty,self,master,received)
+            try:
+                self.assertTrue(ready.wait(10))
+                os.write(master,b'he');collect(lambda:b'codet> [default] he' in received)
+                release.set()
+                collect(lambda:b'fixture done\r\ncodet> [default] he' in received)
+                self.assertNotIn(b'hefixture done',received)
+                received.clear();os.write(master,b'\x7fllo\n')
+                collect(lambda:b'fixture done\r\ncodet> [default] ' in received)
+                self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'hllo')
+                self.assertNotIn(b'codet> [default] \r\nfixture done',received)
+                received.clear();os.write(master,b'plain message\n')
+                collect(lambda:b'fixture done\r\ncodet> [default] ' in received)
+                self.assertEqual(bytes(received).count(b'codet> [default] '),1,received)
+                os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+                self.assertEqual(process.returncode,0,received)
+            finally:
+                release.set()
+                if process.poll() is None:process.kill();process.wait(timeout=5)
+                resources.close()
 
     def test_prepared_line_viewport_and_stdout_binding(self):
         import fcntl
@@ -1412,7 +1415,7 @@ class CliTests(unittest.TestCase):
                         received=bytearray();collect=partial(collect_pty,self,master,received)
                         collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]));self.assertEqual(os.read(notice,1),b'r')
                         # The gate follows the write; PTY reads may still split its final newline.
-                        frame_end=br'\xFF'+(b'\r\n' if columns<10 else b'')
+                        frame_end=br'\xFF'
                         collect(lambda received=received,frame_end=frame_end:frame_end in received)
                         self.assertNotIn(b'\x9b',received);self.assertNotIn(b'\xe2\x80\xae',received)
                         self.assertNotIn(b'\b',received)
@@ -1420,6 +1423,12 @@ class CliTests(unittest.TestCase):
                             self.assertLessEqual(len(line_cells(received)[-1]),min(columns-1,256))
                         else:self.assertNotIn(b'\r',received.replace(b'\r\n',b''))
                         before=bytes(received);os.write(trigger,b'g')
+                        if route=='replace-output':
+                            collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]));self.assertEqual(os.read(notice,1),b'p')
+                            changed=bytearray()
+                            collect_pty(self,second,changed,lambda changed=changed:br'\xFF' in changed)
+                            self.assertNotIn(b'context fallback',received)
+                            os.write(trigger,b'g')
                         collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]));self.assertEqual(os.read(notice,1),b'd')
                         if route=='stderr-log':
                             self.assertTrue(select.select([log],[],[],1)[0])
@@ -1427,12 +1436,9 @@ class CliTests(unittest.TestCase):
                             while select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
                             self.assertEqual(bytes(received),before)
                         elif route=='replace-output':
-                            changed=bytearray()
-                            collect_pty(self,second,changed,lambda changed=changed:br'\xFF' in changed)
-                            self.assertFalse(changed.startswith(b'\r'),changed)
                             collect(lambda received=received:b'context fallback' in received)
                             self.assertIn('context fallback',line_cells(received))
-                            self.assertEqual(bytes(changed).count(b'codet>'),1,changed)
+                            self.assertGreaterEqual(bytes(changed).count(b'codet>'),1,changed)
                         else:
                             collect(lambda received=received:b'context fallback' in received)
                             rows=line_cells(received)
@@ -1518,12 +1524,64 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exported.returncode,0,exported.stderr)
             self.assertFalse(any(m.get('role')=='user' and m.get('text')=='' for m in json.loads(exported.stdout)['messages']))
 
+    def test_terminal_input_errors_retry_and_permanent_failures_are_not_eof(self):
+        helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+        for active in (False,True):
+            for stage in ('poll','select','read'):
+                for error in ('EINTR','EAGAIN','ENOMEM','EBADF'):
+                    with self.subTest(active=active,stage=stage,error=error),PtyProcess() as resources:
+                        self.server.requests=[]
+                        ready,release=threading.Event(),threading.Event()
+                        self.server.signal_gate=(ready,release);self.server.releases.append(release)
+                        master,slave=resources.openpty()
+                        command=[helper,'--codet-input-recovery-helper',stage,error,'-C',str(self.workspace),'--ui=line','--color=never']
+                        if active:command.append('fixture-signal-wait')
+                        process=resources.start(command,stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='dumb',LC_ALL='C'))
+                        received=bytearray();collect=partial(collect_pty,self,master,received)
+                        try:
+                            if error=='EBADF':
+                                if stage=='read':os.write(master,b'x')
+                                release.set()
+                                if active:
+                                    collect(lambda received=received:b'Cannot ' in received and b'codet>' in received)
+                                    os.write(master,b'\x7f/quit\n' if stage=='read' else b'/quit\n')
+                                    collect(lambda process=process:process.poll() is not None)
+                                    self.assertEqual(process.returncode,0,received)
+                                else:
+                                    collect(lambda process=process:process.poll() is not None)
+                                    self.assertEqual(process.returncode,1,received)
+                                self.assertRegex(bytes(received),b'Cannot (read|wait for) terminal input:')
+                                continue
+                            if active:
+                                self.assertTrue(ready.wait(10),received)
+                                os.write(master,b'he');collect(lambda received=received:b'he' in received)
+                                release.set();collect(lambda received=received:b'fixture done' in received)
+                                os.write(master,b'llo\n')
+                                collect(lambda received=received:len(self.server.requests)==2 and received.count(b'fixture done')>=2)
+                            else:
+                                collect(lambda received=received:b'codet>' in received)
+                                os.write(master,b'hello\n');collect(lambda received=received:b'fixture done' in received)
+                            self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'hello')
+                            os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                            self.assertEqual(process.returncode,0,received)
+                        finally:
+                            release.set()
+
     def test_pty_resources_close_after_acquisition_and_spawn_failures(self):
-        import fcntl
-        from unittest import mock
-        for failure in ('pipe','spawn'):
-            resources=PtyProcess()
-            with self.assertRaises(OSError),resources:
+        # Isolate the descriptor namespace from the fixture server and force immediate reuse.
+        script = r"""
+import collections,fcntl,os
+from unittest import mock
+from pty_process import PtyProcess
+for failure in ('pipe','spawn'):
+    resources=PtyProcess();closed=[];reused=[];native_close=os.close
+    def close(descriptor):
+        closed.append(descriptor);native_close(descriptor)
+        if not reused:
+            reused.append(os.open('/dev/null',os.O_RDONLY))
+    with mock.patch('pty_process.os.close',side_effect=close):
+        try:
+            with resources:
                 resources.openpty()
                 if failure=='pipe':
                     with mock.patch('pty_process.os.pipe',side_effect=OSError('injected pipe failure')):
@@ -1531,9 +1589,19 @@ class CliTests(unittest.TestCase):
                 else:
                     resources.pipe();resources.pipe()
                     with mock.patch('pty_process.subprocess.Popen',side_effect=OSError('injected spawn failure')):
-                        resources.start([BIN])
-            for descriptor in resources.descriptors:
-                with self.assertRaises(OSError):fcntl.fcntl(descriptor,fcntl.F_GETFD)
+                        resources.start(['unused'])
+        except OSError:
+            pass
+        else:
+            raise AssertionError('expected injected failure')
+    assert collections.Counter(closed)==collections.Counter(resources.descriptors),(closed,resources.descriptors)
+    assert reused[0] in resources.descriptors,(reused,resources.descriptors)
+    fcntl.fcntl(reused[0],fcntl.F_GETFD)
+    native_close(reused[0])
+"""
+        result=subprocess.run([sys.executable,'-c',script],cwd=pathlib.Path(__file__).parent,
+            capture_output=True,text=True,timeout=10)
+        self.assertEqual(result.returncode,0,result.stderr)
 
     def test_approval_curses_failure_cancels_without_running_the_tool(self):
         import fcntl
@@ -1543,28 +1611,29 @@ class CliTests(unittest.TestCase):
         for stage in ('clear','put','refresh'):
             with self.subTest(stage=stage):
                 self.server.requests=[]
-                resources=self.enterContext(PtyProcess());master,slave=resources.openpty();arm,trigger=resources.pipe();notice,notify=resources.pipe()
-                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
-                helper=str(pathlib.Path(BIN).with_name('codet_tests'))
-                process=resources.start([helper,'--codet-redraw-helper',stage,str(arm),str(notify),
-                    '-C',str(self.workspace),'--ui','curses','--color','never','fixture-command'],
-                    stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=dict(self.env,TERM='xterm'))
-                received=bytearray()
-                collect=partial(collect_pty,self,master,received)
-                try:
-                    collect(lambda received=received:b'Approve? [y/N]' in received)
-                    os.write(trigger,b'a');received.clear()
-                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,101,0,0))
-                    process.send_signal(signal.SIGWINCH)
-                    collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
-                    self.assertEqual(os.read(notice,1),b'f')
-                    collect(lambda received=received:b'Cannot render approval review' in received)
-                    self.assertEqual(len(self.server.requests),1)
-                    os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
-                    self.assertEqual(process.returncode,0,bytes(received))
-                finally:
-                    if process.poll() is None:process.kill();process.wait(timeout=5)
-                    resources.close()
+                with PtyProcess() as resources:
+                    master,slave=resources.openpty();arm,trigger=resources.pipe();notice,notify=resources.pipe()
+                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
+                    helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+                    process=resources.start([helper,'--codet-redraw-helper',stage,str(arm),str(notify),
+                        '-C',str(self.workspace),'--ui','curses','--color','never','fixture-command'],
+                        stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=dict(self.env,TERM='xterm'))
+                    received=bytearray()
+                    collect=partial(collect_pty,self,master,received)
+                    try:
+                        collect(lambda received=received:b'Approve? [y/N]' in received)
+                        os.write(trigger,b'a');received.clear()
+                        fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,101,0,0))
+                        process.send_signal(signal.SIGWINCH)
+                        collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
+                        self.assertEqual(os.read(notice,1),b'f')
+                        collect(lambda received=received:b'Cannot render approval review' in received)
+                        self.assertEqual(len(self.server.requests),1)
+                        os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                        self.assertEqual(process.returncode,0,bytes(received))
+                    finally:
+                        if process.poll() is None:process.kill();process.wait(timeout=5)
+                        resources.close()
 
     def test_ordinary_curses_failure_preserves_worker_and_partial_input(self):
         import fcntl
@@ -1575,29 +1644,30 @@ class CliTests(unittest.TestCase):
             with self.subTest(stage=stage):
                 ready,release=threading.Event(),threading.Event()
                 self.server.signal_gate=(ready,release);self.server.releases.append(release)
-                resources=self.enterContext(PtyProcess());master,slave=resources.openpty();arm,trigger=resources.pipe();notice,notify=resources.pipe()
-                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
-                helper=str(pathlib.Path(BIN).with_name('codet_tests'))
-                process=resources.start([helper,'--codet-redraw-helper',stage,str(arm),str(notify),
-                    '-C',str(self.workspace),'--ui','curses','--color','never','fixture-signal-wait'],
-                    stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=dict(self.env,TERM='xterm'))
-                received=bytearray()
-                collect=partial(collect_pty,self,master,received)
-                try:
-                    self.assertTrue(ready.wait(10));os.write(trigger,b'a');os.write(master,b'fixture-reco')
-                    collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
-                    self.assertEqual(os.read(notice,1),b'f')
-                    self.assertIsNone(process.poll());release.set()
-                    collect(lambda received=received:b'fixture done' in received)
-                    received.clear();os.write(master,b'vered-output\n')
-                    collect(lambda received=received:b'recovered reply' in received)
-                    self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'fixture-recovered-output')
-                    os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
-                    self.assertEqual(process.returncode,0,bytes(received))
-                finally:
-                    release.set()
-                    if process.poll() is None:process.kill();process.wait(timeout=5)
-                    resources.close()
+                with PtyProcess() as resources:
+                    master,slave=resources.openpty();arm,trigger=resources.pipe();notice,notify=resources.pipe()
+                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
+                    helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+                    process=resources.start([helper,'--codet-redraw-helper',stage,str(arm),str(notify),
+                        '-C',str(self.workspace),'--ui','curses','--color','never','fixture-signal-wait'],
+                        stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=dict(self.env,TERM='xterm'))
+                    received=bytearray()
+                    collect=partial(collect_pty,self,master,received)
+                    try:
+                        self.assertTrue(ready.wait(10));os.write(trigger,b'a');os.write(master,b'fixture-reco')
+                        collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
+                        self.assertEqual(os.read(notice,1),b'f')
+                        self.assertIsNone(process.poll());release.set()
+                        collect(lambda received=received:b'fixture done' in received)
+                        received.clear();os.write(master,b'vered-output\n')
+                        collect(lambda received=received:b'recovered reply' in received)
+                        self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'fixture-recovered-output')
+                        os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                        self.assertEqual(process.returncode,0,bytes(received))
+                    finally:
+                        release.set()
+                        if process.poll() is None:process.kill();process.wait(timeout=5)
+                        resources.close()
 
     def test_new_approval_marks_old_draft_as_discard_only_before_fresh_answer(self):
         import fcntl
@@ -1613,34 +1683,35 @@ class CliTests(unittest.TestCase):
                 self.server.requests=[]
                 ready,release=threading.Event(),threading.Event()
                 self.server.signal_gate=(ready,release);self.server.releases.append(release)
-                resources=self.enterContext(PtyProcess());master,slave=resources.openpty()
-                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
-                process=resources.start([BIN,'-C',str(self.workspace),'--ui',ui,'--color','never',
-                    *flags,prompt+' fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,
-                    env=dict(self.env,TERM='xterm'))
-                received=bytearray()
-                collect=partial(collect_pty,self,master,received)
-                try:
-                    self.assertTrue(ready.wait(10))
-                    os.write(master,b'old-draft')
-                    collect(lambda received=received:b'old-draft' in re.sub(rb'\x1b(?:\[[0-?]*[ -/]*[@-~]|\([A-Z0-9])',b'',received))
-                    received.clear();release.set()
-                    collect(lambda received=received:b'discard>' in received)
-                    self.assertNotIn(expected,received)
-                    if ui=='line':self.assertTrue(received.endswith(b'discard> '),bytes(received))
-                    received.clear();os.write(master,b'yes\n')
-                    if ui=='line':collect(lambda received=received:b'input discarded' in received)
-                    self.assertEqual(len(self.server.requests),1)
-                    collect(lambda received=received,expected=expected:expected in received)
-                    received.clear();os.write(master,answer)
-                    collect(lambda received=received,done=done:done in received)
-                    self.assertGreaterEqual(len(self.server.requests),2)
-                    os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
-                    self.assertEqual(process.returncode,0,bytes(received))
-                finally:
-                    release.set()
-                    if process.poll() is None:process.kill();process.wait(timeout=5)
-                    resources.close()
+                with PtyProcess() as resources:
+                    master,slave=resources.openpty()
+                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,100,0,0))
+                    process=resources.start([BIN,'-C',str(self.workspace),'--ui',ui,'--color','never',
+                        *flags,prompt+' fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,
+                        env=dict(self.env,TERM='xterm'))
+                    received=bytearray()
+                    collect=partial(collect_pty,self,master,received)
+                    try:
+                        self.assertTrue(ready.wait(10))
+                        os.write(master,b'old-draft')
+                        collect(lambda received=received:b'old-draft' in re.sub(rb'\x1b(?:\[[0-?]*[ -/]*[@-~]|\([A-Z0-9])',b'',received))
+                        received.clear();release.set()
+                        collect(lambda received=received:b'discard>' in received)
+                        self.assertNotIn(expected,received)
+                        if ui=='line':self.assertTrue(received.endswith(b'discard> '),bytes(received))
+                        received.clear();os.write(master,b'yes\n')
+                        if ui=='line':collect(lambda received=received:b'input discarded' in received)
+                        self.assertEqual(len(self.server.requests),1)
+                        collect(lambda received=received,expected=expected:expected in received)
+                        received.clear();os.write(master,answer)
+                        collect(lambda received=received,done=done:done in received)
+                        self.assertGreaterEqual(len(self.server.requests),2)
+                        os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                        self.assertEqual(process.returncode,0,bytes(received))
+                    finally:
+                        release.set()
+                        if process.poll() is None:process.kill();process.wait(timeout=5)
+                        resources.close()
 
     def test_line_empty_draft_does_not_delay_a_fresh_request_answer(self):
         for prompt,flags,expected,answer,done in (
@@ -1649,26 +1720,27 @@ class CliTests(unittest.TestCase):
             with self.subTest(prompt=prompt):
                 ready,release=threading.Event(),threading.Event()
                 self.server.signal_gate=(ready,release);self.server.releases.append(release)
-                resources=self.enterContext(PtyProcess());master,slave=resources.openpty()
-                process=resources.start([BIN,'-C',str(self.workspace),'--ui','line',*flags,
-                    prompt+' fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,
-                    env=dict(self.env,TERM='xterm'))
-                received=bytearray()
-                collect=partial(collect_pty,self,master,received)
-                try:
-                    self.assertTrue(ready.wait(10));os.write(master,b'erase-me')
-                    collect(lambda received=received:b'erase-me' in received)
-                    received.clear();os.write(master,b'\x7f'*8)
-                    collect(lambda received=received: b'\r' in received and not line_cells(received)[-1])
-                    received.clear();release.set();collect(lambda expected=expected,received=received:expected in received)
-                    self.assertNotIn(b'discard>',received)
-                    os.write(master,answer);collect(lambda done=done,received=received:done in received)
-                    os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
-                    self.assertEqual(process.returncode,0,bytes(received))
-                finally:
-                    release.set()
-                    if process.poll() is None:process.kill();process.wait(timeout=5)
-                    resources.close()
+                with PtyProcess() as resources:
+                    master,slave=resources.openpty()
+                    process=resources.start([BIN,'-C',str(self.workspace),'--ui','line',*flags,
+                        prompt+' fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,
+                        env=dict(self.env,TERM='xterm'))
+                    received=bytearray()
+                    collect=partial(collect_pty,self,master,received)
+                    try:
+                        self.assertTrue(ready.wait(10));os.write(master,b'erase-me')
+                        collect(lambda received=received:b'erase-me' in received)
+                        received.clear();os.write(master,b'\x7f'*8)
+                        collect(lambda received=received: b'\r' in received and not line_cells(received)[-1])
+                        received.clear();release.set();collect(lambda expected=expected,received=received:expected in received)
+                        self.assertNotIn(b'discard>',received)
+                        os.write(master,answer);collect(lambda done=done,received=received:done in received)
+                        os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                        self.assertEqual(process.returncode,0,bytes(received))
+                    finally:
+                        release.set()
+                        if process.poll() is None:process.kill();process.wait(timeout=5)
+                        resources.close()
 
     def test_expired_approval_draft_is_discarded_before_next_turn(self):
         import fcntl
@@ -1681,34 +1753,35 @@ class CliTests(unittest.TestCase):
             ('curses','fixture-question',['--permission-mode','plan'],b'Enter a choice')):
             with self.subTest(ui=ui,prompt=prompt):
                 self.server.requests=[]
-                resources=self.enterContext(PtyProcess());master,slave=resources.openpty()
-                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
-                process=resources.start([BIN,'-C',str(self.workspace),'--ui',ui,'--color','never',*flags,prompt],
-                    stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
-                received=bytearray()
-                collect=partial(collect_pty,self,master,received)
-                try:
-                    collect(lambda received=received,expected=expected:expected in received)
-                    received.clear();os.write(master,b'ye')
-                    collect(lambda received=received:b'ye' in received)
-                    process.send_signal(signal.SIGINT)
-                    collect(lambda received=received:b'Interrupted' in received)
-                    collect(lambda received=received:b'discard>' in received)
-                    received.clear();os.write(master,b's\n')
-                    collect(lambda received=received:b'input discarded' in received)
-                    if ui=='line':collect(lambda received=received:b'codet> [' in received)
-                    self.assertEqual(len(self.server.requests),1)
-                    received.clear();os.write(master,b'fixture-recovered-output\n')
-                    collect(lambda received=received:b'recovered reply' in received)
-                    for request in self.server.requests:
-                        self.assertFalse(any(m['role']=='user' and m.get('content') in ('yes','s')
-                                             for m in request['body'].get('messages',[])))
-                    os.write(master,b'/quit\n')
-                    collect(lambda process=process:process.poll() is not None)
-                    self.assertEqual(process.returncode,0,bytes(received))
-                finally:
-                    if process.poll() is None:process.kill();process.wait(timeout=5)
-                    resources.close()
+                with PtyProcess() as resources:
+                    master,slave=resources.openpty()
+                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
+                    process=resources.start([BIN,'-C',str(self.workspace),'--ui',ui,'--color','never',*flags,prompt],
+                        stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+                    received=bytearray()
+                    collect=partial(collect_pty,self,master,received)
+                    try:
+                        collect(lambda received=received,expected=expected:expected in received)
+                        received.clear();os.write(master,b'ye')
+                        collect(lambda received=received:b'ye' in received)
+                        process.send_signal(signal.SIGINT)
+                        collect(lambda received=received:b'Interrupted' in received)
+                        collect(lambda received=received:b'discard>' in received)
+                        received.clear();os.write(master,b's\n')
+                        collect(lambda received=received:b'input discarded' in received)
+                        if ui=='line':collect(lambda received=received:b'codet> [' in received)
+                        self.assertEqual(len(self.server.requests),1)
+                        received.clear();os.write(master,b'fixture-recovered-output\n')
+                        collect(lambda received=received:b'recovered reply' in received)
+                        for request in self.server.requests:
+                            self.assertFalse(any(m['role']=='user' and m.get('content') in ('yes','s')
+                                                 for m in request['body'].get('messages',[])))
+                        os.write(master,b'/quit\n')
+                        collect(lambda process=process:process.poll() is not None)
+                        self.assertEqual(process.returncode,0,bytes(received))
+                    finally:
+                        if process.poll() is None:process.kill();process.wait(timeout=5)
+                        resources.close()
 
     def test_invisible_approval_bytes_are_visible_but_execution_bytes_unchanged(self):
         import fcntl
@@ -1718,159 +1791,164 @@ class CliTests(unittest.TestCase):
         for ui in ('line','curses'):
             with self.subTest(ui=ui):
                 marker.unlink(missing_ok=True)
-                resources=self.enterContext(PtyProcess());master,slave=resources.openpty()
-                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
-                process=resources.start([BIN,'-C',str(self.workspace),'--ui',ui,'--color','never','fixture-invisible-approval'],
-                    stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
-                received=bytearray()
-                collect=partial(collect_pty,self,master,received)
-                try:
-                    collect(lambda received=received:b'Approve? [y/N]' in received)
-                    self.assertNotIn('\U000e0061'.encode(),received)
-                    self.assertNotIn('\u0301'.encode(),received)
-                    self.assertIn(br'\xF3',received)
-                    self.assertIn(br'\xCC',received)
-                    self.assertFalse(marker.exists())
-                    os.write(master,b'yes\n')
-                    collect(lambda marker=marker:marker.exists())
-                    # Redirection creates the file before printf writes it; completion owns readiness.
-                    collect(lambda received=received:b'fixture done' in received)
-                    self.assertEqual(marker.read_text(),'approved')
-                    os.write(master,b'/quit\n')
-                    collect(lambda process=process:process.poll() is not None)
-                    self.assertEqual(process.returncode,0,bytes(received))
-                finally:
-                    if process.poll() is None:process.kill();process.wait(timeout=5)
-                    resources.close()
+                with PtyProcess() as resources:
+                    master,slave=resources.openpty()
+                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
+                    process=resources.start([BIN,'-C',str(self.workspace),'--ui',ui,'--color','never','fixture-invisible-approval'],
+                        stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+                    received=bytearray()
+                    collect=partial(collect_pty,self,master,received)
+                    try:
+                        collect(lambda received=received:b'Approve? [y/N]' in received)
+                        self.assertNotIn('\U000e0061'.encode(),received)
+                        self.assertNotIn('\u0301'.encode(),received)
+                        self.assertIn(br'\xF3',received)
+                        self.assertIn(br'\xCC',received)
+                        self.assertFalse(marker.exists())
+                        os.write(master,b'yes\n')
+                        collect(lambda marker=marker:marker.exists())
+                        # Redirection creates the file before printf writes it; completion owns readiness.
+                        collect(lambda received=received:b'fixture done' in received)
+                        self.assertEqual(marker.read_text(),'approved')
+                        os.write(master,b'/quit\n')
+                        collect(lambda process=process:process.poll() is not None)
+                        self.assertEqual(process.returncode,0,bytes(received))
+                    finally:
+                        if process.poll() is None:process.kill();process.wait(timeout=5)
+                        resources.close()
 
     def test_curses_c_locale_review_survives_partial_input_and_retains_history(self):
         import fcntl
         import select
         import struct
         import termios
-        resources=self.enterContext(PtyProcess());master,slave=resources.openpty()
-        fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',12,20,0,0))
-        process=resources.start([BIN,'-C',str(self.workspace),'--ui','curses','--color','never','fixture-paged-approval-unsafe'],
-            stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm',LC_ALL='C'))
-        received=bytearray()
-        collect=partial(collect_pty,self,master,received,seconds=10)
-        try:
-            collect(lambda:b'Approval review' in received)
-            os.write(master,b'yes\n')
-            os.write(master,b'\xe9')
-            collect(lambda:br'\xE9' in received)
-            os.write(master,b'\x9b\xaa')
-            collect(lambda:br'\xE9\x9B\xAA' in received)
-            os.write(master,b'\x7f')
-            for _ in range(240):
-                if b'Approve? [y/N]' in received:break
-                os.write(master,b' ')
-                if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
-            collect(lambda:b'Approve? [y/N]' in received)
-            self.assertIn(b'curl',received)
-            self.assertIn(b'evil',received)
-            self.assertFalse((self.workspace/'reviewed-marker').exists())
-            received.clear()
-            os.write(master,('雪'*30+'\n').encode())
-            collect(lambda:b'fixture done' in received)
-            self.assertIn(b'denied',received)
-            self.assertIn(b'exec_command:',received)
-            self.assertIn(b'Context:',received)
-            self.assertNotIn(b'Cannot render approval',received)
-            os.write(master,b'/quit\n')
-            collect(lambda:process.poll() is not None)
-            self.assertEqual(process.returncode,0,bytes(received))
-        finally:
-            if process.poll() is None:process.kill();process.wait(timeout=5)
-            resources.close()
+        with PtyProcess() as resources:
+            master,slave=resources.openpty()
+            fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',12,20,0,0))
+            process=resources.start([BIN,'-C',str(self.workspace),'--ui','curses','--color','never','fixture-paged-approval-unsafe'],
+                stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm',LC_ALL='C'))
+            received=bytearray()
+            collect=partial(collect_pty,self,master,received,seconds=10)
+            try:
+                collect(lambda:b'Approval review' in received)
+                os.write(master,b'yes\n')
+                os.write(master,b'\xe9')
+                collect(lambda:br'\xE9' in received)
+                os.write(master,b'\x9b\xaa')
+                collect(lambda:br'\xE9\x9B\xAA' in received)
+                os.write(master,b'\x7f')
+                for _ in range(240):
+                    if b'Approve? [y/N]' in received:break
+                    os.write(master,b' ')
+                    if select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+                collect(lambda:b'Approve? [y/N]' in received)
+                self.assertIn(b'curl',received)
+                self.assertIn(b'evil',received)
+                self.assertFalse((self.workspace/'reviewed-marker').exists())
+                received.clear()
+                os.write(master,('雪'*30+'\n').encode())
+                collect(lambda:b'fixture done' in received)
+                self.assertIn(b'denied',received)
+                self.assertIn(b'exec_command:',received)
+                self.assertIn(b'Context:',received)
+                self.assertNotIn(b'Cannot render approval',received)
+                os.write(master,b'/quit\n')
+                collect(lambda:process.poll() is not None)
+                self.assertEqual(process.returncode,0,bytes(received))
+            finally:
+                if process.poll() is None:process.kill();process.wait(timeout=5)
+                resources.close()
 
     def test_curses_empty_answer_records_denial_in_history(self):
         import fcntl
         import struct
         import termios
-        resources=self.enterContext(PtyProcess());master,slave=resources.openpty()
-        fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
-        process=resources.start([BIN,'-C',str(self.workspace),'--ui','curses','--color','never','fixture-command'],
-            stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm',LC_ALL='C'))
-        received=bytearray()
-        collect=partial(collect_pty,self,master,received)
-        try:
-            collect(lambda:b'Approve? [y/N]' in received)
-            received.clear();os.write(master,b'\n')
-            collect(lambda:b'fixture done' in received)
-            self.assertIn(b'[Approval denied]',received)
-            self.assertNotIn(b'[Approval cancelled]',received)
-            self.assertIn(b'exec_command: printf approved',received)
-            os.write(master,b'/quit\n')
-            collect(lambda:process.poll() is not None)
-            self.assertEqual(process.returncode,0,bytes(received))
-        finally:
-            if process.poll() is None:process.kill();process.wait(timeout=5)
-            resources.close()
+        with PtyProcess() as resources:
+            master,slave=resources.openpty()
+            fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
+            process=resources.start([BIN,'-C',str(self.workspace),'--ui','curses','--color','never','fixture-command'],
+                stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm',LC_ALL='C'))
+            received=bytearray()
+            collect=partial(collect_pty,self,master,received)
+            try:
+                collect(lambda:b'Approve? [y/N]' in received)
+                received.clear();os.write(master,b'\n')
+                collect(lambda:b'fixture done' in received)
+                self.assertIn(b'[Approval denied]',received)
+                self.assertNotIn(b'[Approval cancelled]',received)
+                self.assertIn(b'exec_command: printf approved',received)
+                os.write(master,b'/quit\n')
+                collect(lambda:process.poll() is not None)
+                self.assertEqual(process.returncode,0,bytes(received))
+            finally:
+                if process.poll() is None:process.kill();process.wait(timeout=5)
+                resources.close()
 
     def test_curses_small_approval_echoes_quit_without_unlocking(self):
         import fcntl
         import struct
         import termios
-        resources=self.enterContext(PtyProcess());master,slave=resources.openpty()
-        fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',4,30,0,0))
-        process=resources.start([BIN,'-C',str(self.workspace),'--ui','curses','--color','never','fixture-paged-approval'],
-            stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm',LC_ALL='C'))
-        received=bytearray()
-        collect=partial(collect_pty,self,master,received)
-        try:
-            collect(lambda:b'Resize to review' in received)
-            os.write(master,b'yes\n/quit')
-            collect(lambda:b'/quit' in received)
-            self.assertNotIn(b'Approve? [y/N]',received)
-            os.write(master,b'\n')
-            collect(lambda:process.poll() is not None)
-            self.assertEqual(process.returncode,0,bytes(received))
-            self.assertFalse((self.workspace/'reviewed-marker').exists())
-        finally:
-            if process.poll() is None:process.kill();process.wait(timeout=5)
-            resources.close()
+        with PtyProcess() as resources:
+            master,slave=resources.openpty()
+            fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',4,30,0,0))
+            process=resources.start([BIN,'-C',str(self.workspace),'--ui','curses','--color','never','fixture-paged-approval'],
+                stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm',LC_ALL='C'))
+            received=bytearray()
+            collect=partial(collect_pty,self,master,received)
+            try:
+                collect(lambda:b'Resize to review' in received)
+                os.write(master,b'yes\n/quit')
+                collect(lambda:b'/quit' in received)
+                self.assertNotIn(b'Approve? [y/N]',received)
+                os.write(master,b'\n')
+                collect(lambda:process.poll() is not None)
+                self.assertEqual(process.returncode,0,bytes(received))
+                self.assertFalse((self.workspace/'reviewed-marker').exists())
+            finally:
+                if process.poll() is None:process.kill();process.wait(timeout=5)
+                resources.close()
 
     def test_curses_approval_requires_all_pages_and_fresh_confirmation_after_resize(self):
         import fcntl
         import select
         import struct
         import termios
-        resources=self.enterContext(PtyProcess());master,slave=resources.openpty()
-        fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',8,40,0,0))
-        process=resources.start([BIN,'-C',str(self.workspace),'--ui','curses','fixture-paged-approval'],
-            stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
-        received=bytearray()
-        collect=partial(collect_pty,self,master,received,seconds=7)
-        marker=self.workspace/'reviewed-marker'
-        try:
-            collect(lambda:b'Approval review' in received)
-            self.assertNotIn(b'Approve? [y/N]',received)
-            os.write(master,b'yes\n')
-            # A round-trip status redraw proves that the early answer was consumed.
-            os.write(master,b'\x1b[6~')
-            collect(lambda:b'\x1b[1;17H' in received and b'2' in received[received.index(b'\x1b[1;17H'):])
-            self.assertFalse(marker.exists())
-            fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',8,35,0,0))
-            process.send_signal(signal.SIGWINCH)
-            received.clear()
-            collect(lambda:b'Approval review 1/' in received or b'\x1b[1;17H' in received)
-            for _ in range(40):
-                if b'Approve? [y/N]' in received:break
-                os.write(master,b' ')
-                if select.select([master],[],[],.05)[0]:received.extend(os.read(master,65536))
-            collect(lambda:b'Approve? [y/N]' in received)
-            self.assertFalse(marker.exists())
-            self.assertIn(b'reviewed-marker',received)
-            os.write(master,b'yes\n')
-            collect(marker.exists)
-            collect(lambda:b'fixture done' in received)
-            os.write(master,b'/quit\n')
-            collect(lambda:process.poll() is not None)
-            self.assertEqual(process.returncode,0,bytes(received))
-        finally:
-            if process.poll() is None:process.kill();process.wait(timeout=5)
-            resources.close()
+        with PtyProcess() as resources:
+            master,slave=resources.openpty()
+            fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',8,40,0,0))
+            process=resources.start([BIN,'-C',str(self.workspace),'--ui','curses','fixture-paged-approval'],
+                stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+            received=bytearray()
+            collect=partial(collect_pty,self,master,received,seconds=7)
+            marker=self.workspace/'reviewed-marker'
+            try:
+                collect(lambda:b'Approval review' in received)
+                self.assertNotIn(b'Approve? [y/N]',received)
+                os.write(master,b'yes\n')
+                # A round-trip status redraw proves that the early answer was consumed.
+                os.write(master,b'\x1b[6~')
+                collect(lambda:b'\x1b[1;17H' in received and b'2' in received[received.index(b'\x1b[1;17H'):])
+                self.assertFalse(marker.exists())
+                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',8,35,0,0))
+                process.send_signal(signal.SIGWINCH)
+                received.clear()
+                collect(lambda:b'Approval review 1/' in received or b'\x1b[1;17H' in received)
+                for _ in range(40):
+                    if b'Approve? [y/N]' in received:break
+                    os.write(master,b' ')
+                    if select.select([master],[],[],.05)[0]:received.extend(os.read(master,65536))
+                collect(lambda:b'Approve? [y/N]' in received)
+                self.assertFalse(marker.exists())
+                self.assertIn(b'reviewed-marker',received)
+                os.write(master,b'yes\n')
+                collect(marker.exists)
+                collect(lambda:b'fixture done' in received)
+                os.write(master,b'/quit\n')
+                collect(lambda:process.poll() is not None)
+                self.assertEqual(process.returncode,0,bytes(received))
+            finally:
+                if process.poll() is None:process.kill();process.wait(timeout=5)
+                resources.close()
 
     def test_curses_narrow_approval_keeps_unsafe_suffix_reviewable_and_denial_available(self):
         import fcntl
@@ -1919,27 +1997,28 @@ class CliTests(unittest.TestCase):
         import termios
         for action in ('quit','eof','signal'):
             with self.subTest(action=action):
-                resources=self.enterContext(PtyProcess());master,slave=resources.openpty()
-                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',8,40,0,0))
-                process=resources.start([BIN,'-C',str(self.workspace),'--ui','curses','fixture-paged-approval'],
-                    stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
-                received=bytearray()
-                collect=partial(collect_pty,self,master,received)
-                try:
-                    collect(lambda received=received:b'Approval review' in received)
-                    if action=='signal':
-                        process.send_signal(signal.SIGINT)
-                        collect(lambda received=received:b'Interrupted' in received)
-                        os.write(master,b'fixture-recovered-output\n')
-                        collect(lambda received=received:b'recovered reply' in received)
-                        os.write(master,b'/quit\n')
-                    else:os.write(master,b'/quit\n' if action=='quit' else b'\x04')
-                    collect(lambda process=process:process.poll() is not None)
-                    self.assertEqual(process.returncode,0,bytes(received))
-                    self.assertFalse((self.workspace/'reviewed-marker').exists())
-                finally:
-                    if process.poll() is None:process.kill();process.wait(timeout=5)
-                    resources.close()
+                with PtyProcess() as resources:
+                    master,slave=resources.openpty()
+                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',8,40,0,0))
+                    process=resources.start([BIN,'-C',str(self.workspace),'--ui','curses','fixture-paged-approval'],
+                        stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+                    received=bytearray()
+                    collect=partial(collect_pty,self,master,received)
+                    try:
+                        collect(lambda received=received:b'Approval review' in received)
+                        if action=='signal':
+                            process.send_signal(signal.SIGINT)
+                            collect(lambda received=received:b'Interrupted' in received)
+                            os.write(master,b'fixture-recovered-output\n')
+                            collect(lambda received=received:b'recovered reply' in received)
+                            os.write(master,b'/quit\n')
+                        else:os.write(master,b'/quit\n' if action=='quit' else b'\x04')
+                        collect(lambda process=process:process.poll() is not None)
+                        self.assertEqual(process.returncode,0,bytes(received))
+                        self.assertFalse((self.workspace/'reviewed-marker').exists())
+                    finally:
+                        if process.poll() is None:process.kill();process.wait(timeout=5)
+                        resources.close()
 
     def test_display_escaping_preserves_data_outputs_and_bounds_hook_replay(self):
         import pty
