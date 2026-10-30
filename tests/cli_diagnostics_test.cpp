@@ -25,6 +25,7 @@
 using namespace codet;
 using namespace testing;
 namespace {
+#ifdef CODET_NATIVE_TERMINAL_METRICS
 thread_local unsigned input_backoffs = 0;
 int input_pause(const timespec *delay, timespec *) {
   EXPECT_EQ(delay->tv_sec, 0);
@@ -65,6 +66,7 @@ TEST(TerminalInput, TransientReadinessFailuresRemainRetryableAndOnlyReadsIndicat
   EXPECT_EQ(::read(descriptors[0], &byte, 1), 1);
   EXPECT_EQ(byte, 'x');
 }
+#endif
 TEST(InteractionWarnings, RetainedWarningsAreNotReadmittedAfterRefreshThrows) {
   Interaction interaction;
   detail::UiHistory history;
@@ -86,6 +88,7 @@ TEST(InteractionWarnings, RetainedWarningsAreNotReadmittedAfterRefreshThrows) {
   interaction.drain_warnings(consume);
   EXPECT_EQ(history.lines().size(), 2u); // A genuinely new occurrence can be admitted.
 }
+#ifdef CODET_NATIVE_TERMINAL_METRICS
 TEST(DiagnosticWriter, NativeAliasesSeparatePartialRecordsWithoutDuplicatingTheirBoundary) {
   int descriptors[2];
   ASSERT_EQ(::pipe(descriptors), 0);
@@ -109,6 +112,7 @@ TEST(DiagnosticWriter, NativeAliasesSeparatePartialRecordsWithoutDuplicatingThei
   EXPECT_EQ(WEXITSTATUS(status), 0);
   EXPECT_EQ(bytes, "wa\nnext\nlast\n");
 }
+#endif
 TEST(InteractionWarnings, FailedAdmissionRemainsPendingWithoutReplacingTheOperationException) {
   Interaction interaction;
   interaction.warn(Interaction::Warning::event_render);

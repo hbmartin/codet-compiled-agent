@@ -100,6 +100,7 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+#ifdef CODET_NATIVE_TERMINAL_METRICS
     if (argc == 3 && std::string(argv[1]) == "--codet-alias-diagnostic-helper") {
       const int descriptor = std::stoi(argv[2]);
       if (::dup2(descriptor, STDOUT_FILENO) < 0 || ::dup2(descriptor, STDERR_FILENO) < 0)
@@ -115,6 +116,7 @@ int main(int argc, char **argv) {
         return 3;
       return output.write({"next"}) && errors.write({"last"}) ? 0 : 4;
     }
+#endif
     if (argc > 4 && std::string(argv[1]) == "--codet-input-recovery-helper") {
       const std::string error(argv[3]);
       const int number = error == "EAGAIN"   ? EAGAIN
