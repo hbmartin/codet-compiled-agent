@@ -28,8 +28,17 @@ public:
   void warn(Warning kind) noexcept {
     warnings_.fetch_or(static_cast<unsigned>(kind), std::memory_order_relaxed);
   }
-  template <class Consumer> void drain_warnings(Consumer consume) noexcept {
-    const auto pending = warnings_.exchange(0, std::memory_order_relaxed);
+  template <class Consumer> void drain_warnings(Consumer consume, bool retry = true) noexcept {
+    // Low bits are new occurrences; high bits are failed attempts awaiting a real UI event.
+    constexpr unsigned kinds = 7, shift = 3;
+    auto snapshot = warnings_.load(std::memory_order_relaxed);
+    unsigned pending;
+    do {
+      pending = (snapshot | (retry ? snapshot >> shift : 0u)) & kinds;
+      if (!pending)
+        return;
+    } while (!warnings_.compare_exchange_weak(snapshot, snapshot & ~(pending | (pending << shift)),
+                                              std::memory_order_relaxed));
     constexpr std::pair<Warning, std::string_view> messages[] = {
         {Warning::exec_stop, "Exec cleanup failed while stopping owned process"},
         {Warning::exec_original, "Exec cleanup failed; preserving original error"},
@@ -39,9 +48,9 @@ public:
       if (pending & bit)
         try {
           if (!consume(entry.second))
-            warn(entry.first);
+            warnings_.fetch_or(bit << shift, std::memory_order_relaxed);
         } catch (...) {
-          warn(entry.first); // Retry only when the main thread next drains warnings.
+          warnings_.fetch_or(bit << shift, std::memory_order_relaxed);
         }
     }
   }

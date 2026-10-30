@@ -269,6 +269,10 @@ class Terminal final : public detail::CliDiagnosticSurface {
   uint64_t input_events_ = 0;
   // Release native callbacks before destroying the prompt/history data they can reference.
   detail::TerminalResources resources_{native_resources_};
+  static bool retry_input(int error, const Terminal *terminal) {
+    return detail::retry_terminal_input(
+        error, terminal && terminal->read_cancel_ ? &terminal->read_cancel_->requested : nullptr);
+  }
   static int read_character(EditLine *edit, wchar_t *character) {
     void *data = nullptr;
     el_get(edit, EL_CLIENTDATA, &data);
@@ -281,9 +285,7 @@ class Terminal final : public detail::CliDiagnosticSurface {
       const int ready = detail::wait_terminal_input(STDIN_FILENO, 100, ops);
       if (ready < 0) {
         const int error = errno;
-        if (detail::retry_terminal_input(error, terminal && terminal->read_cancel_
-                                                    ? &terminal->read_cancel_->requested
-                                                    : nullptr))
+        if (retry_input(error, terminal))
           continue;
         if (terminal)
           terminal->input_error_ = error;
@@ -295,9 +297,7 @@ class Terminal final : public detail::CliDiagnosticSurface {
       const auto n = ops.read(STDIN_FILENO, &byte, 1);
       if (n < 0) {
         const int error = errno;
-        if (detail::retry_terminal_input(error, terminal && terminal->read_cancel_
-                                                    ? &terminal->read_cancel_->requested
-                                                    : nullptr))
+        if (retry_input(error, terminal))
           continue;
         if (terminal)
           terminal->input_error_ = error;
@@ -700,11 +700,9 @@ public:
           ch = c;
         else if (n == 0)
           closed = true;
-        else if (!detail::retry_terminal_input(errno,
-                                               read_cancel_ ? &read_cancel_->requested : nullptr))
+        else if (!retry_input(errno, this))
           throw Error("Cannot read terminal input: " + std::string(std::strerror(errno)));
-      } else if (ready < 0 && !detail::retry_terminal_input(
-                                  errno, read_cancel_ ? &read_cancel_->requested : nullptr))
+      } else if (ready < 0 && !retry_input(errno, this))
         throw Error("Cannot wait for terminal input: " + std::string(std::strerror(errno)));
     }
     if (ch == ERR)
@@ -1191,14 +1189,17 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     interaction->begin_turn(session.id);
     std::future<RunResult> work;
     std::optional<Json> pending;
-    const auto drain_warnings = [&] {
-      interaction->drain_warnings([&](std::string_view text) {
-        const std::string owned(text);
-        return diagnostics->warning_rendered({owned});
-      });
+    const auto drain_warnings = [&](bool retry = true) {
+      interaction->drain_warnings(
+          [&](std::string_view text) {
+            const std::string owned(text);
+            return diagnostics->warning_rendered({owned});
+          },
+          retry);
     };
     const auto deliver = [&](bool recovering = false, bool final = false) {
       bool delivered = false;
+      detail::WarningDrainScope warnings(drain_warnings, delivered, recovering || final);
       diagnostics->deliver_files();
       interaction->deliver(
           [&](const Json &event) {
@@ -1232,8 +1233,6 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
               terminal->progress(event);
           },
           diagnostic, recovering);
-      if (delivered || recovering || final)
-        drain_warnings();
     };
     try {
       terminal->begin_active(cancel);

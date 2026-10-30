@@ -128,6 +128,136 @@ TEST(InteractionWarnings, FailedAdmissionRemainsPendingWithoutReplacingTheOperat
   EXPECT_EQ(refreshes, 1u);
   EXPECT_EQ(history.lines().size(), 1u);
 }
+TEST(InteractionWarnings, NewOccurrencesGetOneIdleAttemptAndFailuresWaitForRealEvents) {
+  Interaction interaction;
+  size_t attempts = 0;
+  const auto fail = [&](std::string_view) {
+    ++attempts;
+    return false;
+  };
+  interaction.warn(Interaction::Warning::exec_stop);
+  for (int i = 0; i != 100; ++i)
+    interaction.drain_warnings(fail, false);
+  EXPECT_EQ(attempts, 1u);
+  interaction.drain_warnings(fail, true);
+  EXPECT_EQ(attempts, 2u);
+  interaction.drain_warnings(fail, false);
+  EXPECT_EQ(attempts, 2u);
+  interaction.drain_warnings(
+      [&](std::string_view) {
+        ++attempts;
+        return true;
+      },
+      true);
+  interaction.drain_warnings(fail, true);
+  EXPECT_EQ(attempts, 3u);
+}
+TEST(InteractionWarnings, ConcurrentOccurrenceDuringFailedAdmissionKeepsItsFirstAttempt) {
+  Interaction interaction;
+  interaction.warn(Interaction::Warning::event_render);
+  size_t attempts = 0;
+  interaction.drain_warnings(
+      [&](std::string_view) {
+        ++attempts;
+        std::thread producer([&] { interaction.warn(Interaction::Warning::event_render); });
+        producer.join();
+        return false;
+      },
+      false);
+  interaction.drain_warnings(
+      [&](std::string_view) {
+        ++attempts;
+        return true;
+      },
+      false);
+  interaction.drain_warnings(
+      [&](std::string_view) {
+        ++attempts;
+        return false;
+      },
+      true);
+  EXPECT_EQ(attempts, 2u);
+}
+TEST(InteractionWarnings, ThrowingDeliveryStillDrainsNewWarningsWithoutReplacingItsException) {
+  Interaction interaction;
+  interaction.warn(Interaction::Warning::exec_original);
+  bool delivered = false;
+  size_t attempts = 0;
+  const auto drain = [&](bool retry) {
+    interaction.drain_warnings(
+        [&](std::string_view) {
+          ++attempts;
+          return false;
+        },
+        retry);
+  };
+  const auto original = std::make_exception_ptr(Error("original delivery"));
+  try {
+    detail::WarningDrainScope scope(drain, delivered, false);
+    std::rethrow_exception(original);
+  } catch (...) {
+    EXPECT_EQ(std::current_exception(), original);
+  }
+  EXPECT_EQ(attempts, 1u);
+  { detail::WarningDrainScope scope(drain, delivered, false); }
+  EXPECT_EQ(attempts, 1u);
+  { detail::WarningDrainScope scope(drain, delivered, true); }
+  EXPECT_EQ(attempts, 2u);
+}
+TEST(InteractionWarnings, SurfacesMustSpecifyAdmissionAndRetainedHistorySurvivesRefreshFailure) {
+  struct Bare : detail::CliDiagnosticSurface {
+    bool fullscreen() const override {
+      return true;
+    }
+    void diagnostic(const std::string &) override {}
+  };
+  static_assert(std::is_abstract_v<Bare>, "Warning admission cannot be inferred from rendering");
+  struct Retaining final : Bare {
+    detail::UiHistory history;
+    size_t refreshes = 0;
+    bool warning_rendered(detail::RenderedTextView text) noexcept override {
+      return detail::retain_warning([&] { history.add(text.text); },
+                                    [&] {
+                                      ++refreshes;
+                                      throw std::bad_alloc();
+                                    });
+    }
+  } surface;
+  Interaction interaction;
+  interaction.warn(Interaction::Warning::event_render);
+  for (int i = 0; i != 100; ++i)
+    interaction.drain_warnings([&](std::string_view text) {
+      const std::string owned(text);
+      return surface.warning_rendered({owned});
+    });
+  EXPECT_EQ(surface.history.lines().size(), 1u);
+  EXPECT_EQ(surface.refreshes, 1u);
+}
+TEST(LineDestinations, AliasesShareRecoveryAndPermissionChangesKeepTheBoundary) {
+  detail::LineDestinations destinations;
+  struct stat tty {};
+  tty.st_mode = S_IFCHR;
+  tty.st_dev = 1;
+  tty.st_ino = 2;
+  destinations.bind(STDOUT_FILENO, tty);
+  destinations.bind(STDERR_FILENO, tty);
+  destinations.open(tty);
+  destinations.pending(STDERR_FILENO, true);
+  const auto before = destinations.generation(STDOUT_FILENO);
+  destinations.interrupt(STDERR_FILENO);
+  EXPECT_TRUE(destinations.pending(STDOUT_FILENO));
+  EXPECT_FALSE(destinations.row(tty));
+  EXPECT_GT(destinations.generation(STDOUT_FILENO), before);
+  const auto generation = destinations.generation(STDOUT_FILENO);
+  tty.st_mode |= S_IRUSR;
+  destinations.bind(STDOUT_FILENO, tty);
+  EXPECT_EQ(destinations.generation(STDOUT_FILENO), generation);
+  auto next = tty;
+  ++next.st_ino;
+  destinations.bind(STDOUT_FILENO, next);
+  EXPECT_FALSE(destinations.pending(STDOUT_FILENO));
+  EXPECT_TRUE(destinations.pending(STDERR_FILENO));
+}
 TEST(ApprovalIdentity, RequiresCompleteTypedIdentityAndNeverDefaultsApproval) {
   const Json valid = {
       {"codet_session_id", "session"}, {"codet_turn", uint64_t{3}}, {"request_id", "request"}};
@@ -481,7 +611,7 @@ TEST(LinePrompt, BasicEmptyDraftEndsItsRowAndSubmissionExposesDeferredBytes) {
     f.line->flush();
     EXPECT_EQ(f.stream.str(), before);
     for (const std::string &raw : {std::string("a\xe9"), std::string("a\xf0\x9f"),
-                                  std::string("a\xff"), std::string("a\\xE9")}) {
+                                   std::string("a\xff"), std::string("a\\xE9")}) {
       f.stream.str("");
       for (char byte : raw)
         f.line->append(byte);
@@ -506,15 +636,15 @@ TEST(LinePrompt, MultipleMutationsAndOwnershipGapsCannotUseTheBasicAppendShortcu
   EXPECT_THAT(f.stream.str(), Not(HasSubstr("abcyz")));
 }
 TEST(CursesInput, SharedDecoderDistinguishesIncompleteAndMalformedTrailingPrefixes) {
-  for (const std::string &partial : {std::string("\xc2"), std::string("\xe0\xa0"),
-                                    std::string("\xf4\x8f\xbf")}) {
+  for (const std::string &partial :
+       {std::string("\xc2"), std::string("\xe0\xa0"), std::string("\xf4\x8f\xbf")}) {
     const auto token = detail::rendered_token(partial, 0);
     EXPECT_TRUE(token.incomplete);
     EXPECT_FALSE(token.valid);
     EXPECT_EQ(token.bytes, partial.size());
   }
   for (const std::string &malformed : {std::string("\xc0"), std::string("\xe0\x80"),
-                                      std::string("\xf4\x90"), std::string("\xe9x")}) {
+                                       std::string("\xf4\x90"), std::string("\xe9x")}) {
     EXPECT_FALSE(detail::rendered_token(malformed, 0).incomplete);
     detail::CursesInput input;
     for (char byte : malformed)
@@ -1501,6 +1631,14 @@ struct Surface final : detail::CliDiagnosticSurface {
     ++calls;
     if (render)
       render(text);
+  }
+  bool warning_rendered(detail::RenderedTextView text) noexcept override {
+    try {
+      diagnostic_rendered(text);
+      return true; // This test surface owns no history before its callback returns.
+    } catch (...) {
+      return false;
+    }
   }
 };
 struct CliDiagnosticsTest : Test {

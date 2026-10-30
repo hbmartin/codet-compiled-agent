@@ -12,14 +12,7 @@ public:
     diagnostic(text.text);
   }
   // Acceptance is distinct from refreshing an already-retained warning.
-  virtual bool warning_rendered(RenderedTextView text) noexcept {
-    try {
-      diagnostic_rendered(text);
-      return true;
-    } catch (...) {
-      return false;
-    }
-  }
+  virtual bool warning_rendered(RenderedTextView) noexcept = 0;
 };
 
 class CliDiagnostics {

@@ -29,6 +29,18 @@ template <class Report> void secondary_diagnostic(Report report) noexcept {
     return;
   }
 }
+template <class Drain> class WarningDrainScope {
+  const Drain &drain_;
+  const bool &delivered_;
+  bool final_;
+
+public:
+  WarningDrainScope(const Drain &drain, const bool &delivered, bool final) noexcept
+      : drain_(drain), delivered_(delivered), final_(final) {}
+  ~WarningDrainScope() {
+    secondary_diagnostic([&] { drain_(delivered_ || final_); });
+  }
+};
 template <class Retain, class Refresh>
 bool retain_warning(Retain retain, Refresh refresh) noexcept {
   try {
