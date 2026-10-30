@@ -15,13 +15,15 @@ class LinePrompt final : public LineOutputObserver {
   LineOutputObserver *previous_;
   bool owned_ = false, dirty_ = false, visible_ = false, due_ = true;
   bool internal_ = false, explained_ = false, known_ = true;
-  bool echo_update_ = false;
+  bool echo_update_ = false, append_update_ = false;
   bool abandoned_dirty_ = false;
   size_t columns_ = 0, painted_ = 0;
   const size_t test_columns_;
   uint64_t revision_ = 0, request_revision_ = 0;
   bool guidance_due_ = true;
   std::array<char, 1280> row_{};
+  std::array<char, 1280> previous_row_{};
+  size_t previous_bytes_ = 0, committed_ = 0;
   std::array<char, 256> spaces_{};
   struct Internal {
     bool &flag;
@@ -49,6 +51,7 @@ class LinePrompt final : public LineOutputObserver {
     }
     visible_ = false;
     painted_ = 0;
+    previous_bytes_ = 0;
   }
   void abandon_geometry() noexcept {
     if (known_ && dirty_) {
@@ -112,6 +115,20 @@ class LinePrompt final : public LineOutputObserver {
     const auto present = [&](std::initializer_list<std::string_view> parts, bool newline) {
       return keyboard ? output_.echo_attempt(parts, newline) : output_.display(parts, newline);
     };
+    if (!columns_ && append_update_ && visible_ && !input_.stale() &&
+        input_.input().changed_offset() >= committed_) {
+      const auto end = input_.input().committed_end();
+      if (end >= committed_) {
+        const auto text = input_.input().prepared().substr(committed_, end - committed_);
+        if (!text.empty()) {
+          dirty_ = true;
+          visible_ = present({text}, false);
+        }
+        if (visible_)
+          committed_ = end;
+        return;
+      }
+    }
     const size_t width = columns_ ? columns_ : 80;
     auto label = prefix(width);
     size_t bytes = 0, used = label.size();
@@ -125,7 +142,7 @@ class LinePrompt final : public LineOutputObserver {
       ++used;
     }
     if (!input_.stale()) {
-      const auto tail = input_.input().tail(width - used);
+      const auto tail = input_.input().tail(width - used, !columns_);
       if (tail.omitted) {
         append("<");
         ++used;
@@ -136,13 +153,30 @@ class LinePrompt final : public LineOutputObserver {
     const bool was_dirty = dirty_;
     dirty_ = true; // Even failure may have emitted part of the row.
     if (columns_) {
-      visible_ = present({was_dirty ? "\r" : "", std::string_view(spaces_.data(), painted_),
-                          painted_ ? "\r" : "", std::string_view(row_.data(), bytes)},
-                         false);
-      painted_ = used;
+      const bool append = append_update_ && visible_ && bytes >= previous_bytes_ &&
+                          std::memcmp(row_.data(), previous_row_.data(), previous_bytes_) == 0;
+      if (append && bytes == previous_bytes_)
+        return;
+      visible_ = append
+                     ? present({std::string_view(row_.data() + previous_bytes_,
+                                                 bytes - previous_bytes_)}, false)
+                     : present({was_dirty ? "\r" : "", std::string_view(spaces_.data(), painted_),
+                                painted_ ? "\r" : "", std::string_view(row_.data(), bytes)}, false);
+      if (visible_) {
+        painted_ = used;
+        previous_bytes_ = bytes;
+        std::copy_n(row_.data(), bytes, previous_row_.data());
+      } else {
+        previous_bytes_ = 0;
+        painted_ = std::max(painted_, used);
+      }
     } else {
-      visible_ = present({std::string_view(row_.data(), bytes)}, true);
-      dirty_ = !visible_;
+      if (was_dirty)
+        separate();
+      dirty_ = true;
+      visible_ = present({std::string_view(row_.data(), bytes)}, false);
+      if (visible_)
+        committed_ = input_.input().committed_end();
       painted_ = 0;
     }
   }
@@ -245,8 +279,6 @@ public:
       if (!guidance_due_)
         dirty_ = false;
     }
-    if (dirty_ && !columns_)
-      separate();
     paint();
     due_ = false; // Retry only on a real edit, request change or output event.
   }
@@ -254,6 +286,7 @@ public:
     if (!input_.append(byte))
       return;
     Internal echo(echo_update_);
+    Internal append(append_update_);
     due_ = true;
     flush();
   }

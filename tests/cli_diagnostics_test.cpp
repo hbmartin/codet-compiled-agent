@@ -317,11 +317,11 @@ struct LineFixture {
   std::string prompt = "codet> ";
   struct stat tty {};
   std::optional<detail::LinePrompt> line;
-  LineFixture() {
+  explicit LineFixture(size_t columns = 80) {
     tty.st_mode = S_IFCHR;
     tty.st_dev = 1;
     tty.st_rdev = 2;
-    line.emplace(input, output, io, prompt, tty, 80);
+    line.emplace(input, output, io, prompt, tty, columns);
     line->acquire();
   }
   void normal(std::string_view text) {
@@ -370,6 +370,41 @@ TEST(LinePrompt, RestoresTheSafeDraftAndDeletionMatchesSubmittedBytes) {
     f.line->append(byte);
   EXPECT_EQ(last_line(f.stream.str()), "codet> hllo");
   EXPECT_EQ(f.line->take().text, "hllo");
+}
+TEST(LinePrompt, SafeAppendsUseOnlyTheNewPreparedBytes) {
+  for (size_t columns : {size_t{0}, size_t{9}, size_t{80}}) {
+    LineFixture f(columns);
+    for (int i = 0; i != 30; ++i)
+      f.line->append('x');
+    EXPECT_EQ(f.stream.str(), "codet> " + std::string(30, 'x'));
+    const auto bytes = f.stream.str().size();
+    f.line->flush();
+    EXPECT_EQ(f.stream.str().size(), bytes);
+    f.line->erase_character();
+    EXPECT_EQ(f.input.input().raw(), std::string(29, 'x'));
+    if (!columns || columns == 9) {
+      EXPECT_THAT(f.stream.str(), HasSubstr("\ncodet> " + std::string(29, 'x')));
+      const auto wire = f.stream.str();
+      EXPECT_EQ(std::count(wire.begin(), wire.end(), '\r'), 0);
+    }
+  }
+}
+TEST(LinePrompt, UnknownWidthHoldsIncompleteUtf8AndKeepsSnapshotsBounded) {
+  LineFixture f(0);
+  f.line->append(static_cast<char>(0xe9));
+  EXPECT_EQ(f.stream.str(), "codet> ");
+  f.line->append(static_cast<char>(0x9b));
+  EXPECT_EQ(f.stream.str(), "codet> ");
+  f.line->append(static_cast<char>(0xaa));
+  EXPECT_EQ(f.stream.str(), "codet> " + std::string(f.input.input().prepared()));
+  for (int i = 0; i != 200; ++i)
+    f.line->append('x');
+  auto wire = f.stream.str();
+  EXPECT_EQ(std::count(wire.begin(), wire.end(), '\n'), 0);
+  const auto before = wire.size();
+  f.line->erase_character();
+  EXPECT_LE(f.stream.str().size() - before, 82u);
+  EXPECT_THAT(f.stream.str().substr(before), StartsWith("\ncodet> <"));
 }
 TEST(LinePrompt, CachedTokensReplaceRawEchoAndOneColumnBackspace) {
   for (const std::string &text : {std::string("e\xcc\x81"), std::string("雪"),
@@ -492,7 +527,7 @@ TEST(LinePrompt, DraftTrafficIsBoundedAndUnknownGeometryUsesSnapshots) {
     f.line->acquire();
     f.line->flush();
     EXPECT_EQ(f.stream.str().find('\r'), std::string::npos);
-    EXPECT_THAT(f.stream.str(), ::testing::EndsWith("\n"));
+    EXPECT_NE(f.stream.str().back(), '\n');
     EXPECT_LE(f.stream.str().size(), 81u);
   }
 }
