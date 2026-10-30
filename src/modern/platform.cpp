@@ -102,9 +102,9 @@ int curl_progress(void *data, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
 } // namespace
 namespace {
 struct TextPoint {
-  uint32_t value;
-  size_t consumed;
-  bool valid;
+  uint32_t value = 0;
+  size_t consumed = 0;
+  bool valid = false;
   bool incomplete = false;
 };
 TextPoint decode_text_point(std::string_view text, size_t offset) noexcept {

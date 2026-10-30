@@ -40,9 +40,9 @@ RenderProgress terminal_text_into(std::string_view, char *, size_t,
                                   RenderMode = RenderMode::prose) noexcept;
 RenderedText render_terminal_text(std::string_view, size_t, RenderMode = RenderMode::prose);
 struct RenderedToken {
-  size_t bytes;
-  uint32_t point;
-  bool valid, escape;
+  size_t bytes = 0;
+  uint32_t point = 0;
+  bool valid = false, escape = false;
   bool incomplete = false;
 };
 RenderedToken rendered_token(std::string_view, size_t) noexcept;
