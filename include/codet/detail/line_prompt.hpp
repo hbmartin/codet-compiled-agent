@@ -13,7 +13,7 @@ class LinePrompt final : public LineOutputObserver {
   struct stat terminal_ {};
   LineOutputObserver *previous_;
   bool owned_ = false, dirty_ = false, visible_ = false, due_ = true;
-  bool internal_ = false, explained_ = false, known_ = true;
+  bool internal_ = false, explained_ = false;
   bool echo_update_ = false, append_update_ = false;
   bool inspection_due_ = false;
   size_t columns_ = 0, painted_ = 0;
@@ -67,12 +67,11 @@ class LinePrompt final : public LineOutputObserver {
     previous_bytes_ = 0;
   }
   void destination(const struct stat &value) noexcept {
-    if (!known_ || !same_destination(terminal_, value)) {
+    if (!same_destination(terminal_, value)) {
       bind_errors();
       boundaries().bind(STDOUT_FILENO, value);
       abandon_geometry();
       terminal_ = value;
-      known_ = true;
       dirty_ = boundaries().row(value);
       explained_ = false;
       guidance_due_ = true;
@@ -237,7 +236,7 @@ public:
     boundaries().bind(descriptor, value);
     inspection_due_ = true; // Refresh stdout once at the end of the output batch, not per record.
     const bool separator = boundaries().separate(value);
-    if (known_ && S_ISCHR(value.st_mode) && same_destination(value, terminal_)) {
+    if (S_ISCHR(value.st_mode) && same_destination(value, terminal_)) {
       dirty_ = visible_ = false;
       painted_ = previous_bytes_ = 0;
       due_ = true;

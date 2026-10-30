@@ -1,5 +1,6 @@
 // Identical host-only harness for fetched main and this follow-up. No production counters.
 #include "codet/detail/line_prompt.hpp"
+#include "codet/interaction.hpp"
 #include "descriptor_bench_metrics.hpp"
 #ifdef __APPLE__
 #include <util.h>
@@ -58,6 +59,15 @@ auto before(Prompt &value, const struct stat &tty, codet::detail::CliOutput &out
 template <class Prompt>
 void before(Prompt &value, const struct stat &tty, codet::detail::CliOutput &, long) {
   value.before_output(tty);
+}
+template <class Interaction, class Consume>
+auto drain_new(Interaction &value, Consume consume,
+               int) -> decltype(value.drain_warnings(consume, false), void()) {
+  value.drain_warnings(consume, false);
+}
+template <class Interaction, class Consume>
+void drain_new(Interaction &value, Consume consume, long) {
+  value.drain_warnings(consume);
 }
 } // namespace
 void *operator new(size_t n) {
@@ -124,7 +134,11 @@ int main(int argc, char **argv) {
     return 2;
   (void)std::setlocale(LC_ALL, "C");
   const std::string mode = argv[1];
-  const bool native = mode == "native-busy" || mode == "native-editing";
+  const bool native =
+      mode == "native-busy" || mode == "native-editing" || mode == "native-boundary";
+  const bool warnings =
+      mode == "warning-empty" || mode == "warning-new" || mode == "warning-failed-idle";
+  const bool deferred = mode == "deferred-tail";
   const bool editing = mode == "editing" || mode == "editing-basic" ||
                        mode == "editing-patterned" || mode == "native-editing";
   int child = -1;
@@ -153,6 +167,8 @@ int main(int argc, char **argv) {
     if (::dup2(slave, STDOUT_FILENO) < 0 || ::fstat(STDOUT_FILENO, &tty) < 0)
       return 3;
     ::close(slave);
+    if (mode == "native-boundary" && ::dup2(STDOUT_FILENO, STDERR_FILENO) < 0)
+      return 3;
   }
   Cancellation cancel;
   detail::IoContext io(cancel);
@@ -161,23 +177,48 @@ int main(int argc, char **argv) {
   detail::CliOutput injected(stream), terminal(io);
   auto &output = native ? terminal : injected;
   detail::RequestInputController input;
-  if (!editing && mode != "allocation-positive" && mode != "geometry-positive")
+  if (!editing && !deferred && !warnings && mode != "allocation-positive" &&
+      mode != "geometry-positive")
     for (size_t i = 0; i < (mode == "unchanged" ? 65536u : 20480u); ++i)
       input.append('x');
   const std::string label = "codet> ";
-  auto line = prompt<detail::LinePrompt>(0, mode == "editing-basic" ? 0u : 80u, input, output, io,
-                                         label, tty);
+  auto line = prompt<detail::LinePrompt>(0, mode == "editing-basic" || deferred ? 0u : 80u, input,
+                                         output, io, label, tty);
   line->acquire();
   line->flush();
   const auto initial = input.input().rebuilt_bytes();
-  const size_t count = editing ? 20480 : mode == "unchanged" ? 10000 : native ? 100 : 1000;
+  Interaction interaction;
+  size_t warning_attempts = 0;
+  const auto consume = [&](std::string_view) {
+    ++warning_attempts;
+    return mode != "warning-failed-idle";
+  };
+  if (mode == "warning-failed-idle")
+    interaction.warn(Interaction::Warning::exec_stop);
+  const size_t count = warnings              ? 100000
+                       : editing             ? 20480
+                       : mode == "unchanged" ? 10000
+                       : native              ? 100
+                                             : 1000;
   allocations = allocated = operations = bytes = geometry = 0;
   test::descriptor_bench::stats = test::descriptor_bench::flags = test::descriptor_bench::bounds =
       0;
   observing = test::descriptor_bench::observing = true;
   const auto start = std::chrono::steady_clock::now();
   for (size_t i = 0; i < count; ++i) {
-    if (mode == "allocation-positive") {
+    if (warnings) {
+      if (mode == "warning-new")
+        interaction.warn(Interaction::Warning::exec_stop);
+      drain_new(interaction, consume, 0);
+    } else if (deferred) {
+      line->append('a');
+      line->append(static_cast<char>(0xe9));
+      if (line->take().text != std::string("a\xe9"))
+        return 6;
+    } else if (mode == "native-boundary") {
+      (void)detail::write_diagnostic(std::cerr, {"progress"});
+      line->append('x');
+    } else if (mode == "allocation-positive") {
       auto *p = ::operator new(32);
       ::operator delete(p);
     } else if (mode == "geometry-positive") {
@@ -200,6 +241,8 @@ int main(int argc, char **argv) {
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
   observing = test::descriptor_bench::observing = false;
   if (native) {
+    if (mode == "native-boundary")
+      ::close(STDERR_FILENO);
     ::close(STDOUT_FILENO);
     int status;
     if (::waitpid(child, &status, 0) < 0 || status)
@@ -217,6 +260,7 @@ int main(int argc, char **argv) {
                   {"fcntl", test::descriptor_bench::flags.load()},
                   {"fpathconf", test::descriptor_bench::bounds.load()},
                   {"prepared_input_bytes", input.input().rebuilt_bytes() - initial},
+                  {"warning_attempts", warning_attempts},
                   {"iterations", count}})
                 .dump()
          << '\n';
