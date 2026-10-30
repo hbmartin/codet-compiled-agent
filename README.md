@@ -141,7 +141,7 @@ Active line input uses the cached safe presentation for echo, deletion and repai
 are never replayed raw. The editable tail reserves the terminal's final column and uses at most
 256 columns, with `<` marking omitted input. Full submitted input and pending approval documents
 remain intact. Short rows use compact input/approval/question prefixes; complete request guidance
-remains outside the editable row. Unknown widths and terminals below ten columns use bounded,
+remains outside the editable row. Terminals with unknown widths or fewer than ten columns use
 safe append echo on the current line. Incomplete UTF-8 is held until resolved; deletion or a
 presentation change uses a bounded labelled snapshot instead of guessing wrapped-line cursor
 movement. Known-width rows also append only new prepared text when their displayed prefix stays

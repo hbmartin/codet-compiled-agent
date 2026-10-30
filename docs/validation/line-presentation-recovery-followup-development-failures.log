@@ -1,0 +1,157 @@
+FILE input-pty.log
+test_terminal_input_errors_retry_and_permanent_failures_are_not_eof (__main__.CliTests) ... 
+======================================================================
+FAIL: test_terminal_input_errors_retry_and_permanent_failures_are_not_eof (__main__.CliTests) (active=True, stage='poll', error='EBADF')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Volumes/Pro2T/codet-compiled-agent/tests/cli_integration.py", line 1544, in test_terminal_input_errors_retry_and_permanent_failures_are_not_eof
+    release.set();collect(lambda process=process:process.poll() is not None)
+  File "/Volumes/Pro2T/codet-compiled-agent/tests/pty_process.py", line 29, in collect
+    test.assertTrue(predicate(), bytes(received))
+AssertionError: False is not true : b'Permissions: default; no OS shell sandbox\r\nError: Cannot wait for terminal input: Bad file descriptor\r\ncodet> [default] '
+
+======================================================================
+FAIL: test_terminal_input_errors_retry_and_permanent_failures_are_not_eof (__main__.CliTests) (active=True, stage='select', error='EBADF')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Volumes/Pro2T/codet-compiled-agent/tests/cli_integration.py", line 1544, in test_terminal_input_errors_retry_and_permanent_failures_are_not_eof
+    release.set();collect(lambda process=process:process.poll() is not None)
+  File "/Volumes/Pro2T/codet-compiled-agent/tests/pty_process.py", line 29, in collect
+    test.assertTrue(predicate(), bytes(received))
+AssertionError: False is not true : b'Permissions: default; no OS shell sandbox\r\nError: Cannot wait for terminal input: Bad file descriptor\r\ncodet> [default] '
+
+======================================================================
+FAIL: test_terminal_input_errors_retry_and_permanent_failures_are_not_eof (__main__.CliTests) (active=True, stage='read', error='EBADF')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Volumes/Pro2T/codet-compiled-agent/tests/cli_integration.py", line 1544, in test_terminal_input_errors_retry_and_permanent_failures_are_not_eof
+    release.set();collect(lambda process=process:process.poll() is not None)
+  File "/Volumes/Pro2T/codet-compiled-agent/tests/pty_process.py", line 29, in collect
+    test.assertTrue(predicate(), bytes(received))
+AssertionError: False is not true : b'xPermissions: default; no OS shell sandbox\r\nError: Cannot read terminal input: Bad file descriptor\r\ncodet> [default] x'
+
+----------------------------------------------------------------------
+Ran 1 test in 33.556s
+
+FAILED (failures=3)
+
+
+FILE lint-first.log
+build/lint-venv/bin/python scripts/lint.py all
+B023 Function definition does not bind loop variable `received`
+    --> tests/cli_integration.py:1546:66
+     |
+1544 | …                     release.set()
+1545 | …                     if active:
+1546 | …                         collect(lambda:b'Cannot ' in received and b'codet>' in received)
+     |                                                        ^^^^^^^^
+1547 | …                         os.write(master,b'\x7f/quit\n' if stage=='read' else b'/quit\n')
+1548 | …                         collect(lambda process=process:process.poll() is not None)
+     |
+
+B023 Function definition does not bind loop variable `received`
+    --> tests/cli_integration.py:1546:92
+     |
+1544 | …                     release.set()
+1545 | …                     if active:
+1546 | …                         collect(lambda:b'Cannot ' in received and b'codet>' in received)
+     |                                                                                  ^^^^^^^^
+1547 | …                         os.write(master,b'\x7f/quit\n' if stage=='read' else b'/quit\n')
+1548 | …                         collect(lambda process=process:process.poll() is not None)
+     |
+
+B023 Function definition does not bind loop variable `received`
+    --> tests/cli_integration.py:1557:80
+     |
+1555 | …                     if active:
+1556 | …                         self.assertTrue(ready.wait(10),received)
+1557 | …                         os.write(master,b'he');collect(lambda:b'he' in received)
+     |                                                                          ^^^^^^^^
+1558 | …                         release.set();collect(lambda:b'fixture done' in received)
+1559 | …                         os.write(master,b'llo\n')
+     |
+
+B023 Function definition does not bind loop variable `received`
+    --> tests/cli_integration.py:1558:81
+     |
+1556 | …                     self.assertTrue(ready.wait(10),received)
+1557 | …                     os.write(master,b'he');collect(lambda:b'he' in received)
+1558 | …                     release.set();collect(lambda:b'fixture done' in received)
+     |                                                                       ^^^^^^^^
+1559 | …                     os.write(master,b'llo\n')
+1560 | …                     collect(lambda:len(self.server.requests)==2 and received.count(b'fixture done')>=2)
+     |
+
+B023 Function definition does not bind loop variable `received`
+    --> tests/cli_integration.py:1560:81
+     |
+1558 | …                         release.set();collect(lambda:b'fixture done' in received)
+1559 | …                         os.write(master,b'llo\n')
+1560 | …                         collect(lambda:len(self.server.requests)==2 and received.count(b'fixture done')>=2)
+     |                                                                           ^^^^^^^^
+1561 | …                     else:
+1562 | …                         collect(lambda:b'codet>' in received)
+     |
+
+B023 Function definition does not bind loop variable `received`
+    --> tests/cli_integration.py:1562:61
+     |
+1560 | …                         collect(lambda:len(self.server.requests)==2 and received.count(b'fixture done')>=2)
+1561 | …                     else:
+1562 | …                         collect(lambda:b'codet>' in received)
+     |                                                       ^^^^^^^^
+1563 | …                         os.write(master,b'hello\n');collect(lambda:b'fixture done' in received)
+1564 | …                     self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'hello')
+     |
+
+B023 Function definition does not bind loop variable `received`
+    --> tests/cli_integration.py:1563:95
+     |
+1561 | …                     else:
+1562 | …                         collect(lambda:b'codet>' in received)
+1563 | …                         os.write(master,b'hello\n');collect(lambda:b'fixture done' in received)
+     |                                                                                         ^^^^^^^^
+1564 | …                     self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'hello')
+1565 | …                     os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+     |
+
+Found 7 errors.
+No findings to report. Good job! (3 suppressed)
+make: *** [check-lint] Error 1
+
+
+Early Ubuntu static findings (resolved, no suppressions):
+[
+  {
+    "id": "uninitMemberVarNoCtor",
+    "severity": "warning",
+    "msg": "Member variable 'Inspection::previous' has no initializer.",
+    "verbose": "Member variable 'Inspection::previous' has no initializer. Member variables of native types, pointers, or references are left uninitialized when the class is instantiated. That may cause bugs or undefined behavior.",
+    "cwe": "398",
+    "hash": "11362832305046469919",
+    "file0": "/home/runner/work/codet-compiled-agent/codet-compiled-agent/src/modern/cli.cpp",
+    "locations": [
+      {
+        "file": "/home/runner/work/codet-compiled-agent/codet-compiled-agent/include/codet/detail/line_prompt.hpp",
+        "line": "114",
+        "column": "28"
+      }
+    ]
+  },
+  {
+    "id": "throwInNoexceptFunction",
+    "severity": "error",
+    "msg": "Unhandled exception thrown in function declared not to throw exceptions.",
+    "verbose": "Unhandled exception thrown in function declared not to throw exceptions.",
+    "cwe": "398",
+    "hash": "9354720058213964590",
+    "file0": "/home/runner/work/codet-compiled-agent/codet-compiled-agent/src/modern/cli.cpp",
+    "locations": [
+      {
+        "file": "/home/runner/work/codet-compiled-agent/codet-compiled-agent/src/modern/cli.cpp",
+        "line": "533",
+        "column": "11"
+      }
+    ]
+  }
+]
