@@ -86,6 +86,29 @@ TEST(InteractionWarnings, RetainedWarningsAreNotReadmittedAfterRefreshThrows) {
   interaction.drain_warnings(consume);
   EXPECT_EQ(history.lines().size(), 2u); // A genuinely new occurrence can be admitted.
 }
+TEST(DiagnosticWriter, NativeAliasesSeparatePartialRecordsWithoutDuplicatingTheirBoundary) {
+  int descriptors[2];
+  ASSERT_EQ(::pipe(descriptors), 0);
+  const auto child = test::start_helper(
+      {"--codet-alias-diagnostic-helper", std::to_string(descriptors[1])}, {descriptors[0]});
+  ::close(descriptors[1]);
+  ASSERT_GT(child, 0);
+  int status = 0;
+  const bool finished = test::wait_helper(child, status);
+  std::string bytes;
+  char buffer[128];
+  for (;;) {
+    const auto count = ::read(descriptors[0], buffer, sizeof(buffer));
+    if (count <= 0)
+      break;
+    bytes.append(buffer, static_cast<size_t>(count));
+  }
+  ::close(descriptors[0]);
+  ASSERT_TRUE(finished);
+  ASSERT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
+  EXPECT_EQ(bytes, "wa\nnext\nlast\n");
+}
 TEST(InteractionWarnings, FailedAdmissionRemainsPendingWithoutReplacingTheOperationException) {
   Interaction interaction;
   interaction.warn(Interaction::Warning::event_render);
@@ -556,8 +579,9 @@ TEST(LinePrompt, FailedRowsAndGuidanceUseTheSharedRecoveryNewline) {
   struct Partial : std::stringbuf {
     bool fail = false;
     size_t keep = 0;
+    int skip = 0;
     std::streamsize xsputn(const char *text, std::streamsize count) override {
-      if (!fail)
+      if (!fail || skip-- > 0)
         return std::stringbuf::xsputn(text, count);
       fail = false;
       const auto size = std::min(count, static_cast<std::streamsize>(keep));
@@ -585,6 +609,29 @@ TEST(LinePrompt, FailedRowsAndGuidanceUseTheSharedRecoveryNewline) {
     line.append('y');
     EXPECT_EQ(last_line(buffer.str()), "q> y") << keep;
   }
+  for (int skip = 0; skip != 4; ++skip)
+    for (size_t keep = 0; keep != 26; ++keep) {
+      Partial buffer;
+      std::ostream stream(&buffer);
+      detail::CliOutput output(stream);
+      Cancellation cancel;
+      detail::IoContext io(cancel);
+      detail::RequestInputController input;
+      struct stat tty {};
+      tty.st_mode = S_IFCHR;
+      const std::string prompt = "codet> ";
+      detail::LinePrompt line(input, output, io, prompt, tty, 80);
+      line.acquire();
+      for (const auto byte : std::string("abcdefghijklmnop"))
+        line.append(byte);
+      buffer.fail = true;
+      buffer.keep = keep;
+      buffer.skip = skip;
+      line.erase_character();
+      line.erase_character();
+      EXPECT_EQ(last_line(buffer.str()), "codet> abcdefghijklmn") << skip << ":" << keep;
+      EXPECT_EQ(input.take().text, "abcdefghijklmn");
+    }
 }
 TEST(LinePrompt, ErasingTheFinalCharacterRemovesTheActiveOrdinaryPrompt) {
   LineFixture f;

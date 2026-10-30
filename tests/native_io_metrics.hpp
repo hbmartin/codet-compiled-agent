@@ -13,6 +13,7 @@ struct NativeIoMetrics {
   unsigned writes = 0, vectors = 0, inspections = 0;
   unsigned bound_queries = 0;
   bool bound_indeterminate = false;
+  bool vector_partial = false, vector_failure = false;
 };
 extern thread_local NativeIoMetrics native_io_metrics;
 } // namespace codet::test

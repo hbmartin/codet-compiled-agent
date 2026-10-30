@@ -142,9 +142,17 @@ are never replayed raw. The editable tail reserves the terminal's final column a
 256 columns, with `<` marking omitted input. Full submitted input and pending approval documents
 remain intact. Short rows use compact input/approval/question prefixes; complete request guidance
 remains outside the editable row. Unknown widths and terminals below ten columns use bounded,
-labelled snapshots on new lines instead of cursor erasure. Resizing or replacing stdout abandons
+safe append echo on the current line. Incomplete UTF-8 is held until resolved; deletion or a
+presentation change uses a bounded labelled snapshot instead of guessing wrapped-line cursor
+movement. Known-width rows also append only new prepared text when their displayed prefix stays
+valid; moving the viewport still requires a bounded repaint. Resizing or replacing stdout abandons
 the old row geometry. Prompts follow stdout's destination; a separate redirected stderr does not
-disturb that row. Deleting the final ordinary draft character removes its active prompt, and an
+disturb that row. Guidance and unfinished-line boundaries follow the destinations currently
+reachable through stdout/stderr, including aliased channels. Transient input resource failures
+retry with a cancellation-aware backoff of at most 25 ms; permanent input errors are reported
+separately from EOF. Fixed worker warnings enter history once per coalesced occurrence; a failed
+refresh does not reinsert them, and idle polling does not retry their delivery.
+Deleting the final ordinary draft character removes its active prompt, and an
 exactly empty ordinary Enter queues no message. Empty request answers retain their existing meaning.
 Ordinary curses drawing failures preserve the worker and input and retry on the next UI event;
 approval drawing failures still cancel safely. UI history retains request/context excerpts and associated decisions within

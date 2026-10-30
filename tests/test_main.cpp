@@ -100,6 +100,21 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc == 3 && std::string(argv[1]) == "--codet-alias-diagnostic-helper") {
+      const int descriptor = std::stoi(argv[2]);
+      if (::dup2(descriptor, STDOUT_FILENO) < 0 || ::dup2(descriptor, STDERR_FILENO) < 0)
+        return 2;
+      ::close(descriptor);
+      codet::Cancellation cancel;
+      codet::detail::IoContext io(cancel);
+      codet::detail::DiagnosticWriter errors(std::cerr, &io), output(std::cout, &io);
+      auto &metrics = codet::test::native_io_metrics;
+      metrics.interrupt_fd = STDERR_FILENO;
+      metrics.vector_partial = true;
+      if (errors.write({"warning"}))
+        return 3;
+      return output.write({"next"}) && errors.write({"last"}) ? 0 : 4;
+    }
     if (argc > 4 && std::string(argv[1]) == "--codet-input-recovery-helper") {
       const std::string error(argv[3]);
       const int number = error == "EAGAIN"   ? EAGAIN
