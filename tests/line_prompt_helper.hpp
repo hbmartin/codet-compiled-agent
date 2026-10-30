@@ -30,9 +30,11 @@ inline int line_viewport_helper(int release, int notify, int replacement) {
   if (replacement >= 0) {
     // A real edit/repaint event, not an unchanged flush, establishes the new geometry.
     line.append('z');
-    line.erase_character();
     if (::write(notify, "p", 1) != 1 || !read_token(release, command))
       return 9;
+    line.erase_character();
+    if (::write(notify, "e", 1) != 1 || !read_token(release, command))
+      return 10;
   }
   const DiagnosticSink broken = [](const auto &) { throw Error("configured sink failed"); };
   const std::string text = "context fallback";

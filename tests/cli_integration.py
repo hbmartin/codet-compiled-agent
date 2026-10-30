@@ -1392,8 +1392,36 @@ class CliTests(unittest.TestCase):
                 if process.poll() is None:process.kill();process.wait(timeout=5)
                 resources.close()
 
+    def test_native_line_boundaries_recover_before_append_and_expose_submission_tail(self):
+        import fcntl
+        import struct
+        import termios
+        for columns in (0,80):
+            for mode in ('empty','context','standalone','immediate','notice','inspection'):
+                with self.subTest(columns=columns,mode=mode),PtyProcess() as resources:
+                    master,slave=resources.openpty()
+                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,columns,0,0))
+                    helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+                    process=resources.start([helper,'--codet-line-boundary-helper',mode],stdin=slave,
+                        stdout=slave,stderr=slave,env=dict(self.env,LC_ALL='C'))
+                    received=bytearray()
+                    collect_pty(self,master,received,lambda process=process:process.poll() is not None)
+                    while select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+                    self.assertEqual(process.returncode,0,received)
+                    rows=line_cells(received)
+                    if mode=='empty':
+                        self.assertIn(r'codet> a\xE9',rows)
+                        if not columns:self.assertIn('codet> x',rows)
+                    elif mode=='inspection':
+                        self.assertEqual(bytes(received).count(b'Unfinished input must be discarded.'),1,received)
+                    else:
+                        self.assertIn('codet> abcd',rows)
+                        self.assertNotIn('d',rows)
+                        self.assertIn('Tool result receipt candidate (publication unconfirmed): /complete/path' if mode=='notice' else 'wa',rows)
+
     def test_prepared_line_viewport_and_stdout_binding(self):
         import fcntl
+        import re
         import struct
         import termios
         for columns in (0,9,20,80,400):
@@ -1407,6 +1435,8 @@ class CliTests(unittest.TestCase):
                         if route=='separate-input':
                             _,source=resources.openpty()
                         second,second_slave=resources.openpty() if route=='replace-output' else (-1,-1)
+                        if second_slave>=0:
+                            fcntl.ioctl(second_slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,40,0,0))
                         log,log_write=resources.pipe() if route=='stderr-log' else (-1,slave)
                         helper=str(pathlib.Path(BIN).with_name('codet_tests'))
                         passed=(arm,notify)+((second_slave,) if second_slave>=0 else ())
@@ -1426,8 +1456,28 @@ class CliTests(unittest.TestCase):
                         if route=='replace-output':
                             collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]));self.assertEqual(os.read(notice,1),b'p')
                             changed=bytearray()
-                            collect_pty(self,second,changed,lambda changed=changed:br'\xFF' in changed)
+                            collect_pty(self,second,changed,lambda changed=changed:changed.endswith(br'\xFFz'))
+                            # The new terminal has 39 usable columns, independent of the old PTY.
+                            prepared=br'e\xCC\x81\xE9\x9B\xAA\xC2\x9B\xE2\x80\xAE\x5Cx41\xFF'
+                            def expected_row(text):
+                                tokens=re.findall(rb'\\x[0-9A-F]{2}|.',text)
+                                kept=[];used=0
+                                for token in reversed(tokens):
+                                    if used+len(token)>31:break
+                                    kept.insert(0,token);used+=len(token)
+                                return 'codet> <'+b''.join(kept).decode()
+                            self.assertEqual(line_cells(changed)[-1],expected_row(prepared+b'z'))
+                            self.assertEqual(bytes(changed).count(b'codet>'),1,changed)
+                            self.assertEqual(bytes(changed),b'\r\n'+expected_row(prepared+b'z').encode())
                             self.assertNotIn(b'context fallback',received)
+                            os.write(trigger,b'g')
+                            collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]));self.assertEqual(os.read(notice,1),b'e')
+                            deleted=bytearray()
+                            collect_pty(self,second,deleted,lambda deleted=deleted:br'\xFF' in deleted)
+                            self.assertTrue(deleted.startswith(b'\r'),deleted)
+                            self.assertEqual(line_cells(deleted)[-1],expected_row(prepared))
+                            self.assertEqual(bytes(deleted).count(b'codet>'),1,deleted)
+                            self.assertLessEqual(max(map(len,line_cells(deleted))),39)
                             os.write(trigger,b'g')
                         collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]));self.assertEqual(os.read(notice,1),b'd')
                         if route=='stderr-log':
@@ -1438,7 +1488,6 @@ class CliTests(unittest.TestCase):
                         elif route=='replace-output':
                             collect(lambda received=received:b'context fallback' in received)
                             self.assertIn('context fallback',line_cells(received))
-                            self.assertGreaterEqual(bytes(changed).count(b'codet>'),1,changed)
                         else:
                             collect(lambda received=received:b'context fallback' in received)
                             rows=line_cells(received)

@@ -20,6 +20,9 @@ public:
   virtual ~LineOutputObserver() = default;
   // Return true to request a separator on this destination, shared with failed-record recovery.
   virtual bool before_output(int descriptor, const struct stat &) = 0;
+  virtual bool presenting() const noexcept {
+    return false;
+  }
 };
 // Internal trust boundary: the referenced text has already been rendered for humans.
 struct RenderedTextView {
