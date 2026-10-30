@@ -1,18 +1,28 @@
 #pragma once
 #include "codet/detail/cli_output.hpp"
 #include "codet/detail/request_input_controller.hpp"
+#include <sys/ioctl.h>
 
 namespace codet::detail {
-// Main-thread presentation owner. Input intent remains in RequestInputController.
+// Main-thread presentation owner. Raw input never crosses this output boundary.
 class LinePrompt final : public LineOutputObserver {
   RequestInputController &input_;
   CliOutput &output_;
   IoContext &io_;
   const std::string &prompt_;
   struct stat terminal_ {};
+  struct stat abandoned_ {};
   LineOutputObserver *previous_;
   bool owned_ = false, dirty_ = false, visible_ = false, due_ = true;
-  bool internal_ = false, explained_ = false;
+  bool internal_ = false, explained_ = false, known_ = true;
+  bool echo_update_ = false;
+  bool abandoned_dirty_ = false;
+  size_t columns_ = 0, painted_ = 0;
+  const size_t test_columns_;
+  uint64_t revision_ = 0, request_revision_ = 0;
+  bool guidance_due_ = true;
+  std::array<char, 1280> row_{};
+  std::array<char, 256> spaces_{};
   struct Internal {
     bool &flag;
     bool previous;
@@ -23,6 +33,10 @@ class LinePrompt final : public LineOutputObserver {
       flag = previous;
     }
   };
+  static bool same(const struct stat &a, const struct stat &b) noexcept {
+    return a.st_dev == b.st_dev && a.st_ino == b.st_ino &&
+           (a.st_mode & S_IFMT) == (b.st_mode & S_IFMT) && a.st_rdev == b.st_rdev;
+  }
   bool eligible() const noexcept {
     return owned_ &&
            (input_.stale() || input_.kind() != RequestKind::message || !input_.input().empty());
@@ -34,13 +48,112 @@ class LinePrompt final : public LineOutputObserver {
       dirty_ = false;
     }
     visible_ = false;
+    painted_ = 0;
+  }
+  void abandon_geometry() noexcept {
+    if (known_ && dirty_) {
+      abandoned_ = terminal_;
+      abandoned_dirty_ = true;
+    }
+    dirty_ = visible_ = false;
+    painted_ = columns_ = 0;
+  }
+  void destination(const struct stat &value) noexcept {
+    if (!known_ || !same(terminal_, value)) {
+      const bool resumed = abandoned_dirty_ && same(abandoned_, value);
+      const bool retained = known_ && dirty_;
+      abandon_geometry();
+      if (resumed && !retained)
+        abandoned_dirty_ = false;
+      terminal_ = value;
+      known_ = true;
+      dirty_ = resumed;
+      visible_ = explained_ = false;
+      painted_ = columns_ = 0;
+      due_ = true;
+    }
+  }
+  void geometry() {
+    size_t columns = test_columns_;
+    const int descriptor = output_.presentation_descriptor();
+    if (descriptor >= 0) {
+      struct stat value {};
+      if (::fstat(descriptor, &value) == 0) {
+        destination(value);
+        struct winsize size {};
+        columns =
+            S_ISCHR(value.st_mode) && ::ioctl(descriptor, TIOCGWINSZ, &size) == 0 ? size.ws_col : 0;
+      } else {
+        abandon_geometry();
+        known_ = false;
+        columns = 0;
+      }
+    }
+    columns = columns >= 10 ? std::min(columns - 1, size_t{256}) : 0;
+    if (columns_ != columns) {
+      // Never erase using geometry established before a resize.
+      separate();
+      columns_ = columns;
+    }
+  }
+  std::string_view prefix(size_t width) const noexcept {
+    if (input_.stale())
+      return RequestInput::discard_prompt;
+    const auto full =
+        input_.kind() == RequestKind::message ? std::string_view(prompt_) : input_.guidance();
+    if (full.size() + 8 <= width)
+      return full;
+    return input_.kind() == RequestKind::message    ? "in> "
+           : input_.kind() == RequestKind::approval ? "a> "
+                                                    : "q> ";
+  }
+  void paint() {
+    const bool keyboard = echo_update_ && (visible_ || dirty_);
+    const auto present = [&](std::initializer_list<std::string_view> parts, bool newline) {
+      return keyboard ? output_.echo_attempt(parts, newline) : output_.display(parts, newline);
+    };
+    const size_t width = columns_ ? columns_ : 80;
+    auto label = prefix(width);
+    size_t bytes = 0, used = label.size();
+    const auto append = [&](std::string_view text) {
+      std::memcpy(row_.data() + bytes, text.data(), text.size());
+      bytes += text.size();
+    };
+    append(label);
+    if (!label.empty() && label.back() != ' ') {
+      append(" ");
+      ++used;
+    }
+    if (!input_.stale()) {
+      const auto tail = input_.input().tail(width - used);
+      if (tail.omitted) {
+        append("<");
+        ++used;
+      }
+      append(tail.text);
+      used += tail.columns;
+    }
+    const bool was_dirty = dirty_;
+    dirty_ = true; // Even failure may have emitted part of the row.
+    if (columns_) {
+      visible_ = present({was_dirty ? "\r" : "", std::string_view(spaces_.data(), painted_),
+                          painted_ ? "\r" : "", std::string_view(row_.data(), bytes)},
+                         false);
+      painted_ = used;
+    } else {
+      visible_ = present({std::string_view(row_.data(), bytes)}, true);
+      dirty_ = !visible_;
+      painted_ = 0;
+    }
   }
 
 public:
+  // A fixed geometry is useful for injected streams; native stdout is always inspected afresh.
   LinePrompt(RequestInputController &input, CliOutput &output, IoContext &io,
-             const std::string &prompt, const struct stat &terminal) noexcept
+             const std::string &prompt, const struct stat &terminal, size_t columns = 0) noexcept
       : input_(input), output_(output), io_(io), prompt_(prompt), terminal_(terminal),
-        previous_(io.line_output) {
+        previous_(io.line_output), test_columns_(columns) {
+    spaces_.fill(' ');
     io_.line_output = this;
   }
   ~LinePrompt() override {
@@ -48,12 +161,33 @@ public:
   }
   LinePrompt(const LinePrompt &) = delete;
   LinePrompt &operator=(const LinePrompt &) = delete;
-  void before_output(const struct stat &destination) override {
-    if (internal_ || !S_ISCHR(destination.st_mode) || destination.st_dev != terminal_.st_dev ||
-        destination.st_rdev != terminal_.st_rdev)
-      return;
-    separate();
+  bool before_output(int descriptor, const struct stat &value) override {
+    if (internal_)
+      return false;
+    if (descriptor == STDOUT_FILENO)
+      destination(value);
+    else if (const auto prompt = output_.presentation_descriptor(); prompt >= 0) {
+      struct stat current {};
+      if (::fstat(prompt, &current) == 0)
+        destination(current);
+      else {
+        abandon_geometry();
+        known_ = false;
+      }
+    }
+    // Retain only a boundary for the last abandoned row, never its cursor geometry.
+    // A stderr still targeting that terminal must not invalidate the new stdout row.
+    if (abandoned_dirty_ && same(value, abandoned_)) {
+      abandoned_dirty_ = false;
+      return true;
+    }
+    if (!known_ || !S_ISCHR(value.st_mode) || !same(value, terminal_))
+      return false;
+    const bool separator = dirty_;
+    dirty_ = visible_ = false;
+    painted_ = 0;
     due_ = true;
+    return separator;
   }
   void acquire() noexcept {
     owned_ = true;
@@ -61,68 +195,87 @@ public:
   }
   void editor() noexcept {
     owned_ = dirty_ = visible_ = false;
+    painted_ = 0;
     due_ = true;
   }
   void release() noexcept {
     owned_ = false;
   }
-  void request_changed() noexcept {
-    visible_ = false;
-    due_ = true;
-    if (!input_.stale())
-      explained_ = false;
-  }
   void flush() {
-    if (!due_ || !eligible())
-      return;
-    separate();
-    Internal guard(internal_);
-    if (input_.stale() && !explained_)
-      (void)output_.display({RequestInput::discard_instruction});
-    dirty_ = true; // A failed write may have emitted a prefix.
-    if (input_.stale()) {
-      visible_ = output_.display({RequestInput::discard_prompt}, false);
-      explained_ |= visible_;
-    } else {
-      const auto prefix =
-          input_.kind() == RequestKind::message ? std::string_view(prompt_) : input_.guidance();
-      visible_ = input_.kind() == RequestKind::message
-                     ? output_.display({prefix, input_.input().raw()}, false)
-                     : output_.display({prefix, " ", input_.input().raw()}, false);
+    if (revision_ != input_.revision()) {
+      revision_ = input_.revision();
+      due_ = true;
+      if (!input_.stale())
+        explained_ = false;
     }
-    due_ = false; // Retry only after another edit, request change or output event.
+    if (request_revision_ != input_.request_revision()) {
+      request_revision_ = input_.request_revision();
+      guidance_due_ = true;
+    }
+    if (!due_)
+      return;
+    geometry();
+    Internal guard(internal_);
+    if (!eligible()) {
+      if (owned_ && dirty_ && columns_) {
+        const auto parts = {std::string_view("\r"), std::string_view(spaces_.data(), painted_),
+                            std::string_view("\r")};
+        if (echo_update_)
+          output_.echo(parts);
+        else
+          (void)output_.display(parts, false);
+        dirty_ = visible_ = false;
+        painted_ = 0;
+      }
+      due_ = false;
+      return;
+    }
+    if (input_.stale() && !explained_) {
+      separate();
+      dirty_ = true;
+      explained_ = output_.display({RequestInput::discard_instruction});
+      if (explained_)
+        dirty_ = false;
+    }
+    if (!input_.stale() && guidance_due_ && input_.kind() != RequestKind::message &&
+        prefix(columns_ ? columns_ : 80) != input_.guidance()) {
+      separate();
+      dirty_ = true;
+      guidance_due_ = !output_.display({input_.guidance()});
+      if (!guidance_due_)
+        dirty_ = false;
+    }
+    if (dirty_ && !columns_)
+      separate();
+    paint();
+    due_ = false; // Retry only on a real edit, request change or output event.
   }
   void append(char byte) {
     if (!input_.append(byte))
       return;
-    if (input_.stale())
-      return;
-    if (!visible_) {
-      due_ = true;
-      flush();
-    } else {
-      Internal guard(internal_);
-      dirty_ = true;
-      output_.echo({std::string_view(&byte, 1)});
-    }
+    Internal echo(echo_update_);
+    due_ = true;
+    flush();
   }
   void erase_character() {
     if (input_.input().empty())
       return;
     input_.erase_character();
-    if (!input_.stale() && visible_) {
-      Internal guard(internal_);
-      output_.echo({"\b \b"});
-    } else if (!input_.stale()) {
-      due_ = true;
-      flush();
-    }
+    Internal echo(echo_update_);
+    due_ = true;
+    flush();
   }
   void submitted() {
     Internal guard(internal_);
-    output_.echo({"\n"});
+    if (dirty_)
+      output_.echo({"\n"});
     dirty_ = visible_ = explained_ = false;
+    painted_ = 0;
     due_ = true;
+  }
+  InputLine take() {
+    submitted();
+    return input_.take();
   }
 };
 } // namespace codet::detail

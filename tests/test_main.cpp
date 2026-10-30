@@ -389,6 +389,12 @@ int main(int argc, char **argv) {
       (void)::fflush(stdout);
       return output.status(0);
     }
+    if (argc > 1 && std::string(argv[1]) == "--codet-line-viewport-helper") {
+      if (argc != 5)
+        return 2;
+      return codet::test::line_viewport_helper(std::stoi(argv[2]), std::stoi(argv[3]),
+                                               std::stoi(argv[4]));
+    }
     if (argc > 1 && std::string(argv[1]) == "--codet-line-prompt-helper") {
       if (argc != 5) {
         std::fputs("line-prompt helper expects MODE RELEASE_FD NOTIFY_FD\n", stderr);

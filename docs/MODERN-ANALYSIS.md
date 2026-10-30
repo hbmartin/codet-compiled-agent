@@ -32,7 +32,7 @@ dependencies. Defaults use `clang` and `clang++`; `CLANG_TIDY` and `CPPCHECK` se
 
 Analyzer targets only configure their dedicated compilation database. They do not build the
 application or GoogleTest. `modern-analysis-host` is the explicit build stage; it also compiles
-both benchmark targets so their warning policy is checked in CI, without executing benchmark
+the persistence, sanitization and line-input benchmarks so their warning policy is checked in CI, without executing benchmark
 workloads. Fetching analysis tools is separate from offline analysis; application dependency
 pins are unchanged. Build the complete developer image from the repository root:
 
@@ -823,3 +823,65 @@ paths and is covered by final full suites, repetitions and Ubuntu CI.
 [initial lint failure](validation/line-prompt-followup-initial-lint-failure.log), and
 [strict Release baseline limitation](validation/line-prompt-followup-strict-release-failure.log)
 retain the evidence.
+
+
+## Safe bounded line input and context-aware diagnostics
+
+Fetched baseline `60b8c4e` contains merged PR #44. Validated application/test source `6f29048468561b45636fc10e503ade435737e0d0`
+uses strict cached presentation for active line echo, deletion and restoration. Editable rows reserve
+the final stdout column and cap their tail at 256 columns; unknown or sub-ten-column widths use
+labelled snapshots. Complete raw input and pending approval requests are retained. The controller
+owns invalidation and rejection reasons, and exactly empty ordinary Enter never queues a message.
+
+Native PTYs cover C/UTF-8 input, wide and escaped combining characters, malformed bytes, narrow/basic
+terminals, separate input/output terminals, `/dev/tty`, redirected stderr and stdout replacement.
+An old destination retains only a separator boundary; diagnostics there cannot repaint the new row.
+Recovery tests close the request and release repaint ownership before draining, preserving original
+exception identity. Fixed worker warnings coalesce without allocation and render on the main thread.
+
+Darwin reports POLLNVAL for a valid `/dev/tty` alias. An isolated probe confirms zero-byte reads
+after that result; the bounded select fallback fixes both active and libedit input readiness.
+Keyboard row repaint remains best effort. A negative control proved that using checked display for
+every keystroke incorrectly latched failure; the regression now protects the existing exit policy.
+
+Full Debug and ASan/UBSan CTest pass 9/9 each (605 unit cases, 67 fault cases and 98 integration
+methods), with the two existing network/Tiger opt-in skips. Final focused unit and PTY batches pass
+twenty repetitions. Pinned lint, Semgrep, runner checks, Cppcheck and analyzer self-tests pass.
+Local Clang findings exactly match the existing baseline; strict required Ubuntu analysis and tests
+pass. No checks were weakened. One existing sanitizer startup-signal race is retained with its
+passing rerun, twenty further socket/Unicode repetitions, and passing final quiet suites.
+
+Identical Release harnesses use one warm-up plus five alternating measured runs, repeated twice
+without concurrent task tests/analyzers. Median milliseconds (set 1 / set 2):
+
+| Workload | Fetched main | Changed |
+| --- | ---: | ---: |
+| line/native-busy | 13.038 / 11.488 | 0.967 / 0.851 |
+| line/busy | 0.056 / 0.056 | 0.101 / 0.101 |
+| line/editing | 2.084 / 2.130 | 3.428 / 3.272 |
+| line/deletion | 0.022 / 0.022 | 0.084 / 0.087 |
+| line/unchanged | 0.022 / 0.022 | 0.028 / 0.028 |
+| output/diagnostics-amplified | 393.452 / 397.294 | 396.674 / 389.585 |
+| export/large | 278.021 / 281.400 | 278.091 / 281.338 |
+
+A 20 KiB draft across 100 native output batches falls from 2,049,700 to 8,900 emitted bytes
+(99.6% less), with zero repaint allocations/preparation. Both versions make 300 direct output
+operations and 300 fstat calls in that workload; the change uses 200 rather than 300 fcntl calls
+and adds 100 geometry queries. Unchanged line-prompt redraws perform no output, geometry query, allocation or
+input preparation. Two fixed row buffers use 1,536 bytes; the arm64 line owner grows from 200 to
+1,936 bytes including destination state. Full input remains capped at 65,536 raw bytes.
+
+Correct safe row rewriting increases editing/deletion traffic compared with raw byte echo and
+one-column backspace. Injected-sink and export timings can be slower; no general speedup is claimed.
+Diagnostics/exports retain their observed allocation/native-operation counts. The library-internal
+editor writes are not fully observable by these interposers; zero direct counts do not mean no I/O.
+No timing thresholds are added. Native Tiger/PPC SDK/compiler and Intel runtime checks remain
+unavailable; Tiger-compatible CR/space rendering, ASCII fallback and existing native libraries are
+retained. Blocking TTY output and irrecoverable emergency delivery retain their documented limits.
+
+[Commands, hashes, results, CI and limitations](validation/line-input-rendering-followup.json),
+[all measured medians](validation/line-input-rendering-followup-performance.csv),
+[all final samples](validation/line-input-rendering-followup-performance-samples.csv),
+[baseline reproductions](validation/line-input-rendering-followup-reproductions.json), and
+[development failures and negative control](validation/line-input-rendering-followup-development-failures.log)
+retain the evidence. Historical measurements are unchanged.

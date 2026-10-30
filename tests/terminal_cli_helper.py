@@ -133,6 +133,18 @@ def background_close(binary,mode):
 
 
 def main():
+    if len(sys.argv) >= 3 and sys.argv[1] == "stdin-devtty":
+        # Fresh, single-threaded process: no preexec callback in the fixture-server process.
+        try:
+            os.setsid()
+            fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+            descriptor=os.open('/dev/tty',os.O_RDWR)
+            try:os.dup2(descriptor,0)
+            finally:os.close(descriptor)
+            os.execv(sys.argv[2],sys.argv[2:])
+        except BaseException as error:
+            print('stdin alias setup/exec failed: '+str(error),file=sys.stderr)
+            return 127
     if len(sys.argv) != 3 or sys.argv[1] not in ("unknown-term", "background-term", "background-config", "background-partial", "active-job-control", "close-line", "close-curses", "close-detach-failure", "close-detach-failure-curses", "close-partial", "close-query-failure"):
         print("terminal helper expects MODE CODET", file=sys.stderr)
         return 2

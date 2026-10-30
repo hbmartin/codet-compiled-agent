@@ -44,6 +44,7 @@ struct Recording : Processes {
   bool running = false, poll_error = false;
   std::string output = "done", capture_error;
   size_t closes = 0;
+  bool stop_error = false;
   ProcessResult run(const ProcessSpec &spec, const Cancellation &) override {
     return hook ? hook(spec) : ProcessResult{};
   }
@@ -60,6 +61,8 @@ struct Recording : Processes {
     return result;
   }
   void stop(const std::string &) override {
+    if (stop_error)
+      throw Error("injected stop failure");
     running = false;
   }
   void write(const std::string &, const std::string &text) override {
@@ -252,6 +255,43 @@ TEST_F(Runtime, PipeEofPublishesFinalOutputAndPtyRejectsBeforeWriting) {
                            cancel)
                   .error);
   EXPECT_TRUE(recording.writes.empty());
+}
+TEST_F(Runtime, WorkerExecCleanupQueuesFixedWarningsAndPreservesTheOriginalFailure) {
+  config.permission_mode = "bypass";
+  for (bool original_failure : {false, true}) {
+    Recording process;
+    process.running = true;
+    auto interaction = std::make_shared<Interaction>();
+    Tools tools(config, files, process, http, clock, {}, {}, {}, interaction);
+    const auto start =
+        tools.execute(call("exec_command", {{"cmd", "cat"}, {"yield_time_ms", 1}}), cancel);
+    ASSERT_FALSE(start.error) << start.content;
+    process.stop_error = true;
+    auto worker = std::async(std::launch::async, [&] {
+      if (original_failure) {
+        process.poll_error = true;
+        const auto result =
+            tools.execute(call("write_stdin", {{"session_id", start.metadata.at("session_id")},
+                                               {"chars", "x"},
+                                               {"yield_time_ms", 1}}),
+                          cancel);
+        EXPECT_TRUE(result.error);
+        EXPECT_THAT(result.content, HasSubstr("injected output collection failure"));
+      } else {
+        tools.cancel_exec();
+        tools.cancel_exec();
+      }
+    });
+    worker.get();
+    size_t count = 0;
+    interaction->drain_warnings([&](std::string_view message) {
+      EXPECT_EQ(message, original_failure ? "Exec cleanup failed; preserving original error"
+                                          : "Exec cleanup failed while stopping owned process");
+      ++count;
+      return true;
+    });
+    EXPECT_EQ(count, 1u);
+  }
 }
 TEST_F(Runtime, EofRetryDoesNotInventExitStatusAfterFailedCollection) {
   Recording process;
@@ -840,3 +880,54 @@ TEST_F(Runtime, SteeringAtCompletionBecomesPendingForTheSameSession) {
   EXPECT_EQ(input->take_pending(session.id), (std::vector<std::string>{"late steering"}));
 }
 } // namespace
+
+TEST(InteractionAdmission, ExactlyEmptyMessagesAreNeverQueued) {
+  codet::Interaction input;
+  input.begin_turn("session");
+  input.submit("");
+  EXPECT_TRUE(input.take_input().empty());
+  input.submit(" ");
+  EXPECT_EQ(input.take_input(), std::vector<std::string>{" "});
+  input.end_turn();
+  input.submit("");
+  EXPECT_TRUE(input.take_pending("session").empty());
+}
+
+TEST(InteractionWarnings, CoalescesWorkerFailuresAndRetriesOnMainThreadOnly) {
+  codet::Interaction input;
+  auto producer = std::async(std::launch::async, [&] {
+    for (int i = 0; i < 1000; ++i) {
+      input.warn(codet::Interaction::Warning::exec_stop);
+      input.warn(codet::Interaction::Warning::exec_original);
+    }
+  });
+  producer.get();
+  size_t attempts = 0;
+  input.drain_warnings([&](std::string_view) {
+    ++attempts;
+    return false;
+  });
+  EXPECT_EQ(attempts, 2u);
+  std::vector<std::string> received;
+  input.drain_warnings([&](std::string_view message) {
+    received.emplace_back(message);
+    return true;
+  });
+  ASSERT_EQ(received.size(), 2u);
+  EXPECT_EQ(received[0], "Exec cleanup failed while stopping owned process");
+  EXPECT_EQ(received[1], "Exec cleanup failed; preserving original error");
+  input.drain_warnings([](std::string_view) {
+    ADD_FAILURE();
+    return true;
+  });
+  input.post({{"type", "invalid"}, {"text", 42}});
+  input.deliver([](const codet::Json &event) { (void)event.at("text").get<std::string>(); },
+                [](const std::string &) { throw std::bad_alloc(); });
+  attempts = 0;
+  input.drain_warnings([&](std::string_view warning) {
+    EXPECT_EQ(warning, "Worker event diagnostic could not be displayed");
+    ++attempts;
+    return true;
+  });
+  EXPECT_EQ(attempts, 1u);
+}

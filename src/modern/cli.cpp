@@ -11,6 +11,7 @@
 #include "codet/detail/line_prompt.hpp"
 #include "codet/detail/native_terminal.hpp"
 #include "codet/detail/request_input_controller.hpp"
+#include "codet/detail/terminal_input.hpp"
 #include "codet/detail/ui_history.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/interaction.hpp"
@@ -273,10 +274,7 @@ class Terminal final : public detail::CliDiagnosticSurface {
     for (;;) {
       if (terminal && terminal->read_cancel_ && terminal->read_cancel_->requested)
         return 0;
-      struct pollfd descriptor {
-        STDIN_FILENO, POLLIN, 0
-      };
-      const int ready = ::poll(&descriptor, 1, 100);
+      const int ready = detail::wait_terminal_input(STDIN_FILENO, 100);
       if (ready < 0) {
         if (errno == EINTR)
           continue;
@@ -381,14 +379,10 @@ private:
 public:
   void begin_request(const Json &event) {
     input_.open(detail::ApprovalIdentity::from(event), detail::RequestKind::question);
-    if (line_)
-      line_->request_changed();
   }
   void begin_approval(const Json &event) {
     const auto identity = detail::ApprovalIdentity::from(event);
     input_.open(identity, detail::RequestKind::approval);
-    if (line_)
-      line_->request_changed();
     const auto target =
         event.at("tool").get<std::string>() + ": " + event.at("target").get<std::string>();
     if (!curses_) {
@@ -417,8 +411,6 @@ public:
   }
   void end_approval(std::optional<std::string_view> answer = {}) {
     input_.close();
-    if (line_)
-      line_->request_changed();
     auto finished = std::move(approval_);
     approval_.reset();
 
@@ -460,8 +452,8 @@ public:
       resources_.start_editor();
       struct stat destination {};
       detail::OutputAttempt inspection(io.cancel, detail::OutputMode::diagnostic);
-      if (inspection.inspect([&] { return ::fstat(STDIN_FILENO, &destination); }) < 0)
-        throw Error("Cannot inspect input terminal");
+      if (inspection.inspect([&] { return ::fstat(STDOUT_FILENO, &destination); }) < 0)
+        throw Error("Cannot inspect prompt terminal");
       line_.emplace(input_, output_, io, prompt_, destination);
       el_set(
           resources_.editor(), EL_PROMPT, +[](EditLine *edit) -> const char * {
@@ -549,7 +541,9 @@ public:
           try {
             terminal.end_active();
           } catch (...) {
-            (void)detail::immediate_stderr({"Terminal active-mode restoration also failed"});
+            detail::secondary_diagnostic([&] {
+              (void)terminal.errors_.write({"Terminal active-mode restoration also failed"});
+            });
           }
         }
       } restore{*this};
@@ -562,8 +556,8 @@ public:
         if (closed)
           return std::nullopt;
         if (line) {
-          if (line->action() == detail::InputAction::discard) {
-            discarded_line(line->discard_reason());
+          if (const auto submission = line->classify(); submission.rejection) {
+            discarded_line(*submission.rejection);
             break; // The stale idle line ended; hand the empty prompt back to libedit.
           }
           if (resources_.entries())
@@ -650,8 +644,7 @@ public:
     if (curses_)
       ch = getch();
     else {
-      pollfd fd{STDIN_FILENO, POLLIN, 0};
-      const auto ready = ::poll(&fd, 1, 50);
+      const auto ready = detail::wait_terminal_input(STDIN_FILENO, 50);
       if (ready > 0) {
         unsigned char c = 0;
         const auto n = ::read(STDIN_FILENO, &c, 1);
@@ -659,7 +652,8 @@ public:
           ch = c;
         else if (n == 0)
           closed = true;
-      }
+      } else if (ready < 0 && errno != EINTR)
+        closed = true;
     }
     if (ch == ERR)
       return {};
@@ -682,9 +676,7 @@ public:
       return {};
     }
     if (ch == bindings_["submit"] || ch == KEY_ENTER || ch == '\r') {
-      if (line_)
-        line_->submitted();
-      auto submitted = input_.take(input_.input().raw());
+      auto submitted = line_ ? line_->take() : input_.take();
       const auto &text = submitted.text;
       if (!submitted.discarded && approval_ && detail::approves(text) &&
           !approval_->approved_review()) {
@@ -774,11 +766,20 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   // Keep session ownership until background-process destruction has finished.
   std::shared_ptr<void> lifecycle_owner, current_owner;
   auto diagnostics = std::make_shared<detail::CliDiagnostics>(std::cerr, &io);
-  DiagnosticSink diagnostic = [&, diagnostics](const std::string &text) {
-    if (interaction && std::this_thread::get_id() != terminal_thread)
-      interaction->post({{"type", "codet.diagnostic"}, {"text", text}});
-    else
-      diagnostics->emit_rendered({text});
+  const DiagnosticSink main_diagnostic = [diagnostics](const std::string &text) {
+    diagnostics->emit_rendered({text});
+  };
+  DiagnosticSink diagnostic = [&](const std::string &text) {
+    if (interaction && std::this_thread::get_id() != terminal_thread) {
+      try {
+        interaction->post({{"type", "codet.diagnostic"}, {"text", text}});
+      } catch (const std::bad_alloc &) {
+        throw;
+      } catch (...) {
+        interaction->warn(Interaction::Warning::event_render);
+      }
+    } else
+      detail::context_diagnostic(main_diagnostic, errors, {text});
   };
   std::string home = env("CODET_HOME");
   if (home.empty()) {
@@ -1136,7 +1137,20 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     interaction->begin_turn(session.id);
     std::future<RunResult> work;
     std::optional<Json> pending;
+    const auto drain_warnings = [&] {
+      interaction->drain_warnings([&](std::string_view text) {
+        const std::string owned(text);
+        diagnostics->emit_rendered({owned});
+        return true;
+      });
+    };
     const auto deliver = [&](bool recovering = false) {
+      struct DrainWarnings {
+        const decltype(drain_warnings) &drain;
+        ~DrainWarnings() {
+          drain();
+        }
+      } warnings{drain_warnings};
       diagnostics->deliver_files();
       interaction->deliver(
           [&](const Json &event) {
@@ -1193,12 +1207,13 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
         }
         if (line) {
           const auto &text = line->text;
-          const auto action = line->action(pending ? &*pending : nullptr);
+          const auto submission = line->classify(pending ? &*pending : nullptr);
+          const auto action = submission.action;
           if (action == detail::InputAction::quit) {
             quit_requested = true;
             cancel.requested = true;
           } else if (action == detail::InputAction::discard) {
-            terminal->discarded_line(line->discard_reason());
+            terminal->discarded_line(*submission.rejection);
           } else if (text == "/model" || text.rfind("/model ", 0) == 0 || text == "/status" ||
                      text == "/compact") {
             terminal->say("Use /model, /status and /compact after the active turn completes.");
@@ -1210,13 +1225,13 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
             pending.reset();
             terminal->end_approval(answered ? std::optional<std::string_view>(text) : std::nullopt);
             if (!answered)
-              terminal->discarded_line(line->discard_reason());
+              terminal->discarded_line(detail::InputDiscard::expired);
           } else if (text.rfind("/permissions", 0) == 0)
             terminal->say("Change permission modes after the active turn completes.");
           else if (text == "/new") {
             new_requested = true;
             terminal->say("Starting a new session after pending messages are handled.");
-          } else {
+          } else if (!text.empty()) {
             try {
               interaction->submit(text);
             } catch (const Error &error) {

@@ -234,9 +234,10 @@ TEST(RequestInput, DiscardReasonDistinguishesFinishedExpiryFromStaleDrafts) {
   const detail::ApprovalIdentity identity{"s", "request", 1};
   detail::InputLine finished{"yes", identity, false}, unfinished{"yes", identity, true};
   EXPECT_EQ(finished.action(), detail::InputAction::discard);
-  EXPECT_EQ(detail::discard_message(finished.discard_reason()),
+  EXPECT_EQ(detail::discard_message(*finished.classify().rejection),
             "Request expired; answer discarded.");
-  EXPECT_EQ(detail::discard_message(unfinished.discard_reason()), "Unfinished input discarded.");
+  EXPECT_EQ(detail::discard_message(*unfinished.classify().rejection),
+            "Unfinished input discarded.");
 }
 TEST(RequestInputController, FreshEmptyAndPresentationClearsHaveDistinctOwnership) {
   detail::RequestInputController input;
@@ -279,15 +280,38 @@ struct LineFixture {
     tty.st_mode = S_IFCHR;
     tty.st_dev = 1;
     tty.st_rdev = 2;
-    line.emplace(input, output, io, prompt, tty);
+    line.emplace(input, output, io, prompt, tty, 80);
     line->acquire();
   }
   void normal(std::string_view text) {
-    line->before_output(tty);
+    if (line->before_output(STDERR_FILENO, tty))
+      output.echo({"\n"});
     output.display({text});
   }
 };
-TEST(LinePrompt, RestoresTheVisibleDraftAndBackspaceMatchesSubmittedBytes) {
+// A basic terminal row: CR returns to its start, spaces overwrite, LF ends it.
+std::string last_line(std::string_view wire) {
+  std::string row;
+  size_t column = 0;
+  for (char byte : wire) {
+    if (byte == '\r')
+      column = 0;
+    else if (byte == '\n') {
+      row.clear();
+      column = 0;
+    } else {
+      if (column == row.size())
+        row += byte;
+      else
+        row[column] = byte;
+      ++column;
+    }
+  }
+  while (!row.empty() && row.back() == ' ')
+    row.pop_back();
+  return row;
+}
+TEST(LinePrompt, RestoresTheSafeDraftAndDeletionMatchesSubmittedBytes) {
   LineFixture f;
   f.line->flush();
   EXPECT_TRUE(f.stream.str().empty());
@@ -296,50 +320,232 @@ TEST(LinePrompt, RestoresTheVisibleDraftAndBackspaceMatchesSubmittedBytes) {
   f.normal("done");
   f.normal("second record");
   f.line->flush();
-  f.line->flush();
-  EXPECT_EQ(f.stream.str(), "codet> he\ndone\nsecond record\ncodet> he");
-  f.line->erase_character();
-  for (char byte : std::string("llo"))
-    f.line->append(byte);
-  f.line->submitted();
-  EXPECT_EQ(f.input.take().text, "hllo");
+  EXPECT_EQ(last_line(f.stream.str()), "codet> he");
   const auto before = f.stream.str();
   f.line->flush();
   EXPECT_EQ(f.stream.str(), before);
+  f.line->erase_character();
+  for (char byte : std::string("llo"))
+    f.line->append(byte);
+  EXPECT_EQ(last_line(f.stream.str()), "codet> hllo");
+  EXPECT_EQ(f.line->take().text, "hllo");
+}
+TEST(LinePrompt, CachedTokensReplaceRawEchoAndOneColumnBackspace) {
+  for (const std::string &text : {std::string("e\xcc\x81"), std::string("雪"),
+                                  std::string("\xc2\x9b\xe2\x80\xae\\x41\xff")}) {
+    LineFixture f;
+    f.input.unicode(false);
+    for (char byte : text)
+      f.line->append(byte);
+    EXPECT_EQ(last_line(f.stream.str()), f.input.view(f.prompt, 79));
+    EXPECT_EQ(f.stream.str().find('\b'), std::string::npos);
+    EXPECT_EQ(f.stream.str().find('\x9b'), std::string::npos);
+    f.normal("notice");
+    f.line->flush();
+    EXPECT_EQ(last_line(f.stream.str()), f.input.view(f.prompt, 79));
+    f.line->erase_character();
+    EXPECT_EQ(last_line(f.stream.str()),
+              f.input.input().empty() ? std::string{} : f.input.view(f.prompt, 79));
+  }
 }
 TEST(LinePrompt, ApprovalAndQuestionDraftsSurviveOutputWithoutDuplicatedAnswers) {
   for (auto kind : {detail::RequestKind::approval, detail::RequestKind::question}) {
     LineFixture f;
     f.input.open({"s", "request", 1}, kind);
-    f.line->request_changed();
     f.line->flush();
     f.line->append('y');
     f.normal("notice");
     f.line->flush();
-    EXPECT_EQ(f.stream.str().substr(f.stream.str().size() - 2), " y");
+    EXPECT_THAT(last_line(f.stream.str()), ::testing::EndsWith(" y"));
     f.line->submitted();
     EXPECT_EQ(f.input.take().text, "y");
   }
 }
-TEST(LinePrompt, RedirectedOutputDoesNotInvalidateTheInputTerminal) {
+TEST(LinePrompt, RedirectedOutputAndReleasedRecoveryNeverRepaintAnotherPrompt) {
   LineFixture f;
   f.line->append('x');
+  const auto before = f.stream.str();
   struct stat log {};
   log.st_mode = S_IFREG;
-  f.line->before_output(log);
+  EXPECT_FALSE(f.line->before_output(STDERR_FILENO, log));
   f.line->flush();
-  EXPECT_EQ(f.stream.str(), "codet> x");
+  EXPECT_EQ(f.stream.str(), before);
+  f.input.close();
   f.line->release();
   f.normal("done");
   f.line->flush();
-  EXPECT_EQ(f.stream.str(), "codet> x\ndone\n");
+  EXPECT_THAT(f.stream.str(), ::testing::EndsWith("\ndone\n"));
   f.line.reset();
   EXPECT_EQ(f.io.line_output, nullptr);
 }
+TEST(LinePrompt, ControllerMutationsInvalidatePresentationWithoutNotifications) {
+  LineFixture f;
+  f.line->append('x');
+  f.input.open({"s", "first", 1}, detail::RequestKind::approval);
+  f.line->flush();
+  EXPECT_EQ(last_line(f.stream.str()), "discard>");
+  const auto stale = f.input.take();
+  EXPECT_EQ(stale.classify().rejection, detail::InputDiscard::unfinished);
+  f.line->flush();
+  EXPECT_EQ(last_line(f.stream.str()), "Approve? [y/N]");
+  f.line->append('y');
+  f.input.presentation_clear();
+  f.line->flush();
+  EXPECT_EQ(last_line(f.stream.str()), "Approve? [y/N]");
+  f.input.close();
+  f.line->flush();
+  EXPECT_EQ(last_line(f.stream.str()), "discard>");
+}
+TEST(RequestInput, ValidSubmissionHasNoDiscardReason) {
+  detail::InputLine ordinary{"run tests", {}, false};
+  EXPECT_FALSE(ordinary.classify().rejection);
+  EXPECT_EQ(ordinary.classify().action, detail::InputAction::message);
+  const detail::ApprovalIdentity identity{"s", "r", 1};
+  const Json event = {{"codet_session_id", "s"}, {"codet_turn", 1}, {"request_id", "r"}};
+  detail::InputLine answer{"", identity, false};
+  EXPECT_EQ(answer.classify(&event).action, detail::InputAction::answer);
+  EXPECT_FALSE(answer.classify(&event).rejection);
+}
+TEST(LinePrompt, OldDestinationKeepsOnlyASeparatorAndCannotRepaintTheNewRow) {
+  LineFixture f;
+  f.line->append('x');
+  auto next = f.tty;
+  next.st_ino = 7;
+  next.st_rdev = 8;
+  EXPECT_FALSE(f.line->before_output(STDOUT_FILENO, next));
+  f.line->flush();
+  const auto before = f.stream.str();
+  EXPECT_TRUE(f.line->before_output(STDERR_FILENO, f.tty));
+  f.line->flush();
+  EXPECT_EQ(f.stream.str(), before);
+  EXPECT_FALSE(f.line->before_output(STDERR_FILENO, f.tty));
+  EXPECT_TRUE(f.line->before_output(STDERR_FILENO, next));
+}
+TEST(LinePrompt, ErasingTheFinalCharacterRemovesTheActiveOrdinaryPrompt) {
+  LineFixture f;
+  f.line->append('x');
+  f.line->erase_character();
+  EXPECT_TRUE(last_line(f.stream.str()).empty());
+  const auto end = f.stream.str().size();
+  f.normal("progress");
+  f.line->flush();
+  EXPECT_EQ(f.stream.str().substr(end), "progress\n");
+}
+TEST(LinePrompt, DraftTrafficIsBoundedAndUnknownGeometryUsesSnapshots) {
+  LineFixture f;
+  for (size_t i = 0; i < 20480; ++i)
+    f.input.append('x');
+  f.line->flush();
+  f.stream.str("");
+  for (int i = 0; i < 100; ++i) {
+    f.normal("progress");
+    f.line->flush();
+  }
+  EXPECT_LT(f.stream.str().size(), 100 * 100u);
+  EXPECT_EQ(f.input.input().size(), 20480u);
+  EXPECT_THAT(last_line(f.stream.str()), HasSubstr("<"));
+  for (size_t columns : {size_t{0}, size_t{9}}) {
+    f.line.reset();
+    f.stream.str("");
+    f.line.emplace(f.input, f.output, f.io, f.prompt, f.tty, columns);
+    f.line->acquire();
+    f.line->flush();
+    EXPECT_EQ(f.stream.str().find('\r'), std::string::npos);
+    EXPECT_THAT(f.stream.str(), ::testing::EndsWith("\n"));
+    EXPECT_LE(f.stream.str().size(), 81u);
+  }
+}
+TEST(LinePrompt, FailedConfiguredSinkUsesTheInvocationGate) {
+  LineFixture f;
+  f.line->append('y');
+  detail::DiagnosticWriter errors(f.stream, &f.io);
+  const DiagnosticSink broken = [](const auto &) { throw Error("sink failed"); };
+  const std::string warning = "fallback";
+  // Injected destinations have no native identity: explicitly exercise the shared gate.
+  if (f.line->before_output(STDERR_FILENO, f.tty))
+    f.output.echo({"\n"});
+  detail::context_diagnostic(broken, errors, {warning});
+  f.line->flush();
+  EXPECT_THAT(f.stream.str(), HasSubstr("\nfallback\ncodet> y"));
+  const DiagnosticSink exhausted = [](const auto &) { throw std::bad_alloc(); };
+  EXPECT_THROW(detail::context_diagnostic(exhausted, errors, {warning}), std::bad_alloc);
+}
+TEST(LinePrompt, InstructionDeliveryIsIndependentOfPromptDelivery) {
+  struct Failing : std::stringbuf {
+    int writes = 0, fail = 0, instructions = 0;
+    std::streamsize xsputn(const char *text, std::streamsize size) override {
+      if (std::string_view(text, static_cast<size_t>(size)) ==
+          detail::RequestInput::discard_instruction)
+        ++instructions;
+      if (++writes == fail) {
+        const auto count = std::min(std::streamsize{3}, size);
+        (void)std::stringbuf::xsputn(text, count);
+        return count;
+      }
+      return std::stringbuf::xsputn(text, size);
+    }
+  };
+  for (int failure : {1, 2}) {
+    Failing buffer;
+    buffer.fail = failure;
+    std::ostream stream(&buffer);
+    detail::CliOutput output(stream);
+    Cancellation cancel;
+    detail::IoContext io(cancel);
+    detail::RequestInputController input;
+    input.append('x');
+    input.open({"s", "r", 1}, detail::RequestKind::approval);
+    struct stat tty {};
+    tty.st_mode = S_IFCHR;
+    const std::string prompt = "codet> ";
+    detail::LinePrompt line(input, output, io, prompt, tty, 80);
+    line.acquire();
+    line.flush();
+    const int attempts = buffer.writes;
+    line.flush();
+    EXPECT_EQ(buffer.writes, attempts);
+    if (line.before_output(STDERR_FILENO, tty))
+      output.echo({"\n"});
+    output.display({"warning"});
+    line.flush();
+    EXPECT_EQ(buffer.instructions, failure == 1 ? 2 : 1);
+    EXPECT_THAT(buffer.str(), HasSubstr("warning"));
+  }
+}
+TEST(LinePrompt, KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure) {
+  struct Refuse : std::stringbuf {
+    bool fail = false;
+    std::streamsize xsputn(const char *p, std::streamsize n) override {
+      return fail ? 0 : std::stringbuf::xsputn(p, n);
+    }
+  } buffer;
+  std::ostream stream(&buffer);
+  detail::CliOutput output(stream);
+  Cancellation cancel;
+  detail::IoContext io(cancel);
+  detail::RequestInputController input;
+  struct stat tty {};
+  tty.st_mode = S_IFCHR;
+  const std::string prompt = "codet> ";
+  detail::LinePrompt line(input, output, io, prompt, tty, 80);
+  line.acquire();
+  line.append('x');
+  ASSERT_FALSE(output.failed());
+  buffer.fail = true;
+  line.append('y');
+  line.erase_character();
+  line.erase_character();
+  EXPECT_FALSE(output.failed());
+  EXPECT_TRUE(input.input().empty());
+  (void)output.display({"required display"});
+  EXPECT_TRUE(output.failed());
+  buffer.fail = false;
+  line.append('z');
+  line.erase_character();
+  EXPECT_TRUE(output.failed());
+}
 TEST(LinePrompt, FailedPromptIsSeparatedAndOnlyRetriedOnAnotherEvent) {
   LineFixture f;
-  f.stream.setstate(std::ios::badbit);
-  // A missing buffer persistently fails even after stream recovery.
   auto *original = f.stream.basic_ios<char>::rdbuf(nullptr);
   f.line->append('h');
   f.line->flush();

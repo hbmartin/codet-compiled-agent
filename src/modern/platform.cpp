@@ -443,6 +443,11 @@ bool detail::recover_diagnostic_stream(std::ostream &output) noexcept {
 }
 detail::DiagnosticWriter::DiagnosticWriter(std::ostream &output, IoContext *io) noexcept
     : output_(output), state_(&local_), file_(diagnostic_file(output)), io_(io) {}
+int detail::DiagnosticWriter::native_descriptor() const noexcept {
+  return &output_ == &std::cerr && output_.rdbuf() == native_stderr_buffer   ? STDERR_FILENO
+         : &output_ == &std::cout && output_.rdbuf() == native_stdout_buffer ? STDOUT_FILENO
+                                                                             : -1;
+}
 void detail::reset_standard_diagnostics() noexcept {
   stderr_stream_state.reset(std::cerr.rdbuf());
   stdout_stream_state.reset(std::cout.rdbuf());
@@ -457,8 +462,9 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
   state_ = &destination.state;
   const int native = destination.native;
   if (native >= 0) {
-    if (io_ && io_->line_output && destination.owner->inspected)
-      io_->line_output->before_output(destination.owner->identity);
+    if (io_ && io_->line_output && destination.owner->inspected &&
+        io_->line_output->before_output(native, destination.owner->identity))
+      state_->pending = true;
     if (!output_ || (file_ && std::ferror(file_)))
       (void)recover_diagnostic_stream(output_);
     NativeDiagnosticRecord record(native, *state_, *destination.owner, attempt);

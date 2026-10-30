@@ -5,6 +5,42 @@
 #include "process_helper.hpp"
 
 namespace codet::test {
+inline int line_viewport_helper(int release, int notify, int replacement) {
+  Cancellation cancel;
+  detail::IoContext io(cancel);
+  detail::CliOutput output(io);
+  detail::DiagnosticWriter errors(std::cerr, &io);
+  detail::RequestInputController input;
+  struct stat terminal {};
+  if (::fstat(STDOUT_FILENO, &terminal) < 0)
+    return 3;
+  const std::string prompt = "codet> ";
+  detail::LinePrompt line(input, output, io, prompt, terminal);
+  line.acquire();
+  const std::string raw = "e\xcc\x81雪\xc2\x9b\xe2\x80\xae\\x41\xff";
+  for (char byte : raw)
+    line.append(byte);
+  if (::write(notify, "r", 1) != 1)
+    return 4;
+  char command;
+  if (!read_token(release, command))
+    return 5;
+  if (replacement >= 0 && ::dup2(replacement, STDOUT_FILENO) < 0)
+    return 6;
+  if (replacement >= 0)
+    line.flush(); // Repaint the new destination before old-channel output.
+  const DiagnosticSink broken = [](const auto &) { throw Error("configured sink failed"); };
+  const std::string text = "context fallback";
+  detail::context_diagnostic(broken, errors, {text});
+  line.flush();
+  if (::write(notify, "d", 1) != 1 || !read_token(release, command))
+    return 7;
+  line.erase_character();
+  line.submitted();
+  auto expected = raw;
+  expected.pop_back();
+  return input.take().text == expected ? 0 : 8;
+}
 inline int line_prompt_helper(const std::string &mode, int release, int notify) {
   if (mode != "approval" && mode != "question")
     return 2;
@@ -16,7 +52,7 @@ inline int line_prompt_helper(const std::string &mode, int release, int notify) 
   input.open({"s", "request", 1},
              mode == "approval" ? detail::RequestKind::approval : detail::RequestKind::question);
   struct stat terminal {};
-  if (::fstat(STDIN_FILENO, &terminal) < 0)
+  if (::fstat(STDOUT_FILENO, &terminal) < 0)
     return 3;
   const std::string prompt = "codet> ";
   detail::LinePrompt line(input, output, io, prompt, terminal);
@@ -35,13 +71,18 @@ inline int line_prompt_helper(const std::string &mode, int release, int notify) 
   diagnostics.files->submit(std::move(notice));
   diagnostics.deliver_files();
   line.flush();
-  // A cleanup drain may fail after restoring the prompt. Its report uses the same gate.
+  // Production closes the request and releases repaint ownership before the cleanup drain.
   auto worker = std::async(std::launch::async, [] { return 0; });
   const auto original = std::make_exception_ptr(Error("original"));
   const bool quitting = false;
   try {
     detail::recover_turn(
-        original, cancel, quitting, worker, [] {}, [] { throw Error("drain failed"); },
+        original, cancel, quitting, worker,
+        [&] {
+          input.close();
+          line.release();
+        },
+        [] { throw Error("drain failed"); },
         [&](std::string_view text) { (void)errors.write({text}); });
   } catch (...) {
     if (std::current_exception() != original || cancel.requested)
@@ -51,6 +92,6 @@ inline int line_prompt_helper(const std::string &mode, int release, int notify) 
   if (::write(notify, "d", 1) != 1 || !read_token(release, token))
     return 7;
   line.submitted();
-  return input.take().text == "y" ? 0 : 8;
+  return input.take().discarded ? 0 : 8;
 }
 } // namespace codet::test

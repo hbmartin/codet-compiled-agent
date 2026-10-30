@@ -1,0 +1,1096 @@
+{
+  "baseline": "60b8c4e17689ffb8a08bccc28bdcb25e32d040b4",
+  "validated_ref": "6f29048468561b45636fc10e503ade435737e0d0",
+  "frozen_runtime_ref": "f076cecd3f97facd1caf5f2147a550e6d2b4035e",
+  "source_equivalence": "The final follow-up changes after the frozen runtime are stronger Python frame/row assertions. All production sources and build inputs are byte-identical. Complete integration reruns cover the frame predicate; final Debug/sanitizer row tests cover the last strengthened assertion.",
+  "branch": "codex/line-input-rendering-followup",
+  "date": "2026-10-29",
+  "environment": {
+    "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+    "platform": "macOS 27 arm64",
+    "release_flags": "-O3 -DNDEBUG -arch arm64",
+    "existing_local_warning_exceptions": "-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+    "strict_build": "Fresh strict Apple-Clang build still fails three unchanged images.cpp integer-to-double warnings. Existing local Debug/sanitizer caches and both benchmark variants retain their prior exceptions. Required Ubuntu builds and all checks remain strict; no check configuration or suppression was weakened."
+  },
+  "behavior": {
+    "viewport": "Cached strict presentation is used for active raw echo, character deletion and restoration. Known stdout geometry reserves the final column and caps the row at 256 columns. Tail selection uses cached token offsets/widths; no raw bytes or full-draft copy on repaint. CR and spaces rewrite the row without ANSI capabilities.",
+    "fallback": "Widths unknown or below ten columns use labelled snapshots bounded to 80 columns; snapshots may wrap naturally. No destructive cursor movement is guessed. Complete request guidance remains outside compact editable rows.",
+    "ownership": "Native output supplies its channel and resolved stat identity. Prompt geometry follows stdout, ignores unrelated redirected stderr, and abandons old geometry on replacement/resize. One fixed old-destination boundary can separate diagnostics there without repainting the new row. Controller revisions invalidate presentation on input/request mutations; raw submission and its line boundary use one operation.",
+    "admission": "Only exactly empty ordinary messages are ignored before queueing. Whitespace-only ordinary messages and empty request answers retain their meanings. Submission classification supplies a discard reason only on rejection; external answer rejection explicitly reports expiry.",
+    "diagnostics": "Main-thread configured-sink and restoration fallbacks use the invocation writer. Interactive worker cleanup failures set allocation-free fixed warning bits on Interaction, coalesced by kind and drained only by the main thread, including after quiescence. No ambient global cancellation context or new lock.",
+    "delivery": "Discard instruction success is independent of prompt success. Keyboard row updates remain best effort and do not latch a new display error; checked prompt/reply failures remain sticky. Raw data, storage/journal authority and diagnostic replay order are unchanged.",
+    "input_bytes": 65536,
+    "row_columns": 256,
+    "snapshot_columns": 80,
+    "row_buffers_bytes": 1536,
+    "line_owner_size_baseline_arm64": 200,
+    "line_owner_size_changed_arm64": 1936
+  },
+  "commands": [
+    [
+      "cmake",
+      "--build",
+      "build/host",
+      "-j4"
+    ],
+    [
+      "ctest",
+      "--test-dir",
+      "build/host",
+      "--output-on-failure"
+    ],
+    [
+      "cmake",
+      "--build",
+      "build/sanitize",
+      "-j4"
+    ],
+    [
+      "ctest",
+      "--test-dir",
+      "build/sanitize",
+      "--output-on-failure"
+    ],
+    [
+      "build/sanitize/codet_tests",
+      "--gtest_filter=LinePrompt.*:CliOutput.*:RequestInput*.*:CursesInput.*:InteractionWarnings.*",
+      "--gtest_repeat=20"
+    ],
+    [
+      "python3",
+      "tests/cli_integration.py",
+      "build/sanitize/codet",
+      "CliTests.test_prepared_line_viewport_and_stdout_binding",
+      "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+      "CliTests.test_line_unicode_cells_use_safe_cache_and_preserve_answer_bytes",
+      "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+    ],
+    [
+      "make",
+      "check-lint",
+      "CHECK_PYTHON=build/lint-venv/bin/python"
+    ],
+    [
+      "make",
+      "test-lint-runners",
+      "test-modern-analysis-runner",
+      "CHECK_PYTHON=build/lint-venv/bin/python",
+      "ANALYSIS_PYTHON=build/lint-venv/bin/python"
+    ],
+    [
+      "make",
+      "check-semgrep",
+      "CHECK_PYTHON=build/lint-venv/bin/python",
+      "SEMGREP=build/semgrep-venv/bin/pysemgrep"
+    ],
+    [
+      "build/lint-venv/bin/python",
+      "scripts/analyze-modern.py",
+      "--build-dir",
+      "build/line-input-rendering-followup/final-delivery/cppcheck-analysis",
+      "--jobs",
+      "4",
+      "--timeout",
+      "300",
+      "--tool",
+      "cppcheck"
+    ],
+    [
+      "build/lint-venv/bin/python",
+      "scripts/analyze-modern.py",
+      "--build-dir",
+      "build/line-input-rendering-followup/final-delivery/clang-tidy-analysis",
+      "--jobs",
+      "4",
+      "--timeout",
+      "300",
+      "--tool",
+      "clang-tidy"
+    ],
+    [
+      "build/lint-venv/bin/python",
+      "scripts/analyze-modern.py",
+      "--build-dir",
+      "build/line-input-rendering-followup/final-delivery/clang-analyzer-analysis",
+      "--jobs",
+      "4",
+      "--timeout",
+      "300",
+      "--tool",
+      "clang-analyzer"
+    ],
+    [
+      "build/lint-venv/bin/python",
+      "scripts/analyze-modern.py",
+      "--build-dir",
+      "build/line-input-rendering-followup/final-delivery/selftest-analysis",
+      "--jobs",
+      "4",
+      "--timeout",
+      "300",
+      "--selftest"
+    ],
+    [
+      "cmake",
+      "--build",
+      "build/line-input-rendering-followup/changed-release",
+      "--target",
+      "codet_line_input_bench",
+      "codet_ui_render_bench",
+      "codet_output_bench",
+      "codet_export_bench",
+      "-j4"
+    ],
+    [
+      "python3",
+      "build/line-input-rendering-followup/measure-final.py"
+    ],
+    [
+      "python3",
+      "tests/cli_integration.py",
+      "build/host/codet"
+    ],
+    [
+      "python3",
+      "tests/cli_integration.py",
+      "build/sanitize/codet"
+    ],
+    [
+      "python3",
+      "tests/cli_integration.py",
+      "build/sanitize/codet",
+      "CliTests.test_prepared_line_viewport_and_stdout_binding"
+    ],
+    [
+      "python3",
+      "tests/cli_integration.py",
+      "build/host/codet",
+      "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty"
+    ],
+    [
+      "python3",
+      "tests/cli_integration.py",
+      "build/sanitize/codet",
+      "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty"
+    ]
+  ],
+  "checks": [
+    {
+      "name": "host-build",
+      "exit": 0,
+      "seconds": 10.982340416987427,
+      "command_id": 0
+    },
+    {
+      "name": "host-ctest",
+      "exit": 0,
+      "seconds": 108.60240937501658,
+      "command_id": 1
+    },
+    {
+      "name": "sanitize-build",
+      "exit": 0,
+      "seconds": 16.41751033300534,
+      "command_id": 2
+    },
+    {
+      "name": "sanitize-ctest",
+      "exit": 0,
+      "seconds": 174.0075660829898,
+      "command_id": 3
+    },
+    {
+      "name": "repeat-unit",
+      "exit": 0,
+      "seconds": 15.192875291919336,
+      "command_id": 4
+    },
+    {
+      "name": "repeat-pty-0",
+      "exit": 0,
+      "seconds": 6.537254708004184,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-1",
+      "exit": 0,
+      "seconds": 6.562761957990006,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-2",
+      "exit": 0,
+      "seconds": 6.486611666972749,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-3",
+      "exit": 0,
+      "seconds": 6.5114985830150545,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-4",
+      "exit": 0,
+      "seconds": 6.3394769170554355,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-5",
+      "exit": 0,
+      "seconds": 6.522750666947104,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-6",
+      "exit": 0,
+      "seconds": 6.402763333986513,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-7",
+      "exit": 0,
+      "seconds": 6.388100124895573,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-8",
+      "exit": 0,
+      "seconds": 6.886824292014353,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-9",
+      "exit": 0,
+      "seconds": 6.506166124949232,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-10",
+      "exit": 0,
+      "seconds": 6.585400417097844,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-11",
+      "exit": 0,
+      "seconds": 6.629902416956611,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-12",
+      "exit": 0,
+      "seconds": 6.458935500006191,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-13",
+      "exit": 0,
+      "seconds": 6.443284541950561,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-14",
+      "exit": 0,
+      "seconds": 6.583282500039786,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-15",
+      "exit": 0,
+      "seconds": 6.6032285830006,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-16",
+      "exit": 0,
+      "seconds": 6.9265044999774545,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-17",
+      "exit": 0,
+      "seconds": 6.666934541077353,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-18",
+      "exit": 0,
+      "seconds": 6.749442333937623,
+      "command_id": 5
+    },
+    {
+      "name": "repeat-pty-19",
+      "exit": 0,
+      "seconds": 6.744010708061978,
+      "command_id": 5
+    },
+    {
+      "name": "lint",
+      "exit": 0,
+      "seconds": 1.2033692500554025,
+      "command_id": 6
+    },
+    {
+      "name": "runner-tests",
+      "exit": 0,
+      "seconds": 5.311620207969099,
+      "command_id": 7
+    },
+    {
+      "name": "semgrep",
+      "exit": 0,
+      "seconds": 3.7174022500403225,
+      "command_id": 8
+    },
+    {
+      "name": "cppcheck",
+      "exit": 0,
+      "seconds": 57.949024457950145,
+      "command_id": 9
+    },
+    {
+      "name": "clang-tidy",
+      "exit": 1,
+      "seconds": 40.08331554196775,
+      "command_id": 10
+    },
+    {
+      "name": "clang-analyzer",
+      "exit": 1,
+      "seconds": 59.580014499952085,
+      "command_id": 11
+    },
+    {
+      "name": "selftest",
+      "exit": 0,
+      "seconds": 1.4730308749713004,
+      "command_id": 12
+    },
+    {
+      "name": "release-build",
+      "exit": 0,
+      "seconds": 3.9427720840321854,
+      "command_id": 13
+    },
+    {
+      "name": "measurements",
+      "exit": 0,
+      "seconds": 54.798079291009344,
+      "command_id": 14
+    },
+    {
+      "name": "host-integration",
+      "exit": 0,
+      "seconds": 52.33247437502723,
+      "command_id": 15
+    },
+    {
+      "name": "sanitize-integration",
+      "exit": 0,
+      "seconds": 61.29183366592042,
+      "command_id": 16
+    },
+    {
+      "name": "frame-repeat-0",
+      "exit": 0,
+      "seconds": 5.658728334004991,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-1",
+      "exit": 0,
+      "seconds": 5.660202292026952,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-2",
+      "exit": 0,
+      "seconds": 6.146103541948833,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-3",
+      "exit": 0,
+      "seconds": 6.163912541931495,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-4",
+      "exit": 0,
+      "seconds": 6.162280082935467,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-5",
+      "exit": 0,
+      "seconds": 6.172392999986187,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-6",
+      "exit": 0,
+      "seconds": 6.175055874977261,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-7",
+      "exit": 0,
+      "seconds": 6.162675958941691,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-8",
+      "exit": 0,
+      "seconds": 6.170685249962844,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-9",
+      "exit": 0,
+      "seconds": 6.173594124964438,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-10",
+      "exit": 0,
+      "seconds": 6.173187332926318,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-11",
+      "exit": 0,
+      "seconds": 6.1655432500410825,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-12",
+      "exit": 0,
+      "seconds": 6.165203707991168,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-13",
+      "exit": 0,
+      "seconds": 6.16263599996455,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-14",
+      "exit": 0,
+      "seconds": 6.179720166954212,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-15",
+      "exit": 0,
+      "seconds": 6.164983000024222,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-16",
+      "exit": 0,
+      "seconds": 6.162559499964118,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-17",
+      "exit": 0,
+      "seconds": 6.171722041908652,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-18",
+      "exit": 0,
+      "seconds": 6.1486857500858605,
+      "command_id": 17
+    },
+    {
+      "name": "frame-repeat-19",
+      "exit": 0,
+      "seconds": 6.148139375029132,
+      "command_id": 17
+    },
+    {
+      "name": "final-separate-row-debug",
+      "exit": 0,
+      "reported_unittest_seconds": 0.873,
+      "command_id": 18
+    },
+    {
+      "name": "final-separate-row-sanitize",
+      "exit": 0,
+      "reported_unittest_seconds": 0.903,
+      "command_id": 19
+    }
+  ],
+  "full_suites": {
+    "debug_ctest": "9/9 pass",
+    "asan_ubsan_ctest": "9/9 pass",
+    "unit_cases": 605,
+    "publication_fault_cases": 67,
+    "cli_integration_methods": 98,
+    "expected_skips": [
+      "NetworkOptIn.TlsHandshake",
+      "Contracts.NativeTigerDesktopAcceptance"
+    ]
+  },
+  "repetitions": {
+    "final_unit_batches": 20,
+    "final_pty_batches": 20,
+    "final_pty_methods_per_batch": 4,
+    "native_geometry_destination_subtests_per_batch": 20,
+    "additional_initial_batches": "20 batches of 114 focused unit cases, 18 fault cases and 22 PTY methods; later final-source repeats retain coverage after changes.",
+    "socket_unicode_retries": "20 fresh successful repetitions after one existing startup-delay race; assertions unchanged."
+  },
+  "source_hashes": {
+    "CMakeLists.txt": "27a6991a21bd7b6f155c542ba9e6be6aed3c66434774439a6a4b80652f2c81e6",
+    "Makefile": "3cb01db1516b82f2eeff95452d0587a413b6d5d492d48b6c535e85b0b260f290",
+    "include/codet/detail/cleanup_diagnostics.hpp": "19000659668cdeabd3e818733403ee70bcc33158936fb6012cbcecde8e704bb1",
+    "include/codet/detail/cli_output.hpp": "03aa0701544a6f6595f292bd4099faa8a06f6e727b924d435ab9ae42e1985387",
+    "include/codet/detail/curses_input.hpp": "198fae1572c3c8f78cbb6a7e891abe215274c4d50d1f2ad1128d9cdcb42d816b",
+    "include/codet/detail/curses_text.hpp": "679b9a272baa6f173f65833d782b73c550bff3559568c85ae9015afc061bfe53",
+    "include/codet/detail/diagnostic_stream.hpp": "09e54714e7c7c3b72da4c1c53cc18a55087c304b671e6bc9855c24de1dcac6cd",
+    "include/codet/detail/line_prompt.hpp": "d953b18c3bfe3001c8eac22a0074083f7263658d78e1b0d6dd9d6faaeb3abd57",
+    "include/codet/detail/request_input.hpp": "b86027f8a6e046be24bb2a4a86fa28621d3e89603af937965c0bc01284791544",
+    "include/codet/detail/request_input_controller.hpp": "642167c654884494df6319b2ad7a32daba396164e17c26aeebdafe1eda5cbd65",
+    "include/codet/detail/terminal_input.hpp": "5422ba71dea79d65e4d086ff03801587c1bf3db88afd936f0edcee5f5ea6f286",
+    "include/codet/interaction.hpp": "34a4beb284e62a548f114673a44893c9613141f64688cbbeed4f6d93c0b3c208",
+    "src/modern/cli.cpp": "a31e32c50904c9378cd32b816b763f54674f2fc27b816d44a72ac14f3ad27191",
+    "src/modern/interaction.cpp": "34d6b25dba4abde35db7f9f1a46f7c633d5caa53a3f150a36ee764ca218f4ee1",
+    "src/modern/platform.cpp": "98aeedc5a844d5e44aa0d778ade5a4b3ae6673502922919db27d7ef7216a5fe0",
+    "src/modern/tools.cpp": "a193014c8bc597303fec8bf7506c9771210a6f43002eed2224d59337e3c568e6",
+    "tests/cli_diagnostics_test.cpp": "d7c738c78a6a95837d8a38660300c3e69ceb787637d263f6e956643a9a81dca6",
+    "tests/cli_integration.py": "fcb6f7acb2e02e28fcf62cda5c9bcec5efa55830aaa7c50090058544506e75d1",
+    "tests/line_input_bench.cpp": "e7b218ec61309501be37d64d28966f567a3dafffaa7b76ff6465a50049b310b9",
+    "tests/line_prompt_helper.hpp": "7fa55b55ba6ec8d9fc55e4b3251a35e4453b87c655d9fb74ada63f60f971fe88",
+    "tests/pty_process.py": "90184ba757ea3be88073be713b27261eec517b06c2cb137515e7d6021a57c940",
+    "tests/publication_fault_test.cpp": "d9a9c14924cc592abfdc3dab8cb47ebf160990849a90872cc2809ecb6837dbb5",
+    "tests/runtime_test.cpp": "fb1f8c813db143b14e371b5868bfac8a02ebdcf73bb802cd0e9caacd880a3ad5",
+    "tests/terminal_cli_helper.py": "a4130fa18c8e5dd7e602a6c7cedde6de76350db244a57cf157d704895050c741",
+    "tests/test_main.cpp": "2f9fb681de90e37de1a1ad6553bc59f01f0bed457eed6629f97039c1730d5011",
+    "tests/ui_render_bench.cpp": "bd791a1d28089d08b6959826870ad45eb2c2a80c321ae98fc0aa1a4ccabb5a83"
+  },
+  "static_analysis": {
+    "baseline_comparison": {
+      "cppcheck": {
+        "findings": 0,
+        "completed": 25,
+        "expected": 25,
+        "current_input_hash_mismatches": [],
+        "diagnostic_multiset_equal_to_baseline": true,
+        "findings_detail": []
+      },
+      "clang-tidy": {
+        "findings": 6,
+        "completed": 24,
+        "expected": 25,
+        "current_input_hash_mismatches": [],
+        "diagnostic_multiset_equal_to_baseline": true,
+        "findings_detail": [
+          [
+            "bugprone-narrowing-conversions",
+            "src/modern/images.cpp",
+            "narrowing conversion from 'unsigned long' to 'double'"
+          ],
+          [
+            "bugprone-narrowing-conversions",
+            "src/modern/images.cpp",
+            "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+          ],
+          [
+            "bugprone-narrowing-conversions",
+            "src/modern/images.cpp",
+            "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+          ],
+          [
+            "bugprone-exception-escape",
+            "src/modern/main.cpp",
+            "an exception may be thrown in function 'main' which should not throw exceptions"
+          ],
+          [
+            "clang-diagnostic-error",
+            "src/modern/platform.cpp",
+            "implicit instantiation of undefined template 'std::basic_istringstream<char>'"
+          ],
+          [
+            "bugprone-exception-escape",
+            "src/modern/state.cpp",
+            "an exception may be thrown in function 'operator()' which should not throw exceptions"
+          ]
+        ]
+      },
+      "clang-analyzer": {
+        "findings": 1,
+        "completed": 25,
+        "expected": 25,
+        "current_input_hash_mismatches": [],
+        "diagnostic_multiset_equal_to_baseline": true,
+        "findings_detail": [
+          [
+            "core.DivideZero",
+            "src/modern/context.cpp",
+            "Division by zero",
+            "project_history",
+            "b7fd78895b63841553e144fd774a0954"
+          ]
+        ]
+      }
+    },
+    "interpretation": "Local Clang findings exactly match the recorded baseline; Cppcheck and analyzer self-tests pass. Required Ubuntu Clang-Tidy, Cppcheck and Clang Static Analyzer all pass."
+  },
+  "linux_ci": {
+    "conclusion": "success",
+    "createdAt": "2026-10-29T19:13:49Z",
+    "databaseId": 40938171129,
+    "headSha": "713b360f23093f024fc2c92c6b8c941c865d2b9a",
+    "jobs": [
+      {
+        "completedAt": "2026-10-29T19:14:29Z",
+        "conclusion": "success",
+        "databaseId": 123674165336,
+        "name": "lint",
+        "startedAt": "2026-10-29T19:13:52Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-29T19:13:53Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-29T19:13:52Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:13:55Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "number": 2,
+            "startedAt": "2026-10-29T19:13:53Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:13:59Z",
+            "conclusion": "success",
+            "name": "Install lightweight check prerequisites",
+            "number": 3,
+            "startedAt": "2026-10-29T19:13:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:14:04Z",
+            "conclusion": "success",
+            "name": "Test enforcement runners without building C++",
+            "number": 4,
+            "startedAt": "2026-10-29T19:13:59Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:14:11Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+            "number": 5,
+            "startedAt": "2026-10-29T19:14:04Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:14:24Z",
+            "conclusion": "success",
+            "name": "Provision pinned lint tools",
+            "number": 6,
+            "startedAt": "2026-10-29T19:14:11Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:14:25Z",
+            "conclusion": "success",
+            "name": "Check formatting, Python, shell and workflows",
+            "number": 7,
+            "startedAt": "2026-10-29T19:14:24Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:14:27Z",
+            "conclusion": "success",
+            "name": "Upload lint evidence",
+            "number": 8,
+            "startedAt": "2026-10-29T19:14:25Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:14:27Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+            "number": 15,
+            "startedAt": "2026-10-29T19:14:27Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:14:27Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "number": 16,
+            "startedAt": "2026-10-29T19:14:27Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:14:27Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-10-29T19:14:27Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/hbmartin/codet-compiled-agent/actions/runs/40938171129/job/123674165336"
+      },
+      {
+        "completedAt": "2026-10-29T19:14:26Z",
+        "conclusion": "success",
+        "databaseId": 123674165770,
+        "name": "semgrep",
+        "startedAt": "2026-10-29T19:13:52Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-29T19:13:54Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-29T19:13:53Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:13:55Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "number": 2,
+            "startedAt": "2026-10-29T19:13:54Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:14:00Z",
+            "conclusion": "success",
+            "name": "Install policy-check prerequisites",
+            "number": 3,
+            "startedAt": "2026-10-29T19:13:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:14:18Z",
+            "conclusion": "success",
+            "name": "Provision hash-locked Semgrep environment",
+            "number": 4,
+            "startedAt": "2026-10-29T19:14:00Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:14:22Z",
+            "conclusion": "success",
+            "name": "Check production sources and headers",
+            "number": 5,
+            "startedAt": "2026-10-29T19:14:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:14:23Z",
+            "conclusion": "success",
+            "name": "Upload policy evidence",
+            "number": 6,
+            "startedAt": "2026-10-29T19:14:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:14:24Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "number": 12,
+            "startedAt": "2026-10-29T19:14:23Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:14:24Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 13,
+            "startedAt": "2026-10-29T19:14:24Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/hbmartin/codet-compiled-agent/actions/runs/40938171129/job/123674165770"
+      },
+      {
+        "completedAt": "2026-10-29T19:23:35Z",
+        "conclusion": "success",
+        "databaseId": 123674165984,
+        "name": "ubuntu",
+        "startedAt": "2026-10-29T19:13:52Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-29T19:13:54Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-29T19:13:53Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:13:58Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "number": 2,
+            "startedAt": "2026-10-29T19:13:54Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:14:19Z",
+            "conclusion": "success",
+            "name": "Install host tools and libraries",
+            "number": 3,
+            "startedAt": "2026-10-29T19:13:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:14:21Z",
+            "conclusion": "success",
+            "name": "Fetch verified dependencies",
+            "number": 4,
+            "startedAt": "2026-10-29T19:14:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:14:23Z",
+            "conclusion": "success",
+            "name": "Fetch pinned analyzer sources",
+            "number": 5,
+            "startedAt": "2026-10-29T19:14:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:15:33Z",
+            "conclusion": "success",
+            "name": "Build pinned analyzer offline",
+            "number": 6,
+            "startedAt": "2026-10-29T19:14:23Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:17:08Z",
+            "conclusion": "success",
+            "name": "Configure and build with Clang",
+            "number": 7,
+            "startedAt": "2026-10-29T19:15:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:17:10Z",
+            "conclusion": "success",
+            "name": "Verify analyzer detection",
+            "number": 8,
+            "startedAt": "2026-10-29T19:17:08Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:22:03Z",
+            "conclusion": "success",
+            "name": "Analyze all application sources",
+            "number": 9,
+            "startedAt": "2026-10-29T19:17:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:23:30Z",
+            "conclusion": "success",
+            "name": "Run unit, CLI and integration tests",
+            "number": 10,
+            "startedAt": "2026-10-29T19:22:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:23:33Z",
+            "conclusion": "success",
+            "name": "Upload analysis and test evidence",
+            "number": 11,
+            "startedAt": "2026-10-29T19:23:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:23:33Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "number": 22,
+            "startedAt": "2026-10-29T19:23:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:23:33Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 23,
+            "startedAt": "2026-10-29T19:23:33Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/hbmartin/codet-compiled-agent/actions/runs/40938171129/job/123674165984"
+      },
+      {
+        "completedAt": "2026-10-29T19:23:40Z",
+        "conclusion": "success",
+        "databaseId": 123679395178,
+        "name": "Required checks",
+        "startedAt": "2026-10-29T19:23:37Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-29T19:23:38Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-29T19:23:38Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:23:38Z",
+            "conclusion": "success",
+            "name": "Require every mandatory job to succeed",
+            "number": 2,
+            "startedAt": "2026-10-29T19:23:38Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-29T19:23:38Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 3,
+            "startedAt": "2026-10-29T19:23:38Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/hbmartin/codet-compiled-agent/actions/runs/40938171129/job/123679395178"
+      }
+    ],
+    "status": "completed",
+    "updatedAt": "2026-10-29T19:23:41Z",
+    "url": "https://github.com/hbmartin/codet-compiled-agent/actions/runs/40938171129"
+  },
+  "performance": {
+    "method": "Identical Release harnesses. One warm-up and five alternating measured runs in each of two sets. No concurrent task tests, builds or analyzers. Samples include warm-up labels. C++ allocations/direct native calls only, not peak RSS or complete libc/libedit activity.",
+    "variants": [
+      {
+        "name": "baseline",
+        "ref": "60b8c4e17689ffb8a08bccc28bdcb25e32d040b4",
+        "configure": [
+          "cmake",
+          "-S",
+          "build/line-input-rendering-followup/baseline-src",
+          "-B",
+          "build/line-input-rendering-followup/baseline-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+          "-DCODET_DEPENDENCY_ROOT=.deps"
+        ],
+        "harness_hashes": {
+          "CMakeLists.txt": "27a6991a21bd7b6f155c542ba9e6be6aed3c66434774439a6a4b80652f2c81e6",
+          "tests/line_input_bench.cpp": "e7b218ec61309501be37d64d28966f567a3dafffaa7b76ff6465a50049b310b9",
+          "tests/ui_render_bench.cpp": "bd791a1d28089d08b6959826870ad45eb2c2a80c321ae98fc0aa1a4ccabb5a83",
+          "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+          "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+          "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+          "tests/native_stat_interposer.hpp": "1b18a6ad90b78d614d8665cfaeacd490b543071541cb63857ce919e1fdcc51ef",
+          "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6"
+        },
+        "production_hashes": {
+          "include/codet/detail/cleanup_diagnostics.hpp": "8e7ef7deeb0eae2a1bac9678eda83dda3814f7601e2320fc0d9a42eb23ac5dd0",
+          "include/codet/detail/cli_output.hpp": "3759f8da1ed70813137fb140593af484f1988225b32852539e31dc46b9cc70c7",
+          "include/codet/detail/curses_input.hpp": "927a48b88670af8048b563ca3cd844fa59ea3facb3ee76537072e7255f56ce09",
+          "include/codet/detail/curses_text.hpp": "d8c2750f6d332e9f3b1e51c15ada0851dcc23bdfedf7aca4baf8cdb63fed0bce",
+          "include/codet/detail/diagnostic_stream.hpp": "f98f51ce429671c5edba84329e5fa207d356ca52eeb8664ae0404fd0d17fd9c3",
+          "include/codet/detail/line_prompt.hpp": "eacdb5b3d6a66c44b8d3367467e2c6d495c5efd933d46b08258bed4cfd664841",
+          "include/codet/detail/request_input.hpp": "097f687eb665cf913368ae1b3ce115a74c4a41f4b6f0f14300c1132da45f12ca",
+          "include/codet/detail/request_input_controller.hpp": "771a26a6e99b43119f3d705d276ed9de405aedd9789133dd5a50cedb1361dc93",
+          "include/codet/interaction.hpp": "ac2bae0c6d600d8866c06090444b842acbcb5baa31475825a20d34e36b512f03",
+          "src/modern/cli.cpp": "1bbea0033146d6db774baa84cf5455642763e0b7fe21068daa7bbe625f4e9714",
+          "src/modern/interaction.cpp": "90774409061326f7ed9781b6d3e0ca23db1d1292e10e6ec02fdca1651e218818",
+          "src/modern/platform.cpp": "4341161db48c3058f280554c43da81df39de30629f5f0d838b6460ce88e7c5e2",
+          "src/modern/tools.cpp": "7cce428421e53452797feda0d5bfaa2eac9cb75a470f3c9da7dd39a43067b5fc"
+        }
+      },
+      {
+        "name": "changed",
+        "ref": "f076cecd3f97facd1caf5f2147a550e6d2b4035e",
+        "configure": [
+          "cmake",
+          "-S",
+          "build/line-input-rendering-followup/changed-src",
+          "-B",
+          "build/line-input-rendering-followup/changed-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+          "-DCODET_DEPENDENCY_ROOT=.deps"
+        ],
+        "harness_hashes": {
+          "CMakeLists.txt": "27a6991a21bd7b6f155c542ba9e6be6aed3c66434774439a6a4b80652f2c81e6",
+          "tests/line_input_bench.cpp": "e7b218ec61309501be37d64d28966f567a3dafffaa7b76ff6465a50049b310b9",
+          "tests/ui_render_bench.cpp": "bd791a1d28089d08b6959826870ad45eb2c2a80c321ae98fc0aa1a4ccabb5a83",
+          "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+          "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+          "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+          "tests/native_stat_interposer.hpp": "1b18a6ad90b78d614d8665cfaeacd490b543071541cb63857ce919e1fdcc51ef",
+          "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6"
+        },
+        "production_hashes": {
+          "include/codet/detail/cleanup_diagnostics.hpp": "19000659668cdeabd3e818733403ee70bcc33158936fb6012cbcecde8e704bb1",
+          "include/codet/detail/cli_output.hpp": "03aa0701544a6f6595f292bd4099faa8a06f6e727b924d435ab9ae42e1985387",
+          "include/codet/detail/curses_input.hpp": "198fae1572c3c8f78cbb6a7e891abe215274c4d50d1f2ad1128d9cdcb42d816b",
+          "include/codet/detail/curses_text.hpp": "679b9a272baa6f173f65833d782b73c550bff3559568c85ae9015afc061bfe53",
+          "include/codet/detail/diagnostic_stream.hpp": "09e54714e7c7c3b72da4c1c53cc18a55087c304b671e6bc9855c24de1dcac6cd",
+          "include/codet/detail/line_prompt.hpp": "d953b18c3bfe3001c8eac22a0074083f7263658d78e1b0d6dd9d6faaeb3abd57",
+          "include/codet/detail/request_input.hpp": "b86027f8a6e046be24bb2a4a86fa28621d3e89603af937965c0bc01284791544",
+          "include/codet/detail/request_input_controller.hpp": "642167c654884494df6319b2ad7a32daba396164e17c26aeebdafe1eda5cbd65",
+          "include/codet/detail/terminal_input.hpp": "5422ba71dea79d65e4d086ff03801587c1bf3db88afd936f0edcee5f5ea6f286",
+          "include/codet/interaction.hpp": "34a4beb284e62a548f114673a44893c9613141f64688cbbeed4f6d93c0b3c208",
+          "src/modern/cli.cpp": "a31e32c50904c9378cd32b816b763f54674f2fc27b816d44a72ac14f3ad27191",
+          "src/modern/interaction.cpp": "34d6b25dba4abde35db7f9f1a46f7c633d5caa53a3f150a36ee764ca218f4ee1",
+          "src/modern/platform.cpp": "98aeedc5a844d5e44aa0d778ade5a4b3ae6673502922919db27d7ef7216a5fe0",
+          "src/modern/tools.cpp": "a193014c8bc597303fec8bf7506c9771210a6f43002eed2224d59337e3c568e6"
+        }
+      }
+    ],
+    "samples": 696,
+    "workloads": 29,
+    "medians": "line-input-rendering-followup-performance.csv",
+    "every_sample": "line-input-rendering-followup-performance-samples.csv",
+    "counter_checks": "Allocation, write, fstat, fcntl, pipe-bound, locale-conversion and geometry-query positive controls pass. UI checksums match. Diagnostics/exports retain identical allocation and directly observed native-operation counts. Line restoration and unchanged redraw have no allocations or input preparation.",
+    "interpretation": "20 KiB busy-turn output falls from 2049700 to 8900 bytes per 100 native batches. Rewriting safe rows increases editing/deletion output work compared with unsafe byte echo. Native busy-turn latency improves; injected sink/editing and some export timings are slower. No general latency claim or timing-based CI threshold.",
+    "discarded": "An initial collection overlapped an integration retry and was discarded in full. Later intermediate samples preceded the final ownership/echo fixes and are not used as final evidence."
+  },
+  "failures": "line-input-rendering-followup-development-failures.log",
+  "reproductions": "line-input-rendering-followup-reproductions.json",
+  "platform_limits": {
+    "native_tiger_runtime": false,
+    "tiger_compiler": false,
+    "tiger_sdk": false,
+    "docker": false,
+    "native_intel_runtime": false,
+    "linux": "Strict required Ubuntu wide-curses/UTF-8 build, analysis and CTest pass; see CI record.",
+    "tty": "Blocking TTY output remains outside bounded-cancellation guarantees. Standalone/emergency delivery remains best effort without EAGAIN waiting."
+  },
+  "unchanged": [
+    "Public diagnostic/CLI constructors and raw submitted/data bytes.",
+    "Strict complete approval review, Unicode policy, durable completion and cancellation precedence.",
+    "Live/cleanup/file replay ordering, terminal cleanup ownership, journal authority and storage formats."
+  ]
+}

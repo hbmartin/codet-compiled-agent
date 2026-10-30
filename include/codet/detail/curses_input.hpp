@@ -51,6 +51,11 @@ class CursesInput {
   }
 
 public:
+  struct Tail {
+    std::string_view text;
+    size_t columns = 0;
+    bool omitted = false;
+  };
   static constexpr size_t limit = 65536;
   const std::string &raw() const noexcept {
     return raw_;
@@ -120,21 +125,26 @@ public:
     rebuild(tokens_.empty() ? 0u : tokens_.back().source_end);
     mutation.complete = true;
   }
-  std::string view(std::string_view prompt, size_t columns) const {
-    std::string result(prompt.substr(0, columns));
-    columns -= result.size();
+  Tail tail(size_t columns) const noexcept {
     size_t start = tokens_.size(), used = 0;
     while (start && tokens_[start - 1].columns <= columns - used) {
       used += tokens_[--start].columns;
     }
     if (start && columns) {
-      result += '<';
       --columns;
       while (start < tokens_.size() && used > columns)
         used -= tokens_[start++].columns;
     }
     const auto offset = start ? tokens_[start - 1].display_end : 0u;
-    result.append(display_, offset, display_.size() - offset);
+    // Token offsets belong to display_; avoid a throwing bounds-checked substr in this view.
+    return {std::string_view(display_.data() + offset, display_.size() - offset), used, start != 0};
+  }
+  std::string view(std::string_view prompt, size_t columns) const {
+    std::string result(prompt.substr(0, columns));
+    const auto suffix = tail(columns - result.size());
+    if (suffix.omitted && columns > result.size())
+      result += '<';
+    result += suffix.text;
     return result;
   }
 };

@@ -5,9 +5,11 @@
 #include "codet/detail/cli_diagnostics.hpp"
 #include "codet/detail/cli_output.hpp"
 #include "codet/detail/curses_input.hpp"
+#include "codet/detail/line_prompt.hpp"
 #include "codet/detail/terminal_resources.hpp"
 #include "codet/detail/ui_history.hpp"
 #include "codet/diagnostics.hpp"
+#include "codet/interaction.hpp"
 #include "codet/prompt.hpp"
 #include "journal_fixture.hpp"
 #include "journal_metrics.hpp"
@@ -209,6 +211,60 @@ extern "C" int sqlite3_step(sqlite3_stmt *statement) {
   return result;
 }
 namespace {
+TEST(LineViewportFault, CachedRestorationHasNoDraftSizedAllocation) {
+  struct Discard : std::streambuf {
+    size_t bytes = 0;
+    std::streamsize xsputn(const char *, std::streamsize n) override {
+      bytes += static_cast<size_t>(n);
+      return n;
+    }
+    int overflow(int value) override {
+      ++bytes;
+      return value;
+    }
+  } buffer;
+  std::ostream stream(&buffer);
+  detail::CliOutput output(stream);
+  Cancellation cancel;
+  detail::IoContext io(cancel);
+  detail::RequestInputController input;
+  for (size_t i = 0; i < detail::CursesInput::limit; ++i)
+    input.append('x');
+  const auto rebuilt = input.input().rebuilt_bytes();
+  struct stat tty {};
+  tty.st_mode = S_IFCHR;
+  const std::string prompt = "codet> ";
+  detail::LinePrompt line(input, output, io, prompt, tty, 80);
+  line.acquire();
+  line.flush();
+  buffer.bytes = 0;
+  fault::fired = false;
+  fault::countdown = 0;
+  if (line.before_output(STDERR_FILENO, tty))
+    output.echo({"\n"});
+  line.flush();
+  for (int i = 0; i < 100; ++i)
+    line.flush();
+  fault::countdown = -1;
+  EXPECT_FALSE(fault::fired);
+  EXPECT_EQ(input.input().rebuilt_bytes(), rebuilt);
+  EXPECT_LE(buffer.bytes, 80u);
+}
+TEST(InteractionWarningFault, ProducerAndFixedConsumerNeedNoAllocation) {
+  Interaction input;
+  fault::fired = false;
+  fault::countdown = 0;
+  input.warn(Interaction::Warning::exec_stop);
+  input.warn(Interaction::Warning::exec_stop);
+  size_t calls = 0;
+  input.drain_warnings([&](std::string_view) noexcept {
+    ++calls;
+    return true;
+  });
+  fault::countdown = -1;
+  EXPECT_FALSE(fault::fired);
+  EXPECT_EQ(calls, 1u);
+}
 TEST(UiBudgetFault, BoundedRawPreparationCapsAllocationsAndPropagatesFailure) {
   const std::string huge(16 * 1024 * 1024, '\x1b');
   fault::largest_allocation = 0;

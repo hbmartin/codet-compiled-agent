@@ -1,0 +1,127 @@
+Echo status negative control
+============================
+Note: Google Test filter = LinePrompt.KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from LinePrompt
+[ RUN      ] LinePrompt.KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure
+tests/cli_diagnostics_test.cpp:538: Failure
+Value of: output.failed()
+  Actual: true
+Expected: false
+
+[  FAILED  ] LinePrompt.KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure (0 ms)
+[----------] 1 test from LinePrompt (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (0 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] LinePrompt.KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure
+
+ 1 FAILED TEST
+
+
+Baseline separate-input/devtty negative control
+===============================================
+F
+======================================================================
+FAIL: test_line_prompts_follow_stdout_with_separate_input_and_devtty (__main__.CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty) (alias=True)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "tests/cli_integration.py", line 1455, in test_line_prompts_follow_stdout_with_separate_input_and_devtty
+    collect(lambda ready=ready,process=process:ready.is_set() or process.poll() is not None)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "tests/pty_process.py", line 29, in collect
+    test.assertTrue(predicate(), bytes(received))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : b'Permissions: default; no OS shell sandbox\r\nError: Interrupted\r\ncodet> [default] '
+
+----------------------------------------------------------------------
+Ran 1 test in 10.659s
+
+FAILED (failures=1)
+
+
+Initial sanitizer startup signal race
+=====================================
+FAIL: test_shared_full_socket_cancels_without_blocking_final_stderr (__main__.CliTests.test_shared_full_socket_cancels_without_blocking_final_stderr) (signal=<Signals.SIGTERM: 15>)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "tests/cli_integration.py", line 2364, in test_shared_full_socket_cancels_without_blocking_final_stderr
+    try:
+AssertionError: -15 != 130
+
+----------------------------------------------------------------------
+Ran 97 tests in 65.212s
+
+FAILED (failures=1)
+
+    Start 5: codet.prompts
+5/9 Test #5: codet.prompts ....................   Passed    1.50 sec
+    Start 6: codet.build-integrity
+6/9 Test #6: codet.build-integrity ............   Passed    0.77 sec
+    Start 7: codet.semgrep-report
+7/9 Test #7: codet.semgrep-report .............   Passed    0.96 sec
+    Start 8: codet.lint-runner
+8/9 Test #8: codet.lint-runner ................   Passed    2.53 sec
+    Start 9: codet.hermetic
+9/9 Test #9: codet.hermetic ...................   Passed    0.94 sec
+
+89% tests passed, 1 tests failed out of 9
+
+Total Test time (real) = 207.86 sec
+
+The following tests FAILED:
+	  4 - codet.integration (Failed)
+Errors while running CTest
+
+
+Fresh strict local Debug build
+==============================
+[15/71] Building CXX object CMakeFiles/codet_core.dir/src/modern/images.cpp.o
+FAILED: CMakeFiles/codet_core.dir/src/modern/images.cpp.o 
+/usr/bin/c++ -DCODET_VERSION=\"0.1.0\" -Iinclude -Ibuild/line-input-rendering-followup/strict-debug/generated -I.deps/json-schema-validator/src -isystem .deps/json/include -isystem .deps/tomlplusplus/include -isystem /opt/homebrew/Cellar/openssl@4/4.0.3/include -g -std=c++17 -arch arm64 -Wno-deprecated-declarations -Wall -Wextra -Wpedantic -Werror -Wconversion -Wsign-conversion -Wshorten-64-to-32 -MD -MT CMakeFiles/codet_core.dir/src/modern/images.cpp.o -MF CMakeFiles/codet_core.dir/src/modern/images.cpp.o.d -o CMakeFiles/codet_core.dir/src/modern/images.cpp.o -c src/modern/images.cpp
+src/modern/images.cpp:81:76: error: implicit conversion from 'const unsigned long' to 'double' may lose precision [-Werror,-Wimplicit-int-float-conversion]
+src/modern/images.cpp:82:60: error: implicit conversion from 'size_t' (aka 'unsigned long') to 'double' may lose precision [-Werror,-Wimplicit-int-float-conversion]
+src/modern/images.cpp:83:60: error: implicit conversion from 'size_t' (aka 'unsigned long') to 'double' may lose precision [-Werror,-Wimplicit-int-float-conversion]
+
+Ubuntu PTY snapshot read-boundary race
+======================================
+FAIL: test_prepared_line_viewport_and_stdout_binding (__main__.CliTests.test_prepared_line_viewport_and_stdout_binding) (columns=9, route='stderr-log')
+2026-10-29T19:11:30.6935082Z ----------------------------------------------------------------------
+2026-10-29T19:11:30.6935436Z Traceback (most recent call last):
+2026-10-29T19:11:30.6936169Z   File "/home/runner/work/codet-compiled-agent/codet-compiled-agent/tests/cli_integration.py", line 1427, in test_prepared_line_viewport_and_stdout_binding
+2026-10-29T19:11:30.6936897Z     self.assertEqual(bytes(received),before)
+2026-10-29T19:11:30.6937915Z AssertionError: b'cod[691 chars]\\x81\\xE9\\x9B\\xAA\\xC2\\x9B\\xE2\\x80\\xAE\\x5Cx41\\xFF\r\n' != b'cod[691 chars]\\x81\\xE9\\x9B\\xAA\\xC2\\x9B\\xE2\\x80\\xAE\\x5Cx41\\xFF'
+2026-10-29T19:11:30.6938729Z 
+2026-10-29T19:11:30.6938876Z ----------------------------------------------------------------------
+2026-10-29T19:11:30.6939209Z Ran 98 tests in 36.530s
+2026-10-29T19:11:30.6939353Z 
+2026-10-29T19:11:30.6939432Z FAILED (failures=1)
+2026-10-29T19:11:30.6939562Z 
+2026-10-29T19:11:30.6939673Z     Start 5: codet.prompts
+2026-10-29T19:11:30.8959978Z 5/9 Test #5: codet.prompts ....................   Passed    0.20 sec
+2026-10-29T19:11:30.8961567Z     Start 6: codet.build-integrity
+2026-10-29T19:11:31.0658429Z 6/9 Test #6: codet.build-integrity ............   Passed    0.17 sec
+2026-10-29T19:11:31.0660208Z     Start 7: codet.semgrep-report
+2026-10-29T19:11:31.5406310Z 7/9 Test #7: codet.semgrep-report .............   Passed    0.47 sec
+2026-10-29T19:11:31.5408572Z     Start 8: codet.lint-runner
+2026-10-29T19:11:32.9585282Z 8/9 Test #8: codet.lint-runner ................   Passed    1.42 sec
+2026-10-29T19:11:32.9587707Z     Start 9: codet.hermetic
+2026-10-29T19:11:33.1527676Z 9/9 Test #9: codet.hermetic ...................   Passed    0.19 sec
+2026-10-29T19:11:33.1532051Z 
+2026-10-29T19:11:33.1532284Z 89% tests passed, 1 tests failed out of 9
+
+
+The Ubuntu snapshot test now waits for the full final escape plus CRLF before recording a baseline frame. It preserves its exact byte-equality assertion and passes full Debug/sanitizer integration plus twenty further native matrix repetitions.
+
+
+Darwin devtty readiness probe
+{"ready": [[0, 32]], "read": [], "select": [], "foreground": 68517, "group": 68517}
+
+
+Initial Ubuntu analyzer findings: Tail columns/omitted and InputSubmission action missing default initializers; Warning enum size; empty fallback catch. Corrected without suppressions. A later Ubuntu run caught timeval microseconds implicit widening; corrected with an explicit native-type conversion.
+
+
+The startup-signal race is in an existing 0.3-second startup-delay test. Assertions and timeout remain unchanged. The failed integration rerun and 20 socket/Unicode repetitions pass; final quiet suites also pass. Existing Python 3.15 sqlite ResourceWarnings remain visible.

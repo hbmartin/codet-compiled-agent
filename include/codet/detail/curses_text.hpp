@@ -29,13 +29,14 @@ class CursesText {
   }
   static size_t prepare(std::string_view token, RenderedToken parsed, char *output, bool unicode,
                         bool prose_tabs, bool strict) noexcept {
-    if (parsed.valid &&
-        (parsed.point == '\n' || (prose_tabs && parsed.point == '\t') ||
-         (parsed.point >= 0x20 && parsed.point != 0x7f && (unicode || parsed.point < 0x80) &&
-          (!strict || parsed.point < 0x80 || !approval_invisible(parsed.point))))) {
+    if (printable_ascii(parsed, prose_tabs)) {
+      std::copy(token.begin(), token.end(), output);
+      return token.size();
+    }
+    if (parsed.valid && parsed.point >= 0x80 && unicode &&
+        (!strict || !approval_invisible(parsed.point))) {
       const auto width = columns(token, parsed);
-      if (parsed.point == '\n' || (prose_tabs && parsed.point == '\t') || width > 0 ||
-          (!strict && width == 0)) {
+      if (width > 0 || (!strict && width == 0)) {
         std::copy(token.begin(), token.end(), output);
         return token.size();
       }

@@ -137,6 +137,15 @@ returns after acknowledgement; line prompts return after intervening output. Exp
 live draft to empty permits fresh input, while hidden or stale drafts retain their identity until
 Enter. Backspace removes one validated UTF-8 character or trailing prefix, or one malformed byte.
 Quit, EOF, and cancellation remain available.
+Active line input uses the cached safe presentation for echo, deletion and repainting; draft bytes
+are never replayed raw. The editable tail reserves the terminal's final column and uses at most
+256 columns, with `<` marking omitted input. Full submitted input and pending approval documents
+remain intact. Short rows use compact input/approval/question prefixes; complete request guidance
+remains outside the editable row. Unknown widths and terminals below ten columns use bounded,
+labelled snapshots on new lines instead of cursor erasure. Resizing or replacing stdout abandons
+the old row geometry. Prompts follow stdout's destination; a separate redirected stderr does not
+disturb that row. Deleting the final ordinary draft character removes its active prompt, and an
+exactly empty ordinary Enter queues no message. Empty request answers retain their existing meaning.
 Ordinary curses drawing failures preserve the worker and input and retry on the next UI event;
 approval drawing failures still cancel safely. UI history retains request/context excerpts and associated decisions within
 256 KiB and 1,000 lines, with at most 16 KiB per approval excerpt. The pending review stays complete.

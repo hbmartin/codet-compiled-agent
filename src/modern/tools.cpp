@@ -2,6 +2,7 @@
 #include "codet/computer.hpp"
 #include "codet/context.hpp"
 #include "codet/core.hpp"
+#include "codet/detail/diagnostic_stream.hpp"
 #include "codet/interaction.hpp"
 #include "codet/output.hpp"
 #include "codet/patch.hpp"
@@ -971,7 +972,10 @@ void Tools::cancel_exec() noexcept {
       try {
         processes_.stop(entry.second.process);
       } catch (...) {
-        std::fputs("Exec cleanup failed while stopping owned process\n", stderr);
+        if (interaction_)
+          interaction_->warn(Interaction::Warning::exec_stop);
+        else
+          (void)detail::immediate_stderr({"Exec cleanup failed while stopping owned process"});
       }
       entry.second.completed = true;
     }
@@ -1706,7 +1710,10 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
       try {
         processes_.stop(job.process);
       } catch (...) {
-        std::fputs("Exec cleanup failed; preserving original error\n", stderr);
+        if (interaction_)
+          interaction_->warn(Interaction::Warning::exec_original);
+        else
+          (void)detail::immediate_stderr({"Exec cleanup failed; preserving original error"});
       }
       job.completed = true;
       throw;

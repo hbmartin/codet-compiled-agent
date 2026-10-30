@@ -26,7 +26,7 @@ void Interaction::deliver(const EventSink &sink, const DiagnosticSink &diagnosti
     try {
       report_diagnostic(diagnostics, message);
     } catch (...) {
-      (void)detail::immediate_stderr({"Worker event diagnostic could not be displayed"});
+      warn(Warning::event_render);
     }
   };
   for (size_t i = 0; i < batch.size(); ++i) {
@@ -107,6 +107,8 @@ bool Interaction::current_event(const Json &event) {
           event.value("codet_session_id", "") == session_);
 }
 void Interaction::submit(const std::string &text) {
+  if (text.empty())
+    return;
   std::lock_guard<std::mutex> lock(mutex_);
   if (input_.size() >= 100 || text.size() > 65536)
     throw Error("Pending user input limit exceeded");

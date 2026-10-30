@@ -7,19 +7,25 @@ inline std::string_view discard_message(InputDiscard reason) noexcept {
                                             : "Request expired; answer discarded.";
 }
 enum class InputAction : uint8_t { quit, discard, answer, message };
+struct InputSubmission {
+  InputAction action = InputAction::message;
+  std::optional<InputDiscard> rejection;
+};
 struct InputLine {
   std::string text;
   std::optional<ApprovalIdentity> request;
   bool discarded = false;
-  InputDiscard discard_reason() const noexcept {
-    return discarded ? InputDiscard::unfinished : InputDiscard::expired;
+  InputSubmission classify(const Json *pending = nullptr) const {
+    if (text == "/quit" || text == "/exit")
+      return {InputAction::quit, {}};
+    if (discarded)
+      return {InputAction::discard, InputDiscard::unfinished};
+    if (request && (!pending || !request->matches(*pending)))
+      return {InputAction::discard, InputDiscard::expired};
+    return {request ? InputAction::answer : InputAction::message, {}};
   }
   InputAction action(const Json *pending = nullptr) const {
-    if (text == "/quit" || text == "/exit")
-      return InputAction::quit;
-    if (discarded || (request && (!pending || !request->matches(*pending))))
-      return InputAction::discard;
-    return request ? InputAction::answer : InputAction::message;
+    return classify(pending).action;
   }
 };
 // Intent belongs to the draft, not whichever request happens to exist at Enter.

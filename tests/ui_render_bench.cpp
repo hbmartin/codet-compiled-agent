@@ -55,13 +55,18 @@ void operator delete[](void *p, size_t) noexcept {
   std::free(p);
 }
 namespace {
+#ifdef CODET_CACHED_UI
+constexpr size_t history_budget = codet::detail::UiHistory::byte_limit;
+#else
+constexpr size_t history_budget = 262144; // Compatibility with implementations predating UiHistory.
+#endif
 constexpr std::string_view marker = "[UI history excerpt truncated]";
 template <class Text>
 auto history_text(const std::string &source, size_t &work, bool rendered,
-                  int) -> decltype(Text::bounded(source, size_t{262144}, marker, true)) {
+                  int) -> decltype(Text::bounded(source, history_budget, marker, true)) {
   size_t processed = 0;
   auto result = Text::bounded(
-      source, 262144, marker, true,
+      source, history_budget, marker, true,
       rendered ? std::optional<codet::detail::RenderMode>{}
                : std::optional<codet::detail::RenderMode>{codet::detail::RenderMode::prose},
       &processed);
@@ -241,7 +246,7 @@ int main(int argc, char **argv) {
   observing = false;
   const codet::Json result = {{"milliseconds", elapsed},
                               {"locale_conversions", conversions},
-                              {"history_budget", 262144},
+                              {"history_budget", history_budget},
                               {"allocations", allocations},
                               {"allocated_bytes", allocated},
                               {"prepared_input_bytes", work},
