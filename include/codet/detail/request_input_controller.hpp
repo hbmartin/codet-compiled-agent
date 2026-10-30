@@ -10,6 +10,7 @@ class RequestInputController {
   CursesInput input_;
   RequestKind kind_ = RequestKind::message;
   uint64_t revision_ = 0, request_revision_ = 0;
+  bool appended_ = false;
 
 public:
   static constexpr std::string_view approval_prompt = "Approve? [y/N]";
@@ -19,6 +20,9 @@ public:
   }
   uint64_t request_revision() const noexcept {
     return request_revision_;
+  }
+  bool appended_since(uint64_t painted) const noexcept {
+    return appended_ && revision_ - painted == 1;
   }
   bool stale() const noexcept {
     return scope_.stale();
@@ -33,6 +37,7 @@ public:
     return input_;
   }
   void unicode(bool enabled) {
+    appended_ = false;
     input_.unicode(enabled);
     ++revision_;
   }
@@ -41,6 +46,7 @@ public:
       return false;
     scope_.edit();
     input_ += byte;
+    appended_ = true;
     ++revision_;
     return true;
   }
@@ -48,16 +54,19 @@ public:
     if (input_.empty())
       return;
     input_.erase_character();
+    appended_ = false;
     ++revision_;
     if (input_.empty())
       scope_.edited_empty();
   }
   void presentation_clear() noexcept {
+    appended_ = false;
     if (!scope_.stale())
       input_.clear();
     ++revision_;
   }
   void open(ApprovalIdentity identity, RequestKind kind) {
+    appended_ = false;
     const bool was_stale = stale();
     if (scope_.open(std::move(identity)) && !was_stale)
       input_.clear();
@@ -66,6 +75,7 @@ public:
     ++request_revision_;
   }
   void close() noexcept {
+    appended_ = false;
     const bool was_stale = stale();
     scope_.close();
     kind_ = RequestKind::message;
@@ -75,6 +85,7 @@ public:
     ++request_revision_;
   }
   InputLine take(std::string text) {
+    appended_ = false;
     auto line = scope_.take(std::move(text));
     input_.clear();
     ++revision_;

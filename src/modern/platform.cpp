@@ -105,6 +105,7 @@ struct TextPoint {
   uint32_t value;
   size_t consumed;
   bool valid;
+  bool incomplete = false;
 };
 TextPoint decode_text_point(std::string_view text, size_t offset) noexcept {
   const auto lead = static_cast<unsigned char>(text[offset]);
@@ -130,7 +131,8 @@ TextPoint decode_text_point(std::string_view text, size_t offset) noexcept {
     ++accepted;
   }
   // Consume the same malformed prefix as pinned nlohmann replacement sanitization.
-  return {point, accepted, width != 0 && accepted == width};
+  return {point, accepted, width != 0 && accepted == width,
+          width != 0 && accepted < width && accepted == text.size() - offset};
 }
 bool repair_text(const std::string &text, std::string &result) {
   size_t copied = 0;
@@ -578,7 +580,7 @@ detail::RenderedToken detail::rendered_token(std::string_view text, size_t offse
   if (lead < 0x80)
     return {1, lead, true, false};
   const auto point = decode_text_point(text, offset);
-  return {point.consumed, point.value, point.valid, false};
+  return {point.consumed, point.value, point.valid, false, point.incomplete};
 }
 size_t detail::rendered_prefix(std::string_view text, size_t limit, size_t *last_token) noexcept {
   if (!last_token && text.size() <= limit)

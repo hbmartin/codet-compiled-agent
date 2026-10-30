@@ -470,6 +470,58 @@ TEST(LinePrompt, UnknownWidthHoldsIncompleteUtf8AndKeepsSnapshotsBounded) {
   EXPECT_LE(f.stream.str().size() - before, 82u);
   EXPECT_THAT(f.stream.str().substr(before), StartsWith("\ncodet> <"));
 }
+TEST(LinePrompt, BasicEmptyDraftEndsItsRowAndSubmissionExposesDeferredBytes) {
+  for (size_t width : {size_t{0}, size_t{9}}) {
+    LineFixture f(width);
+    f.line->append('x');
+    f.line->erase_character();
+    EXPECT_EQ(f.stream.str(), "codet> x\n");
+    EXPECT_TRUE(f.input.input().empty());
+    const auto before = f.stream.str();
+    f.line->flush();
+    EXPECT_EQ(f.stream.str(), before);
+    for (const std::string &raw : {std::string("a\xe9"), std::string("a\xf0\x9f"),
+                                  std::string("a\xff"), std::string("a\\xE9")}) {
+      f.stream.str("");
+      for (char byte : raw)
+        f.line->append(byte);
+      const auto submitted = f.line->take();
+      EXPECT_EQ(submitted.text, raw);
+      EXPECT_EQ(f.stream.str(), "codet> " + detail::literal_text(raw) + "\n");
+    }
+  }
+}
+TEST(LinePrompt, MultipleMutationsAndOwnershipGapsCannotUseTheBasicAppendShortcut) {
+  LineFixture f(0);
+  for (char byte : std::string("abc"))
+    f.line->append(byte);
+  f.line->release();
+  f.input.erase_character();
+  f.input.append('x');
+  f.line->acquire();
+  f.line->append('y');
+  f.line->append('z');
+  EXPECT_EQ(last_line(f.stream.str()), "codet> abxyz");
+  EXPECT_EQ(f.line->take().text, "abxyz");
+  EXPECT_THAT(f.stream.str(), Not(HasSubstr("abcyz")));
+}
+TEST(CursesInput, SharedDecoderDistinguishesIncompleteAndMalformedTrailingPrefixes) {
+  for (const std::string &partial : {std::string("\xc2"), std::string("\xe0\xa0"),
+                                    std::string("\xf4\x8f\xbf")}) {
+    const auto token = detail::rendered_token(partial, 0);
+    EXPECT_TRUE(token.incomplete);
+    EXPECT_FALSE(token.valid);
+    EXPECT_EQ(token.bytes, partial.size());
+  }
+  for (const std::string &malformed : {std::string("\xc0"), std::string("\xe0\x80"),
+                                      std::string("\xf4\x90"), std::string("\xe9x")}) {
+    EXPECT_FALSE(detail::rendered_token(malformed, 0).incomplete);
+    detail::CursesInput input;
+    for (char byte : malformed)
+      input += byte;
+    EXPECT_EQ(input.committed_end(), input.prepared().size());
+  }
+}
 TEST(LinePrompt, CachedTokensReplaceRawEchoAndOneColumnBackspace) {
   for (const std::string &text : {std::string("e\xcc\x81"), std::string("雪"),
                                   std::string("\xc2\x9b\xe2\x80\xae\\x41\xff")}) {
