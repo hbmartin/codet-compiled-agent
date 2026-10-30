@@ -795,7 +795,6 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   detail::DiagnosticWriter errors(std::cerr, &io);
   detail::reset_standard_diagnostics();
   io.line_destinations = {};
-  io.presentation_identity = nullptr;
   const auto o = parse(args);
   detail::CliOutput output(io);
   if (o.help) {
