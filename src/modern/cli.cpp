@@ -251,6 +251,7 @@ Options parse(const std::vector<std::string> &args) {
 class Terminal final : public detail::CliDiagnosticSurface {
   detail::CliOutput &output_;
   detail::DiagnosticWriter &errors_;
+  const detail::TerminalInputOps &input_ops_;
   detail::NativeTerminalResourceOps native_resources_;
   bool curses_ = false, display_dirty_ = true;
   detail::CursesDrawOps drawing_;
@@ -265,6 +266,7 @@ class Terminal final : public detail::CliDiagnosticSurface {
   std::map<std::string, int> bindings_{{"submit", 10}, {"quit", 4}, {"backspace", 127}};
   const Cancellation *read_cancel_ = nullptr;
   int input_error_ = 0;
+  uint64_t input_events_ = 0;
   // Release native callbacks before destroying the prompt/history data they can reference.
   detail::TerminalResources resources_{native_resources_};
   static int read_character(EditLine *edit, wchar_t *character) {
@@ -275,7 +277,8 @@ class Terminal final : public detail::CliDiagnosticSurface {
     for (;;) {
       if (terminal && terminal->read_cancel_ && terminal->read_cancel_->requested)
         return 0;
-      const int ready = detail::wait_terminal_input(STDIN_FILENO, 100);
+      const auto &ops = terminal ? terminal->input_ops_ : detail::native_terminal_input;
+      const int ready = detail::wait_terminal_input(STDIN_FILENO, 100, ops);
       if (ready < 0) {
         const int error = errno;
         if (detail::retry_terminal_input(error, terminal && terminal->read_cancel_
@@ -289,7 +292,7 @@ class Terminal final : public detail::CliDiagnosticSurface {
       if (ready == 0)
         continue;
       char byte = 0;
-      const auto n = ::read(STDIN_FILENO, &byte, 1);
+      const auto n = ops.read(STDIN_FILENO, &byte, 1);
       if (n < 0) {
         const int error = errno;
         if (detail::retry_terminal_input(error, terminal && terminal->read_cancel_
@@ -320,6 +323,9 @@ public:
   void flush_prompt() {
     if (line_)
       line_->flush();
+  }
+  uint64_t input_events() const noexcept {
+    return input_events_;
   }
   void discarded_line(detail::InputDiscard reason = detail::InputDiscard::unfinished) {
     say(std::string(detail::discard_message(reason)));
@@ -438,7 +444,9 @@ public:
   Terminal(const Config &c, const std::string &color, detail::CliOutput &output,
            detail::DiagnosticWriter &errors, const detail::CursesDrawOps &drawing,
            detail::IoContext &io)
-      : output_(output), errors_(errors), drawing_(drawing) {
+      : output_(output), errors_(errors),
+        input_ops_(io.terminal_input ? *io.terminal_input : detail::native_terminal_input),
+        drawing_(drawing) {
     curses_ =
         (c.ui == "curses" || (c.ui == "auto" && env("TERM") != "dumb" && !env("TERM").empty()));
     for (auto it = c.keybindings.begin(); it != c.keybindings.end(); ++it) {
@@ -505,6 +513,25 @@ public:
     else {
       (void)errors_.write({text.text});
     }
+  }
+  bool warning_rendered(detail::RenderedTextView text) noexcept override {
+    if (!curses_) {
+      try {
+        return errors_.write({text.text});
+      } catch (...) {
+        return false;
+      }
+    }
+    return detail::retain_warning(
+        [&] {
+          remember(detail::CursesText::bounded(text.text, detail::UiHistory::byte_limit,
+                                               detail::UiHistory::omission, curses_unicode_)
+                       .text);
+        },
+        [&] {
+          display_dirty_ = true;
+          render();
+        });
   }
   void set_mode(const std::string &mode) {
     status_ = "Permissions: " + mode + "; no OS shell sandbox";
@@ -661,24 +688,24 @@ public:
     if (curses_)
       ch = getch();
     else {
-      const auto ready = detail::wait_terminal_input(STDIN_FILENO, 50);
+      const auto ready = detail::wait_terminal_input(STDIN_FILENO, 50, input_ops_);
       if (ready > 0) {
         unsigned char c = 0;
-        const auto n = ::read(STDIN_FILENO, &c, 1);
+        const auto n = input_ops_.read(STDIN_FILENO, &c, 1);
         if (n == 1)
           ch = c;
         else if (n == 0)
           closed = true;
-        else if (!detail::retry_terminal_input(errno, read_cancel_ ? &read_cancel_->requested
-                                                                  : nullptr))
+        else if (!detail::retry_terminal_input(errno,
+                                               read_cancel_ ? &read_cancel_->requested : nullptr))
           throw Error("Cannot read terminal input: " + std::string(std::strerror(errno)));
-      } else if (ready < 0 &&
-                 !detail::retry_terminal_input(errno, read_cancel_ ? &read_cancel_->requested
-                                                                  : nullptr))
+      } else if (ready < 0 && !detail::retry_terminal_input(
+                                  errno, read_cancel_ ? &read_cancel_->requested : nullptr))
         throw Error("Cannot wait for terminal input: " + std::string(std::strerror(errno)));
     }
     if (ch == ERR)
       return {};
+    ++input_events_;
     if (ch == KEY_RESIZE) {
       render();
       return {};
@@ -1162,20 +1189,15 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     const auto drain_warnings = [&] {
       interaction->drain_warnings([&](std::string_view text) {
         const std::string owned(text);
-        diagnostics->emit_rendered({owned});
-        return true;
+        return diagnostics->warning_rendered({owned});
       });
     };
-    const auto deliver = [&](bool recovering = false) {
-      struct DrainWarnings {
-        const decltype(drain_warnings) &drain;
-        ~DrainWarnings() {
-          drain();
-        }
-      } warnings{drain_warnings};
+    const auto deliver = [&](bool recovering = false, bool final = false) {
+      bool delivered = false;
       diagnostics->deliver_files();
       interaction->deliver(
           [&](const Json &event) {
+            delivered = true;
             const auto type = event.value("type", "");
             if (type == "codet.diagnostic")
               diagnostics->emit_rendered({event.at("text").get_ref<const std::string &>()});
@@ -1205,6 +1227,8 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
               terminal->progress(event);
           },
           diagnostic, recovering);
+      if (delivered || recovering || final)
+        drain_warnings();
     };
     try {
       terminal->begin_active(cancel);
@@ -1221,7 +1245,10 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
         }
         terminal->flush_prompt();
         bool closed = false;
+        const auto input_events = terminal->input_events();
         const auto line = terminal->active_input(closed);
+        if (terminal->input_events() != input_events || closed)
+          drain_warnings();
         if (closed) {
           if (pending && pending->value("type", "") == "codet.approval")
             quit_requested = true;
@@ -1262,7 +1289,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
           }
         }
       }
-      deliver();
+      deliver(false, true);
       terminal->end_active();
       return work.get();
     } catch (...) {

@@ -1,5 +1,6 @@
 #pragma once
 #include "codet/core.hpp"
+#include "codet/detail/output_destination.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <climits>
@@ -11,12 +12,15 @@
 #include <unistd.h>
 namespace codet::detail {
 class LineOutputObserver;
+struct TerminalInputOps;
 enum class OutputMode : uint8_t { required, diagnostic, immediate };
 enum class OutputResult : uint8_t { success, cancelled, failure };
 // Owned by one invocation and borrowed by output/diagnostic controllers, including final catches.
 struct IoContext {
   const Cancellation *cancel = nullptr;
   LineOutputObserver *line_output = nullptr;
+  LineDestinations line_destinations;
+  const TerminalInputOps *terminal_input = nullptr;
   explicit IoContext(const Cancellation &value) noexcept : cancel(&value) {}
 };
 // One logical delivery owns its interruption budget, including inspection and streamed chunks.

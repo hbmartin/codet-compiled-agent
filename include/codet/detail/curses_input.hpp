@@ -88,18 +88,18 @@ public:
            (static_cast<unsigned char>(raw_[start]) & 0xc0) == 0x80)
       --start;
     const auto lead = static_cast<unsigned char>(raw_[start]);
-    const size_t expected = lead >= 0xc2 && lead <= 0xdf ? 2u
+    const size_t expected = lead >= 0xc2 && lead <= 0xdf   ? 2u
                             : lead >= 0xe0 && lead <= 0xef ? 3u
-                            : lead >= 0xf0 && lead <= 0xf4 ? 4u : 0u;
+                            : lead >= 0xf0 && lead <= 0xf4 ? 4u
+                                                           : 0u;
     const auto length = raw_.size() - start;
     bool partial = expected && length < expected;
     for (size_t i = start + 1; partial && i < raw_.size(); ++i) {
       const auto byte = static_cast<unsigned char>(raw_[i]);
       partial = byte >= 0x80 && byte <= 0xbf;
       if (i == start + 1)
-        partial = partial && !(lead == 0xe0 && byte < 0xa0) &&
-                  !(lead == 0xed && byte > 0x9f) && !(lead == 0xf0 && byte < 0x90) &&
-                  !(lead == 0xf4 && byte > 0x8f);
+        partial = partial && !(lead == 0xe0 && byte < 0xa0) && !(lead == 0xed && byte > 0x9f) &&
+                  !(lead == 0xf0 && byte < 0x90) && !(lead == 0xf4 && byte > 0x8f);
     }
     if (!partial)
       return display_.size();

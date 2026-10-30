@@ -29,6 +29,16 @@ template <class Report> void secondary_diagnostic(Report report) noexcept {
     return;
   }
 }
+template <class Retain, class Refresh>
+bool retain_warning(Retain retain, Refresh refresh) noexcept {
+  try {
+    retain();
+  } catch (...) {
+    return false;
+  }
+  secondary_diagnostic(refresh);
+  return true; // Retention committed, even if refreshing that history failed.
+}
 // Bind the fallback explicitly to this invocation; preserve the public bad_alloc contract.
 inline void context_diagnostic(const DiagnosticSink &sink, DiagnosticWriter &fallback,
                                RenderedTextView text) {

@@ -263,9 +263,7 @@ struct DescriptorDiagnosticState {
     if (!inspected)
       return state; // An interruption cannot establish a different destination or erase its
                     // boundary.
-    if (!known || current.st_dev != identity.st_dev || current.st_ino != identity.st_ino ||
-        (current.st_mode & S_IFMT) != (identity.st_mode & S_IFMT) ||
-        current.st_rdev != identity.st_rdev) {
+    if (!known || !detail::same_destination(current, identity)) {
       state.reset(nullptr);
       pipe_limit = 0;
     }
@@ -285,12 +283,18 @@ struct DiagnosticDestination {
   int native = -1;
   DescriptorDiagnosticState *owner = nullptr;
 };
+int native_diagnostic_descriptor(std::ostream &output) noexcept {
+  return &output == &std::cerr && output.rdbuf() == native_stderr_buffer   ? STDERR_FILENO
+         : &output == &std::cout && output.rdbuf() == native_stdout_buffer ? STDOUT_FILENO
+                                                                           : -1;
+}
 DiagnosticDestination diagnostic_destination(std::ostream &output, detail::DiagnosticState &local,
                                              detail::OutputAttempt &attempt) noexcept {
-  if (&output == &std::cerr && output.rdbuf() == native_stderr_buffer)
+  const int native = native_diagnostic_descriptor(output);
+  if (native == STDERR_FILENO)
     return {stderr_descriptor_state.bind(STDERR_FILENO, attempt), STDERR_FILENO,
             &stderr_descriptor_state};
-  if (&output == &std::cout && output.rdbuf() == native_stdout_buffer)
+  if (native == STDOUT_FILENO)
     return {stdout_descriptor_state.bind(STDOUT_FILENO, attempt), STDOUT_FILENO,
             &stdout_descriptor_state};
   auto &state = &output == &std::cerr   ? stderr_stream_state
@@ -444,9 +448,7 @@ bool detail::recover_diagnostic_stream(std::ostream &output) noexcept {
 detail::DiagnosticWriter::DiagnosticWriter(std::ostream &output, IoContext *io) noexcept
     : output_(output), state_(&local_), file_(diagnostic_file(output)), io_(io) {}
 int detail::DiagnosticWriter::native_descriptor() const noexcept {
-  return &output_ == &std::cerr && output_.rdbuf() == native_stderr_buffer   ? STDERR_FILENO
-         : &output_ == &std::cout && output_.rdbuf() == native_stdout_buffer ? STDOUT_FILENO
-                                                                             : -1;
+  return native_diagnostic_descriptor(output_);
 }
 void detail::reset_standard_diagnostics() noexcept {
   stderr_stream_state.reset(std::cerr.rdbuf());
@@ -462,9 +464,18 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
   state_ = &destination.state;
   const int native = destination.native;
   if (native >= 0) {
-    if (io_ && io_->line_output && destination.owner->inspected &&
-        io_->line_output->before_output(native, destination.owner->identity))
-      state_->pending = true;
+    if (io_ && destination.owner->inspected) {
+      const auto &identity = destination.owner->identity;
+      bool separate = false;
+      if (io_->line_output)
+        separate = io_->line_output->before_output(native, identity);
+      else {
+        io_->line_destinations.bind(native, identity);
+        separate = io_->line_destinations.separate(identity);
+      }
+      if (separate)
+        state_->pending = true;
+    }
     if (!output_ || (file_ && std::ferror(file_)))
       (void)recover_diagnostic_stream(output_);
     NativeDiagnosticRecord record(native, *state_, *destination.owner, attempt);

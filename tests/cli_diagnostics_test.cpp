@@ -9,6 +9,7 @@
 #include "codet/detail/request_input_controller.hpp"
 #include "codet/detail/terminal_input.hpp"
 #include "codet/detail/ui_history.hpp"
+#include "codet/interaction.hpp"
 #include "native_io_metrics.hpp"
 #include "process_helper.hpp"
 #include "temp.hpp"
@@ -63,6 +64,42 @@ TEST(TerminalInput, TransientReadinessFailuresRemainRetryableAndOnlyReadsIndicat
   char byte;
   EXPECT_EQ(::read(descriptors[0], &byte, 1), 1);
   EXPECT_EQ(byte, 'x');
+}
+TEST(InteractionWarnings, RetainedWarningsAreNotReadmittedAfterRefreshThrows) {
+  Interaction interaction;
+  detail::UiHistory history;
+  size_t renders = 0;
+  interaction.warn(Interaction::Warning::exec_stop);
+  const auto consume = [&](std::string_view message) noexcept {
+    return detail::retain_warning([&] { history.add(message); },
+                                  [&] {
+                                    ++renders;
+                                    throw std::bad_alloc();
+                                  });
+  };
+  for (int i = 0; i != 100; ++i)
+    interaction.drain_warnings(consume);
+  EXPECT_EQ(renders, 1u);
+  ASSERT_EQ(history.lines().size(), 1u);
+  EXPECT_EQ(history.lines().front(), "Exec cleanup failed while stopping owned process");
+  interaction.warn(Interaction::Warning::exec_stop);
+  interaction.drain_warnings(consume);
+  EXPECT_EQ(history.lines().size(), 2u); // A genuinely new occurrence can be admitted.
+}
+TEST(InteractionWarnings, FailedAdmissionRemainsPendingWithoutReplacingTheOperationException) {
+  Interaction interaction;
+  interaction.warn(Interaction::Warning::event_render);
+  size_t refreshes = 0;
+  interaction.drain_warnings([&](std::string_view) {
+    return detail::retain_warning([] { throw std::bad_alloc(); }, [&] { ++refreshes; });
+  });
+  EXPECT_EQ(refreshes, 0u);
+  detail::UiHistory history;
+  interaction.drain_warnings([&](std::string_view message) {
+    return detail::retain_warning([&] { history.add(message); }, [&] { ++refreshes; });
+  });
+  EXPECT_EQ(refreshes, 1u);
+  EXPECT_EQ(history.lines().size(), 1u);
 }
 TEST(ApprovalIdentity, RequiresCompleteTypedIdentityAndNeverDefaultsApproval) {
   const Json valid = {
@@ -488,7 +525,8 @@ TEST(LinePrompt, OldDestinationKeepsOnlyASeparatorAndCannotRepaintTheNewRow) {
   auto next = f.tty;
   next.st_ino = 7;
   next.st_rdev = 8;
-  EXPECT_FALSE(f.line->before_output(STDOUT_FILENO, next));
+  EXPECT_TRUE(
+      f.line->before_output(STDOUT_FILENO, next)); // Untracked terminal: conservative boundary.
   f.line->flush();
   const auto before = f.stream.str();
   EXPECT_TRUE(f.line->before_output(STDERR_FILENO, f.tty));
@@ -496,6 +534,57 @@ TEST(LinePrompt, OldDestinationKeepsOnlyASeparatorAndCannotRepaintTheNewRow) {
   EXPECT_EQ(f.stream.str(), before);
   EXPECT_FALSE(f.line->before_output(STDERR_FILENO, f.tty));
   EXPECT_TRUE(f.line->before_output(STDERR_FILENO, next));
+}
+TEST(LinePrompt, MultipleStdoutChangesPreserveTheReachableStderrBoundaryAndGuidance) {
+  LineFixture f(20);
+  f.io.line_destinations.bind(STDERR_FILENO, f.tty);
+  f.input.open({"s", "request", 1}, detail::RequestKind::approval);
+  f.line->flush();
+  for (const auto inode : {2, 3}) {
+    auto next = f.tty;
+    next.st_ino = static_cast<decltype(next.st_ino)>(inode);
+    f.stream.str("");
+    (void)f.line->before_output(STDOUT_FILENO, next);
+    f.line->flush();
+    EXPECT_THAT(f.stream.str(), HasSubstr("Approve? [y/N]\n"));
+    EXPECT_THAT(f.stream.str(), EndsWith("a> "));
+  }
+  EXPECT_TRUE(f.line->before_output(STDERR_FILENO, f.tty));
+  EXPECT_FALSE(f.line->before_output(STDERR_FILENO, f.tty));
+}
+TEST(LinePrompt, FailedRowsAndGuidanceUseTheSharedRecoveryNewline) {
+  struct Partial : std::stringbuf {
+    bool fail = false;
+    size_t keep = 0;
+    std::streamsize xsputn(const char *text, std::streamsize count) override {
+      if (!fail)
+        return std::stringbuf::xsputn(text, count);
+      fail = false;
+      const auto size = std::min(count, static_cast<std::streamsize>(keep));
+      (void)std::stringbuf::xsputn(text, size);
+      return size;
+    }
+  };
+  for (size_t keep = 0; keep < 38; ++keep) {
+    Partial buffer;
+    buffer.fail = true;
+    buffer.keep = keep;
+    std::ostream stream(&buffer);
+    detail::CliOutput output(stream);
+    Cancellation cancel;
+    detail::IoContext io(cancel);
+    detail::RequestInputController input;
+    input.open({"s", "q", 1}, detail::RequestKind::question);
+    struct stat tty {};
+    tty.st_mode = S_IFCHR;
+    const std::string prompt = "codet> ";
+    detail::LinePrompt line(input, output, io, prompt, tty, 20);
+    line.acquire();
+    line.flush();
+    EXPECT_EQ(last_line(buffer.str()), "q>") << keep;
+    line.append('y');
+    EXPECT_EQ(last_line(buffer.str()), "q> y") << keep;
+  }
 }
 TEST(LinePrompt, ErasingTheFinalCharacterRemovesTheActiveOrdinaryPrompt) {
   LineFixture f;
