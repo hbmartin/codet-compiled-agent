@@ -528,9 +528,13 @@ public:
                                                detail::UiHistory::omission, curses_unicode_)
                        .text);
         },
-        [&] {
+        [&]() noexcept {
           display_dirty_ = true;
-          render();
+          try {
+            render();
+          } catch (...) {
+            display_dirty_ = true;
+          }
         });
   }
   void set_mode(const std::string &mode) {
