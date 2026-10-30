@@ -41,6 +41,11 @@ extern "C" int poll(pollfd *descriptors, nfds_t count, int timeout) {
   using Poll = int (*)(pollfd *, nfds_t, int);
   static const auto original = reinterpret_cast<Poll>(codet::test::native_symbol("poll"));
   auto &metrics = codet::test::native_io_metrics;
+  if (count == 1 && descriptors[0].fd == metrics.interrupt_fd && metrics.input_polls_failed) {
+    --metrics.input_polls_failed;
+    errno = metrics.input_error;
+    return -1;
+  }
   if (count == 1 && descriptors[0].fd == metrics.interrupt_fd && metrics.polls_interrupted) {
     --metrics.polls_interrupted;
     errno = EINTR;

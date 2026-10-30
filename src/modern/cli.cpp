@@ -264,6 +264,7 @@ class Terminal final : public detail::CliDiagnosticSurface {
   std::optional<detail::LinePrompt> line_;
   std::map<std::string, int> bindings_{{"submit", 10}, {"quit", 4}, {"backspace", 127}};
   const Cancellation *read_cancel_ = nullptr;
+  int input_error_ = 0;
   // Release native callbacks before destroying the prompt/history data they can reference.
   detail::TerminalResources resources_{native_resources_};
   static int read_character(EditLine *edit, wchar_t *character) {
@@ -276,16 +277,28 @@ class Terminal final : public detail::CliDiagnosticSurface {
         return 0;
       const int ready = detail::wait_terminal_input(STDIN_FILENO, 100);
       if (ready < 0) {
-        if (errno == EINTR)
+        const int error = errno;
+        if (detail::retry_terminal_input(error, terminal && terminal->read_cancel_
+                                                    ? &terminal->read_cancel_->requested
+                                                    : nullptr))
           continue;
+        if (terminal)
+          terminal->input_error_ = error;
         return -1;
       }
       if (ready == 0)
         continue;
       char byte = 0;
       const auto n = ::read(STDIN_FILENO, &byte, 1);
-      if (n < 0 && errno == EINTR)
-        continue;
+      if (n < 0) {
+        const int error = errno;
+        if (detail::retry_terminal_input(error, terminal && terminal->read_cancel_
+                                                    ? &terminal->read_cancel_->requested
+                                                    : nullptr))
+          continue;
+        if (terminal)
+          terminal->input_error_ = error;
+      }
       if (n <= 0)
         return static_cast<int>(n);
       const auto converted = std::mbrtowc(character, &byte, 1, &state);
@@ -533,7 +546,7 @@ public:
   }
   std::optional<std::string> read(Cancellation &cancel) {
     if (!curses_ && (input_.stale() || (input_.ordinary_draft() && !input_.input().empty()))) {
-      begin_active();
+      begin_active(cancel);
       flush_prompt();
       struct Restore {
         Terminal &terminal;
@@ -570,9 +583,12 @@ public:
       if (line_)
         line_->editor();
       read_cancel_ = &cancel;
+      input_error_ = 0;
       el_set(resources_.editor(), EL_PREP_TERM, 1);
       int count = 0;
       const char *text = el_gets(resources_.editor(), &count);
+      if (input_error_)
+        throw Error("Cannot read terminal input: " + std::string(std::strerror(input_error_)));
       if (!text || count <= 0)
         return std::nullopt;
       std::string line(text, static_cast<size_t>(count));
@@ -622,7 +638,8 @@ public:
       }
     }
   }
-  void begin_active() {
+  void begin_active(const Cancellation &cancel) {
+    read_cancel_ = &cancel;
     if (line_)
       line_->acquire();
     if (!input_.ordinary_draft())
@@ -652,8 +669,13 @@ public:
           ch = c;
         else if (n == 0)
           closed = true;
-      } else if (ready < 0 && errno != EINTR)
-        closed = true;
+        else if (!detail::retry_terminal_input(errno, read_cancel_ ? &read_cancel_->requested
+                                                                  : nullptr))
+          throw Error("Cannot read terminal input: " + std::string(std::strerror(errno)));
+      } else if (ready < 0 &&
+                 !detail::retry_terminal_input(errno, read_cancel_ ? &read_cancel_->requested
+                                                                  : nullptr))
+        throw Error("Cannot wait for terminal input: " + std::string(std::strerror(errno)));
     }
     if (ch == ERR)
       return {};
@@ -1185,7 +1207,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
           diagnostic, recovering);
     };
     try {
-      terminal->begin_active();
+      terminal->begin_active(cancel);
       work = std::async(std::launch::async, [&] {
         return compacting ? agent.compact(session, cancel)
                           : agent.run(session, text, cancel, schema, !steering, pending_images);

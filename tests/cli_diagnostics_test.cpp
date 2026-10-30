@@ -7,6 +7,7 @@
 #include "codet/detail/native_output.hpp"
 #include "codet/detail/request_input.hpp"
 #include "codet/detail/request_input_controller.hpp"
+#include "codet/detail/terminal_input.hpp"
 #include "codet/detail/ui_history.hpp"
 #include "native_io_metrics.hpp"
 #include "process_helper.hpp"
@@ -23,6 +24,46 @@
 using namespace codet;
 using namespace testing;
 namespace {
+thread_local unsigned input_backoffs = 0;
+int input_pause(const timespec *delay, timespec *) {
+  EXPECT_EQ(delay->tv_sec, 0);
+  EXPECT_EQ(delay->tv_nsec, 25000000);
+  ++input_backoffs;
+  return 0;
+}
+TEST(TerminalInput, TransientReadinessFailuresRemainRetryableAndOnlyReadsIndicateEof) {
+  int descriptors[2];
+  ASSERT_EQ(::pipe(descriptors), 0);
+  struct Cleanup {
+    int *descriptors;
+    ~Cleanup() {
+      ::close(descriptors[0]);
+      ::close(descriptors[1]);
+      test::native_io_metrics = {};
+    }
+  } cleanup{descriptors};
+  ASSERT_EQ(::write(descriptors[1], "x", 1), 1);
+  Cancellation cancel;
+  input_backoffs = 0;
+  for (const auto error : {EINTR, EAGAIN, ENOMEM}) {
+    test::native_io_metrics.interrupt_fd = descriptors[0];
+    test::native_io_metrics.input_error = error;
+    test::native_io_metrics.input_polls_failed = 1;
+    EXPECT_EQ(detail::wait_terminal_input(descriptors[0], 0), -1);
+    EXPECT_EQ(errno, error);
+    EXPECT_TRUE(detail::retry_terminal_input(error, &cancel.requested, input_pause));
+    EXPECT_GT(detail::wait_terminal_input(descriptors[0], 0), 0);
+  }
+  EXPECT_EQ(input_backoffs, 2u);
+  cancel.requested = true;
+  EXPECT_TRUE(detail::retry_terminal_input(EAGAIN, &cancel.requested, input_pause));
+  EXPECT_EQ(input_backoffs, 2u);
+  EXPECT_FALSE(detail::retry_terminal_input(EBADF, &cancel.requested, input_pause));
+  EXPECT_FALSE(detail::retry_terminal_input(EINVAL, &cancel.requested, input_pause));
+  char byte;
+  EXPECT_EQ(::read(descriptors[0], &byte, 1), 1);
+  EXPECT_EQ(byte, 'x');
+}
 TEST(ApprovalIdentity, RequiresCompleteTypedIdentityAndNeverDefaultsApproval) {
   const Json valid = {
       {"codet_session_id", "session"}, {"codet_turn", uint64_t{3}}, {"request_id", "request"}};
