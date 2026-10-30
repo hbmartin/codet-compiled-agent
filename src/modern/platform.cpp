@@ -367,6 +367,7 @@ namespace {
 class NativeDiagnosticRecord {
   detail::OutputAttempt &attempt_;
   detail::DiagnosticState &state_;
+  detail::DiagnosticState *alias_ = nullptr;
   detail::DescriptorOutput descriptor_;
   bool ready_ = true;
 
@@ -376,11 +377,22 @@ public:
       : attempt_(attempt), state_(state),
         descriptor_(descriptor, attempt, owner.inspected ? &owner.identity : nullptr,
                     owner.pipe_limit) {
+    auto &other =
+        &owner == &stderr_descriptor_state ? stdout_descriptor_state : stderr_descriptor_state;
+    if (owner.inspected && other.known &&
+        detail::same_destination(owner.identity, other.identity)) {
+      alias_ = &other.state;
+      state_.pending = state_.pending || alias_->pending;
+    }
     if (state_.pending) {
       ready_ = write({"\n"}, false);
       if (ready_)
         state_.pending = false;
     }
+  }
+  ~NativeDiagnosticRecord() {
+    if (alias_)
+      alias_->pending = state_.pending;
   }
   bool write(std::initializer_list<std::string_view> parts, bool newline = false) noexcept {
     if (!ready_)
