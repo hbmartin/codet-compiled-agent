@@ -102,9 +102,10 @@ int curl_progress(void *data, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
 } // namespace
 namespace {
 struct TextPoint {
-  uint32_t value;
-  size_t consumed;
-  bool valid;
+  uint32_t value = 0;
+  size_t consumed = 0;
+  bool valid = false;
+  bool incomplete = false;
 };
 TextPoint decode_text_point(std::string_view text, size_t offset) noexcept {
   const auto lead = static_cast<unsigned char>(text[offset]);
@@ -130,7 +131,8 @@ TextPoint decode_text_point(std::string_view text, size_t offset) noexcept {
     ++accepted;
   }
   // Consume the same malformed prefix as pinned nlohmann replacement sanitization.
-  return {point, accepted, width != 0 && accepted == width};
+  return {point, accepted, width != 0 && accepted == width,
+          width != 0 && accepted < width && accepted == text.size() - offset};
 }
 bool repair_text(const std::string &text, std::string &result) {
   size_t copied = 0;
@@ -249,33 +251,30 @@ const char *FileNotice::label() const noexcept {
 namespace {
 // Fixed, trivially destructible fallback owners also serve late shutdown diagnostics.
 detail::DiagnosticState stderr_stream_state, stdout_stream_state;
+detail::LineDestinations native_destinations;
 auto *const native_stderr_buffer = std::cerr.rdbuf();
 auto *const native_stdout_buffer = std::cout.rdbuf();
 struct DescriptorDiagnosticState {
   struct stat identity {};
   bool known = false, inspected = false;
   size_t pipe_limit = 0;
-  detail::DiagnosticState state;
-  detail::DiagnosticState &bind(int descriptor, detail::OutputAttempt &attempt) noexcept {
+  void bind(int descriptor, detail::OutputAttempt &attempt) noexcept {
     struct stat current {};
     const auto status = attempt.inspect([&] { return ::fstat(descriptor, &current); });
     inspected = status == 0;
     if (!inspected)
-      return state; // An interruption cannot establish a different destination or erase its
-                    // boundary.
+      return; // An interruption cannot establish a different destination or erase its boundary.
     if (!known || !detail::same_destination(current, identity)) {
-      state.reset(nullptr);
       pipe_limit = 0;
     }
     known = true;
     identity = current;
-    return state;
+    native_destinations.bind(descriptor, current);
   }
   void reset() noexcept {
     known = false;
     inspected = false;
     pipe_limit = 0;
-    state.reset(nullptr);
   }
 } stderr_descriptor_state, stdout_descriptor_state;
 struct DiagnosticDestination {
@@ -291,12 +290,11 @@ int native_diagnostic_descriptor(std::ostream &output) noexcept {
 DiagnosticDestination diagnostic_destination(std::ostream &output, detail::DiagnosticState &local,
                                              detail::OutputAttempt &attempt) noexcept {
   const int native = native_diagnostic_descriptor(output);
-  if (native == STDERR_FILENO)
-    return {stderr_descriptor_state.bind(STDERR_FILENO, attempt), STDERR_FILENO,
-            &stderr_descriptor_state};
-  if (native == STDOUT_FILENO)
-    return {stdout_descriptor_state.bind(STDOUT_FILENO, attempt), STDOUT_FILENO,
-            &stdout_descriptor_state};
+  if (native >= 0) {
+    auto &owner = native == STDERR_FILENO ? stderr_descriptor_state : stdout_descriptor_state;
+    owner.bind(native, attempt);
+    return {local, native, &owner};
+  }
   auto &state = &output == &std::cerr   ? stderr_stream_state
                 : &output == &std::cout ? stdout_stream_state
                                         : local;
@@ -366,33 +364,27 @@ namespace {
 // Ordinary diagnostics and streamed notices use the same record boundaries and attempt.
 class NativeDiagnosticRecord {
   detail::OutputAttempt &attempt_;
-  detail::DiagnosticState &state_;
-  detail::DiagnosticState *alias_ = nullptr;
+  int native_;
   detail::DescriptorOutput descriptor_;
   bool ready_ = true;
 
 public:
-  NativeDiagnosticRecord(int descriptor, detail::DiagnosticState &state,
-                         DescriptorDiagnosticState &owner, detail::OutputAttempt &attempt) noexcept
-      : attempt_(attempt), state_(state),
+  NativeDiagnosticRecord(int descriptor, DescriptorDiagnosticState &owner,
+                         detail::OutputAttempt &attempt, bool presentation = false) noexcept
+      : attempt_(attempt), native_(descriptor),
         descriptor_(descriptor, attempt, owner.inspected ? &owner.identity : nullptr,
                     owner.pipe_limit) {
-    auto &other =
-        &owner == &stderr_descriptor_state ? stdout_descriptor_state : stderr_descriptor_state;
-    if (owner.inspected && other.known &&
-        detail::same_destination(owner.identity, other.identity)) {
-      alias_ = &other.state;
-      state_.pending = state_.pending || alias_->pending;
+    bool separator = native_destinations.pending(native_);
+    if (!presentation) {
+      separator = native_destinations.separate(native_) || separator;
+      native_destinations.interrupt(native_);
     }
-    if (state_.pending) {
-      ready_ = write({"\n"}, false);
+    if (separator) {
+      native_destinations.pending(native_, true);
+      ready_ = write({"\n"});
       if (ready_)
-        state_.pending = false;
+        native_destinations.pending(native_, false);
     }
-  }
-  ~NativeDiagnosticRecord() {
-    if (alias_)
-      alias_->pending = state_.pending;
   }
   bool write(std::initializer_list<std::string_view> parts, bool newline = false) noexcept {
     if (!ready_)
@@ -400,20 +392,22 @@ public:
     ready_ = descriptor_.result(parts, newline, attempt_) == detail::OutputResult::success;
     return ready_;
   }
-  void begin(bool newline = true) noexcept {
-    if (ready_ && newline)
-      state_.pending = true;
+  void begin() noexcept {
+    if (ready_)
+      native_destinations.pending(native_, true);
   }
   bool finish(std::initializer_list<std::string_view> tail = {}, bool newline = true) noexcept {
-    if (!write(tail, newline))
+    if (!write(tail, newline)) {
+      native_destinations.interrupt(native_);
       return false;
-    state_.pending = false;
+    }
+    native_destinations.pending(native_, false);
     return true;
   }
 };
 NativeDiagnosticRecord immediate_record(detail::OutputAttempt &attempt) noexcept {
-  auto &state = stderr_descriptor_state.bind(STDERR_FILENO, attempt);
-  return {STDERR_FILENO, state, stderr_descriptor_state, attempt};
+  stderr_descriptor_state.bind(STDERR_FILENO, attempt);
+  return {STDERR_FILENO, stderr_descriptor_state, attempt};
 }
 } // namespace
 bool detail::immediate_stderr(std::initializer_list<std::string_view> parts,
@@ -462,7 +456,11 @@ detail::DiagnosticWriter::DiagnosticWriter(std::ostream &output, IoContext *io) 
 int detail::DiagnosticWriter::native_descriptor() const noexcept {
   return native_diagnostic_descriptor(output_);
 }
+detail::LineDestinations &detail::native_line_destinations() noexcept {
+  return native_destinations;
+}
 void detail::reset_standard_diagnostics() noexcept {
+  native_destinations = {};
   stderr_stream_state.reset(std::cerr.rdbuf());
   stdout_stream_state.reset(std::cout.rdbuf());
   stderr_descriptor_state.reset();
@@ -482,15 +480,16 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
       if (io_->line_output)
         separate = io_->line_output->before_output(native, identity);
       else {
-        io_->line_destinations.bind(native, identity);
-        separate = io_->line_destinations.separate(identity);
+        native_destinations.bind(native, identity);
+        separate = native_destinations.separate(identity);
       }
       if (separate)
-        state_->pending = true;
+        native_destinations.pending(native, true);
     }
     if (!output_ || (file_ && std::ferror(file_)))
       (void)recover_diagnostic_stream(output_);
-    NativeDiagnosticRecord record(native, *state_, *destination.owner, attempt);
+    const bool presentation = io_ && io_->line_output && io_->line_output->presenting();
+    NativeDiagnosticRecord record(native, *destination.owner, attempt, presentation);
     record.begin();
     const bool success = record.finish(parts, newline);
     if (!success) {
@@ -578,7 +577,7 @@ detail::RenderedToken detail::rendered_token(std::string_view text, size_t offse
   if (lead < 0x80)
     return {1, lead, true, false};
   const auto point = decode_text_point(text, offset);
-  return {point.consumed, point.value, point.valid, false};
+  return {point.consumed, point.value, point.valid, false, point.incomplete};
 }
 size_t detail::rendered_prefix(std::string_view text, size_t limit, size_t *last_token) noexcept {
   if (!last_token && text.size() <= limit)

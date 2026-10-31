@@ -100,6 +100,57 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+#ifdef CODET_NATIVE_TERMINAL_METRICS
+    if (argc == 3 && std::string(argv[1]) == "--codet-line-boundary-helper") {
+      codet::Cancellation cancel;
+      codet::detail::IoContext io(cancel);
+      codet::detail::CliOutput output(io);
+      codet::detail::RequestInputController input;
+      struct stat terminal {};
+      if (::fstat(STDOUT_FILENO, &terminal) < 0)
+        return 2;
+      const std::string prompt = "codet> ";
+      codet::detail::LinePrompt line(input, output, io, prompt, terminal);
+      line.acquire();
+      const std::string mode(argv[2]);
+      if (mode == "empty") {
+        line.append('x');
+        line.erase_character();
+        for (char byte : std::string("a\xe9"))
+          line.append(byte);
+        return line.take().text == std::string("a\xe9") ? 0 : 3;
+      }
+      for (char byte : std::string("abc"))
+        line.append(byte);
+      auto &metrics = codet::test::native_io_metrics;
+      if (mode == "inspection") {
+        input.open({"session", "request", 1}, codet::detail::RequestKind::approval);
+        line.flush();
+        metrics.interrupt_fd = STDOUT_FILENO;
+        metrics.stats_interrupted = 1;
+        line.append('a');
+        line.append('b');
+        metrics = {};
+        return 0;
+      }
+      metrics.interrupt_fd = STDERR_FILENO;
+      metrics.vector_partial = true;
+      if (mode == "context") {
+        codet::detail::DiagnosticWriter errors(std::cerr, &io);
+        (void)errors.write({"warning"});
+      } else if (mode == "standalone")
+        (void)codet::detail::write_diagnostic(std::cerr, {"warning"});
+      else if (mode == "immediate")
+        (void)codet::detail::immediate_stderr({"warning"});
+      else if (mode == "notice") {
+        codet::FileNotice notice("/complete/path", codet::FileNoticeKind::tool_result);
+        codet::emergency_file_diagnostic(notice);
+      } else
+        return 4;
+      metrics = {};
+      line.append('d');
+      return line.take().text == "abcd" ? 0 : 5;
+    }
     if (argc == 3 && std::string(argv[1]) == "--codet-alias-diagnostic-helper") {
       const int descriptor = std::stoi(argv[2]);
       if (::dup2(descriptor, STDOUT_FILENO) < 0 || ::dup2(descriptor, STDERR_FILENO) < 0)
@@ -115,6 +166,7 @@ int main(int argc, char **argv) {
         return 3;
       return output.write({"next"}) && errors.write({"last"}) ? 0 : 4;
     }
+#endif
     if (argc > 4 && std::string(argv[1]) == "--codet-input-recovery-helper") {
       const std::string error(argv[3]);
       const int number = error == "EAGAIN"   ? EAGAIN

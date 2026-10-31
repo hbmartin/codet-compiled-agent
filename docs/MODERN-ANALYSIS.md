@@ -939,3 +939,42 @@ The [validation record](validation/line-presentation-recovery-followup.json),
 [all samples](validation/line-presentation-recovery-followup-performance-samples.csv), and
 [development failure evidence](validation/line-presentation-recovery-followup-development-failures.log)
 record the passing checks, exact build refs/harness hashes, existing limitations, and rejected work.
+
+## Basic input and shared diagnostic boundaries
+
+Fetched main `08781fc` reproduces the open basic-row, hidden UTF-8 tail, stale append,
+shared-fallback, and repeated-guidance failures. Their before/after traces are retained in
+`docs/validation/basic-input-boundary-followup-reproductions.json`.
+
+The follow-up finalizes deferred input presentation before submission, verifies painted
+revisions, and uses one native boundary authority for line output and diagnostic recovery.
+New warnings get a first attempt on the existing poll; failed retries remain tied to real
+UI events and final quiescence. Internal surfaces explicitly own warning admission.
+
+Debug and ASan/UBSan each pass 9/9 CTest groups (621 unit cases, two existing opt-in skips;
+67 publication-fault cases; 100 integration methods). Twenty focused unit, lifecycle,
+and Python 3.9 PTY repetition sets pass. Pinned lint, Semgrep, runner checks, and required
+static analysis pass with the exact pre-existing local Clang findings recorded separately.
+The strict Ubuntu workflow also passes at the validated runtime revision.
+
+The native metric references are absent from the host cross-selection build, which links
+and runs its selected tests without interposers. Its arm64 host compatibility archive is
+explicitly identified in the evidence; this does not establish native PPC/Tiger support.
+No Tiger compiler/SDK or native runtime was available.
+
+A repeated shutdown test initially sent `/quit` before the idle libedit prompt. It now
+waits for that exact readiness boundary; twenty isolated repetitions and the final
+complete repetition batches pass. No native editor handoff or typeahead policy changed.
+
+The two Release measurement sets retain every sample, allocation/work counter, and timing.
+Empty warning polls and unchanged redraws allocate and output nothing. Basic typing was
+about 2–3% slower and moving-window typing about 3–5% slower across the two sets; allocation
+and output counts were unchanged. Large exports were about 1–6% slower, also with unchanged
+allocation and native-operation counts. Exposing deferred bytes adds 4,000 bytes per 1,000
+records; correct shared-boundary restoration adds 7,900 stdout bytes per 100 batches that
+the broken baseline omitted. The warning microbenchmark uses the legacy full-drain API on
+baseline and first-only draining on the change; it does not show old CLI idle retry behavior.
+Partial warning output can repeat on event-gated retry, and correct boundary restoration may add repaint
+work compared with broken baseline output. No general latency or exactly-once delivery
+claim is made. Full evidence: `docs/validation/basic-input-boundary-followup.json` and the
+adjacent performance summary/sample CSVs.

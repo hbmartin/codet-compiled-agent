@@ -1,0 +1,70 @@
+[
+  {
+    "variant": "baseline",
+    "mode": [],
+    "status": 0,
+    "output": "empty \"codet> x\" raw=\npartial \"codet> a\\n\" submitted=61E9\nmulti-edit \"codet> abcyz\" raw=616278797A\nwarning \"Ex\\nExec cleanup failed while stopping owned process\\n\"\n",
+    "errors": ""
+  },
+  {
+    "variant": "baseline",
+    "mode": [
+      "alias"
+    ],
+    "status": 0,
+    "output": "alias \"codet> abcwa\\r\\nd\" raw=61626364\n",
+    "errors": ""
+  },
+  {
+    "variant": "baseline",
+    "mode": [
+      "alias-context"
+    ],
+    "status": 0,
+    "output": "alias-context \"codet> abc\\r\\nwa\\r\\ncodet> abcd\" raw=61626364\n",
+    "errors": ""
+  },
+  {
+    "variant": "baseline",
+    "mode": [
+      "fstat"
+    ],
+    "status": 0,
+    "output": "fstat \"codet> x\\r\\nUnfinished input must be discarded. Press Enter, then type a fresh answer.\\r\\ndiscard> discard> \\r\\nUnfinished input must be discarded. Press Enter, then type a fresh answer.\\r\\ndiscard> \" raw=6162\n",
+    "errors": ""
+  },
+  {
+    "variant": "changed",
+    "mode": [],
+    "status": 0,
+    "output": "empty \"codet> x\\n\" raw=\npartial \"codet> a\\\\xE9\\n\" submitted=61E9\nmulti-edit \"codet> abc\\ncodet> abxyz\" raw=616278797A\nwarning \"Ex\\nExec cleanup failed while stopping owned process\\n\"\n",
+    "errors": ""
+  },
+  {
+    "variant": "changed",
+    "mode": [
+      "alias"
+    ],
+    "status": 0,
+    "output": "alias \"codet> abc\\r\\nwa\\r\\ncodet> abcd\" raw=61626364\n",
+    "errors": ""
+  },
+  {
+    "variant": "changed",
+    "mode": [
+      "alias-context"
+    ],
+    "status": 0,
+    "output": "alias-context \"codet> abc\\r\\nwa\\r\\ncodet> abcd\" raw=61626364\n",
+    "errors": ""
+  },
+  {
+    "variant": "changed",
+    "mode": [
+      "fstat"
+    ],
+    "status": 0,
+    "output": "fstat \"codet> x\\r\\nUnfinished input must be discarded. Press Enter, then type a fresh answer.\\r\\ndiscard> \\r\\ndiscard> \\r\\ndiscard> \" raw=6162\n",
+    "errors": ""
+  }
+]

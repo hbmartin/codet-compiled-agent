@@ -13,12 +13,14 @@ class LinePrompt final : public LineOutputObserver {
   struct stat terminal_ {};
   LineOutputObserver *previous_;
   bool owned_ = false, dirty_ = false, visible_ = false, due_ = true;
-  bool internal_ = false, explained_ = false, known_ = true;
+  bool internal_ = false, explained_ = false;
   bool echo_update_ = false, append_update_ = false;
   bool inspection_due_ = false;
   size_t columns_ = 0, painted_ = 0;
   const size_t test_columns_;
   uint64_t revision_ = 0, request_revision_ = 0;
+  uint64_t painted_revision_ = 0, boundary_generation_ = 0;
+  bool append_valid_ = false;
   bool guidance_due_ = true;
   std::array<char, 1280> row_{};
   std::array<char, 1280> previous_row_{};
@@ -34,6 +36,15 @@ class LinePrompt final : public LineOutputObserver {
       flag = previous;
     }
   };
+  LineDestinations &boundaries() const noexcept {
+    return output_.presentation_descriptor() >= 0 ? native_line_destinations()
+                                                  : io_.line_destinations;
+  }
+  void bind_errors() noexcept {
+    struct stat errors {};
+    if (output_.presentation_descriptor() >= 0 && ::fstat(STDERR_FILENO, &errors) == 0)
+      boundaries().bind(STDERR_FILENO, errors);
+  }
   bool eligible() const noexcept {
     return owned_ &&
            (input_.stale() || input_.kind() != RequestKind::message || !input_.input().empty());
@@ -42,7 +53,7 @@ class LinePrompt final : public LineOutputObserver {
     if (dirty_) {
       Internal guard(internal_);
       if (output_.echo_attempt({"\n"}))
-        (void)io_.line_destinations.separate(terminal_);
+        (void)boundaries().separate(terminal_);
       dirty_ = false;
     }
     visible_ = false;
@@ -50,22 +61,18 @@ class LinePrompt final : public LineOutputObserver {
     previous_bytes_ = 0;
   }
   void abandon_geometry() noexcept {
+    append_valid_ = false;
     dirty_ = visible_ = false;
     painted_ = columns_ = 0;
     previous_bytes_ = 0;
   }
   void destination(const struct stat &value) noexcept {
-    if (!known_ || !same_destination(terminal_, value)) {
-      if (output_.presentation_descriptor() >= 0) {
-        struct stat errors {};
-        if (::fstat(STDERR_FILENO, &errors) == 0)
-          io_.line_destinations.bind(STDERR_FILENO, errors);
-      }
-      io_.line_destinations.bind(STDOUT_FILENO, value);
+    if (!same_destination(terminal_, value)) {
+      bind_errors();
+      boundaries().bind(STDOUT_FILENO, value);
       abandon_geometry();
       terminal_ = value;
-      known_ = true;
-      dirty_ = io_.line_destinations.row(value);
+      dirty_ = boundaries().row(value);
       explained_ = false;
       guidance_due_ = true;
       due_ = true;
@@ -83,9 +90,18 @@ class LinePrompt final : public LineOutputObserver {
             S_ISCHR(value.st_mode) && ::ioctl(descriptor, TIOCGWINSZ, &size) == 0 ? size.ws_col : 0;
       } else {
         abandon_geometry();
-        known_ = false;
+        // A failed inspection invalidates geometry, not the last confirmed identity.
+        dirty_ = boundaries().row(terminal_);
         columns = 0;
       }
+    }
+    if (output_.presentation_descriptor() >= 0 &&
+        boundary_generation_ != boundaries().generation(STDOUT_FILENO)) {
+      visible_ = append_valid_ = false;
+      dirty_ = boundaries().row(terminal_);
+      painted_ = previous_bytes_ = 0;
+      due_ = true;
+      boundary_generation_ = boundaries().generation(STDOUT_FILENO);
     }
     columns = columns >= 10 ? std::min(columns - 1, size_t{256}) : 0;
     if (columns_ != columns) {
@@ -111,18 +127,23 @@ class LinePrompt final : public LineOutputObserver {
     const auto present = [&](std::initializer_list<std::string_view> parts, bool newline) {
       return keyboard ? output_.echo_attempt(parts, newline) : output_.display(parts, newline);
     };
-    if (!columns_ && append_update_ && visible_ && !input_.stale() &&
+    const bool compatible =
+        append_update_ && append_valid_ && input_.appended_since(painted_revision_);
+    if (!columns_ && compatible && visible_ && !input_.stale() &&
         input_.input().changed_offset() >= committed_) {
       const auto end = input_.input().committed_end();
       if (end >= committed_) {
         const auto text = input_.input().prepared().substr(committed_, end - committed_);
         if (!text.empty()) {
           dirty_ = true;
-          io_.line_destinations.open(terminal_);
+          boundaries().open(terminal_);
           visible_ = present({text}, false);
         }
-        if (visible_)
+        if (visible_) {
           committed_ = end;
+          painted_revision_ = input_.revision();
+        } else
+          append_valid_ = false;
         return;
       }
     }
@@ -149,12 +170,14 @@ class LinePrompt final : public LineOutputObserver {
     }
     const bool was_dirty = dirty_;
     dirty_ = true; // Even failure may have emitted part of the row.
-    io_.line_destinations.open(terminal_);
+    boundaries().open(terminal_);
     if (columns_) {
-      const bool append = append_update_ && visible_ && bytes >= previous_bytes_ &&
+      const bool append = compatible && visible_ && bytes >= previous_bytes_ &&
                           std::memcmp(row_.data(), previous_row_.data(), previous_bytes_) == 0;
-      if (append && bytes == previous_bytes_)
+      if (append && bytes == previous_bytes_) {
+        painted_revision_ = input_.revision();
         return;
+      }
       visible_ =
           append
               ? present({std::string_view(row_.data() + previous_bytes_, bytes - previous_bytes_)},
@@ -174,12 +197,15 @@ class LinePrompt final : public LineOutputObserver {
       if (was_dirty)
         separate();
       dirty_ = true;
-      io_.line_destinations.open(terminal_);
+      boundaries().open(terminal_);
       visible_ = present({std::string_view(row_.data(), bytes)}, false);
       if (visible_)
         committed_ = input_.input().committed_end();
       painted_ = 0;
     }
+    append_valid_ = visible_;
+    if (visible_)
+      painted_revision_ = input_.revision();
   }
 
 public:
@@ -189,10 +215,9 @@ public:
       : input_(input), output_(output), io_(io), prompt_(prompt), terminal_(terminal),
         previous_(io.line_output), test_columns_(columns) {
     spaces_.fill(' ');
-    io_.line_destinations.bind(STDOUT_FILENO, terminal);
-    struct stat errors {};
-    if (output_.presentation_descriptor() >= 0 && ::fstat(STDERR_FILENO, &errors) == 0)
-      io_.line_destinations.bind(STDERR_FILENO, errors);
+    boundaries().bind(STDOUT_FILENO, terminal);
+    bind_errors();
+    boundary_generation_ = boundaries().generation(STDOUT_FILENO);
     io_.line_output = this;
   }
   ~LinePrompt() override {
@@ -200,15 +225,18 @@ public:
   }
   LinePrompt(const LinePrompt &) = delete;
   LinePrompt &operator=(const LinePrompt &) = delete;
+  bool presenting() const noexcept override {
+    return internal_;
+  }
   bool before_output(int descriptor, const struct stat &value) override {
     if (internal_)
       return false;
     if (descriptor == STDOUT_FILENO)
       destination(value);
-    io_.line_destinations.bind(descriptor, value);
+    boundaries().bind(descriptor, value);
     inspection_due_ = true; // Refresh stdout once at the end of the output batch, not per record.
-    const bool separator = io_.line_destinations.separate(value);
-    if (known_ && S_ISCHR(value.st_mode) && same_destination(value, terminal_)) {
+    const bool separator = boundaries().separate(value);
+    if (S_ISCHR(value.st_mode) && same_destination(value, terminal_)) {
       dirty_ = visible_ = false;
       painted_ = previous_bytes_ = 0;
       due_ = true;
@@ -216,6 +244,7 @@ public:
     return separator;
   }
   void acquire() noexcept {
+    append_valid_ = false;
     owned_ = true;
     due_ = true;
   }
@@ -225,6 +254,7 @@ public:
     due_ = true;
   }
   void release() noexcept {
+    append_valid_ = false;
     owned_ = false;
   }
   void flush() {
@@ -250,7 +280,9 @@ public:
       return;
     Internal guard(internal_);
     if (!eligible()) {
-      if (owned_ && dirty_ && columns_) {
+      if (owned_ && dirty_ && !columns_)
+        separate();
+      else if (owned_ && dirty_) {
         const auto parts = {std::string_view("\r"), std::string_view(spaces_.data(), painted_),
                             std::string_view("\r")};
         if (echo_update_)
@@ -259,7 +291,7 @@ public:
           (void)output_.display(parts, false);
         dirty_ = visible_ = false;
         painted_ = 0;
-        (void)io_.line_destinations.separate(terminal_);
+        (void)boundaries().separate(terminal_);
       }
       due_ = false;
       return;
@@ -267,23 +299,23 @@ public:
     if (input_.stale() && !explained_) {
       separate();
       dirty_ = true;
-      io_.line_destinations.open(terminal_);
+      boundaries().open(terminal_);
       explained_ = output_.display({RequestInput::discard_instruction});
-      if (explained_)
+      if (explained_) {
         dirty_ = false;
-      if (explained_)
-        (void)io_.line_destinations.separate(terminal_);
+        (void)boundaries().separate(terminal_);
+      }
     }
     if (!input_.stale() && guidance_due_ && input_.kind() != RequestKind::message &&
         prefix(columns_ ? columns_ : 80) != input_.guidance()) {
       separate();
       dirty_ = true;
-      io_.line_destinations.open(terminal_);
+      boundaries().open(terminal_);
       guidance_due_ = !output_.display({input_.guidance()});
-      if (!guidance_due_)
+      if (!guidance_due_) {
         dirty_ = false;
-      if (!guidance_due_)
-        (void)io_.line_destinations.separate(terminal_);
+        (void)boundaries().separate(terminal_);
+      }
     }
     paint();
     due_ = false; // Retry only on a real edit, request change or output event.
@@ -306,10 +338,18 @@ public:
   }
   void submitted() {
     Internal guard(internal_);
+    if (owned_ && !columns_ && !input_.stale() &&
+        input_.input().committed_end() < input_.input().prepared().size()) {
+      // Typing holds valid prefixes; submission must expose the unresolved bytes.
+      flush();
+      if (visible_ && committed_ <= input_.input().prepared().size())
+        (void)output_.echo_attempt({input_.input().prepared().substr(committed_)});
+    }
     if (dirty_)
       if (output_.echo_attempt({"\n"}))
-        (void)io_.line_destinations.separate(terminal_);
+        (void)boundaries().separate(terminal_);
     dirty_ = visible_ = explained_ = false;
+    append_valid_ = false;
     painted_ = 0;
     due_ = true;
   }
