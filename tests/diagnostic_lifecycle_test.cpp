@@ -402,6 +402,23 @@ TEST(DiagnosticFallbackMetadata, ResetMayOverlapAStableReplacedBuffer) {
     detail::reset_standard_diagnostics();
   writer.join();
 }
+TEST(DiagnosticReservations, CompletionPublishesAnEventButPresentationFailureDoesNot) {
+  detail::LineDestinations destinations;
+  struct stat tty {};
+  tty.st_mode = S_IFCHR;
+  destinations.bind(1, tty);
+  const auto diagnostic = destinations.admit(1, false);
+  const auto admitted = destinations.generation(1);
+  EXPECT_EQ(destinations.active(1), 1u);
+  destinations.finish(diagnostic, true, true);
+  EXPECT_GT(destinations.generation(1), admitted);
+  EXPECT_EQ(destinations.active(1), 0u);
+  const auto presentation = destinations.admit(1, true);
+  const auto before_failure = destinations.generation(1);
+  destinations.finish(presentation, false, false);
+  EXPECT_EQ(destinations.generation(1), before_failure);
+  EXPECT_TRUE(destinations.pending(1));
+}
 TEST(DiagnosticReservations, AliasesResetAndOldFailuresRetainTheirOwnership) {
   detail::LineDestinations destinations;
   struct stat tty {};
