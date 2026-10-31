@@ -106,6 +106,14 @@ extern "C" ssize_t writev(int descriptor, const iovec *parts, int count) {
   }
   return original(descriptor, parts, count);
 }
+void codet::test::observed_stat(int descriptor) noexcept {
+  auto &metrics = native_io_metrics;
+  if (descriptor == metrics.interrupt_fd)
+    if (auto gate = metrics.after_stat) {
+      metrics.after_stat = nullptr;
+      gate(metrics.stat_context);
+    }
+}
 bool codet::test::interrupt_stat(int descriptor) noexcept {
   auto &metrics = native_io_metrics;
   if (descriptor == metrics.interrupt_fd) {

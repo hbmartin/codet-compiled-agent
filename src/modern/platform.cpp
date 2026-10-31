@@ -251,7 +251,10 @@ const char *FileNotice::label() const noexcept {
 }
 namespace {
 // Fixed, trivially destructible fallback owners also serve late shutdown diagnostics.
-detail::DiagnosticState stderr_stream_state, stdout_stream_state;
+struct StreamMetadata {
+  detail::DiagnosticState state;
+  uint64_t epoch = 0, serial = 0;
+} stderr_stream_state, stdout_stream_state;
 // Statically initialized, allocation-free metadata only; no native I/O or callbacks under it.
 pthread_mutex_t native_metadata_mutex = PTHREAD_MUTEX_INITIALIZER;
 struct NativeMetadataGuard {
@@ -265,13 +268,14 @@ struct NativeMetadataGuard {
   NativeMetadataGuard &operator=(const NativeMetadataGuard &) = delete;
 };
 detail::LineDestinations native_destinations;
-uint64_t native_epoch = 0;
+uint64_t native_epoch = 0, native_observation = 0;
 auto *const native_stderr_buffer = std::cerr.rdbuf();
 auto *const native_stdout_buffer = std::cout.rdbuf();
 struct DescriptorDiagnosticState {
   struct stat identity {};
   bool known = false;
   size_t pipe_limit = 0;
+  uint64_t observation = 0;
 } stderr_descriptor_state, stdout_descriptor_state;
 DescriptorDiagnosticState &descriptor_state(int descriptor) noexcept {
   return descriptor == STDERR_FILENO ? stderr_descriptor_state : stdout_descriptor_state;
@@ -284,20 +288,40 @@ struct NativeInspection {
 };
 NativeInspection inspect_native(int descriptor, detail::OutputAttempt &attempt) noexcept {
   NativeInspection result;
-  result.inspected = detail::inspect_output_destination(descriptor, result.identity, attempt);
-  NativeMetadataGuard guard;
-  if (!guard.locked)
+  // One refresh handles an observation overtaken by another writer or an invocation reset.
+  // Under continuing descriptor churn, delivery still uses its latest borrowed-fd snapshot.
+  for (unsigned pass = 0; pass != 2; ++pass) {
+    uint64_t observation;
+    {
+      NativeMetadataGuard guard;
+      if (!guard.locked)
+        return result;
+      observation = ++native_observation;
+      result.epoch = native_epoch;
+    }
+    result.inspected = detail::inspect_output_destination(descriptor, result.identity, attempt);
+    NativeMetadataGuard guard;
+    if (!guard.locked)
+      return result;
+    result.available = true;
+    auto &owner = descriptor_state(descriptor);
+    const bool current = result.epoch == native_epoch && observation >= owner.observation;
+    if (result.inspected && !current && pass == 0)
+      continue;
+    result.epoch = native_epoch;
+    if (result.inspected && current) {
+      if (!owner.known || !detail::same_destination(result.identity, owner.identity))
+        owner.pipe_limit = 0;
+      owner.known = true;
+      owner.identity = result.identity;
+      owner.observation = observation;
+      native_destinations.bind(descriptor, result.identity);
+    }
+    result.pipe_limit =
+        result.inspected && owner.known && detail::same_destination(result.identity, owner.identity)
+            ? owner.pipe_limit
+            : 0;
     return result;
-  result.available = true;
-  result.epoch = native_epoch;
-  auto &owner = descriptor_state(descriptor);
-  if (result.inspected) {
-    if (!owner.known || !detail::same_destination(result.identity, owner.identity))
-      owner.pipe_limit = 0;
-    owner.known = true;
-    owner.identity = result.identity;
-    native_destinations.bind(descriptor, result.identity);
-    result.pipe_limit = owner.pipe_limit;
   }
   return result;
 }
@@ -306,14 +330,58 @@ int native_diagnostic_descriptor(std::ostream &output, std::streambuf *buffer) n
          : &output == &std::cout && buffer == native_stdout_buffer ? STDOUT_FILENO
                                                                    : -1;
 }
-detail::DiagnosticState &stream_diagnostic_state(std::ostream &output,
-                                                 detail::DiagnosticState &local) noexcept {
-  auto &state = &output == &std::cerr   ? stderr_stream_state
-                : &output == &std::cout ? stdout_stream_state
-                                        : local;
-  state.bind(output.rdbuf());
-  return state;
-}
+// No references into shared fallback metadata escape its guard. Actual injected-stream
+// operations and buffer replacement retain their caller-synchronization contract.
+class StreamRecord {
+  detail::DiagnosticState &local_;
+  StreamMetadata *shared_;
+  std::streambuf *buffer_;
+  uint64_t epoch_ = 0, serial_ = 0;
+
+public:
+  bool pending = false, available = true;
+  StreamRecord(std::ostream &output, detail::DiagnosticState &local) noexcept
+      : local_(local), shared_(&output == &std::cerr   ? &stderr_stream_state
+                               : &output == &std::cout ? &stdout_stream_state
+                                                       : nullptr),
+        buffer_(output.rdbuf()) {
+    if (!shared_) {
+      local_.bind(buffer_);
+      pending = local_.pending;
+      return;
+    }
+    NativeMetadataGuard guard;
+    if (!guard.locked) {
+      available = false;
+      return;
+    }
+    if (shared_->state.buffer != buffer_) {
+      shared_->state.reset(buffer_);
+      ++shared_->epoch;
+    }
+    epoch_ = shared_->epoch;
+    serial_ = ++shared_->serial;
+    pending = shared_->state.pending;
+    shared_->state.pending = true;
+  }
+  void finish(bool complete, bool attempted) noexcept {
+    if (!shared_) {
+      if (complete)
+        local_.pending = false;
+      else if (attempted)
+        local_.pending = true;
+      return;
+    }
+    NativeMetadataGuard guard;
+    if (guard.locked && shared_->epoch == epoch_ && shared_->serial == serial_ &&
+        shared_->state.buffer == buffer_) {
+      if (complete)
+        shared_->state.pending = false;
+      else if (attempted)
+        shared_->state.pending = true;
+    }
+  }
+};
 bool unsafe_unicode_control(uint32_t point) noexcept {
   return (point >= 0x80 && point <= 0x9f) || point == 0x61c || point == 0x200e || point == 0x200f ||
          (point >= 0x2028 && point <= 0x202e) || (point >= 0x2060 && point <= 0x2064) ||
@@ -391,8 +459,12 @@ public:
                     inspection_.pipe_limit) {
     {
       NativeMetadataGuard guard;
-      if (!guard.locked || !inspection_.available || inspection_.epoch != native_epoch)
+      if (!guard.locked || !inspection_.available)
         return;
+      // Epoch changes invalidate cache commits, never the requested byte delivery.
+      inspection_.epoch = native_epoch;
+      if (inspection_.inspected && !descriptor_state(native_).known)
+        native_destinations.bind(native_, inspection_.identity);
       if (inspection_.inspected &&
           detail::same_destination(inspection_.identity, descriptor_state(native_).identity))
         descriptor_state(native_).pipe_limit = inspection_.pipe_limit;
@@ -475,7 +547,7 @@ bool detail::recover_diagnostic_stream(std::ostream &output) noexcept {
   }
 }
 detail::DiagnosticWriter::DiagnosticWriter(std::ostream &output, IoContext *io) noexcept
-    : output_(output), state_(&local_), file_(diagnostic_file(output)), io_(io) {}
+    : output_(output), file_(diagnostic_file(output)), io_(io) {}
 int detail::DiagnosticWriter::native_descriptor() const noexcept {
   return destination().descriptor;
 }
@@ -537,8 +609,10 @@ void detail::reset_standard_diagnostics() noexcept {
     return;
   ++native_epoch;
   native_destinations.reset();
-  stderr_stream_state.reset(std::cerr.rdbuf());
-  stdout_stream_state.reset(std::cout.rdbuf());
+  stderr_stream_state.state.reset(std::cerr.rdbuf());
+  stdout_stream_state.state.reset(std::cout.rdbuf());
+  ++stderr_stream_state.epoch;
+  ++stdout_stream_state.epoch;
   stderr_descriptor_state = {};
   stdout_descriptor_state = {};
 }
@@ -582,28 +656,28 @@ detail::DiagnosticWriter::write_result(std::initializer_list<std::string_view> p
     }
     return success ? DiagnosticResult::success : DiagnosticResult::failure;
   }
-  state_ = &stream_diagnostic_state(output_, local_);
+  StreamRecord record(output_, local_);
+  if (!record.available)
+    return DiagnosticResult::failure;
 
   struct Recovery {
     std::ostream &stream;
-    bool &pending;
+    StreamRecord &record;
     bool attempted = false, complete = false;
-    Recovery(std::ostream &out, bool &separator) noexcept : stream(out), pending(separator) {}
+    Recovery(std::ostream &out, StreamRecord &value) noexcept : stream(out), record(value) {}
     ~Recovery() {
-      if (!complete) {
-        if (attempted)
-          pending = true;
+      record.finish(complete, attempted);
+      if (!complete)
         recover_diagnostic_stream(stream);
-      }
     }
-  } recovery{output_, state_->pending};
+  } recovery{output_, record};
   if ((!output_ || (file_ && std::ferror(file_))) && !recover_diagnostic_stream(output_))
     output_.clear(output_.rdstate()); // Preserve configured exception-mask behavior.
-  if (state_->pending) {
+  if (record.pending) {
     output_.put('\n');
     if (!output_)
       return DiagnosticResult::failure;
-    state_->pending = false;
+    record.pending = false;
   }
   for (auto part : parts) {
     while (!part.empty() && output_) {

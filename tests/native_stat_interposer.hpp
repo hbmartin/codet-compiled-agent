@@ -6,7 +6,10 @@
 
 namespace codet::test {
 bool interrupt_stat(int) noexcept;
-}
+#ifdef CODET_NATIVE_TERMINAL_METRICS
+void observed_stat(int) noexcept;
+#endif
+} // namespace codet::test
 #if defined(__GLIBC__)
 #if !__GLIBC_PREREQ(2, 33)
 #define CODET_VERSIONED_STAT 1
@@ -25,7 +28,11 @@ extern "C" int __fxstat(int version, int descriptor, struct stat *status) noexce
     errno = EINTR;
     return -1;
   }
-  return native(version, descriptor, status);
+  const auto result = native(version, descriptor, status);
+#ifdef CODET_NATIVE_TERMINAL_METRICS
+  codet::test::observed_stat(descriptor);
+#endif
+  return result;
 }
 #else
 extern "C" int fstat(int descriptor, struct stat *status)
@@ -48,7 +55,11 @@ extern "C" int fstat(int descriptor, struct stat *status)
     errno = EINTR;
     return -1;
   }
-  return native(descriptor, status);
+  const auto result = native(descriptor, status);
+#ifdef CODET_NATIVE_TERMINAL_METRICS
+  codet::test::observed_stat(descriptor);
+#endif
+  return result;
 }
 #endif
 #undef CODET_VERSIONED_STAT

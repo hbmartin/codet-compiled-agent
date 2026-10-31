@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <thread>
 #ifdef __APPLE__
 #include <util.h>
 #else
@@ -144,6 +145,96 @@ TEST_F(NativeRecordLifecycle, EarlyEmergencyFailureReleasesItsReservation) {
   metrics = {};
   line->flush();
   EXPECT_THAT(read(), EndsWith("codet> abc"));
+}
+TEST_F(NativeRecordLifecycle, NullStreamCannotMutateNativeBoundaryOwnership) {
+  const bool before = detail::native_line_destinations().row(identity);
+  std::ostream missing(nullptr);
+  detail::CliOutput injected(missing);
+  detail::RequestInputController other;
+  detail::LinePrompt null_line(other, injected, io, prompt, identity);
+  null_line.acquire();
+  null_line.append('x');
+  EXPECT_EQ(detail::native_line_destinations().row(identity), before);
+  EXPECT_TRUE(io.line_destinations.row(identity));
+}
+TEST_F(NativeRecordLifecycle, ReturningFromInjectedBufferAbandonsTheOldLongerRow) {
+  for (char byte : std::string("abcdef"))
+    line->append(byte);
+  std::ostringstream buffer;
+  struct Restore {
+    std::streambuf *saved;
+    ~Restore() {
+      std::cout.rdbuf(saved);
+    }
+  } restore{std::cout.rdbuf(buffer.rdbuf())};
+  for (unsigned i = 0; i != 3; ++i)
+    line->erase_character();
+  std::cout.rdbuf(restore.saved);
+  line->flush();
+  EXPECT_EQ(read(), "codet> abcdef\r\ncodet> abc");
+  EXPECT_EQ(input.input().raw(), "abc");
+}
+TEST_F(NativeRecordLifecycle, OlderInspectionRefreshesWithoutDroppingTheCurrentRecord) {
+  struct Gate {
+    NativeRecordLifecycle *fixture;
+    static void run(void *context) {
+      auto &f = *static_cast<Gate *>(context)->fixture;
+      // The interrupted fstat has captured the PTY. Publish a newer identity before it returns.
+      int descriptors[2];
+      ASSERT_EQ(::pipe(descriptors), 0);
+      struct Close {
+        int a, b;
+        ~Close() {
+          ::close(a);
+          ::close(b);
+        }
+      } close{descriptors[0], descriptors[1]};
+      ASSERT_EQ(::dup2(descriptors[1], STDERR_FILENO), STDERR_FILENO);
+      EXPECT_TRUE(detail::immediate_stderr({"newer identity"}));
+      pollfd ready{descriptors[0], POLLIN, 0};
+      ASSERT_GT(::poll(&ready, 1, 1000), 0);
+      char bytes[64];
+      ASSERT_EQ(::read(descriptors[0], bytes, sizeof(bytes)), 15);
+      // Leave a different confirmed observation in the cache while restoring the writable PTY.
+      ASSERT_EQ(::dup2(f.slave, STDERR_FILENO), STDERR_FILENO);
+    }
+  } gate{this};
+  auto &metrics = test::native_io_metrics;
+  metrics.interrupt_fd = STDERR_FILENO;
+  metrics.after_stat = Gate::run;
+  metrics.stat_context = &gate;
+  EXPECT_TRUE(detail::immediate_stderr({"current record"}));
+  EXPECT_GE(metrics.inspections, 3u); // Old snapshot, intervening identity, fresh validation.
+  metrics = {};
+  EXPECT_EQ(read(), "current record\r\n");
+}
+TEST(DiagnosticFallbackMetadata, ResetMayOverlapAStableReplacedBuffer) {
+  struct Sink : std::streambuf {
+    std::streamsize xsputn(const char *, std::streamsize count) override {
+      return count;
+    }
+    int_type overflow(int_type ch) override {
+      return traits_type::not_eof(ch);
+    }
+  } sink;
+  struct Restore {
+    std::streambuf *saved;
+    ~Restore() {
+      std::cerr.rdbuf(saved);
+      detail::reset_standard_diagnostics();
+    }
+  } restore{std::cerr.rdbuf(&sink)};
+  std::atomic<bool> start{false};
+  std::thread writer([&] {
+    while (!start.load())
+      std::this_thread::yield();
+    for (unsigned i = 0; i != 1000; ++i)
+      (void)detail::write_diagnostic(std::cerr, {"stable injected buffer"});
+  });
+  start = true;
+  for (unsigned i = 0; i != 1000; ++i)
+    detail::reset_standard_diagnostics();
+  writer.join();
 }
 TEST(DiagnosticReservations, AliasesResetAndOldFailuresRetainTheirOwnership) {
   detail::LineDestinations destinations;

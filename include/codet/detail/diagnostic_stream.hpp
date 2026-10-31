@@ -67,7 +67,6 @@ enum class DiagnosticResult : uint8_t { success, failure, deferred };
 class DiagnosticWriter {
   std::ostream &output_;
   DiagnosticState local_;
-  DiagnosticState *state_;
   FILE *file_;
   IoContext *io_;
 

@@ -16,6 +16,7 @@ class LinePrompt final : public LineOutputObserver {
   bool internal_ = false, explained_ = false;
   bool echo_update_ = false;
   StreamDestination binding_;
+  bool binding_initialized_ = false;
   BoundaryAccess boundaries_;
   bool inspection_due_ = false;
   bool boundary_busy_ = false;
@@ -50,9 +51,11 @@ class LinePrompt final : public LineOutputObserver {
   }
   void resolve_presentation() noexcept {
     const auto next = output_.presentation_destination();
-    if (binding_.descriptor == next.descriptor && binding_.buffer == next.buffer)
+    if (binding_initialized_ && binding_.descriptor == next.descriptor &&
+        binding_.buffer == next.buffer)
       return;
     binding_ = next;
+    binding_initialized_ = true;
     if (binding_.descriptor < 0)
       io_.line_destinations.reset();
     boundaries_ = BoundaryAccess(binding_.descriptor >= 0 ? nullptr : &io_.line_destinations);
@@ -258,9 +261,11 @@ public:
   bool before_output(int descriptor, const struct stat &value) override {
     if (internal_)
       return false;
-    if (descriptor == STDOUT_FILENO)
-      destination(value);
-    boundaries().bind(descriptor, value);
+    if (binding_.descriptor < 0) {
+      if (descriptor == STDOUT_FILENO)
+        destination(value);
+      boundaries().bind(descriptor, value);
+    }
     inspection_due_ = true; // Refresh stdout once at the end of the output batch, not per record.
     const bool separator = binding_.descriptor < 0 && boundaries().separate(value);
     if (S_ISCHR(value.st_mode) && same_destination(value, terminal_)) {
