@@ -1,0 +1,42 @@
+[
+  {
+    "case": "current",
+    "values": [
+      1,
+      2,
+      4
+    ],
+    "exit": 0,
+    "stderr": ""
+  },
+  {
+    "case": "overlap",
+    "values": [
+      1,
+      3,
+      4
+    ],
+    "exit": 1,
+    "stderr": "In file included from /Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/overlap-warning.cpp:1:\n/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/overlap-warning.hpp:39:17: error: static assertion failed due to requirement 'detail::valid_warning_values(warning_values)': Every warning value must be one unique nonzero bit\n   39 |   static_assert(detail::valid_warning_values(warning_values),\n      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n1 error generated.\n"
+  },
+  {
+    "case": "duplicate",
+    "values": [
+      1,
+      1,
+      6
+    ],
+    "exit": 1,
+    "stderr": "In file included from /Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/duplicate-warning.cpp:1:\n/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/duplicate-warning.hpp:39:17: error: static assertion failed due to requirement 'detail::valid_warning_values(warning_values)': Every warning value must be one unique nonzero bit\n   39 |   static_assert(detail::valid_warning_values(warning_values),\n      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n1 error generated.\n"
+  },
+  {
+    "case": "zero",
+    "values": [
+      0,
+      2,
+      4
+    ],
+    "exit": 1,
+    "stderr": "In file included from /Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/zero-warning.cpp:1:\n/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/zero-warning.hpp:39:17: error: static assertion failed due to requirement 'detail::valid_warning_values(warning_values)': Every warning value must be one unique nonzero bit\n   39 |   static_assert(detail::valid_warning_values(warning_values),\n      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\nIn file included from /Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/zero-warning.cpp:1:\nIn file included from /Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/zero-warning.hpp:3:\n/Volumes/Pro2T/codet-compiled-agent/include/codet/detail/warning_bits.hpp:25:26: error: static assertion failed due to requirement '(6U & (6U + 1U)) == 0': Warning kinds must fill one bit bank\n   25 |   static_assert(Kinds && (Kinds & (Kinds + 1u)) == 0, \"Warning kinds must fill one bit bank\");\n      |                          ^~~~~~~~~~~~~~~~~~~~~~~~~~~\n/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/zero-warning.hpp:48:75: note: in instantiation of template class 'codet::detail::WarningBits<6>' requested here\n   48 |   static_assert(sizeof(warning_messages) / sizeof(warning_messages[0]) == WarningEncoding::shift,\n      |                                                                           ^\n/Volumes/Pro2T/codet-compiled-agent/include/codet/detail/warning_bits.hpp:25:49: note: expression evaluates to '6 == 0'\n   25 |   static_assert(Kinds && (Kinds & (Kinds + 1u)) == 0, \"Warning kinds must fill one bit bank\");\n      |                          ~~~~~~~~~~~~~~~~~~~~~~~^~~~\n2 errors generated.\n"
+  }
+]

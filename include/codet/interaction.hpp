@@ -33,6 +33,11 @@ public:
 #undef CODET_WARNING_ENUM
 
 private:
+#define CODET_WARNING_VALUE(name, bit, message) (bit),
+  static constexpr unsigned warning_values[] = {CODET_INTERACTION_WARNINGS(CODET_WARNING_VALUE)};
+#undef CODET_WARNING_VALUE
+  static_assert(detail::valid_warning_values(warning_values),
+                "Every warning value must be one unique nonzero bit");
 #define CODET_WARNING_MASK(name, bit, message) | (bit)
   using WarningEncoding = detail::WarningBits<0 CODET_INTERACTION_WARNINGS(CODET_WARNING_MASK)>;
 #undef CODET_WARNING_MASK

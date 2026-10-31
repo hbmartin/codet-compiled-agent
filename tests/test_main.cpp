@@ -129,12 +129,17 @@ int main(int argc, char **argv) {
         for (char byte : std::string("abc"))
           line.append(byte);
         std::ostringstream first, second;
-        auto *native = std::cout.rdbuf(first.rdbuf());
+        struct RestoreBuffer {
+          std::streambuf *native;
+          ~RestoreBuffer() {
+            std::cout.rdbuf(native);
+          }
+        } restore_buffer{std::cout.rdbuf(first.rdbuf())};
         line.append('d');
         std::cout.rdbuf(second.rdbuf());
         line.flush();
         line.append('e');
-        std::cout.rdbuf(native);
+        std::cout.rdbuf(restore_buffer.native);
         line.flush();
         const bool displayed = first.str().find("abcd") != std::string::npos &&
                                second.str().find("abcd") != std::string::npos;

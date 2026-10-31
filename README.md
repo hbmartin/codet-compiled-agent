@@ -149,8 +149,12 @@ append only new prepared text when their displayed prefix stays valid; moving th
 the old row geometry. Prompts follow stdout's destination; a separate redirected stderr does not
 disturb that row. Guidance and unfinished-line boundaries follow the destinations currently
 reachable through stdout/stderr, including aliased channels. Standalone and emergency diagnostics
-restore a surviving draft on the next main-loop flush,
-without another keystroke. Buffer replacement rebinds presentation, and resizing before submission
+restore a surviving draft on the next main-loop flush after delivery finishes,
+without another keystroke. Prompt output waits for active diagnostic records; a failed prompt
+waits for a real edit, request change, or external output event before another delivery attempt.
+Native and replaced-standard-buffer metadata use short synchronized snapshots and guarded commits;
+I/O and renderer callbacks run outside the metadata lock. Injected-stream I/O and buffer replacement
+remain caller-synchronized, and concurrent diagnostic bytes may interleave. Buffer replacement rebinds presentation, and resizing before submission
 does not repeat deferred UTF-8 escapes. Transient input resource failures retry with a cancellation-aware backoff of at most 25 ms; permanent input errors are reported
 separately from EOF. Fixed worker warnings enter history once per coalesced occurrence; a failed
 refresh does not reinsert them. New warnings get their first delivery attempt on the next existing

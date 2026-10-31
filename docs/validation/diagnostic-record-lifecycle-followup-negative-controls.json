@@ -1,0 +1,26 @@
+[
+  {
+    "name": "own-failure",
+    "test": "NativeRecordLifecycle.FailedPromptDoesNotGenerateIdleRetryEvents",
+    "exit": 1,
+    "output": "Note: Google Test filter = NativeRecordLifecycle.FailedPromptDoesNotGenerateIdleRetryEvents\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from NativeRecordLifecycle\n[ RUN      ] NativeRecordLifecycle.FailedPromptDoesNotGenerateIdleRetryEvents\n/Volumes/Pro2T/codet-compiled-agent/tests/diagnostic_lifecycle_test.cpp:84: Failure\nExpected equality of these values:\n  metrics.inspections\n    Which is: 40\n  0u\n    Which is: 0\n\n/Volumes/Pro2T/codet-compiled-agent/tests/diagnostic_lifecycle_test.cpp:86: Failure\nExpected equality of these values:\n  detail::native_line_destinations().snapshot(1, identity).generation\n    Which is: 25\n  generation\n    Which is: 5\n\n[  FAILED  ] NativeRecordLifecycle.FailedPromptDoesNotGenerateIdleRetryEvents (1 ms)\n[----------] 1 test from NativeRecordLifecycle (1 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (1 ms total)\n[  PASSED  ] 0 tests.\n[  FAILED  ] 1 test, listed below:\n[  FAILED  ] NativeRecordLifecycle.FailedPromptDoesNotGenerateIdleRetryEvents\n\n 1 FAILED TEST\n"
+  },
+  {
+    "name": "completion",
+    "test": "DiagnosticReservations.CompletionPublishesAnEventButPresentationFailureDoesNot",
+    "exit": 1,
+    "output": "Note: Google Test filter = DiagnosticReservations.CompletionPublishesAnEventButPresentationFailureDoesNot\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from DiagnosticReservations\n[ RUN      ] DiagnosticReservations.CompletionPublishesAnEventButPresentationFailureDoesNot\n/Volumes/Pro2T/codet-compiled-agent/tests/diagnostic_lifecycle_test.cpp:414: Failure\nExpected: (destinations.generation(1)) > (admitted), actual: 2 vs 2\n\n[  FAILED  ] DiagnosticReservations.CompletionPublishesAnEventButPresentationFailureDoesNot (0 ms)\n[----------] 1 test from DiagnosticReservations (0 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (0 ms total)\n[  PASSED  ] 0 tests.\n[  FAILED  ] 1 test, listed below:\n[  FAILED  ] DiagnosticReservations.CompletionPublishesAnEventButPresentationFailureDoesNot\n\n 1 FAILED TEST\n"
+  },
+  {
+    "name": "separator",
+    "test": "NativeRecordLifecycle.ObserverCannotExposeAnUnreservedSeparatorGap",
+    "exit": 1,
+    "output": "Note: Google Test filter = NativeRecordLifecycle.ObserverCannotExposeAnUnreservedSeparatorGap\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from NativeRecordLifecycle\n[ RUN      ] NativeRecordLifecycle.ObserverCannotExposeAnUnreservedSeparatorGap\n[  FAILED  ] NativeRecordLifecycle.ObserverCannotExposeAnUnreservedSeparatorGap (1 ms)\n[----------] 1 test from NativeRecordLifecycle (1 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (1 ms total)\n[  PASSED  ] 0 tests.\n[  FAILED  ] 1 test, listed below:\n[  FAILED  ] NativeRecordLifecycle.ObserverCannotExposeAnUnreservedSeparatorGap\n\n 1 FAILED TEST\n"
+  },
+  {
+    "name": "inspection",
+    "test": "NativeRecordLifecycle.StaleInspectionCannotSuppressAnEmergencyOnTheCurrentDescriptor",
+    "exit": 1,
+    "output": "Note: Google Test filter = NativeRecordLifecycle.StaleInspectionCannotSuppressAnEmergencyOnTheCurrentDescriptor\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from NativeRecordLifecycle\n[ RUN      ] NativeRecordLifecycle.StaleInspectionCannotSuppressAnEmergencyOnTheCurrentDescriptor\n[  FAILED  ] NativeRecordLifecycle.StaleInspectionCannotSuppressAnEmergencyOnTheCurrentDescriptor (1 ms)\n[----------] 1 test from NativeRecordLifecycle (1 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (1 ms total)\n[  PASSED  ] 0 tests.\n[  FAILED  ] 1 test, listed below:\n[  FAILED  ] NativeRecordLifecycle.StaleInspectionCannotSuppressAnEmergencyOnTheCurrentDescriptor\n\n 1 FAILED TEST\n"
+  }
+]

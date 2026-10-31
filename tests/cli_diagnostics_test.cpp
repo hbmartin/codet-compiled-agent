@@ -67,6 +67,14 @@ TEST(TerminalInput, TransientReadinessFailuresRemainRetryableAndOnlyReadsIndicat
   EXPECT_EQ(byte, 'x');
 }
 #endif
+TEST(InteractionWarnings, RegistryRequiresDistinctSingleNonzeroBits) {
+  constexpr unsigned good[]{1, 2, 4, 8}, overlap[]{1, 3, 4}, duplicate[]{1, 1, 6}, zero[]{0, 1};
+  static_assert(detail::valid_warning_values(good));
+  static_assert(!detail::valid_warning_values(overlap));
+  static_assert(!detail::valid_warning_values(duplicate));
+  static_assert(!detail::valid_warning_values(zero));
+  EXPECT_TRUE(detail::valid_warning_values(good));
+}
 TEST(InteractionWarnings, FourthKindCannotAliasAnExistingRetry) {
   using Four = detail::WarningBits<15>;
   static_assert(Four::shift == 4 && (Four::retries & 8u) == 0);
@@ -1218,7 +1226,21 @@ TEST(DiagnosticWriter, InterveningRecoverySeparatorCannotSuppressAnAdmittedRecor
   detail::reset_standard_diagnostics();
 }
 TEST(DiagnosticWriter, ConcurrentFallbackAndNativeBoundarySnapshotsAreSynchronized) {
-  testing::internal::CaptureStderr();
+  struct Capture {
+    bool active = true;
+    Capture() {
+      testing::internal::CaptureStderr();
+    }
+    ~Capture() {
+      if (active)
+        (void)testing::internal::GetCapturedStderr();
+    }
+    std::string finish() {
+      auto bytes = testing::internal::GetCapturedStderr();
+      active = false;
+      return bytes;
+    }
+  } capture;
   detail::reset_standard_diagnostics();
   struct stat identity {};
   ASSERT_EQ(::fstat(STDERR_FILENO, &identity), 0);
@@ -1242,7 +1264,7 @@ TEST(DiagnosticWriter, ConcurrentFallbackAndNativeBoundarySnapshotsAreSynchroniz
     (void)boundary.separate(identity);
   }
   worker.join();
-  EXPECT_THAT(testing::internal::GetCapturedStderr(), HasSubstr("/complete/path"));
+  EXPECT_THAT(capture.finish(), HasSubstr("/complete/path"));
   detail::reset_standard_diagnostics();
 }
 TEST(DiagnosticWriter, IndeterminatePipeBoundsDoNotRetryStaleInterruptedErrno) {
