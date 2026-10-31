@@ -63,6 +63,7 @@ struct StreamDestination {
   int descriptor = -1;
   std::streambuf *buffer = nullptr;
 };
+enum class DiagnosticResult : uint8_t { success, failure, deferred };
 class DiagnosticWriter {
   std::ostream &output_;
   DiagnosticState local_;
@@ -75,6 +76,7 @@ public:
   DiagnosticWriter(const DiagnosticWriter &) = delete;
   DiagnosticWriter &operator=(const DiagnosticWriter &) = delete;
   bool write(std::initializer_list<std::string_view>, bool newline = true, bool flush = false);
+  DiagnosticResult write_result(std::initializer_list<std::string_view>, bool newline, bool flush);
   int native_descriptor() const noexcept;
   StreamDestination destination() const noexcept;
   void file(const std::string &);

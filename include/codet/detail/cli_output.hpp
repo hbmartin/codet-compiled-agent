@@ -23,6 +23,7 @@ class CliOutput {
   bool native_required_;
   bool failed_ = false;
   bool cancelled_ = false;
+  bool deferred_ = false;
 
 public:
   CliOutput() noexcept : writer_(std::cout), native_required_(true) {}
@@ -56,6 +57,26 @@ public:
     } catch (...) {
       failed_ = true;
       throw;
+    }
+  }
+  void begin_presentation() noexcept {
+    deferred_ = false;
+  }
+  bool presentation_deferred() const noexcept {
+    return deferred_;
+  }
+  bool present(std::initializer_list<std::string_view> parts, bool newline = false,
+               bool keyboard = false) {
+    try {
+      const auto result = writer_.write_result(parts, newline, true);
+      deferred_ |= result == DiagnosticResult::deferred;
+      if (!keyboard)
+        failed_ |= result == DiagnosticResult::failure;
+      return result == DiagnosticResult::success;
+    } catch (const std::ios_base::failure &) {
+      if (!keyboard)
+        failed_ = true;
+      return false;
     }
   }
   void required(std::initializer_list<std::string_view> parts, bool newline = true,

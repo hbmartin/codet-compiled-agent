@@ -18,6 +18,7 @@ class LinePrompt final : public LineOutputObserver {
   StreamDestination binding_;
   BoundaryAccess boundaries_;
   bool inspection_due_ = false;
+  bool boundary_busy_ = false;
   size_t columns_ = 0, painted_ = 0;
   const size_t test_columns_;
   uint64_t revision_ = 0, request_revision_ = 0;
@@ -70,6 +71,7 @@ class LinePrompt final : public LineOutputObserver {
       abandon_geometry();
       return;
     }
+    boundary_busy_ = state.active != 0;
     if (boundary_generation_ != state.generation) {
       visible_ = append_valid_ = false;
       dirty_ = state.row;
@@ -85,7 +87,7 @@ class LinePrompt final : public LineOutputObserver {
   void separate() {
     if (dirty_) {
       Internal guard(internal_);
-      if (output_.echo_attempt({"\n"}))
+      if (output_.present({"\n"}, false, true))
         (void)boundaries().separate(terminal_);
       dirty_ = false;
     }
@@ -152,7 +154,7 @@ class LinePrompt final : public LineOutputObserver {
   void paint() {
     const bool keyboard = echo_update_ && (visible_ || dirty_);
     const auto present = [&](std::initializer_list<std::string_view> parts, bool newline) {
-      return keyboard ? output_.echo_attempt(parts, newline) : output_.display(parts, newline);
+      return output_.present(parts, newline, keyboard);
     };
     const bool compatible = append_valid_ && input_.appended_since(painted_revision_);
     if (!columns_ && compatible && visible_ && !input_.stale() &&
@@ -260,7 +262,7 @@ public:
       destination(value);
     boundaries().bind(descriptor, value);
     inspection_due_ = true; // Refresh stdout once at the end of the output batch, not per record.
-    const bool separator = boundaries().separate(value);
+    const bool separator = binding_.descriptor < 0 && boundaries().separate(value);
     if (S_ISCHR(value.st_mode) && same_destination(value, terminal_)) {
       dirty_ = visible_ = false;
       painted_ = previous_bytes_ = 0;
@@ -299,6 +301,8 @@ public:
       return;
     }
     observe_boundary();
+    if (boundary_busy_)
+      return;
     if (!due_ && !inspection_due_)
       return;
     inspection_due_ = false;
@@ -306,6 +310,7 @@ public:
     if (!due_)
       return;
     Internal guard(internal_);
+    output_.begin_presentation();
     if (!eligible()) {
       if (owned_ && dirty_ && !columns_)
         separate();
@@ -313,9 +318,9 @@ public:
         const auto parts = {std::string_view("\r"), std::string_view(spaces_.data(), painted_),
                             std::string_view("\r")};
         if (echo_update_)
-          output_.echo(parts);
+          (void)output_.present(parts, false, true);
         else
-          (void)output_.display(parts, false);
+          (void)output_.present(parts, false);
         dirty_ = visible_ = false;
         painted_ = 0;
         (void)boundaries().separate(terminal_);
@@ -327,7 +332,9 @@ public:
       separate();
       dirty_ = true;
       boundaries().open(terminal_);
-      explained_ = output_.display({RequestInput::discard_instruction});
+      explained_ = output_.present({RequestInput::discard_instruction}, true);
+      if (output_.presentation_deferred())
+        return;
       if (explained_) {
         dirty_ = false;
         (void)boundaries().separate(terminal_);
@@ -338,14 +345,16 @@ public:
       separate();
       dirty_ = true;
       boundaries().open(terminal_);
-      guidance_due_ = !output_.display({input_.guidance()});
+      guidance_due_ = !output_.present({input_.guidance()}, true);
+      if (output_.presentation_deferred())
+        return;
       if (!guidance_due_) {
         dirty_ = false;
         (void)boundaries().separate(terminal_);
       }
     }
     paint();
-    due_ = false; // Retry only on a real edit, request change or output event.
+    due_ = output_.presentation_deferred(); // Deferral is not a failed delivery attempt.
     if (binding_.descriptor >= 0) {
       const auto state = boundaries().snapshot(STDOUT_FILENO, terminal_);
       if (!state.available || state.generation != boundary_generation_)
@@ -374,10 +383,10 @@ public:
       // Typing holds valid prefixes; submission must expose the unresolved bytes.
       flush();
       if (!columns_ && visible_ && committed_ <= input_.input().prepared().size())
-        (void)output_.echo_attempt({input_.input().prepared().substr(committed_)});
+        (void)output_.present({input_.input().prepared().substr(committed_)}, false, true);
     }
     if (dirty_)
-      if (output_.echo_attempt({"\n"}))
+      if (output_.present({"\n"}, false, true))
         (void)boundaries().separate(terminal_);
     dirty_ = visible_ = explained_ = false;
     append_valid_ = false;

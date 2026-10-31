@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -16,10 +17,13 @@ class LineDestinations {
     struct stat identity {};
     bool known = false, row = false, pending = false;
     uint64_t generation = 0;
+    uint64_t binding = 0, failure = 0;
+    size_t active = 0;
   };
   std::array<Channel, 2> channels_{};
   bool presented_ = false;
   uint64_t generation_ = 0;
+  uint64_t binding_ = 0;
   static size_t index(int descriptor) noexcept {
     return descriptor == STDOUT_FILENO ? 0u : 1u;
   }
@@ -32,11 +36,16 @@ class LineDestinations {
   }
 
 public:
+  struct Reservation {
+    uint64_t binding = 0, failure = 0;
+    bool admitted = false, separator = false, presentation = false;
+  };
   void bind(int descriptor, const struct stat &identity) noexcept {
     auto &channel = channels_[index(descriptor)];
     if (channel.known && same_destination(channel.identity, identity))
       return;
     Channel next{identity, true, presented_ && S_ISCHR(identity.st_mode), false, ++generation_};
+    next.binding = ++binding_;
     for (const auto &other : channels_)
       if (&other != &channel && other.known && same_destination(other.identity, identity))
         next = other;
@@ -81,6 +90,51 @@ public:
       channel.generation = next;
     });
   }
+  Reservation admit(int descriptor, bool presentation) noexcept {
+    auto &selected = channels_[index(descriptor)];
+    if (!selected.binding)
+      selected.binding = ++binding_;
+    if (presentation && selected.active)
+      return {};
+    Reservation result{selected.binding, selected.failure, true,
+                       selected.pending || (!presentation && selected.row), presentation};
+    const auto next = presentation ? selected.generation : ++generation_;
+    related(descriptor, [&](auto &channel) {
+      channel.pending = true;
+      channel.row = presentation;
+      channel.generation = next;
+      if (!presentation)
+        ++channel.active;
+    });
+    return result;
+  }
+  void finish(const Reservation &record, bool success, bool newline) noexcept {
+    if (!record.admitted)
+      return;
+    const auto next = record.presentation ? generation_ : ++generation_;
+    for (auto &channel : channels_) {
+      if (channel.binding != record.binding)
+        continue;
+      if (!record.presentation) {
+        if (channel.active)
+          --channel.active;
+        channel.generation = next;
+        channel.row = false;
+      }
+      if (!success) {
+        channel.pending = true;
+        channel.row = false;
+        ++channel.failure;
+      } else if (!channel.active && channel.failure == record.failure) {
+        channel.pending = false;
+        if (record.presentation)
+          channel.row = !newline;
+      }
+    }
+  }
+  size_t active(int descriptor) const noexcept {
+    return channels_[index(descriptor)].active;
+  }
   uint64_t generation(int descriptor) const noexcept {
     return channels_[index(descriptor)].generation;
   }
@@ -96,6 +150,7 @@ public:
 struct BoundarySnapshot {
   bool available = false, row = false;
   uint64_t generation = 0;
+  size_t active = 0;
 };
 // Null selects the synchronized native owner. No mutable native references escape its guard.
 class BoundaryAccess {
