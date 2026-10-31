@@ -63,6 +63,10 @@ extern "C" ssize_t write(int descriptor, const void *bytes, size_t size) {
   static const auto original = reinterpret_cast<Write>(codet::test::native_symbol("write"));
   auto &metrics = codet::test::native_io_metrics;
   if (descriptor == metrics.interrupt_fd) {
+    if (auto gate = metrics.before_output) {
+      metrics.before_output = nullptr;
+      gate(metrics.output_context);
+    }
     ++metrics.writes;
     if (metrics.writes_interrupted) {
       --metrics.writes_interrupted;
@@ -77,6 +81,10 @@ extern "C" ssize_t writev(int descriptor, const iovec *parts, int count) {
   static const auto original = reinterpret_cast<Write>(codet::test::native_symbol("writev"));
   auto &metrics = codet::test::native_io_metrics;
   if (descriptor == metrics.interrupt_fd) {
+    if (auto gate = metrics.before_output) {
+      metrics.before_output = nullptr;
+      gate(metrics.output_context);
+    }
     ++metrics.vectors;
     if (metrics.vector_partial && count) {
       metrics.vector_partial = false;

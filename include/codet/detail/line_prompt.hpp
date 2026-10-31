@@ -36,9 +36,9 @@ class LinePrompt final : public LineOutputObserver {
       flag = previous;
     }
   };
-  LineDestinations &boundaries() const noexcept {
+  BoundaryAccess boundaries() const noexcept {
     return output_.presentation_descriptor() >= 0 ? native_line_destinations()
-                                                  : io_.line_destinations;
+                                                  : BoundaryAccess(&io_.line_destinations);
   }
   void bind_errors() noexcept {
     struct stat errors {};
@@ -96,12 +96,12 @@ class LinePrompt final : public LineOutputObserver {
       }
     }
     if (output_.presentation_descriptor() >= 0 &&
-        boundary_generation_ != boundaries().generation(STDOUT_FILENO)) {
+        boundary_generation_ != boundaries().snapshot(STDOUT_FILENO, terminal_).generation) {
       visible_ = append_valid_ = false;
       dirty_ = boundaries().row(terminal_);
       painted_ = previous_bytes_ = 0;
       due_ = true;
-      boundary_generation_ = boundaries().generation(STDOUT_FILENO);
+      boundary_generation_ = boundaries().snapshot(STDOUT_FILENO, terminal_).generation;
     }
     columns = columns >= 10 ? std::min(columns - 1, size_t{256}) : 0;
     if (columns_ != columns) {
@@ -217,7 +217,7 @@ public:
     spaces_.fill(' ');
     boundaries().bind(STDOUT_FILENO, terminal);
     bind_errors();
-    boundary_generation_ = boundaries().generation(STDOUT_FILENO);
+    boundary_generation_ = boundaries().snapshot(STDOUT_FILENO, terminal_).generation;
     io_.line_output = this;
   }
   ~LinePrompt() override {
