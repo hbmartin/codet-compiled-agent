@@ -67,6 +67,14 @@ TEST(TerminalInput, TransientReadinessFailuresRemainRetryableAndOnlyReadsIndicat
   EXPECT_EQ(byte, 'x');
 }
 #endif
+TEST(InteractionWarnings, FourthKindCannotAliasAnExistingRetry) {
+  using Four = detail::WarningBits<15>;
+  static_assert(Four::shift == 4 && (Four::retries & 8u) == 0);
+  const auto fourth = 8u;
+  EXPECT_EQ((fourth | (fourth >> Four::shift)) & Four::kinds, fourth);
+  EXPECT_EQ(((fourth << Four::shift) >> Four::shift) & Four::kinds, fourth);
+  EXPECT_EQ((1u << Four::shift) & fourth, 0u);
+}
 TEST(InteractionWarnings, RetainedWarningsAreNotReadmittedAfterRefreshThrows) {
   Interaction interaction;
   detail::UiHistory history;
