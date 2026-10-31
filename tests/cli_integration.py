@@ -1519,6 +1519,8 @@ class CliTests(unittest.TestCase):
                 received.clear();os.write(input_master,b'\x7fllo\n')
                 collect(lambda received=received:b'fixture done' in received)
                 self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'hllo')
+                # A reply is published before the active-to-idle libedit handoff.
+                collect(lambda received=received:line_cells(received)[-1]=='codet> [default]')
                 os.write(input_master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
                 self.assertEqual(process.returncode,0,received)
 
