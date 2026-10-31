@@ -1,0 +1,1397 @@
+{
+  "baseline": "c656c2bd83e8f00950852042a26773d7f1754405",
+  "branch": "codex/diagnostic-record-lifecycle-followup",
+  "runtime": "72eac4934a39957acd7151a241d93cf5a6797959",
+  "full_local_suite_ref": "72eac4934a39957acd7151a241d93cf5a6797959",
+  "source_equivalence": {
+    "production_files_unchanged_since_correctness_benchmark": true,
+    "runtime_files": [
+      "include/codet/detail/cli_output.hpp",
+      "include/codet/detail/diagnostic_stream.hpp",
+      "include/codet/detail/line_prompt.hpp",
+      "include/codet/detail/output_destination.hpp",
+      "include/codet/detail/warning_bits.hpp",
+      "include/codet/interaction.hpp",
+      "src/modern/cli.cpp",
+      "src/modern/platform.cpp"
+    ],
+    "runtime_hashes": {
+      "include/codet/detail/cli_output.hpp": "6039ea95a9c8b70dc5844af459ec0f64a30e595df8ff2421f2ee7162a1946cb2",
+      "include/codet/detail/diagnostic_stream.hpp": "e8f6edb266372de9b56aa1d3d3e26ce0b1e4aa9997addf626c8df10053f8f468",
+      "include/codet/detail/line_prompt.hpp": "03f9f20d2fdeb81197fda743417196406f2d27f30976285d97c9f502eb160027",
+      "include/codet/detail/output_destination.hpp": "05a1f40cf7b6784fcd9c191176cb9bc70d172aa85bc9e8bc7cb4821922d7a4e3",
+      "include/codet/detail/warning_bits.hpp": "e3e73e8e969a8cdd127fa48a2afa052a281d212626bedbb66faa2160cc6510b3",
+      "include/codet/interaction.hpp": "b06643856d61543592be1f8cba14ba5c059d4255de0e5e1d299fb09c36dd9132",
+      "src/modern/cli.cpp": "a133fc352134b9b9cb13b295d17e952e1a90eb6bbb9e629fd1f5da49a76da29e",
+      "src/modern/platform.cpp": "e353d24a848ca3fe9ca39c414b65729d038b89bc480f42c6ad82e8b1282b1ad0"
+    },
+    "harness_hashes": {
+      "baseline": {
+        "tests/line_input_bench.cpp": "066f1018d619f4c09f789af0be1bdc50c9533b967a287e4775f1f8076228e40b",
+        "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+        "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+        "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+        "tests/native_stat_interposer.hpp": "a8ee57b58ae3da7a83911fd369e77bdf52ca5dd8c38d5da50ec8f4e625d095c5",
+        "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6",
+        "tests/temp.hpp": "a8c9cef361ab35eb2e753b78b258ed120997507a976a2bc46ec199d52215bc6d"
+      },
+      "correctness": {
+        "tests/line_input_bench.cpp": "066f1018d619f4c09f789af0be1bdc50c9533b967a287e4775f1f8076228e40b",
+        "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+        "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+        "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+        "tests/native_stat_interposer.hpp": "a8ee57b58ae3da7a83911fd369e77bdf52ca5dd8c38d5da50ec8f4e625d095c5",
+        "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6",
+        "tests/temp.hpp": "a8c9cef361ab35eb2e753b78b258ed120997507a976a2bc46ec199d52215bc6d"
+      },
+      "optimized": {
+        "tests/line_input_bench.cpp": "066f1018d619f4c09f789af0be1bdc50c9533b967a287e4775f1f8076228e40b",
+        "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+        "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+        "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+        "tests/native_stat_interposer.hpp": "a8ee57b58ae3da7a83911fd369e77bdf52ca5dd8c38d5da50ec8f4e625d095c5",
+        "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6",
+        "tests/temp.hpp": "a8c9cef361ab35eb2e753b78b258ed120997507a976a2bc46ec199d52215bc6d"
+      }
+    },
+    "runtime_matches_benchmark_correctness_ref": true
+  },
+  "changes": {
+    "records": "Fixed destination records separate recovery separators from active reservations. Admission is atomic; observer callbacks follow reservation. Nonthrowing scope-bound completion releases every admitted record, including streamed emergency failure paths. Completion and source ownership are explicit; prompt failures do not make external events.",
+    "prompt": "Snapshots and admission both gate presentation. Deferral is not delivery failure, does not set sticky failure status, and retains input for a later flush. Null-buffer binding initializes explicitly. Return from injected to native retains existing fresh-row behavior.",
+    "inspection": "Monotonic per-observation tickets prevent older cache publication; one same-attempt reinspection refreshes an overtaken observation. Cache/epoch eligibility cannot silently suppress byte delivery. Continuing fd replacement keeps borrowed-descriptor best-effort semantics.",
+    "fallback": "Replaced standard-stream metadata uses guarded snapshots and epoch/serial commits, without mutable shared references across unlocked I/O. Actual injected I/O and buffer replacement remain caller-synchronized.",
+    "guards": "Single-bit, nonzero and pairwise uniqueness checks supplement bank/capacity guards. Scope-bound stderr capture and cout buffer restoration cover test assertion/exception exits."
+  },
+  "validation": [
+    {
+      "name": "Debug CTest",
+      "command": "ctest --test-dir build/host --output-on-failure -j2",
+      "exit": 0,
+      "log_tail": "    Start 6: codet.build-integrity\n7/9 Test #5: codet.prompts ....................   Passed    0.40 sec\n    Start 3: codet.cli\n8/9 Test #6: codet.build-integrity ............   Passed    0.15 sec\n9/9 Test #3: codet.cli ........................   Passed    0.11 sec\n\n100% tests passed out of 9\n\nTotal Test time (real) =  58.16 sec"
+    },
+    {
+      "name": "ASan/UBSan CTest",
+      "command": "ctest --test-dir build/sanitize --output-on-failure -j2",
+      "exit": 0,
+      "log_tail": "    Start 9: codet.hermetic\n7/9 Test #9: codet.hermetic ...................   Passed    0.18 sec\n    Start 6: codet.build-integrity\n8/9 Test #6: codet.build-integrity ............   Passed    0.16 sec\n9/9 Test #2: codet.unit .......................   Passed  105.33 sec\n\n100% tests passed out of 9\n\nTotal Test time (real) = 105.34 sec"
+    },
+    {
+      "name": "Focused repetitions",
+      "command": "build/host/codet_tests --gtest_filter=NativeRecordLifecycle.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.* --gtest_repeat=20",
+      "exit": 0,
+      "log_tail": "[ RUN      ] DiagnosticReservations.CompletionPublishesAnEventButPresentationFailureDoesNot\n[       OK ] DiagnosticReservations.CompletionPublishesAnEventButPresentationFailureDoesNot (0 ms)\n[ RUN      ] DiagnosticReservations.AliasesResetAndOldFailuresRetainTheirOwnership\n[       OK ] DiagnosticReservations.AliasesResetAndOldFailuresRetainTheirOwnership (0 ms)\n[----------] 2 tests from DiagnosticReservations (0 ms total)\n\n[----------] Global test environment tear-down\n[==========] 64 tests from 6 test suites ran. (848 ms total)\n[  PASSED  ] 64 tests."
+    },
+    {
+      "name": "Full-build ThreadSanitizer repetitions",
+      "command": "build/prompt-boundary-ownership-followup/tsan/codet_tests --gtest_filter=NativeRecordLifecycle.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:DiagnosticWriter.*:LinePrompt.* --gtest_repeat=20",
+      "exit": 0,
+      "log_tail": "[ RUN      ] DiagnosticReservations.CompletionPublishesAnEventButPresentationFailureDoesNot\n[       OK ] DiagnosticReservations.CompletionPublishesAnEventButPresentationFailureDoesNot (0 ms)\n[ RUN      ] DiagnosticReservations.AliasesResetAndOldFailuresRetainTheirOwnership\n[       OK ] DiagnosticReservations.AliasesResetAndOldFailuresRetainTheirOwnership (0 ms)\n[----------] 2 tests from DiagnosticReservations (0 ms total)\n\n[----------] Global test environment tear-down\n[==========] 54 tests from 5 test suites ran. (347 ms total)\n[  PASSED  ] 54 tests."
+    },
+    {
+      "name": "Final additional contract under ASan",
+      "command": "build/sanitize/codet_tests --gtest_filter=NativeRecordLifecycle.*:DiagnosticReservations.*:DiagnosticFallbackMetadata.*",
+      "exit": 0,
+      "log_tail": "[ RUN      ] DiagnosticReservations.CompletionPublishesAnEventButPresentationFailureDoesNot\n[       OK ] DiagnosticReservations.CompletionPublishesAnEventButPresentationFailureDoesNot (0 ms)\n[ RUN      ] DiagnosticReservations.AliasesResetAndOldFailuresRetainTheirOwnership\n[       OK ] DiagnosticReservations.AliasesResetAndOldFailuresRetainTheirOwnership (0 ms)\n[----------] 2 tests from DiagnosticReservations (0 ms total)\n\n[----------] Global test environment tear-down\n[==========] 12 tests from 3 test suites ran. (7 ms total)\n[  PASSED  ] 12 tests."
+    },
+    {
+      "name": "Final contract ThreadSanitizer repetitions",
+      "command": "build/prompt-boundary-ownership-followup/tsan/codet_tests --gtest_filter=NativeRecordLifecycle.*:DiagnosticReservations.*:DiagnosticFallbackMetadata.* --gtest_repeat=20",
+      "exit": 0,
+      "log_tail": "[ RUN      ] DiagnosticReservations.CompletionPublishesAnEventButPresentationFailureDoesNot\n[       OK ] DiagnosticReservations.CompletionPublishesAnEventButPresentationFailureDoesNot (0 ms)\n[ RUN      ] DiagnosticReservations.AliasesResetAndOldFailuresRetainTheirOwnership\n[       OK ] DiagnosticReservations.AliasesResetAndOldFailuresRetainTheirOwnership (0 ms)\n[----------] 2 tests from DiagnosticReservations (0 ms total)\n\n[----------] Global test environment tear-down\n[==========] 12 tests from 3 test suites ran. (58 ms total)\n[  PASSED  ] 12 tests."
+    },
+    {
+      "name": "Pinned lint",
+      "command": "make check-lint CHECK_PYTHON=build/lint-venv/bin/python",
+      "exit": 0,
+      "log_tail": "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python scripts/lint.py all\nAll checks passed!\nNo findings to report. Good job! (3 suppressed)"
+    },
+    {
+      "name": "Runner checks",
+      "command": "make test-lint-runners test-modern-analysis-runner CHECK_PYTHON=build/lint-venv/bin/python ANALYSIS_PYTHON=build/lint-venv/bin/python",
+      "exit": 0,
+      "log_tail": "test_suppressed_fatal_still_fails_from_safety_evidence (test_analyze_modern.AnalysisTests.test_suppressed_fatal_still_fails_from_safety_evidence) ... ok\ntest_tidy_diagnostics_and_malformed_report_fail (test_analyze_modern.AnalysisTests.test_tidy_diagnostics_and_malformed_report_fail) ... ok\ntest_timeout_kills_command (test_analyze_modern.AnalysisTests.test_timeout_kills_command) ... ok\ntest_timeout_race_preserves_output_and_reaps (test_analyze_modern.AnalysisTests.test_timeout_race_preserves_output_and_reaps) ... ok\n\n----------------------------------------------------------------------\nRan 37 tests in 3.204s\n\nOK"
+    },
+    {
+      "name": "Host cross-selection without interposers",
+      "command": "cmake --build build/basic-input-boundary-followup/cross-mode --target codet_tests -j4; build/basic-input-boundary-followup/cross-mode/codet_tests --gtest_filter=LinePrompt.*:InteractionWarnings.*:CursesInput.*",
+      "exit": 0,
+      "log_tail": "[ RUN      ] LinePrompt.KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure\n[       OK ] LinePrompt.KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure (0 ms)\n[ RUN      ] LinePrompt.FailedPromptIsSeparatedAndOnlyRetriedOnAnotherEvent\n[       OK ] LinePrompt.FailedPromptIsSeparatedAndOnlyRetriedOnAnotherEvent (0 ms)\n[----------] 18 tests from LinePrompt (23 ms total)\n\n[----------] Global test environment tear-down\n[==========] 30 tests from 3 test suites ran. (105 ms total)\n[  PASSED  ] 30 tests."
+    }
+  ],
+  "python39": {
+    "version": "3.9.6",
+    "batches": 20,
+    "methods_per_batch": 6,
+    "all_passed": true,
+    "command": [
+      "/usr/bin/python3",
+      "tests/cli_integration.py",
+      "build/sanitize/codet",
+      "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+      "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+      "CliTests.test_prepared_line_viewport_and_stdout_binding",
+      "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+      "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+      "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+    ]
+  },
+  "counts": {
+    "full_ctest_groups": 9,
+    "full_unit_cases": 638,
+    "additional_contract_cases": 0,
+    "final_total_unit_cases": 638,
+    "existing_opt_in_skips": 2,
+    "publication_fault_cases": 68,
+    "integration_methods": 101,
+    "focused_repetitions": 20,
+    "focused_cases": 64,
+    "tsan_cases": 54,
+    "tsan_repetitions": 20,
+    "additional_contract_tsan_cases": 12,
+    "additional_contract_tsan_repetitions": 20
+  },
+  "negative_controls": {
+    "runtime_controls": [
+      {
+        "name": "own-failure",
+        "test": "NativeRecordLifecycle.FailedPromptDoesNotGenerateIdleRetryEvents",
+        "expected_failure_exit": 1
+      },
+      {
+        "name": "completion",
+        "test": "DiagnosticReservations.CompletionPublishesAnEventButPresentationFailureDoesNot",
+        "expected_failure_exit": 1
+      },
+      {
+        "name": "separator",
+        "test": "NativeRecordLifecycle.ObserverCannotExposeAnUnreservedSeparatorGap",
+        "expected_failure_exit": 1
+      },
+      {
+        "name": "inspection",
+        "test": "NativeRecordLifecycle.StaleInspectionCannotSuppressAnEmergencyOnTheCurrentDescriptor",
+        "expected_failure_exit": 1
+      }
+    ],
+    "warning_registry": [
+      {
+        "case": "current",
+        "values": [
+          1,
+          2,
+          4
+        ],
+        "exit": 0
+      },
+      {
+        "case": "overlap",
+        "values": [
+          1,
+          3,
+          4
+        ],
+        "exit": 1
+      },
+      {
+        "case": "duplicate",
+        "values": [
+          1,
+          1,
+          6
+        ],
+        "exit": 1
+      },
+      {
+        "case": "zero",
+        "values": [
+          0,
+          2,
+          4
+        ],
+        "exit": 1
+      }
+    ],
+    "method": "Separate mutant objects, with matching mutated headers compiled into the contract test for the completion control; all four runtime controls fail their intended assertions. No tracked implementation is mutated by these probes."
+  },
+  "semgrep": {
+    "version": "1.177.0",
+    "findings": 0,
+    "errors": 0,
+    "command": "PATH=$PWD/build/semgrep-venv/bin:$PATH make check-semgrep CHECK_PYTHON=python3",
+    "environment_note": "The OCaml launcher falls back to pysemgrep by PATH. Prepending the pinned venv avoids an unrelated global pysemgrep1.180; no check or version pin was weakened."
+  },
+  "static_analysis": {
+    "python": "Pinned lint venv Python with PyYAML. An initial system Python3.15 run could not parse YAML and is excluded from finding comparisons.",
+    "llvm": "23.1.3",
+    "comparison": {
+      "clang-tidy": {
+        "baseline": {
+          "passed": false,
+          "findings": 150,
+          "unique": 35
+        },
+        "current": {
+          "passed": false,
+          "findings": 150,
+          "unique": 35
+        },
+        "equal": true,
+        "added": [],
+        "removed": []
+      },
+      "cppcheck": {
+        "baseline": {
+          "passed": true,
+          "findings": 0,
+          "unique": 0
+        },
+        "current": {
+          "passed": true,
+          "findings": 0,
+          "unique": 0
+        },
+        "equal": true,
+        "added": [],
+        "removed": []
+      },
+      "clang-analyzer": {
+        "baseline": [
+          [
+            "core.DivideZero",
+            "Division by zero",
+            "project_history",
+            "b7fd78895b63841553e144fd774a0954"
+          ]
+        ],
+        "current": [
+          [
+            "core.DivideZero",
+            "Division by zero",
+            "project_history",
+            "b7fd78895b63841553e144fd774a0954"
+          ]
+        ],
+        "equal": true
+      }
+    },
+    "policy": "Existing findings remain failures locally; no suppression or assertion change. Ubuntu runs the configured strict toolchain independently."
+  },
+  "ubuntu": {
+    "conclusion": "success",
+    "headSha": "e5b15161b8b2247c007dce83e9d93fb0ba05f2b2",
+    "jobs": [
+      {
+        "completedAt": "2026-10-31T17:42:07Z",
+        "conclusion": "success",
+        "databaseId": 124609358186,
+        "name": "lint",
+        "startedAt": "2026-10-31T17:41:19Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-31T17:41:21Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-31T17:41:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:41:22Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "number": 2,
+            "startedAt": "2026-10-31T17:41:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:41:30Z",
+            "conclusion": "success",
+            "name": "Install lightweight check prerequisites",
+            "number": 3,
+            "startedAt": "2026-10-31T17:41:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:41:35Z",
+            "conclusion": "success",
+            "name": "Test enforcement runners without building C++",
+            "number": 4,
+            "startedAt": "2026-10-31T17:41:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:41:43Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+            "number": 5,
+            "startedAt": "2026-10-31T17:41:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:42:01Z",
+            "conclusion": "success",
+            "name": "Provision pinned lint tools",
+            "number": 6,
+            "startedAt": "2026-10-31T17:41:43Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:42:04Z",
+            "conclusion": "success",
+            "name": "Check formatting, Python, shell and workflows",
+            "number": 7,
+            "startedAt": "2026-10-31T17:42:01Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:42:05Z",
+            "conclusion": "success",
+            "name": "Upload lint evidence",
+            "number": 8,
+            "startedAt": "2026-10-31T17:42:04Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:42:05Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+            "number": 15,
+            "startedAt": "2026-10-31T17:42:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:42:05Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "number": 16,
+            "startedAt": "2026-10-31T17:42:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:42:05Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-10-31T17:42:05Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/hbmartin/codet-compiled-agent/actions/runs/41225729476/job/124609358186"
+      },
+      {
+        "completedAt": "2026-10-31T17:53:32Z",
+        "conclusion": "success",
+        "databaseId": 124609358426,
+        "name": "ubuntu",
+        "startedAt": "2026-10-31T17:41:19Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-31T17:41:21Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-31T17:41:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:41:22Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "number": 2,
+            "startedAt": "2026-10-31T17:41:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:41:33Z",
+            "conclusion": "success",
+            "name": "Install host tools and libraries",
+            "number": 3,
+            "startedAt": "2026-10-31T17:41:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:41:34Z",
+            "conclusion": "success",
+            "name": "Fetch verified dependencies",
+            "number": 4,
+            "startedAt": "2026-10-31T17:41:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:41:35Z",
+            "conclusion": "success",
+            "name": "Fetch pinned analyzer sources",
+            "number": 5,
+            "startedAt": "2026-10-31T17:41:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:42:57Z",
+            "conclusion": "success",
+            "name": "Build pinned analyzer offline",
+            "number": 6,
+            "startedAt": "2026-10-31T17:41:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:45:12Z",
+            "conclusion": "success",
+            "name": "Configure and build with Clang",
+            "number": 7,
+            "startedAt": "2026-10-31T17:42:57Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:45:15Z",
+            "conclusion": "success",
+            "name": "Verify analyzer detection",
+            "number": 8,
+            "startedAt": "2026-10-31T17:45:12Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:51:55Z",
+            "conclusion": "success",
+            "name": "Analyze all application sources",
+            "number": 9,
+            "startedAt": "2026-10-31T17:45:15Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:53:29Z",
+            "conclusion": "success",
+            "name": "Run unit, CLI and integration tests",
+            "number": 10,
+            "startedAt": "2026-10-31T17:51:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:53:31Z",
+            "conclusion": "success",
+            "name": "Upload analysis and test evidence",
+            "number": 11,
+            "startedAt": "2026-10-31T17:53:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:53:31Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "number": 22,
+            "startedAt": "2026-10-31T17:53:31Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:53:31Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 23,
+            "startedAt": "2026-10-31T17:53:31Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/hbmartin/codet-compiled-agent/actions/runs/41225729476/job/124609358426"
+      },
+      {
+        "completedAt": "2026-10-31T17:41:45Z",
+        "conclusion": "success",
+        "databaseId": 124609358453,
+        "name": "semgrep",
+        "startedAt": "2026-10-31T17:41:20Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-31T17:41:21Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-31T17:41:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:41:22Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "number": 2,
+            "startedAt": "2026-10-31T17:41:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:41:27Z",
+            "conclusion": "success",
+            "name": "Install policy-check prerequisites",
+            "number": 3,
+            "startedAt": "2026-10-31T17:41:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:41:38Z",
+            "conclusion": "success",
+            "name": "Provision hash-locked Semgrep environment",
+            "number": 4,
+            "startedAt": "2026-10-31T17:41:27Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:41:41Z",
+            "conclusion": "success",
+            "name": "Check production sources and headers",
+            "number": 5,
+            "startedAt": "2026-10-31T17:41:38Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:41:43Z",
+            "conclusion": "success",
+            "name": "Upload policy evidence",
+            "number": 6,
+            "startedAt": "2026-10-31T17:41:41Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:41:43Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "number": 12,
+            "startedAt": "2026-10-31T17:41:43Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:41:43Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 13,
+            "startedAt": "2026-10-31T17:41:43Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/hbmartin/codet-compiled-agent/actions/runs/41225729476/job/124609358453"
+      },
+      {
+        "completedAt": "2026-10-31T17:53:36Z",
+        "conclusion": "success",
+        "databaseId": 124612272261,
+        "name": "Required checks",
+        "startedAt": "2026-10-31T17:53:34Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-31T17:53:35Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-31T17:53:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:53:35Z",
+            "conclusion": "success",
+            "name": "Require every mandatory job to succeed",
+            "number": 2,
+            "startedAt": "2026-10-31T17:53:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-31T17:53:35Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 3,
+            "startedAt": "2026-10-31T17:53:35Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/hbmartin/codet-compiled-agent/actions/runs/41225729476/job/124612272261"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/hbmartin/codet-compiled-agent/actions/runs/41225729476"
+  },
+  "performance": {
+    "variants": [
+      {
+        "name": "baseline",
+        "ref": "c656c2bd83e8f00950852042a26773d7f1754405",
+        "configure": [
+          "cmake",
+          "-S",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/baseline-src",
+          "-B",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/baseline-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+          "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps"
+        ]
+      },
+      {
+        "name": "correctness",
+        "ref": "dde16fdf665addf27631a2de020b6a697e98aaf8",
+        "configure": [
+          "cmake",
+          "-S",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/correctness-src",
+          "-B",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/correctness-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+          "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps"
+        ]
+      },
+      {
+        "name": "optimized",
+        "ref": "dde16fdf665addf27631a2de020b6a697e98aaf8",
+        "configure": [
+          "cmake",
+          "-S",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/optimized-src",
+          "-B",
+          "/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/optimized-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+          "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps"
+        ]
+      }
+    ],
+    "harness_hashes": {
+      "baseline": {
+        "tests/line_input_bench.cpp": "066f1018d619f4c09f789af0be1bdc50c9533b967a287e4775f1f8076228e40b",
+        "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+        "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+        "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+        "tests/native_stat_interposer.hpp": "a8ee57b58ae3da7a83911fd369e77bdf52ca5dd8c38d5da50ec8f4e625d095c5",
+        "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6",
+        "tests/temp.hpp": "a8c9cef361ab35eb2e753b78b258ed120997507a976a2bc46ec199d52215bc6d"
+      },
+      "correctness": {
+        "tests/line_input_bench.cpp": "066f1018d619f4c09f789af0be1bdc50c9533b967a287e4775f1f8076228e40b",
+        "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+        "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+        "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+        "tests/native_stat_interposer.hpp": "a8ee57b58ae3da7a83911fd369e77bdf52ca5dd8c38d5da50ec8f4e625d095c5",
+        "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6",
+        "tests/temp.hpp": "a8c9cef361ab35eb2e753b78b258ed120997507a976a2bc46ec199d52215bc6d"
+      },
+      "optimized": {
+        "tests/line_input_bench.cpp": "066f1018d619f4c09f789af0be1bdc50c9533b967a287e4775f1f8076228e40b",
+        "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+        "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+        "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+        "tests/native_stat_interposer.hpp": "a8ee57b58ae3da7a83911fd369e77bdf52ca5dd8c38d5da50ec8f4e625d095c5",
+        "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6",
+        "tests/temp.hpp": "a8c9cef361ab35eb2e753b78b258ed120997507a976a2bc46ec199d52215bc6d"
+      }
+    },
+    "method": "Identical Release flags and seven byte-identical harness/support files. One warm-up plus five measured samples per variant/workload, two sets. Three-build order rotates and reverses across samples. No concurrent tests or analyzers.",
+    "samples_total": 1116,
+    "measured_samples": 930,
+    "workloads": 31,
+    "selected_medians": [
+      {
+        "set": 1,
+        "workload": "native-editing",
+        "milliseconds": {
+          "baseline": 20.466042,
+          "correctness": 20.393708,
+          "optimized": 20.180167
+        },
+        "optimized_vs_correctness_percent": -1.047092564039842
+      },
+      {
+        "set": 1,
+        "workload": "native-busy",
+        "milliseconds": {
+          "baseline": 0.833917,
+          "correctness": 0.812625,
+          "optimized": 0.826125
+        },
+        "optimized_vs_correctness_percent": 1.66128287955698
+      },
+      {
+        "set": 1,
+        "workload": "native-flush-boundary",
+        "milliseconds": {
+          "baseline": 0.748625,
+          "correctness": 0.8795,
+          "optimized": 0.811
+        },
+        "optimized_vs_correctness_percent": -7.788516202387708
+      },
+      {
+        "set": 1,
+        "workload": "diagnostics-amplified",
+        "milliseconds": {
+          "baseline": 403.623708,
+          "correctness": 404.112833,
+          "optimized": 400.219667
+        },
+        "optimized_vs_correctness_percent": -0.9633858868322576
+      },
+      {
+        "set": 1,
+        "workload": "diagnostics-pipe-amplified",
+        "milliseconds": {
+          "baseline": 410.711958,
+          "correctness": 411.43725,
+          "optimized": 428.713417
+        },
+        "optimized_vs_correctness_percent": 4.198979795825486
+      },
+      {
+        "set": 1,
+        "workload": "small",
+        "milliseconds": {
+          "baseline": 53.90825,
+          "correctness": 56.562083,
+          "optimized": 54.101542
+        },
+        "optimized_vs_correctness_percent": -4.350159805819032
+      },
+      {
+        "set": 1,
+        "workload": "large",
+        "milliseconds": {
+          "baseline": 276.76125,
+          "correctness": 272.453041,
+          "optimized": 276.30625
+        },
+        "optimized_vs_correctness_percent": 1.414265366926104
+      },
+      {
+        "set": 1,
+        "workload": "editor",
+        "milliseconds": {
+          "baseline": 85.648375,
+          "correctness": 82.427833,
+          "optimized": 82.74675
+        },
+        "optimized_vs_correctness_percent": 0.38690450590881387
+      },
+      {
+        "set": 2,
+        "workload": "native-editing",
+        "milliseconds": {
+          "baseline": 20.122083,
+          "correctness": 20.498875,
+          "optimized": 20.124916
+        },
+        "optimized_vs_correctness_percent": -1.8242903573976732
+      },
+      {
+        "set": 2,
+        "workload": "native-busy",
+        "milliseconds": {
+          "baseline": 0.883042,
+          "correctness": 0.82,
+          "optimized": 0.821125
+        },
+        "optimized_vs_correctness_percent": 0.13719512195122796
+      },
+      {
+        "set": 2,
+        "workload": "native-flush-boundary",
+        "milliseconds": {
+          "baseline": 0.845,
+          "correctness": 0.825792,
+          "optimized": 0.822792
+        },
+        "optimized_vs_correctness_percent": -0.36328760753313594
+      },
+      {
+        "set": 2,
+        "workload": "diagnostics-amplified",
+        "milliseconds": {
+          "baseline": 398.310875,
+          "correctness": 394.165125,
+          "optimized": 395.964167
+        },
+        "optimized_vs_correctness_percent": 0.45641836019865156
+      },
+      {
+        "set": 2,
+        "workload": "diagnostics-pipe-amplified",
+        "milliseconds": {
+          "baseline": 398.977584,
+          "correctness": 404.588375,
+          "optimized": 399.079292
+        },
+        "optimized_vs_correctness_percent": -1.3616513326661916
+      },
+      {
+        "set": 2,
+        "workload": "small",
+        "milliseconds": {
+          "baseline": 54.770208,
+          "correctness": 52.715541,
+          "optimized": 53.765625
+        },
+        "optimized_vs_correctness_percent": 1.9919818332130967
+      },
+      {
+        "set": 2,
+        "workload": "large",
+        "milliseconds": {
+          "baseline": 276.133792,
+          "correctness": 277.627292,
+          "optimized": 278.55375
+        },
+        "optimized_vs_correctness_percent": 0.3337056646433689
+      },
+      {
+        "set": 2,
+        "workload": "editor",
+        "milliseconds": {
+          "baseline": 79.900166,
+          "correctness": 81.611,
+          "optimized": 84.087292
+        },
+        "optimized_vs_correctness_percent": 3.0342625381382327
+      }
+    ],
+    "allocation_and_work_checks": "Positive controls verify 1000 allocations/32000 bytes, 1000 geometry queries, and 128 write/stat/flags/bounds operations. Empty warning polls and unchanged redraws allocate/prepare/write zero bytes. Append preparation remains bounded and allocations match the baseline.",
+    "lock_counts": [
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 0,
+        "case": "lock-positive",
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 1000,
+        "locks": 1000,
+        "milliseconds": 0.036875,
+        "output_operations": 0,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "variant": "baseline"
+      },
+      {
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 239,
+        "case": "editing",
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 20480,
+        "locks": 0,
+        "milliseconds": 3.152958,
+        "output_operations": 76,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0,
+        "variant": "baseline"
+      },
+      {
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 20487,
+        "case": "editing-basic",
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 20480,
+        "locks": 0,
+        "milliseconds": 2.728542,
+        "output_operations": 20480,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0,
+        "variant": "baseline"
+      },
+      {
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 239,
+        "case": "native-editing",
+        "fcntl": 73,
+        "fpathconf": 0,
+        "fstat": 20553,
+        "geometry_queries": 20480,
+        "iterations": 20480,
+        "locks": 82212,
+        "milliseconds": 21.937709,
+        "output_operations": 73,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0,
+        "variant": "baseline"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 8900,
+        "case": "native-busy",
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 300,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "locks": 1500,
+        "milliseconds": 1.638709,
+        "output_operations": 300,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "variant": "baseline"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 7900,
+        "case": "native-flush-boundary",
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 300,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "locks": 1200,
+        "milliseconds": 1.582541,
+        "output_operations": 100,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "variant": "baseline"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 7900,
+        "case": "native-boundary",
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 300,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "locks": 1200,
+        "milliseconds": 1.599542,
+        "output_operations": 100,
+        "prepared_input_bytes": 200,
+        "warning_attempts": 0,
+        "variant": "baseline"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 15900,
+        "case": "native-rebind",
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 400,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "locks": 1600,
+        "milliseconds": 1.508167,
+        "output_operations": 300,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "variant": "baseline"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 0,
+        "case": "native-unchanged",
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 10000,
+        "locks": 10000,
+        "milliseconds": 0.219833,
+        "output_operations": 0,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "variant": "baseline"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 0,
+        "case": "warning-empty",
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 100000,
+        "locks": 0,
+        "milliseconds": 0.092083,
+        "output_operations": 0,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "variant": "baseline"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 0,
+        "case": "lock-positive",
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 1000,
+        "locks": 1000,
+        "milliseconds": 0.023666,
+        "output_operations": 0,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "variant": "correctness"
+      },
+      {
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 239,
+        "case": "editing",
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 20480,
+        "locks": 0,
+        "milliseconds": 5.936708,
+        "output_operations": 76,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0,
+        "variant": "correctness"
+      },
+      {
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 20487,
+        "case": "editing-basic",
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 20480,
+        "locks": 0,
+        "milliseconds": 2.792,
+        "output_operations": 20480,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0,
+        "variant": "correctness"
+      },
+      {
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 239,
+        "case": "native-editing",
+        "fcntl": 73,
+        "fpathconf": 0,
+        "fstat": 20553,
+        "geometry_queries": 20480,
+        "iterations": 20480,
+        "locks": 82285,
+        "milliseconds": 30.561959,
+        "output_operations": 73,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0,
+        "variant": "correctness"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 8900,
+        "case": "native-busy",
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 300,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "locks": 1400,
+        "milliseconds": 7.798459,
+        "output_operations": 300,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "variant": "correctness"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 7900,
+        "case": "native-flush-boundary",
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 300,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "locks": 1400,
+        "milliseconds": 0.987959,
+        "output_operations": 100,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "variant": "correctness"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 7900,
+        "case": "native-boundary",
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 300,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "locks": 1400,
+        "milliseconds": 1.043792,
+        "output_operations": 100,
+        "prepared_input_bytes": 200,
+        "warning_attempts": 0,
+        "variant": "correctness"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 15900,
+        "case": "native-rebind",
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 400,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "locks": 2000,
+        "milliseconds": 0.791042,
+        "output_operations": 300,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "variant": "correctness"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 0,
+        "case": "native-unchanged",
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 10000,
+        "locks": 10000,
+        "milliseconds": 0.266625,
+        "output_operations": 0,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "variant": "correctness"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 0,
+        "case": "warning-empty",
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 100000,
+        "locks": 0,
+        "milliseconds": 0.092083,
+        "output_operations": 0,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "variant": "correctness"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 0,
+        "case": "lock-positive",
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 1000,
+        "locks": 1000,
+        "milliseconds": 0.024167,
+        "output_operations": 0,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "variant": "optimized"
+      },
+      {
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 239,
+        "case": "editing",
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 20480,
+        "locks": 0,
+        "milliseconds": 3.052,
+        "output_operations": 76,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0,
+        "variant": "optimized"
+      },
+      {
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 20487,
+        "case": "editing-basic",
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 20480,
+        "locks": 0,
+        "milliseconds": 2.74225,
+        "output_operations": 20480,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0,
+        "variant": "optimized"
+      },
+      {
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 239,
+        "case": "native-editing",
+        "fcntl": 73,
+        "fpathconf": 0,
+        "fstat": 20553,
+        "geometry_queries": 20480,
+        "iterations": 20480,
+        "locks": 41252,
+        "milliseconds": 21.6055,
+        "output_operations": 73,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0,
+        "variant": "optimized"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 8900,
+        "case": "native-busy",
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 300,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "locks": 1000,
+        "milliseconds": 1.024333,
+        "output_operations": 300,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "variant": "optimized"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 7900,
+        "case": "native-flush-boundary",
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 300,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "locks": 1000,
+        "milliseconds": 1.004709,
+        "output_operations": 100,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "variant": "optimized"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 7900,
+        "case": "native-boundary",
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 300,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "locks": 1000,
+        "milliseconds": 1.041917,
+        "output_operations": 100,
+        "prepared_input_bytes": 200,
+        "warning_attempts": 0,
+        "variant": "optimized"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 15900,
+        "case": "native-rebind",
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 400,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "locks": 1600,
+        "milliseconds": 0.87275,
+        "output_operations": 300,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "variant": "optimized"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 0,
+        "case": "native-unchanged",
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 10000,
+        "locks": 10000,
+        "milliseconds": 0.224041,
+        "output_operations": 0,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "variant": "optimized"
+      },
+      {
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 0,
+        "case": "warning-empty",
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 100000,
+        "locks": 0,
+        "milliseconds": 0.089584,
+        "output_operations": 0,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "variant": "optimized"
+      }
+    ],
+    "lock_instrumentation": "Separate objects count NativeMetadataGuard acquisitions, with 1000-reset positive controls for all three variants. Instrumented timings are excluded.",
+    "optimization_retained": false,
+    "gate": "Candidate reduced locks and improved editing, but diagnostic benefits did not repeat consistently; large regular-file export medians regressed 1.41% and 0.33%. Omit the candidate. These observations are not claims of causal timing differences; there are no timing-based CI thresholds.",
+    "pilot": "Initial pilot samples are published separately and excluded from acceptance. Final measurement sets copy and hash identical support sources across every variant.",
+    "no_general_speedup_claim": true
+  },
+  "limitations": [
+    "Native metadata synchronization does not serialize complete diagnostic byte streams; concurrent bytes may interleave.",
+    "Injected-stream I/O and rdbuf replacement remain caller-synchronized. Concurrent interactive cli_main invocations are not introduced.",
+    "Concurrent descriptor replacement retains borrowed-descriptor best-effort destination semantics; no atomic fd binding is promised.",
+    "Emergency and standalone delivery remains best effort without EAGAIN waiting, with eight total EINTR retries. Partial duplicates and conservative extra separators remain allowed.",
+    "Blocking TTY output remains outside the bounded-cancellation guarantee.",
+    "Native PPC/Tiger compiler, SDK and runtime are unavailable. The host cross-selection build verifies interposer exclusion and link/runtime behavior, not native Tiger execution."
+  ]
+}

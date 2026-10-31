@@ -1,0 +1,128 @@
+diff --git a/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/correctness-src/src/modern/platform.cpp b/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/optimized-src/src/modern/platform.cpp
+index 468f9da..5eae1ca 100644
+--- a/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/correctness-src/src/modern/platform.cpp
++++ b/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/optimized-src/src/modern/platform.cpp
+@@ -454,7 +454,8 @@ class NativeDiagnosticRecord {
+ 
+ public:
+   NativeDiagnosticRecord(int descriptor, NativeInspection inspection,
+-                         detail::OutputAttempt &attempt, bool presentation = false) noexcept
++                         detail::OutputAttempt &attempt, bool presentation = false,
++                         std::ostream *stream = nullptr) noexcept
+       : attempt_(attempt), native_(descriptor), inspection_(inspection),
+         descriptor_(descriptor, attempt, inspection_.inspected ? &inspection_.identity : nullptr,
+                     inspection_.pipe_limit) {
+@@ -469,6 +470,11 @@ public:
+       if (inspection_.inspected &&
+           detail::same_destination(inspection_.identity, descriptor_state(native_).identity))
+         descriptor_state(native_).pipe_limit = inspection_.pipe_limit;
++      if (stream) {
++        auto *file = diagnostic_file(*stream);
++        if (!*stream || (file && std::ferror(file)))
++          (void)detail::recover_diagnostic_stream(*stream);
++      }
+       reservation_ = native_destinations.admit(native_, presentation);
+       ready_ = reservation_.admitted;
+       deferred_ = presentation && !reservation_.admitted;
+@@ -618,15 +624,8 @@ detail::DiagnosticWriter::write_result(std::initializer_list<std::string_view> p
+   const int native = destination().descriptor;
+   if (native >= 0) {
+     const auto inspection = inspect_native(native, attempt);
+-    {
+-      NativeMetadataGuard guard;
+-      if (!guard.locked)
+-        return DiagnosticResult::failure;
+-      if (!output_ || (file_ && std::ferror(file_)))
+-        (void)recover_diagnostic_stream(output_);
+-    }
+     const bool presentation = io_ && io_->line_output && io_->line_output->presenting();
+-    NativeDiagnosticRecord record(native, inspection, attempt, presentation);
++    NativeDiagnosticRecord record(native, inspection, attempt, presentation, &output_);
+     if (presentation && record.deferred())
+       return DiagnosticResult::deferred;
+     if (!presentation && io_ && inspection.inspected && io_->line_output)
+diff --git a/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/correctness-src/include/codet/detail/line_prompt.hpp b/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/optimized-src/include/codet/detail/line_prompt.hpp
+index 11ddf85..b7bf788 100644
+--- a/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/correctness-src/include/codet/detail/line_prompt.hpp
++++ b/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/optimized-src/include/codet/detail/line_prompt.hpp
+@@ -155,6 +155,10 @@ class LinePrompt final : public LineOutputObserver {
+            : input_.kind() == RequestKind::approval ? "a> "
+                                                     : "q> ";
+   }
++  void open_row() noexcept {
++    if (binding_.descriptor < 0)
++      boundaries().open(terminal_);
++  }
+   void paint() {
+     const bool keyboard = echo_update_ && (visible_ || dirty_);
+     const auto present = [&](std::initializer_list<std::string_view> parts, bool newline) {
+@@ -168,7 +172,7 @@ class LinePrompt final : public LineOutputObserver {
+         const auto text = input_.input().prepared().substr(committed_, end - committed_);
+         if (!text.empty()) {
+           dirty_ = true;
+-          boundaries().open(terminal_);
++          open_row();
+           visible_ = present({text}, false);
+         }
+         if (visible_) {
+@@ -202,7 +206,7 @@ class LinePrompt final : public LineOutputObserver {
+     }
+     const bool was_dirty = dirty_;
+     dirty_ = true; // Even failure may have emitted part of the row.
+-    boundaries().open(terminal_);
++    open_row();
+     if (columns_) {
+       const bool append = compatible && visible_ && bytes >= previous_bytes_ &&
+                           std::memcmp(row_.data(), previous_row_.data(), previous_bytes_) == 0;
+@@ -229,7 +233,7 @@ class LinePrompt final : public LineOutputObserver {
+       if (was_dirty)
+         separate();
+       dirty_ = true;
+-      boundaries().open(terminal_);
++      open_row();
+       visible_ = present({std::string_view(row_.data(), bytes)}, false);
+       if (visible_)
+         committed_ = input_.input().committed_end();
+@@ -337,7 +341,7 @@ public:
+     if (input_.stale() && !explained_) {
+       separate();
+       dirty_ = true;
+-      boundaries().open(terminal_);
++      open_row();
+       explained_ = output_.present({RequestInput::discard_instruction}, true);
+       if (output_.presentation_deferred())
+         return;
+@@ -350,7 +354,7 @@ public:
+         prefix(columns_ ? columns_ : 80) != input_.guidance()) {
+       separate();
+       dirty_ = true;
+-      boundaries().open(terminal_);
++      open_row();
+       guidance_due_ = !output_.present({input_.guidance()}, true);
+       if (output_.presentation_deferred())
+         return;
+@@ -361,11 +365,6 @@ public:
+     }
+     paint();
+     due_ = output_.presentation_deferred(); // Deferral is not a failed delivery attempt.
+-    if (binding_.descriptor >= 0) {
+-      const auto state = boundaries().snapshot(STDOUT_FILENO, terminal_);
+-      if (!state.available || state.generation != boundary_generation_)
+-        visible_ = append_valid_ = false; // The next flush observes the intervening boundary.
+-    }
+   }
+   void append(char byte) {
+     if (!input_.append(byte))
+diff --git a/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/correctness-src/include/codet/detail/output_destination.hpp b/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/optimized-src/include/codet/detail/output_destination.hpp
+index f6c916e..58ca241 100644
+--- a/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/correctness-src/include/codet/detail/output_destination.hpp
++++ b/Volumes/Pro2T/codet-compiled-agent/build/diagnostic-record-lifecycle-followup/optimized-src/include/codet/detail/output_destination.hpp
+@@ -96,6 +96,8 @@ public:
+       selected.binding = ++binding_;
+     if (presentation && selected.active)
+       return {};
++    if (presentation)
++      presented_ = true;
+     Reservation result{selected.binding, selected.failure, true,
+                        selected.pending || (!presentation && selected.row), presentation};
+     const auto next = presentation ? selected.generation : ++generation_;
