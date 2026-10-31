@@ -304,10 +304,10 @@ NativeInspection inspect_native(int descriptor, detail::OutputAttempt &attempt) 
 int native_diagnostic_descriptor(std::ostream &output, std::streambuf *buffer) noexcept {
   return &output == &std::cerr && buffer == native_stderr_buffer   ? STDERR_FILENO
          : &output == &std::cout && buffer == native_stdout_buffer ? STDOUT_FILENO
-                                                                           : -1;
+                                                                   : -1;
 }
 detail::DiagnosticState &stream_diagnostic_state(std::ostream &output,
-                                                detail::DiagnosticState &local) noexcept {
+                                                 detail::DiagnosticState &local) noexcept {
   auto &state = &output == &std::cerr   ? stderr_stream_state
                 : &output == &std::cout ? stdout_stream_state
                                         : local;
@@ -540,8 +540,8 @@ bool detail::BoundaryAccess::separate(const struct stat &identity) const noexcep
   NativeMetadataGuard guard;
   return guard.locked && native_destinations.separate(identity);
 }
-detail::BoundarySnapshot detail::BoundaryAccess::snapshot(int descriptor,
-                                                         const struct stat &identity) const noexcept {
+detail::BoundarySnapshot
+detail::BoundaryAccess::snapshot(int descriptor, const struct stat &identity) const noexcept {
   if (local_)
     return {true, local_->row(identity), local_->generation(descriptor)};
   NativeMetadataGuard guard;

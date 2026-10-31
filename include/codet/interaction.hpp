@@ -26,7 +26,7 @@ class Interaction {
 public:
 #define CODET_INTERACTION_WARNINGS(X)                                                              \
   X(exec_stop, 1, "Exec cleanup failed while stopping owned process")                              \
-  X(exec_original, 2, "Exec cleanup failed; preserving original error")                             \
+  X(exec_original, 2, "Exec cleanup failed; preserving original error")                            \
   X(event_render, 4, "Worker event diagnostic could not be displayed")
 #define CODET_WARNING_ENUM(name, bit, message) name = bit,
   enum class Warning : uint8_t { CODET_INTERACTION_WARNINGS(CODET_WARNING_ENUM) };
