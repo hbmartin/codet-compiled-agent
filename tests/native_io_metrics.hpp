@@ -18,6 +18,8 @@ struct NativeIoMetrics {
   void *output_context = nullptr;
   void (*after_stat)(void *) = nullptr;
   void *stat_context = nullptr;
+  void (*before_bound)(void *) = nullptr;
+  void *bound_context = nullptr;
 };
 extern thread_local NativeIoMetrics native_io_metrics;
 } // namespace codet::test

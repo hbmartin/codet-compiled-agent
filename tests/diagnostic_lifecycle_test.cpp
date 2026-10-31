@@ -294,6 +294,86 @@ TEST_F(NativeRecordLifecycle, OlderInspectionRefreshesWithoutDroppingTheCurrentR
   metrics = {};
   EXPECT_EQ(read(), "current record\r\n");
 }
+TEST_F(NativeRecordLifecycle, StaleInspectionCannotSuppressAnEmergencyOnTheCurrentDescriptor) {
+  struct Gate {
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool entered = false, released = false;
+    static void pause(void *context) {
+      auto &gate = *static_cast<Gate *>(context);
+      std::unique_lock<std::mutex> lock(gate.mutex);
+      gate.entered = true;
+      gate.changed.notify_all();
+      EXPECT_TRUE(
+          gate.changed.wait_for(lock, std::chrono::seconds(5), [&] { return gate.released; }));
+    }
+    bool wait() {
+      std::unique_lock<std::mutex> lock(mutex);
+      return changed.wait_for(lock, std::chrono::seconds(5), [&] { return entered; });
+    }
+    void release() {
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        released = true;
+      }
+      changed.notify_all();
+    }
+  } old_gate, current_gate;
+  int descriptors[2];
+  ASSERT_EQ(::pipe(descriptors), 0);
+  struct Close {
+    int a, b;
+    ~Close() {
+      ::close(a);
+      ::close(b);
+    }
+  } close{descriptors[0], descriptors[1]};
+  std::thread older([&] {
+    auto &metrics = test::native_io_metrics;
+    metrics.interrupt_fd = STDERR_FILENO;
+    metrics.after_stat = Gate::pause;
+    metrics.stat_context = &old_gate;
+    EXPECT_TRUE(detail::immediate_stderr({"older"}));
+    metrics = {};
+  });
+  std::thread current;
+  struct Join {
+    Gate &a, &b;
+    std::thread &older, &current;
+    ~Join() {
+      a.release();
+      b.release();
+      if (older.joinable())
+        older.join();
+      if (current.joinable())
+        current.join();
+    }
+  } join{old_gate, current_gate, older, current};
+  ASSERT_TRUE(old_gate.wait());
+  ASSERT_EQ(::dup2(descriptors[1], STDERR_FILENO), STDERR_FILENO);
+  const FileNotice notice("/current/preserved/result", FileNoticeKind::tool_result);
+  current = std::thread([&] {
+    auto &metrics = test::native_io_metrics;
+    metrics.interrupt_fd = STDERR_FILENO;
+    metrics.before_bound = Gate::pause;
+    metrics.bound_context = &current_gate;
+    emergency_file_diagnostic(notice);
+    metrics = {};
+  });
+  ASSERT_TRUE(current_gate.wait());
+  old_gate.release();
+  older.join();
+  current_gate.release();
+  current.join();
+  ASSERT_EQ(::fcntl(descriptors[0], F_SETFL, O_NONBLOCK), 0);
+  std::string bytes;
+  char buffer[256];
+  ssize_t count;
+  while ((count = ::read(descriptors[0], buffer, sizeof(buffer))) > 0)
+    bytes.append(buffer, static_cast<size_t>(count));
+  EXPECT_THAT(bytes, HasSubstr("older\n"));
+  EXPECT_THAT(bytes, HasSubstr(notice.text() + "\n"));
+}
 TEST(DiagnosticFallbackMetadata, ResetMayOverlapAStableReplacedBuffer) {
   struct Sink : std::streambuf {
     std::streamsize xsputn(const char *, std::streamsize count) override {

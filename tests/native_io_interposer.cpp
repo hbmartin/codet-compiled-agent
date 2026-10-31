@@ -134,6 +134,10 @@ extern "C" long fpathconf(int descriptor, int name)
   static const auto original = reinterpret_cast<Bound>(codet::test::native_symbol("fpathconf"));
   auto &metrics = codet::test::native_io_metrics;
   if (descriptor == metrics.interrupt_fd) {
+    if (auto gate = metrics.before_bound) {
+      metrics.before_bound = nullptr;
+      gate(metrics.bound_context);
+    }
     ++metrics.bound_queries;
     if (metrics.bounds_interrupted) {
       --metrics.bounds_interrupted;
