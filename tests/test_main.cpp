@@ -112,7 +112,37 @@ int main(int argc, char **argv) {
       const std::string prompt = "codet> ";
       codet::detail::LinePrompt line(input, output, io, prompt, terminal);
       line.acquire();
-      const std::string mode(argv[2]);
+      std::string mode(argv[2]);
+      if (mode == "submit-resize") {
+        line.append('a');
+        line.append(static_cast<char>(0xe9));
+        codet::detail::DiagnosticWriter errors(std::cerr, &io);
+        (void)errors.write({"notice"});
+        struct winsize size {};
+        size.ws_row = 24;
+        size.ws_col = 80;
+        if (::ioctl(STDOUT_FILENO, TIOCSWINSZ, &size) < 0)
+          return 6;
+        return line.take().text == std::string("a\xe9") ? 0 : 7;
+      }
+      if (mode == "buffer-rebind") {
+        for (char byte : std::string("abc"))
+          line.append(byte);
+        std::ostringstream first, second;
+        auto *native = std::cout.rdbuf(first.rdbuf());
+        line.append('d');
+        std::cout.rdbuf(second.rdbuf());
+        line.flush();
+        line.append('e');
+        std::cout.rdbuf(native);
+        line.flush();
+        const bool displayed = first.str().find("abcd") != std::string::npos &&
+                               second.str().find("abcd") != std::string::npos;
+        return displayed && line.take().text == "abcde" ? 0 : 8;
+      }
+      const bool only_flush = mode.size() > 6 && mode.substr(mode.size() - 6) == "-flush";
+      if (only_flush)
+        mode.resize(mode.size() - 6);
       if (mode == "empty") {
         line.append('x');
         line.erase_character();
@@ -148,6 +178,10 @@ int main(int argc, char **argv) {
       } else
         return 4;
       metrics = {};
+      if (only_flush) {
+        line.flush(); // No subsequent key may be needed to discover the diagnostic boundary.
+        return line.take().text == "abc" ? 0 : 5;
+      }
       line.append('d');
       return line.take().text == "abcd" ? 0 : 5;
     }

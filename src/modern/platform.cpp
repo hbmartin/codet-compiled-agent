@@ -301,9 +301,9 @@ NativeInspection inspect_native(int descriptor, detail::OutputAttempt &attempt) 
   }
   return result;
 }
-int native_diagnostic_descriptor(std::ostream &output) noexcept {
-  return &output == &std::cerr && output.rdbuf() == native_stderr_buffer   ? STDERR_FILENO
-         : &output == &std::cout && output.rdbuf() == native_stdout_buffer ? STDOUT_FILENO
+int native_diagnostic_descriptor(std::ostream &output, std::streambuf *buffer) noexcept {
+  return &output == &std::cerr && buffer == native_stderr_buffer   ? STDERR_FILENO
+         : &output == &std::cout && buffer == native_stdout_buffer ? STDOUT_FILENO
                                                                            : -1;
 }
 detail::DiagnosticState &stream_diagnostic_state(std::ostream &output,
@@ -500,7 +500,11 @@ bool detail::recover_diagnostic_stream(std::ostream &output) noexcept {
 detail::DiagnosticWriter::DiagnosticWriter(std::ostream &output, IoContext *io) noexcept
     : output_(output), state_(&local_), file_(diagnostic_file(output)), io_(io) {}
 int detail::DiagnosticWriter::native_descriptor() const noexcept {
-  return native_diagnostic_descriptor(output_);
+  return destination().descriptor;
+}
+detail::StreamDestination detail::DiagnosticWriter::destination() const noexcept {
+  auto *buffer = output_.rdbuf();
+  return {native_diagnostic_descriptor(output_, buffer), buffer};
 }
 bool detail::inspect_output_destination(int descriptor, struct stat &identity,
                                         OutputAttempt &attempt) noexcept {
@@ -563,7 +567,7 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
                                      bool flush) {
   const auto mode = io_ ? OutputMode::diagnostic : OutputMode::immediate;
   OutputAttempt attempt(io_ ? io_->cancel : nullptr, mode);
-  const int native = native_diagnostic_descriptor(output_);
+  const int native = destination().descriptor;
   if (native >= 0) {
     const auto inspection = inspect_native(native, attempt);
     if (io_ && inspection.inspected && io_->line_output &&

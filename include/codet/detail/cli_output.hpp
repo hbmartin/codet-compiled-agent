@@ -36,6 +36,9 @@ public:
   bool failed() const noexcept {
     return failed_;
   }
+  StreamDestination presentation_destination() const noexcept {
+    return writer_.destination();
+  }
   int presentation_descriptor() const noexcept {
     return writer_.native_descriptor();
   }

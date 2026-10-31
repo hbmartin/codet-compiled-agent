@@ -14,7 +14,9 @@ class LinePrompt final : public LineOutputObserver {
   LineOutputObserver *previous_;
   bool owned_ = false, dirty_ = false, visible_ = false, due_ = true;
   bool internal_ = false, explained_ = false;
-  bool echo_update_ = false, append_update_ = false;
+  bool echo_update_ = false;
+  StreamDestination binding_;
+  BoundaryAccess boundaries_;
   bool inspection_due_ = false;
   size_t columns_ = 0, painted_ = 0;
   const size_t test_columns_;
@@ -37,13 +39,44 @@ class LinePrompt final : public LineOutputObserver {
     }
   };
   BoundaryAccess boundaries() const noexcept {
-    return output_.presentation_descriptor() >= 0 ? native_line_destinations()
-                                                  : BoundaryAccess(&io_.line_destinations);
+    return boundaries_;
   }
   void bind_errors() noexcept {
     struct stat errors {};
-    if (output_.presentation_descriptor() >= 0 && ::fstat(STDERR_FILENO, &errors) == 0)
+    OutputAttempt attempt(io_.cancel, OutputMode::diagnostic);
+    if (binding_.descriptor >= 0 && inspect_output_destination(STDERR_FILENO, errors, attempt))
       boundaries().bind(STDERR_FILENO, errors);
+  }
+  void resolve_presentation() noexcept {
+    const auto next = output_.presentation_destination();
+    if (binding_.descriptor == next.descriptor && binding_.buffer == next.buffer)
+      return;
+    binding_ = next;
+    if (binding_.descriptor < 0)
+      io_.line_destinations.reset();
+    boundaries_ = BoundaryAccess(binding_.descriptor >= 0 ? nullptr : &io_.line_destinations);
+    abandon_geometry();
+    boundaries().bind(STDOUT_FILENO, terminal_);
+    bind_errors();
+    dirty_ = boundaries().row(terminal_);
+    explained_ = false;
+    guidance_due_ = due_ = inspection_due_ = true;
+  }
+  void observe_boundary() noexcept {
+    if (binding_.descriptor < 0)
+      return;
+    const auto state = boundaries().snapshot(STDOUT_FILENO, terminal_);
+    if (!state.available) {
+      abandon_geometry();
+      return;
+    }
+    if (boundary_generation_ != state.generation) {
+      visible_ = append_valid_ = false;
+      dirty_ = state.row;
+      painted_ = previous_bytes_ = 0;
+      due_ = true;
+      boundary_generation_ = state.generation;
+    }
   }
   bool eligible() const noexcept {
     return owned_ &&
@@ -80,10 +113,11 @@ class LinePrompt final : public LineOutputObserver {
   }
   void geometry() {
     size_t columns = test_columns_;
-    const int descriptor = output_.presentation_descriptor();
+    const int descriptor = binding_.descriptor;
     if (descriptor >= 0) {
       struct stat value {};
-      if (::fstat(descriptor, &value) == 0) {
+      OutputAttempt attempt(io_.cancel, OutputMode::diagnostic);
+      if (inspect_output_destination(descriptor, value, attempt)) {
         destination(value);
         struct winsize size {};
         columns =
@@ -95,14 +129,7 @@ class LinePrompt final : public LineOutputObserver {
         columns = 0;
       }
     }
-    if (output_.presentation_descriptor() >= 0 &&
-        boundary_generation_ != boundaries().snapshot(STDOUT_FILENO, terminal_).generation) {
-      visible_ = append_valid_ = false;
-      dirty_ = boundaries().row(terminal_);
-      painted_ = previous_bytes_ = 0;
-      due_ = true;
-      boundary_generation_ = boundaries().snapshot(STDOUT_FILENO, terminal_).generation;
-    }
+    observe_boundary();
     columns = columns >= 10 ? std::min(columns - 1, size_t{256}) : 0;
     if (columns_ != columns) {
       // Never erase using geometry established before a resize.
@@ -127,8 +154,7 @@ class LinePrompt final : public LineOutputObserver {
     const auto present = [&](std::initializer_list<std::string_view> parts, bool newline) {
       return keyboard ? output_.echo_attempt(parts, newline) : output_.display(parts, newline);
     };
-    const bool compatible =
-        append_update_ && append_valid_ && input_.appended_since(painted_revision_);
+    const bool compatible = append_valid_ && input_.appended_since(painted_revision_);
     if (!columns_ && compatible && visible_ && !input_.stale() &&
         input_.input().changed_offset() >= committed_) {
       const auto end = input_.input().committed_end();
@@ -215,8 +241,7 @@ public:
       : input_(input), output_(output), io_(io), prompt_(prompt), terminal_(terminal),
         previous_(io.line_output), test_columns_(columns) {
     spaces_.fill(' ');
-    boundaries().bind(STDOUT_FILENO, terminal);
-    bind_errors();
+    resolve_presentation();
     boundary_generation_ = boundaries().snapshot(STDOUT_FILENO, terminal_).generation;
     io_.line_output = this;
   }
@@ -258,6 +283,7 @@ public:
     owned_ = false;
   }
   void flush() {
+    resolve_presentation();
     if (revision_ != input_.revision()) {
       revision_ = input_.revision();
       due_ = true;
@@ -272,6 +298,7 @@ public:
       due_ = inspection_due_ = false;
       return;
     }
+    observe_boundary();
     if (!due_ && !inspection_due_)
       return;
     inspection_due_ = false;
@@ -319,12 +346,16 @@ public:
     }
     paint();
     due_ = false; // Retry only on a real edit, request change or output event.
+    if (binding_.descriptor >= 0) {
+      const auto state = boundaries().snapshot(STDOUT_FILENO, terminal_);
+      if (!state.available || state.generation != boundary_generation_)
+        visible_ = append_valid_ = false; // The next flush observes the intervening boundary.
+    }
   }
   void append(char byte) {
     if (!input_.append(byte))
       return;
     Internal echo(echo_update_);
-    Internal append(append_update_);
     due_ = true;
     flush();
   }
@@ -342,7 +373,7 @@ public:
         input_.input().committed_end() < input_.input().prepared().size()) {
       // Typing holds valid prefixes; submission must expose the unresolved bytes.
       flush();
-      if (visible_ && committed_ <= input_.input().prepared().size())
+      if (!columns_ && visible_ && committed_ <= input_.input().prepared().size())
         (void)output_.echo_attempt({input_.input().prepared().substr(committed_)});
     }
     if (dirty_)

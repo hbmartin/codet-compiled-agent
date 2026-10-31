@@ -1419,6 +1419,30 @@ class CliTests(unittest.TestCase):
                         self.assertNotIn('d',rows)
                         self.assertIn('Tool result receipt candidate (publication unconfirmed): /complete/path' if mode=='notice' else 'wa',rows)
 
+    def test_native_prompt_restoration_without_another_key_and_resize_submission(self):
+        import fcntl
+        import struct
+        import termios
+        for columns in (0,80):
+            for mode in ('standalone-flush','immediate-flush','notice-flush','submit-resize','buffer-rebind'):
+                with self.subTest(columns=columns,mode=mode),PtyProcess() as resources:
+                    master,slave=resources.openpty()
+                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,columns,0,0))
+                    helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+                    process=resources.start([helper,'--codet-line-boundary-helper',mode],stdin=slave,
+                        stdout=slave,stderr=slave,env=dict(self.env,LC_ALL='C'))
+                    received=bytearray()
+                    collect_pty(self,master,received,lambda process=process:process.poll() is not None)
+                    while select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
+                    self.assertEqual(process.returncode,0,received)
+                    if mode=='submit-resize':
+                        self.assertEqual(bytes(received).count(b'\\xE9'),1,received)
+                    elif mode=='buffer-rebind':
+                        self.assertIn('codet> abcde',line_cells(received),received)
+                    else:
+                        self.assertEqual(bytes(received).count(b'codet> abc'),2,received)
+                        self.assertEqual(line_cells(received)[-2],'codet> abc',received)
+
     def test_prepared_line_viewport_and_stdout_binding(self):
         import fcntl
         import re
