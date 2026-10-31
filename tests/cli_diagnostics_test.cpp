@@ -1199,6 +1199,24 @@ TEST(DiagnosticWriter, OlderCompletionCannotClearNewerFailureOrResetEpoch) {
   }
   detail::reset_standard_diagnostics();
 }
+void intervening_success(void *) {
+  EXPECT_TRUE(detail::immediate_stderr({"intervening"}));
+}
+TEST(DiagnosticWriter, InterveningRecoverySeparatorCannotSuppressAnAdmittedRecord) {
+  detail::reset_standard_diagnostics();
+  testing::internal::CaptureStderr();
+  auto &metrics = test::native_io_metrics;
+  metrics.interrupt_fd = STDERR_FILENO;
+  metrics.vector_partial = true;
+  EXPECT_FALSE(detail::immediate_stderr({"partial"}));
+  metrics.before_output = intervening_success;
+  EXPECT_TRUE(detail::immediate_stderr({"admitted"}));
+  metrics = {};
+  const auto bytes = testing::internal::GetCapturedStderr();
+  EXPECT_THAT(bytes, HasSubstr("intervening\n"));
+  EXPECT_THAT(bytes, HasSubstr("admitted\n"));
+  detail::reset_standard_diagnostics();
+}
 TEST(DiagnosticWriter, ConcurrentFallbackAndNativeBoundarySnapshotsAreSynchronized) {
   testing::internal::CaptureStderr();
   detail::reset_standard_diagnostics();

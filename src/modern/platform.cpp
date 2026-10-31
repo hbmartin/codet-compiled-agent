@@ -411,31 +411,18 @@ public:
         native_destinations.interrupt(native_);
       }
       generation_ = native_destinations.generation(native_);
-      if (separator)
-        native_destinations.pending(native_, true);
+      // Reserve the whole record before I/O, including a recovery separator.
+      native_destinations.pending(native_, true);
       ready_ = true;
     }
-    if (separator) {
+    if (separator)
       ready_ = write({"\n"});
-      NativeMetadataGuard guard;
-      if (guard.locked && ready_ && unchanged())
-        native_destinations.pending(native_, false);
-    }
   }
   bool write(std::initializer_list<std::string_view> parts, bool newline = false) noexcept {
     if (!ready_)
       return false;
     ready_ = descriptor_.result(parts, newline, attempt_) == detail::OutputResult::success;
     return ready_;
-  }
-  void begin() noexcept {
-    NativeMetadataGuard guard;
-    if (!guard.locked || !unchanged()) {
-      ready_ = false;
-      return;
-    }
-    if (ready_)
-      native_destinations.pending(native_, true);
   }
   bool finish(std::initializer_list<std::string_view> tail = {}, bool newline = true) noexcept {
     const bool success = write(tail, newline);
@@ -460,13 +447,11 @@ bool detail::immediate_stderr(std::initializer_list<std::string_view> parts,
                               bool newline) noexcept {
   OutputAttempt attempt(nullptr, OutputMode::immediate);
   auto record = immediate_record(attempt);
-  record.begin(); // Keep the conservative boundary even for a failed unterminated warning.
   return record.finish(parts, newline);
 }
 void emergency_file_diagnostic(const FileNotice &notice) noexcept {
   detail::OutputAttempt attempt(nullptr, detail::OutputMode::immediate);
   auto record = immediate_record(attempt);
-  record.begin();
   if (!record.write({notice.label()}))
     return;
   if (escaped_file_path(notice.path, [&](const char *bytes, size_t size) {
@@ -585,7 +570,6 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
     }
     const bool presentation = io_ && io_->line_output && io_->line_output->presenting();
     NativeDiagnosticRecord record(native, inspection, attempt, presentation);
-    record.begin();
     const bool success = record.finish(parts, newline);
     if (!success) {
       NativeMetadataGuard guard;

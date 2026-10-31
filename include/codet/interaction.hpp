@@ -33,7 +33,7 @@ public:
 #undef CODET_WARNING_ENUM
 
 private:
-#define CODET_WARNING_MASK(name, bit, message) | bit
+#define CODET_WARNING_MASK(name, bit, message) | (bit)
   using WarningEncoding = detail::WarningBits<0 CODET_INTERACTION_WARNINGS(CODET_WARNING_MASK)>;
 #undef CODET_WARNING_MASK
 #define CODET_WARNING_MESSAGE(name, bit, message) {Warning::name, message},
