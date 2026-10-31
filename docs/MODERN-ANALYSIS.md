@@ -978,3 +978,67 @@ Partial warning output can repeat on event-gated retry, and correct boundary res
 work compared with broken baseline output. No general latency or exactly-once delivery
 claim is made. Full evidence: `docs/validation/basic-input-boundary-followup.json` and the
 adjacent performance summary/sample CSVs.
+
+## Synchronized native metadata and prompt restoration
+
+Fetched main `ed231121` reproduces flush-only prompt loss, duplicated deferred UTF-8 bytes
+after a basic-to-known-width resize, and stale native presentation after `rdbuf` replacement.
+The identical before/after probes are retained beside the validation record. ThreadSanitizer
+also confirms the original main-thread generation read versus worker fallback write race.
+
+One statically initialized pthread mutex now protects native boundary and descriptor-cache
+metadata. Inspection, readiness waits, descriptor writes and rendering occur outside it.
+Stack-owned copies and epoch/generation checks prevent older completions from clearing newer
+failures or updating a subsequent invocation. Whole records are reserved before separator I/O;
+an intervening record cannot suppress an admitted body. The mutex does not serialize complete
+byte records. Native fallback metadata is safe to share; arbitrary injected streams and buffer
+replacement still require caller synchronization.
+
+Prompt flush checks external generations before its unchanged-input return. Presentation
+backends rebind explicitly on buffer changes and restore the bounded surviving draft. Deferred
+submission rendering checks geometry again after repainting. Warning bits derive from one
+registry with compile-time capacity and uniqueness checks; coalescing/retry rules are unchanged.
+
+Debug and ASan/UBSan each pass 9/9 CTest groups: 625 unit cases (two existing opt-in skips),
+68 publication-fault cases and 101 CLI integration methods. Twenty focused unit and Python 3.9
+PTY batches pass. A separate complete ThreadSanitizer build passes twenty repetitions of 29
+focused cases. Reentrant delivery tests verify metadata guards are not held during output;
+fresh-process fault tests cover allocation-free first use and emergency delivery. Pinned lint,
+Semgrep, runner checks and strict Ubuntu analysis/tests pass; existing local Clang/SDK findings
+are compared exactly rather than suppressed. The initial Ubuntu macro-parentheses finding
+and its correction are preserved in the evidence. Full local suites use the behavioral revision;
+the last change adds parentheses to enum initializers and produces byte-identical Release core and
+benchmark objects. Final-source focused Debug/ASan tests and twenty TSAN repetitions pass, and
+Ubuntu validates the final source with its complete suite. One macOS ASan child-side fork crashed in
+libxpc/free → sanitizer StackStore before exec; its crash report and twenty passing isolated
+repetitions are retained alongside the complete rerun. No assertion or sanitizer setting was
+weakened. Native PPC/Tiger execution remains unavailable.
+
+Both Release measurement sets use one warm-up and five alternating measured runs with identical
+harnesses and no concurrent local analyzers/tests/builds. All 960 samples, medians, allocations
+and syscall counters are retained. A separate instrumented copy counts metadata guards with a
+1,000-acquisition positive control; its timings do not enter latency comparisons.
+
+`editing-basic` medians, sets 1/2: 2.5065 → 2.4887 ms / 2.5424 → 2.5212 ms.
+
+`native-editing` medians, sets 1/2: 19.8684 → 20.4162 ms / 20.4367 → 21.1517 ms.
+
+`native-unchanged` medians, sets 1/2: 0.1123 → 0.1831 ms / 0.1123 → 0.1844 ms.
+
+`diagnostics-amplified` medians, sets 1/2: 414.0260 → 417.9787 ms / 424.0993 → 416.8830 ms.
+
+`small` medians, sets 1/2: 70.1884 → 64.0638 ms / 55.3937 → 59.9842 ms.
+
+`large` medians, sets 1/2: 269.9833 → 275.0526 ms / 275.6410 → 270.1818 ms.
+
+Native typing is about 3% slower across the two sets. The amplified blocking-pipe diagnostic
+case is about 6% and 19% slower, with unchanged allocations, bytes and native operation counts;
+the new metadata synchronization is retained for correctness. Native unchanged flushes increase
+from about 0.112 ms to 0.184 ms per 10,000 calls while retaining zero allocation/preparation/output
+work. Export timings vary in direction, so no export latency improvement is claimed.
+
+Correct restoration adds bounded output where the broken baseline emitted none. Unchanged
+redraws still allocate, prepare and output nothing; native flushes now also inspect the guarded
+boundary generation. No optional identity cache, timing threshold, or general latency improvement
+claim is included. Full evidence and limitations: `docs/validation/prompt-boundary-ownership-followup.json`
+and its adjacent reproduction, performance-summary and sample files.

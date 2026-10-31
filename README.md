@@ -148,9 +148,10 @@ bounded labelled snapshot instead of guessing wrapped-line cursor movement. Know
 append only new prepared text when their displayed prefix stays valid; moving the viewport still requires a bounded repaint. Resizing or replacing stdout abandons
 the old row geometry. Prompts follow stdout's destination; a separate redirected stderr does not
 disturb that row. Guidance and unfinished-line boundaries follow the destinations currently
-reachable through stdout/stderr, including aliased channels. Standalone diagnostic recovery also
-invalidates stale append state before input presentation resumes. Transient input resource failures
-retry with a cancellation-aware backoff of at most 25 ms; permanent input errors are reported
+reachable through stdout/stderr, including aliased channels. Standalone and emergency diagnostics
+restore a surviving draft on the next main-loop flush,
+without another keystroke. Buffer replacement rebinds presentation, and resizing before submission
+does not repeat deferred UTF-8 escapes. Transient input resource failures retry with a cancellation-aware backoff of at most 25 ms; permanent input errors are reported
 separately from EOF. Fixed worker warnings enter history once per coalesced occurrence; a failed
 refresh does not reinsert them. New warnings get their first delivery attempt on the next existing
 poll; failed attempts retry only on real UI events or final cleanup and may repeat partial output.

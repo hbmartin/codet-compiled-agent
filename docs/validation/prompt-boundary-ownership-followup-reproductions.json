@@ -1,0 +1,106 @@
+[
+  {
+    "capture": "codet> abc\r\nTool result receipt candidate (publication unconfirmed): /preserved/path\r\n",
+    "extra": {},
+    "generation_after": 3,
+    "generation_before": 1,
+    "mode": "notice",
+    "raw_hex": {
+      "bytes": [
+        97,
+        98,
+        99
+      ],
+      "subtype": null
+    },
+    "variant": "baseline"
+  },
+  {
+    "capture": "codet> a\r\nnotice\r\ncodet> a\\xE9\\xE9\r\n",
+    "extra": {},
+    "generation_after": 0,
+    "generation_before": 0,
+    "mode": "resize",
+    "raw_hex": {
+      "bytes": [
+        97,
+        233
+      ],
+      "subtype": null
+    },
+    "variant": "baseline"
+  },
+  {
+    "capture": "codet> abc",
+    "extra": {
+      "injected": "\ncodet> abcd",
+      "local_row": false,
+      "native_row": true
+    },
+    "generation_after": 0,
+    "generation_before": 0,
+    "mode": "rebind",
+    "raw_hex": {
+      "bytes": [
+        97,
+        98,
+        99,
+        100
+      ],
+      "subtype": null
+    },
+    "variant": "baseline"
+  },
+  {
+    "capture": "codet> abc\r\nTool result receipt candidate (publication unconfirmed): /preserved/path\r\ncodet> abc",
+    "extra": {},
+    "generation_after": 3,
+    "generation_before": 1,
+    "mode": "notice",
+    "raw_hex": {
+      "bytes": [
+        97,
+        98,
+        99
+      ],
+      "subtype": null
+    },
+    "variant": "changed"
+  },
+  {
+    "capture": "codet> a\r\nnotice\r\ncodet> a\\xE9\r\n",
+    "extra": {},
+    "generation_after": 0,
+    "generation_before": 0,
+    "mode": "resize",
+    "raw_hex": {
+      "bytes": [
+        97,
+        233
+      ],
+      "subtype": null
+    },
+    "variant": "changed"
+  },
+  {
+    "capture": "codet> abc\r\ncodet> abcd",
+    "extra": {
+      "injected": "codet> abcd",
+      "local_row": true,
+      "native_row": true
+    },
+    "generation_after": 0,
+    "generation_before": 0,
+    "mode": "rebind",
+    "raw_hex": {
+      "bytes": [
+        97,
+        98,
+        99,
+        100
+      ],
+      "subtype": null
+    },
+    "variant": "changed"
+  }
+]

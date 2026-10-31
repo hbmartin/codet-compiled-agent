@@ -1,0 +1,2222 @@
+{
+  "baseline": "ed2311214d72766c85fb2f2f52aa04302ef25c04",
+  "branch": "codex/prompt-boundary-ownership-followup",
+  "runtime": "d8703895de6317951117e377b0f56b70e47efec7",
+  "full_local_suite_ref": "7df8abac0da6565dbf4e496df7d6e7acb14a34a1",
+  "source_equivalence": {
+    "before_ref": "7df8aba",
+    "after_ref": "d8703895de6317951117e377b0f56b70e47efec7",
+    "source_change": "diff --git a/include/codet/interaction.hpp b/include/codet/interaction.hpp\nindex 688b2a3..c913ce6 100644\n--- a/include/codet/interaction.hpp\n+++ b/include/codet/interaction.hpp\n@@ -28,7 +28,7 @@ public:\n   X(exec_stop, 1, \"Exec cleanup failed while stopping owned process\")                              \\\n   X(exec_original, 2, \"Exec cleanup failed; preserving original error\")                            \\\n   X(event_render, 4, \"Worker event diagnostic could not be displayed\")\n-#define CODET_WARNING_ENUM(name, bit, message) name = bit,\n+#define CODET_WARNING_ENUM(name, bit, message) name = (bit),\n   enum class Warning : uint8_t { CODET_INTERACTION_WARNINGS(CODET_WARNING_ENUM) };\n #undef CODET_WARNING_ENUM\n \n",
+    "objects_identical": true,
+    "objects_before": {
+      "CMakeFiles/codet_core.dir/src/modern/inspection.cpp.o": "e9aae65ad9caf211e8f2767301fb8119d1e8dc70e523111613dbfa304f7aacbb",
+      "CMakeFiles/codet_core.dir/src/modern/images.cpp.o": "6af242a156213cd47b91b2b12642514b337c90603e94ff9da7889a4c43818845",
+      "CMakeFiles/codet_core.dir/src/modern/tools.cpp.o": "6424e8687765ea4c7b66f94a20820d69cea280f01d6cb6685076a389f98b3722",
+      "CMakeFiles/codet_core.dir/src/modern/cli.cpp.o": "835b89e034305cc4eb406992b1f3e318bb912d024060f72eb68776efe0b19c44",
+      "CMakeFiles/codet_core.dir/src/modern/computer.cpp.o": "e5f89ce295144a055e7bda145220c31c46b5893d1c9e5cd861862ec117f12b20",
+      "CMakeFiles/codet_core.dir/src/modern/context.cpp.o": "82c2190819cc349920c6e00707206a8c3009c73809c90b9d9e5c54205e8524f8",
+      "CMakeFiles/codet_core.dir/src/modern/interaction.cpp.o": "32e1a56d4f2b21106df956572cfd56242825dbee49151590134027dbfc852803",
+      "CMakeFiles/codet_core.dir/src/modern/patch.cpp.o": "615dcbe8f9097f78b90912d3c5730024bad3b96177f8a80604c25a39b1926fa4",
+      "CMakeFiles/codet_core.dir/src/modern/tool_registry.cpp.o": "d9738a7d75dca49cc111f53f889fd9aa0a63da2f2663594d65550527464f1771",
+      "CMakeFiles/codet_core.dir/src/modern/platform.cpp.o": "aac8367d7acbb1b3425f568d811ce282499afb8291bff624dc25adc70c2c3990",
+      "CMakeFiles/codet_core.dir/src/modern/hooks.cpp.o": "ed318140e2fd3cc23fc50634f53faeb18276a485a5fe4495f1ad271f9fbb9a7f",
+      "CMakeFiles/codet_core.dir/src/modern/support.cpp.o": "7fe68ad4c79c821aaa5edd31bc5812000b32edeabc3876d45dcb2623a0a6287d",
+      "CMakeFiles/codet_core.dir/src/modern/output.cpp.o": "84c85ee92a4d72f30bbc000dc466a7b73242e99327cae8247dbd84be9f5c6553",
+      "CMakeFiles/codet_core.dir/src/modern/provider.cpp.o": "c1f4a85f38d73446ec59ad387a2454c12e09a2b6bad45cacbca37e51e1ee9fac",
+      "CMakeFiles/codet_core.dir/src/modern/capture_catalog.cpp.o": "cb71e243603c9c392f5aa3da2028bfd643d6c7fd83533ee4a0e767671060c557",
+      "CMakeFiles/codet_core.dir/src/modern/config.cpp.o": "c01374403a05764a3085006c93b19d27d13e7abc8a111fe3a473780b664985cd",
+      "CMakeFiles/codet_core.dir/src/modern/state.cpp.o": "11d356850f0c34db02ecb9f0ecf54769bf211a47da09a4625f850162d42773aa",
+      "CMakeFiles/codet_core.dir/src/modern/agent.cpp.o": "edae76cb3aa4fdf19e9cc329f00a4a8a5ea3664fb3c4876320d43fac9279eb35",
+      "CMakeFiles/codet_core.dir/src/modern/failure.cpp.o": "751d0ae7c84c788f407716e6f24fffd3abbe16e0fc608933981f7a08937f477b",
+      "CMakeFiles/codet_core.dir/src/modern/reliability.cpp.o": "94ef49319ce2241db5399b2c8df38118cd71579621132ed02304ebbf80c4ba5a",
+      "CMakeFiles/codet_core.dir/src/modern/prompts.cpp.o": "65dc4ccc5eb2d858b84910c7fd4864fb71e538f79efa5f159d2a4083182223c1",
+      "CMakeFiles/codet_core.dir/src/modern/artifacts.cpp.o": "aa6b3431f91087cae0c1f643c0d8a759626102289e4874287bffb9a603b08842",
+      "CMakeFiles/codet_core.dir/src/modern/instructions.cpp.o": "4f83be64e3dd17d4cb88237743e19a3f26a7c796a01271155f5175b74717ea67",
+      "CMakeFiles/codet_export_bench.dir/tests/export_bench.cpp.o": "b0731743dbb584e34b0f21961e4c00014e435e609b7de2f399e178120b28905b",
+      "CMakeFiles/codet_ui_render_bench.dir/tests/ui_render_bench.cpp.o": "8a78ac5d93047cf9da2aa80f32d6e940f82148b22aa00ea07062c075304c0c92",
+      "CMakeFiles/codet_line_input_bench.dir/tests/line_input_bench.cpp.o": "f59d35dcfa8e753d394cb084b457272a7bd6a9627b751f4b0cd69e9cc7211431",
+      "CMakeFiles/codet_output_bench.dir/tests/output_bench.cpp.o": "4690a38a366826a52c68474d11d0112285406107a02bb27fcd1e8c224d52c73e"
+    },
+    "objects_after": {
+      "CMakeFiles/codet_core.dir/src/modern/inspection.cpp.o": "e9aae65ad9caf211e8f2767301fb8119d1e8dc70e523111613dbfa304f7aacbb",
+      "CMakeFiles/codet_core.dir/src/modern/images.cpp.o": "6af242a156213cd47b91b2b12642514b337c90603e94ff9da7889a4c43818845",
+      "CMakeFiles/codet_core.dir/src/modern/tools.cpp.o": "6424e8687765ea4c7b66f94a20820d69cea280f01d6cb6685076a389f98b3722",
+      "CMakeFiles/codet_core.dir/src/modern/cli.cpp.o": "835b89e034305cc4eb406992b1f3e318bb912d024060f72eb68776efe0b19c44",
+      "CMakeFiles/codet_core.dir/src/modern/computer.cpp.o": "e5f89ce295144a055e7bda145220c31c46b5893d1c9e5cd861862ec117f12b20",
+      "CMakeFiles/codet_core.dir/src/modern/context.cpp.o": "82c2190819cc349920c6e00707206a8c3009c73809c90b9d9e5c54205e8524f8",
+      "CMakeFiles/codet_core.dir/src/modern/interaction.cpp.o": "32e1a56d4f2b21106df956572cfd56242825dbee49151590134027dbfc852803",
+      "CMakeFiles/codet_core.dir/src/modern/patch.cpp.o": "615dcbe8f9097f78b90912d3c5730024bad3b96177f8a80604c25a39b1926fa4",
+      "CMakeFiles/codet_core.dir/src/modern/tool_registry.cpp.o": "d9738a7d75dca49cc111f53f889fd9aa0a63da2f2663594d65550527464f1771",
+      "CMakeFiles/codet_core.dir/src/modern/platform.cpp.o": "aac8367d7acbb1b3425f568d811ce282499afb8291bff624dc25adc70c2c3990",
+      "CMakeFiles/codet_core.dir/src/modern/hooks.cpp.o": "ed318140e2fd3cc23fc50634f53faeb18276a485a5fe4495f1ad271f9fbb9a7f",
+      "CMakeFiles/codet_core.dir/src/modern/support.cpp.o": "7fe68ad4c79c821aaa5edd31bc5812000b32edeabc3876d45dcb2623a0a6287d",
+      "CMakeFiles/codet_core.dir/src/modern/output.cpp.o": "84c85ee92a4d72f30bbc000dc466a7b73242e99327cae8247dbd84be9f5c6553",
+      "CMakeFiles/codet_core.dir/src/modern/provider.cpp.o": "c1f4a85f38d73446ec59ad387a2454c12e09a2b6bad45cacbca37e51e1ee9fac",
+      "CMakeFiles/codet_core.dir/src/modern/capture_catalog.cpp.o": "cb71e243603c9c392f5aa3da2028bfd643d6c7fd83533ee4a0e767671060c557",
+      "CMakeFiles/codet_core.dir/src/modern/config.cpp.o": "c01374403a05764a3085006c93b19d27d13e7abc8a111fe3a473780b664985cd",
+      "CMakeFiles/codet_core.dir/src/modern/state.cpp.o": "11d356850f0c34db02ecb9f0ecf54769bf211a47da09a4625f850162d42773aa",
+      "CMakeFiles/codet_core.dir/src/modern/agent.cpp.o": "edae76cb3aa4fdf19e9cc329f00a4a8a5ea3664fb3c4876320d43fac9279eb35",
+      "CMakeFiles/codet_core.dir/src/modern/failure.cpp.o": "751d0ae7c84c788f407716e6f24fffd3abbe16e0fc608933981f7a08937f477b",
+      "CMakeFiles/codet_core.dir/src/modern/reliability.cpp.o": "94ef49319ce2241db5399b2c8df38118cd71579621132ed02304ebbf80c4ba5a",
+      "CMakeFiles/codet_core.dir/src/modern/prompts.cpp.o": "65dc4ccc5eb2d858b84910c7fd4864fb71e538f79efa5f159d2a4083182223c1",
+      "CMakeFiles/codet_core.dir/src/modern/artifacts.cpp.o": "aa6b3431f91087cae0c1f643c0d8a759626102289e4874287bffb9a603b08842",
+      "CMakeFiles/codet_core.dir/src/modern/instructions.cpp.o": "4f83be64e3dd17d4cb88237743e19a3f26a7c796a01271155f5175b74717ea67",
+      "CMakeFiles/codet_export_bench.dir/tests/export_bench.cpp.o": "b0731743dbb584e34b0f21961e4c00014e435e609b7de2f399e178120b28905b",
+      "CMakeFiles/codet_ui_render_bench.dir/tests/ui_render_bench.cpp.o": "8a78ac5d93047cf9da2aa80f32d6e940f82148b22aa00ea07062c075304c0c92",
+      "CMakeFiles/codet_line_input_bench.dir/tests/line_input_bench.cpp.o": "f59d35dcfa8e753d394cb084b457272a7bd6a9627b751f4b0cd69e9cc7211431",
+      "CMakeFiles/codet_output_bench.dir/tests/output_bench.cpp.o": "4690a38a366826a52c68474d11d0112285406107a02bb27fcd1e8c224d52c73e"
+    }
+  },
+  "final_source_checks": {
+    "macro-tidy.log": "278 warnings generated.\nSuppressed 278 warnings (278 in non-user code).\nUse -header-filter=.* to display errors from all non-system headers. Use -system-headers to display errors from system headers as well.\n",
+    "source-final-unit.log": "aintTheNewRow (0 ms)\n[ RUN      ] LinePrompt.MultipleStdoutChangesPreserveTheReachableStderrBoundaryAndGuidance\n[       OK ] LinePrompt.MultipleStdoutChangesPreserveTheReachableStderrBoundaryAndGuidance (0 ms)\n[ RUN      ] LinePrompt.FailedRowsAndGuidanceUseTheSharedRecoveryNewline\n[       OK ] LinePrompt.FailedRowsAndGuidanceUseTheSharedRecoveryNewline (7 ms)\n[ RUN      ] LinePrompt.ErasingTheFinalCharacterRemovesTheActiveOrdinaryPrompt\n[       OK ] LinePrompt.ErasingTheFinalCharacterRemovesTheActiveOrdinaryPrompt (0 ms)\n[ RUN      ] LinePrompt.DraftTrafficIsBoundedAndUnknownGeometryUsesSnapshots\n[       OK ] LinePrompt.DraftTrafficIsBoundedAndUnknownGeometryUsesSnapshots (27 ms)\n[ RUN      ] LinePrompt.FailedConfiguredSinkUsesTheInvocationGate\n[       OK ] LinePrompt.FailedConfiguredSinkUsesTheInvocationGate (0 ms)\n[ RUN      ] LinePrompt.InstructionDeliveryIsIndependentOfPromptDelivery\n[       OK ] LinePrompt.InstructionDeliveryIsIndependentOfPromptDelivery (0 ms)\n[ RUN      ] LinePrompt.KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure\n[       OK ] LinePrompt.KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure (0 ms)\n[ RUN      ] LinePrompt.FailedPromptIsSeparatedAndOnlyRetriedOnAnotherEvent\n[       OK ] LinePrompt.FailedPromptIsSeparatedAndOnlyRetriedOnAnotherEvent (0 ms)\n[----------] 18 tests from LinePrompt (38 ms total)\n\n[----------] Global test environment tear-down\n[==========] 50 tests from 3 test suites ran. (101 ms total)\n[  PASSED  ] 50 tests.\n",
+    "source-final-sanitize-tests.log": "intTheNewRow (0 ms)\n[ RUN      ] LinePrompt.MultipleStdoutChangesPreserveTheReachableStderrBoundaryAndGuidance\n[       OK ] LinePrompt.MultipleStdoutChangesPreserveTheReachableStderrBoundaryAndGuidance (0 ms)\n[ RUN      ] LinePrompt.FailedRowsAndGuidanceUseTheSharedRecoveryNewline\n[       OK ] LinePrompt.FailedRowsAndGuidanceUseTheSharedRecoveryNewline (10 ms)\n[ RUN      ] LinePrompt.ErasingTheFinalCharacterRemovesTheActiveOrdinaryPrompt\n[       OK ] LinePrompt.ErasingTheFinalCharacterRemovesTheActiveOrdinaryPrompt (0 ms)\n[ RUN      ] LinePrompt.DraftTrafficIsBoundedAndUnknownGeometryUsesSnapshots\n[       OK ] LinePrompt.DraftTrafficIsBoundedAndUnknownGeometryUsesSnapshots (71 ms)\n[ RUN      ] LinePrompt.FailedConfiguredSinkUsesTheInvocationGate\n[       OK ] LinePrompt.FailedConfiguredSinkUsesTheInvocationGate (0 ms)\n[ RUN      ] LinePrompt.InstructionDeliveryIsIndependentOfPromptDelivery\n[       OK ] LinePrompt.InstructionDeliveryIsIndependentOfPromptDelivery (0 ms)\n[ RUN      ] LinePrompt.KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure\n[       OK ] LinePrompt.KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure (0 ms)\n[ RUN      ] LinePrompt.FailedPromptIsSeparatedAndOnlyRetriedOnAnotherEvent\n[       OK ] LinePrompt.FailedPromptIsSeparatedAndOnlyRetriedOnAnotherEvent (0 ms)\n[----------] 18 tests from LinePrompt (84 ms total)\n\n[----------] Global test environment tear-down\n[==========] 50 tests from 3 test suites ran. (174 ms total)\n[  PASSED  ] 50 tests.\n",
+    "source-final-allocation.log": "Note: Google Test filter = *NativeMetadataFirst*\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from PublicationFault\n[ RUN      ] PublicationFault.NativeMetadataFirstUseAndEmergencyDeliveryDoNotAllocate\nnative metadata\nTool result receipt candidate (publication unconfirmed): /complete/preallocated/path\n[       OK ] PublicationFault.NativeMetadataFirstUseAndEmergencyDeliveryDoNotAllocate (52 ms)\n[----------] 1 test from PublicationFault (52 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (52 ms total)\n[  PASSED  ] 1 test.\n"
+  },
+  "source_hashes": {
+    "include/app-functions.h": "8e363fc9efb6f09bed6e406c8cda95f46e18f7ca0412ee16654c9a40f26d9340",
+    "include/app-globals.h": "58b79e8bc8e47df7317aa276e7b63cd06b88f72a304e9d1ed9b7f1161b694d6c",
+    "include/app.h": "7b4aff9d8012d627b4ce9220436240b64d9a16bf9bc0b81653bf63ed753170a3",
+    "include/callback-contracts.h": "c9bd4045bd5fbb7ba1e43cbfe582281349dc1e54c7dddfcabf41b29734c3c3e8",
+    "include/codet/artifacts.hpp": "bb6e85fa55389308906389ed202fa134673ad40d8a2acffa176a208e0a7359cf",
+    "include/codet/computer.hpp": "aa4e4ef2a400b761ed98f8dfe3b596d140eb06fa58ca7689ed927276c860eeb7",
+    "include/codet/context.hpp": "69642ff7cbe971372e0a5e0eec3060ee7dd3cae548adb1e8eb7ca9ae6801c1b5",
+    "include/codet/core.hpp": "615b4fc190c7f8321b7e6834305234a95bd6c3a4b37e35851917b3fe8f7d8ce2",
+    "include/codet/detail/approval_identity.hpp": "da818ceae7cde256db6144c57cb6a6c00b05fa096d2d7f540f7e004fe7cd6c53",
+    "include/codet/detail/approval_review.hpp": "6275783e5e2b70c81ef10447b8e3c38e1ad96729172407fc3d7c16e3caddf2a4",
+    "include/codet/detail/approval_unicode.hpp": "81b289def9f7f2453bca3043619e788e61a36765713f30809f1ff149ff9746b7",
+    "include/codet/detail/cleanup_diagnostics.hpp": "8251d5a169981c80cc02629dbe674c2d07cd4e4f9c1344685cbfc533f5db4409",
+    "include/codet/detail/cli.hpp": "c10ef98ffbda273264f944dd2a1e8294d6182c77b52f108f869004ed90c5896f",
+    "include/codet/detail/cli_diagnostics.hpp": "7ce7e967fef9020205d5bd69581a4d087c64b74bafd330dd89b4e21201874ddb",
+    "include/codet/detail/cli_output.hpp": "14ecca21fafb5c2a6f87ae4b41f9aff7c4e0872d3ebf10f894a43788fdee13a9",
+    "include/codet/detail/curses_input.hpp": "51c9edf6b7a3ebd2dc4eb065b3a5142c31503acb07c60471bc371f2edeb18e65",
+    "include/codet/detail/curses_render.hpp": "a793007ad1d88f41ab8884ac31a7a61e91de650104ea43aef042fb75ae02ea5f",
+    "include/codet/detail/curses_text.hpp": "679b9a272baa6f173f65833d782b73c550bff3559568c85ae9015afc061bfe53",
+    "include/codet/detail/diagnostic_stream.hpp": "8db8d333e6f00b49a9b4a0ad40f62c58b58481fe0c292324286fa6a8cea371d4",
+    "include/codet/detail/history_excerpt.hpp": "ad5264d743ae321ae98c421a6a7bfd1d2a1341a9f4fb5607362285a47fe5ef10",
+    "include/codet/detail/line_prompt.hpp": "c67b004c8e1770ecb0f5b00c554fff7c21ed1948025f6f079872ad52c9724930",
+    "include/codet/detail/native_output.hpp": "01b354b050beed49222734d8d5357b9a54d6e3e39c82d5863fa8cf97f71b9305",
+    "include/codet/detail/native_terminal.hpp": "2af5ae2b24491079f35c529bbbb29419d6ba244ea001e27fbc0ec5637c87b72c",
+    "include/codet/detail/output_destination.hpp": "7ef1c7009526643c93837d2ca7771d2843638fff68d9fb3e54e207b71c70ab43",
+    "include/codet/detail/request_input.hpp": "b86027f8a6e046be24bb2a4a86fa28621d3e89603af937965c0bc01284791544",
+    "include/codet/detail/request_input_controller.hpp": "fe9c7ac661151c6721987f73348a5689468976ec40a2954293ab1b5a092d42d0",
+    "include/codet/detail/terminal_input.hpp": "7933f978f5ed6e4e6ed379f7d1ec63764f5e6aa048599388b6d9747a8fa33aa1",
+    "include/codet/detail/terminal_resources.hpp": "3de15d72934e39d0c296459b75518e181b5cbf39c6f355c912b1102efd019bbf",
+    "include/codet/detail/ui_history.hpp": "93f1b86c2675fadd799dd58976ac181eaaddfe6ba0e004de2f145a94e3573f43",
+    "include/codet/detail/warning_bits.hpp": "d66463aac60c63dc0b64dcadb929124691ddc8f27c1b43e94eb0fb6f09edb533",
+    "include/codet/diagnostics.hpp": "a0a894b40b7ac5fe433a571a3e4f967b7cb70e6cd8961712dd657c7d864864cd",
+    "include/codet/interaction.hpp": "a70901ac38750a1b596f5dc654021a259732ad297bdf06ee3f4eea379225bdc2",
+    "include/codet/output.hpp": "d67f248b095142d77f43701d400529ede8006835558b1c2044ea758d72327225",
+    "include/codet/patch.hpp": "5852178d6a37ef71b560421c84543fe789e0fb5c87d45e337088f48008ec2915",
+    "include/codet/process_control.hpp": "144592cd14597dc1d52750f4eaff9b48be7b3c517991109e93d502300db1f8e6",
+    "include/codet/prompt.hpp": "cedf0270b29cc6731329907bae32be3b3870c9d803e8d354601a731d863752d1",
+    "include/codet/support.hpp": "e28f6ef49aa795f66db598cd5814686f2614b8f36669f476792d74acc61d4547",
+    "include/codet/tool_registry.hpp": "6024b8a00ec83280267cc9a874eff3d9d70b60a87dc5e2394e9f9aafa51e0771",
+    "include/embedded-strings.h": "6ffac0e9967e511dd10556aed94a2ef0201c926bd01d699208e4e26834ec2e86",
+    "include/imported-interfaces.h": "f28bc5576423cc04e2138d46b5accbdc64c3e294dcce7a080fcb4da6e16f2c8b",
+    "include/observed-abi.h": "a6526dee44e4e156cdc8f2cd8a9f5ea28cd1a25c8ea3a1deb31d0e28055f2d64",
+    "include/recovered-declarations.h": "328a2d82bcdb6bab00b171749643475b7e55f40ae7508fb305782a606ffa02a9",
+    "include/recovered-layouts.h": "68c1c0b0313d38632390b8919ddc297d6240bed0c2d1de307fce3f0cb431f195",
+    "include/recovered-storage.h": "a655bf2e2172d9293a2920b3f5ffb6ed6e7164e03b16d1c3400547d00648ce09",
+    "include/recovered-types.h": "22d85c337901a5b84de45b08c20409256586c6cc9e5ca4a13ec783788ca76caa",
+    "include/text_compat.h": "6ff5d6fe7251e3b156983ec5d1e4c2dea5bf08cdf40ac68734e1546850dd0da7",
+    "src/modern/agent.cpp": "e12c09f5a3df81421d10bfa0ac22c62b8b2ee8acf3edb724c629bc043d1504fc",
+    "src/modern/artifacts.cpp": "6bd6b5576aa7167b2fba7a085efe17ab381a689c3a9f8fdfd00a4cf9a2fe145c",
+    "src/modern/capture_catalog.cpp": "2d34912ab50f692309883726bb9cb1bc1b31c5ce5e92aca8d564511b0bb3db1c",
+    "src/modern/cli.cpp": "fc1797d6822c8a36ed9d644e4390b3765a18bf6b934777ac606ab4ceaa363ca7",
+    "src/modern/computer.cpp": "280112859a870db9deaa3d51cc1311f5fcdefa3eaec4ee7f3daac68145172ff9",
+    "src/modern/config.cpp": "6ef1d1b7829a83339e773843cbeff09db275db4a3dd8499e7c0fa0dad0d802ca",
+    "src/modern/context.cpp": "30ef96299db52a88a0904e30461f945da4e13b20ff7d5e15969534ed2de10825",
+    "src/modern/failure.cpp": "aabbc34d0e235141e79fee2c370d4ed7f3450eb89787ed467fb1b1bacf383a2a",
+    "src/modern/hooks.cpp": "5dab560355d69762dae5179f174bb4d67487186a6f288af26cbdd3646323c830",
+    "src/modern/images.cpp": "16b071f39cec995e25b25e1b266f89bf9b4a771fd24ccc87ae3e6c50d305cfe0",
+    "src/modern/inspection.cpp": "431da4f3b207ec6c4821ccf6af3de22e949b4e3875927d3d9aa2cb9899a1794c",
+    "src/modern/instructions.cpp": "04e7f17b7ccbdd3e223cacf5e75971a4ea4ec3dfaa240508806aef48739119f6",
+    "src/modern/interaction.cpp": "34d6b25dba4abde35db7f9f1a46f7c633d5caa53a3f150a36ee764ca218f4ee1",
+    "src/modern/main.cpp": "487894eb1027ee280062729da92b21de628fbfd56189384cf4efd0d5177c2e64",
+    "src/modern/output.cpp": "8b9b0b68e8923a0045dd07d5004ca2b43a3e0c7608d5276a444ccb1f19079b75",
+    "src/modern/patch.cpp": "8c99791527f8a6b09b35674802db3c29cafe2adde4700a67ca7adda60562f770",
+    "src/modern/platform.cpp": "8b65c38a9d097685b2ac8061203cc1b9df898cc993ae93c75942d69a5d970011",
+    "src/modern/prompts.cpp": "57082e86bf22ccad9d788b2bcff866788507bec072a7531797237a6fcfa0d367",
+    "src/modern/provider.cpp": "9560c6f08c03b9417209f6ee7b0b5f1f0337184048ba00e55fc4bbb9172161dc",
+    "src/modern/reliability.cpp": "d924d9c1e8875c7b7e053509e2ab2fe3e24e5aee814c706dbdc9c4e608461356",
+    "src/modern/state.cpp": "fc56e0adbcc130b4e43e7ea1eaf4c68533171bf90299b2b2d28025d1fb8cbf88",
+    "src/modern/support.cpp": "40dfad2759619972f3b0eba053a24b00877b05ce2defb648b727ebd608dd594a",
+    "src/modern/tool_registry.cpp": "bbec68092f2561c5d4596e5976c7766e5715eb4ccddf03ef61b99a8ed7b00a93",
+    "src/modern/tools.cpp": "a193014c8bc597303fec8bf7506c9771210a6f43002eed2224d59337e3c568e6",
+    "src/storage.c": "d3393530d3b2ef67dd12587eda3cca47d0df7b328e56e2790af8092efcc35428",
+    "src/subset.c": "319312c2d33aecb144d39a370ebb1aebab8c507249f4897d1826529dde79b53c",
+    "src/subsystems/abi-semantics.c": "93a619b3a7c0aff2f662cf7b4a5e2af4272da13aa7b9e4c766233aacea981c37",
+    "src/subsystems/bundled_cjson.c": "b4e154c9d7c85cb7dca32370fe3599c65daa18b13d08780631d8bc840adb431e",
+    "src/subsystems/cli.c": "09cdb5fda05c38b1730d0bdcbb35d8228b17b99d56c06d1e8e1b83d64bf7d0d7",
+    "src/subsystems/configuration.c": "4f700b72ad789b6493a8d5c0b7728a65388db5081560566aa61adcf6533f78af",
+    "src/subsystems/context.c": "a97ebc75e5ff6e767e7a932ac75ee4d1dd4f5f99fa05ae583476d622381945e5",
+    "src/subsystems/conversation_state.c": "a95e1d45d81b8b2e19278eecb346ac73dccfac6b20503b379ab9d53c3169b6a2",
+    "src/subsystems/documentation_rag.c": "db7c885baaa724ce8dc40dfe1e2d9d9984791a220fa01f4adfb81961225ff8c4",
+    "src/subsystems/dynamic_strings.c": "24fecba8000a75c5211aa8008a809ec3e34d5c011c16e5fbf810f4fb5efe42af",
+    "src/subsystems/highlighting.c": "53a19497e506f8bd7f876b3a543dc05660877d1aac119c398bb01ee4256e8cd7",
+    "src/subsystems/hooks.c": "ac4c5966f1981ac92c9cf484b6051d8d990d43381d4c1f1dc72a252f87edf061",
+    "src/subsystems/http.c": "c192c89d6cdb11cab9376d0cd95baacef75cfc12cdca26470c31e0bd8d728c05",
+    "src/subsystems/mcp.c": "f8df990285b92e8038cfb545a5f96e6896a226bcc2b7caeddb7f49e3898dd40c",
+    "src/subsystems/models_profiles.c": "4fe98545d86ba7808a3e79a26a5f0b00699175195a1a789f858f1c8b7b4040e4",
+    "src/subsystems/plans_executor.c": "38589530bc5fee2efff6ceb101d90fc90543458634a8bde8f5efc3634cb521b6",
+    "src/subsystems/platform.c": "1eade76569cc39c26555af6f1faffbf25a20a4f5dcf355124b23560d724b61a2",
+    "src/subsystems/process_diff.c": "c24d8e85c88af2264bf57be99a20a1de619d2bed2069ae23e980c00aa242e089",
+    "src/subsystems/project_initialization.c": "6b69c1323bd41506547b94ba1c9a5b217d115bdb4017ca9495bb0dfec616c2fe",
+    "src/subsystems/provider_anthropic.c": "3104b855848ce0d1768a7639bd18f96f3eab7a685ed9b44b508297b7a8a46cf5",
+    "src/subsystems/provider_common.c": "6f7b23924f46271bf50953643d229fa636fac3bbe6e770d758c7187fd54601c0",
+    "src/subsystems/provider_google.c": "7f9e858c4ad131259ae12f95cc889a8a76b20e0e2868323ab8a69ba3908029a1",
+    "src/subsystems/provider_ollama.c": "3b8e96b8f0f0d64d2fa35d91b8208180000906dd37fe9737ad014bdce2b7935c",
+    "src/subsystems/provider_openai.c": "d3c5420860e5a6832d04177c71674d42d314dc8e2636f2dfca0d0f35824d7889",
+    "src/subsystems/reasoning.c": "e2ff77174797a2780b0808a3004fed008ee3bd78f1ddb558d02ec564091e7456",
+    "src/subsystems/recovered-storage.c": "d48a93b4c645db65cdfb596504b6df932a3aa10f38601af0f6895343581797ad",
+    "src/subsystems/routing.c": "d5af0386dd2fac4f6f8df637d1439f24192aa5e4fb62ca1ed8d126ecf46dee6a",
+    "src/subsystems/runtime_startup.c": "75ec2dc31dd692a33a58f4c16eade3c5f9d6e3aed87f5645427cb09a7aff16fd",
+    "src/subsystems/sessions_history.c": "b15685f5cffd1b5ba08941efa3a904b8b820131d4d8f3adfb0382efa140c39b9",
+    "src/subsystems/sqlite_tools.c": "194674e1c599bd074eb432b5b86a9267693ea1a2a4dd555ad299aa4b92077fea",
+    "src/subsystems/stdio_abi_stubs.c": "04ced008179ea64bb0db0b721b8a48c2ccd3857cac3547f9c6452ea2cf331650",
+    "src/subsystems/subagents.c": "56c3a28f879e3853518aa76a31c9de95b6fababad3d17283f5fe02b0afb3ed7c",
+    "src/subsystems/terminal_ui.c": "457ba9bd5e38547257a1268ddd2b30a10b024ea5736508a2fc34387469729ed2",
+    "src/subsystems/themes.c": "e0b576961c7616e4cc93c0e11362c9a188686680c1e3d72935ad056d2bad6e26",
+    "src/subsystems/tools.c": "8085640e41f63652e4cf3a51faf05efc08ee805080b5bbe4d300d92d6f59d4bb",
+    "src/subsystems/web_fetch.c": "c35a4d15f039e119d03ff1c5afa8f9f14738d33096867eeb2c55f44c1417fed1",
+    "src/subsystems/web_search.c": "88f9b395463dc66b70d89945fa35afae92ef21a5e94e78e88c7ebe1ac07408ff",
+    "src/subsystems/workers.c": "9766113fea5d30b905e9f1d4c6771e18876772751ca0efa3a6ecd7197191a6f6",
+    "src/text_compat.c": "b41e7c65ca2060ec538d4469722fd357293fcf3c603c93288edab02b34dbe431",
+    "tests/approval_render_test.cpp": "7f8e99c7996b5717261b102d29876a65b70c4552bd662c9841c615fc45647606",
+    "tests/catalog_recovery_test.cpp": "dc3605a8f8b7a4de695470a9670de2bcf58af19b0be2d0715d23496c3e1e19b6",
+    "tests/checkpoint_test.cpp": "0f59c0aed2b1017d3ea0c875293a6155e9422e42467f05ce5dcc766390e8ea66",
+    "tests/cli_diagnostics_test.cpp": "472c583556cf9f42c79539791776e0b29118f8f9d8257c5a78069c33d2e4f5f1",
+    "tests/cli_integration.py": "3547ce8c64633e7f0aaf7566052e842bc7f5134468f7bc82c0afd5456c495207",
+    "tests/cli_output_test.cpp": "d672117421dd3c7cc1ac65eff0fa4567ae0036951b7bd06ab42f2c6b9c5ea541",
+    "tests/cli_test.cmake": "a1f32be993fcc74dea6cae5b24bccff18981d2d92317285d8c99a91694461702",
+    "tests/context_history_test.cpp": "936ae39187ef87ebf6efe6b2f6a0787d460cb4f768d1d411ca139b6628a3760a",
+    "tests/core_contract.hpp.in": "20abaa20367b4e0d6a9c336e6c3ecd39aeda1d4e2a1e006415f0f09161242bd8",
+    "tests/core_test.cpp": "589a9e4ed1344fdc086ecf12df625c4d7992b6a3da59d0af5b05ae4c0c59abe7",
+    "tests/core_tools.hpp": "ce0eb433db83fcee87df6b51645d0e8cc38bf9e6daf9b18439d8d3b98a505d21",
+    "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+    "tests/diagnostic_header_test.cpp": "1f7006bd7e7718eacf6710f675f3605dac25d73aab31ebb62eafa718c537434c",
+    "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+    "tests/final_review_test.cpp": "3a24179d9fa2ef3bbfd6d6edc73264ae4480b29566389d59cde0c6aa447f4c10",
+    "tests/fixtures/core-tools-v1.json": "457fa3b083c366adea51b72bb799bb6668744709fd238aa7bf68f4c1b62ca496",
+    "tests/fixtures/events-v1.jsonl": "9e33d41bb3ed9051fe968cb8d2b78f18cf17bceb3dbe209ad235b3035209b29a",
+    "tests/followup_test.cpp": "41e7694fc2d83a04f8b7620bc156d431f7be8f992abd26bafb49ddb9f5b52784",
+    "tests/foundation_test.cpp": "5eda0fce3c65f5f405d00ee32945c0262314aa9029fe9fb4b64c878fbb5d6c00",
+    "tests/hermetic.py": "05f4ccddfbe5a904725baa687004da197379c5c90e324f07f86974a807ac1884",
+    "tests/journal_fixture.hpp": "dc3d91005262c9ae0b895d028d49a46dffe0a092740086370137d8995db83f06",
+    "tests/journal_metrics.hpp": "ef06003b1552e719ef736717100fb4c8ca6d7c5d82010c0b984f6aa32ae1e764",
+    "tests/journal_prepare_interposer.cpp": "017b14a0f1621d862bce95a7d67293e8a8a40795682af73d758ea45d3bef30a4",
+    "tests/line_input_bench.cpp": "066f1018d619f4c09f789af0be1bdc50c9533b967a287e4775f1f8076228e40b",
+    "tests/line_prompt_helper.hpp": "c332338b8c470af939926faee83dd44c5f71616c0fc9cc15c5c4d1a361a664c3",
+    "tests/modernization_test.cpp": "51ef04e50b15d7d97fb449673305797a8bafa04e049e12257e18244c0a100778",
+    "tests/native_io_interposer.cpp": "06a40b301fbd9eeb55e3dff3ba9528a3cb81d48a2da7dcf374b28fa50ac05b58",
+    "tests/native_io_metrics.hpp": "e9043ec481e7014c41aa145bad2aaeac435a797e2e44094aa725755e8e7babb2",
+    "tests/native_stat_interposer.hpp": "1b18a6ad90b78d614d8665cfaeacd490b543071541cb63857ce919e1fdcc51ef",
+    "tests/native_stat_test.cpp": "20747a242c45bad51ee9981eaae1386e4cb5c23012ef48fcd33244853d1e4996",
+    "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6",
+    "tests/native_terminal_interposer.cpp": "cd53b6cb611acc9faa67036ffdda0415401671d872b53e34b85a0b9bc1b8981a",
+    "tests/native_terminal_metrics.hpp": "47dea96107c07bbf468a2631f90d5c368fe7dd4734b70eab7a91e312c22c5cfb",
+    "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+    "tests/output_test.cpp": "92a32d664d4066b28a79746f87c2cf3dcaf0c32de941dfd5653f39d43af8ceb1",
+    "tests/persistence_bench.cpp": "d5d39f7bb2f8f2cf4d4f52db83523e606633a76b4b7d4bc6c9630281f79ccd20",
+    "tests/pr17_test.cpp": "d45ae2309114ae9b53ca6b10f73bc7bf4e7611b06ad98cfe43ecb174afb24766",
+    "tests/pr18_test.cpp": "b71a36d977df1ad788b3be23579245a31dcace0fe9d050e5660fcde2efa70299",
+    "tests/process_helper.hpp": "b748b213b38db30139f41f2f6c468c737dc6bdd93d94d825b2a520c9d7dddd23",
+    "tests/process_policy_test.cpp": "22c7d6f253a79184ad9cec9e7a7ddc7df53de4eb15c1a2f89a3fc79dd5f5acee",
+    "tests/prompt_support.hpp": "1a3d5e92e6eb9dcdec36bb355d7cffefc31028403ed0436a260c6dc47517456e",
+    "tests/prompt_test.cpp": "ad3c05cf3af8be9e1895ba7b782543ff7b7513f665a1f9e5da4ff9b2d74dbfb8",
+    "tests/pty_process.py": "90184ba757ea3be88073be713b27261eec517b06c2cb137515e7d6021a57c940",
+    "tests/publication_fault_test.cpp": "d3332bdcddecc8a3570990cdc5bdb31b6e64cc6eed526e9e184217fb026d8ceb",
+    "tests/remaining_test.cpp": "05b8b747e2671330beece0cf4f469ff08c79a21241b814914773876f89430fe9",
+    "tests/review_test.cpp": "ad7cacb15f82466b6c5d5dac800143f53ccb60753dd3f74ab85d23888b989574",
+    "tests/runtime_test.cpp": "fb1f8c813db143b14e371b5868bfac8a02ebdcf73bb802cd0e9caacd880a3ad5",
+    "tests/sanitization_bench.cpp": "e65cefb040833a65ea241b1dd80399699467e35928c062b5df265f0e02263226",
+    "tests/small_core_test.cpp": "2cb869f7db67fffa3df36113a2b125caf46ab21d94d06b852ecd107782935b0c",
+    "tests/static_lifetime_interposer.cpp": "821372cb7fb7c4962b0231d736f8d380fa1f37fd58a33b98919bc600a2bbfd4c",
+    "tests/static_lifetime_metrics.hpp": "85106932df32c2ef4787e0f3d7e027ae6a7d317bd062c3236f728871fa891333",
+    "tests/temp.hpp": "a8c9cef361ab35eb2e753b78b258ed120997507a976a2bc46ec199d52215bc6d",
+    "tests/terminal_cli_helper.py": "a4130fa18c8e5dd7e602a6c7cedde6de76350db244a57cf157d704895050c741",
+    "tests/terminal_resources_test.cpp": "96e572cab81b3f2572f07d84f51c8df4be55ae9738bdb1af5503d611cbfb6956",
+    "tests/test_analyze_modern.py": "3e167c6f2dc9c668c9d9de27d4088337659136b8a4b2dde89635440f6919eb02",
+    "tests/test_build_integrity.py": "4f0cdb504f7de81254a69a368fcfd304b1aac02758c442d1adee355f81509a7b",
+    "tests/test_hermetic.py": "ecba7689d9ca4eb2e2a831a44b440862cf4a575867088dd6318029ee82413de9",
+    "tests/test_lint.py": "56b0e040cf8a0624c367b6c5be07964df464019e4f94cd23b6511dd8b0ca6ca6",
+    "tests/test_main.cpp": "b64580dcc1a134583bdff43128785a5e2cf4123b2c25aa56b388a15fdc03570e",
+    "tests/test_prompts.py": "a6766879cb27cb7fda1af5d3fa843949008b1abcac50fc6d31e08e28bc4e2ba6",
+    "tests/test_semgrep_report.py": "5c69d9f9f48936f73f66b545e82d694e07e246b7c40555751fb958c0bf5b3db9",
+    "tests/tool_contract_test.cpp": "7ee95f497e88d6a747e68c57e440f7ef7a206c8020a0aa69b206fb3486114261",
+    "tests/ui_render_bench.cpp": "bd791a1d28089d08b6959826870ad45eb2c2a80c321ae98fc0aa1a4ccabb5a83"
+  },
+  "changes": {
+    "native_metadata": "One statically initialized pthread mutex protects fixed native boundary/cache records. Guarded value snapshots and epoch/generation commits; no inspection, native output, or callbacks under the lock. Record admission reserves its entire boundary before output. Injected streams remain independently owned.",
+    "presentation": "External generations are checked before the unchanged-input return. Native/injected buffer transitions rebind presentation and preserve abandoned native boundaries. Submission rechecks resulting geometry before deferred escapes.",
+    "warnings": "One registry defines unchanged warning values and text; compile-time mask, capacity, uniqueness and disjoint-bank checks. Existing new/retry/coalescing rules retained."
+  },
+  "validation": [
+    {
+      "name": "cross-selection-rebuild",
+      "command": [
+        "cmake",
+        "--build",
+        "build/basic-input-boundary-followup/cross-mode",
+        "--target",
+        "codet_tests",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 8.536310625029728
+    },
+    {
+      "name": "cross-selection-runtime",
+      "command": [
+        "build/basic-input-boundary-followup/cross-mode/codet_tests",
+        "--gtest_filter=LinePrompt.*:InteractionWarnings.*:CursesInput.*"
+      ],
+      "exit": 0,
+      "seconds": 0.13694170909002423
+    },
+    {
+      "name": "host-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/host",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 0.09241962502710521
+    },
+    {
+      "name": "host-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/host",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 118.29727429104969
+    },
+    {
+      "name": "sanitize-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/sanitize",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 11.145888125058264
+    },
+    {
+      "name": "cross-selection-rebuild",
+      "command": [
+        "cmake",
+        "--build",
+        "build/basic-input-boundary-followup/cross-mode",
+        "--target",
+        "codet_tests",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 0.11499679205007851
+    },
+    {
+      "name": "cross-selection-runtime",
+      "command": [
+        "build/basic-input-boundary-followup/cross-mode/codet_tests",
+        "--gtest_filter=LinePrompt.*:InteractionWarnings.*:CursesInput.*"
+      ],
+      "exit": 0,
+      "seconds": 0.14508420787751675
+    },
+    {
+      "name": "sanitize-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build/sanitize",
+        "-j4"
+      ],
+      "exit": 0,
+      "seconds": 0.08413704088889062
+    },
+    {
+      "name": "sanitize-ctest",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/sanitize",
+        "--output-on-failure"
+      ],
+      "exit": 0,
+      "seconds": 184.56931937509216
+    },
+    {
+      "name": "repeat-unit",
+      "command": [
+        "build/sanitize/codet_tests",
+        "--gtest_filter=TerminalResources.*:LineDestinations.*:LinePrompt.*:CliOutput.*:RequestInput*.*:CursesInput.*:InteractionWarnings.*:TerminalInput.*:DiagnosticWriter.*",
+        "--gtest_repeat=20"
+      ],
+      "exit": 0,
+      "seconds": 42.845193832879886
+    },
+    {
+      "name": "repeat-pty-0",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 13.861449166899547
+    },
+    {
+      "name": "repeat-pty-1",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 13.794237416936085
+    },
+    {
+      "name": "repeat-pty-2",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 13.810230790870264
+    },
+    {
+      "name": "repeat-pty-3",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 13.888670542044565
+    },
+    {
+      "name": "repeat-pty-4",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 13.842243083985522
+    },
+    {
+      "name": "repeat-pty-5",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 13.964915042044595
+    },
+    {
+      "name": "repeat-pty-6",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 13.812800333835185
+    },
+    {
+      "name": "repeat-pty-7",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 13.73237970797345
+    },
+    {
+      "name": "repeat-pty-8",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 13.655678125098348
+    },
+    {
+      "name": "repeat-pty-9",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 13.40790554182604
+    },
+    {
+      "name": "repeat-pty-10",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 14.592872541863471
+    },
+    {
+      "name": "repeat-pty-11",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 13.143571082968265
+    },
+    {
+      "name": "repeat-pty-12",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 13.960037500131875
+    },
+    {
+      "name": "repeat-pty-13",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 13.063710458111018
+    },
+    {
+      "name": "repeat-pty-14",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 13.237237666966394
+    },
+    {
+      "name": "repeat-pty-15",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 13.238876583985984
+    },
+    {
+      "name": "repeat-pty-16",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 13.051813750062138
+    },
+    {
+      "name": "repeat-pty-17",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 13.146370291011408
+    },
+    {
+      "name": "repeat-pty-18",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 13.12030787509866
+    },
+    {
+      "name": "repeat-pty-19",
+      "command": [
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/sanitize/codet",
+        "CliTests.test_native_prompt_restoration_without_another_key_and_resize_submission",
+        "CliTests.test_terminal_input_errors_retry_and_permanent_failures_are_not_eof",
+        "CliTests.test_prepared_line_viewport_and_stdout_binding",
+        "CliTests.test_native_line_boundaries_recover_before_append_and_expose_submission_tail",
+        "CliTests.test_line_prompts_follow_stdout_with_separate_input_and_devtty",
+        "CliTests.test_native_notices_and_cleanup_restore_request_drafts_once"
+      ],
+      "exit": 0,
+      "seconds": 12.958922124933451
+    },
+    {
+      "name": "lint",
+      "command": [
+        "make",
+        "check-lint",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 1.2826010000426322
+    },
+    {
+      "name": "runner-tests",
+      "command": [
+        "make",
+        "test-lint-runners",
+        "test-modern-analysis-runner",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "ANALYSIS_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "exit": 0,
+      "seconds": 5.732144832843915
+    },
+    {
+      "name": "semgrep",
+      "command": [
+        "make",
+        "check-semgrep",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "SEMGREP=build/semgrep-venv/bin/pysemgrep"
+      ],
+      "exit": 0,
+      "seconds": 4.7146470420993865
+    },
+    {
+      "name": "cppcheck",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-boundary-ownership-followup/validation/cppcheck-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--tool",
+        "cppcheck"
+      ],
+      "exit": 0,
+      "seconds": 67.04962441697717
+    },
+    {
+      "name": "clang-tidy",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-boundary-ownership-followup/validation/clang-tidy-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--tool",
+        "clang-tidy"
+      ],
+      "exit": 1,
+      "seconds": 38.6078709999565
+    },
+    {
+      "name": "clang-analyzer",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-boundary-ownership-followup/validation/clang-analyzer-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--tool",
+        "clang-analyzer"
+      ],
+      "exit": 1,
+      "seconds": 58.34770020795986
+    },
+    {
+      "name": "selftest",
+      "command": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-boundary-ownership-followup/validation/selftest-analysis",
+        "--jobs",
+        "4",
+        "--timeout",
+        "300",
+        "--selftest"
+      ],
+      "exit": 0,
+      "seconds": 1.349994958145544
+    }
+  ],
+  "test_counts": {
+    "ctest_groups": 9,
+    "unit_cases": 625,
+    "existing_opt_in_skips": 2,
+    "publication_fault_cases": 68,
+    "cli_integration_methods": 101,
+    "focused_unit_repetitions": 20,
+    "focused_pty_batches": 20,
+    "pty_methods_per_batch": 6,
+    "tsan_repetitions": 20,
+    "tsan_cases_per_repetition": 29
+  },
+  "thread_sanitizer": {
+    "build": "Separate complete host -fsanitize=thread build; ASan/UBSan disabled there.",
+    "final_log_tail": "Guidance\n[       OK ] LinePrompt.MultipleStdoutChangesPreserveTheReachableStderrBoundaryAndGuidance (0 ms)\n[ RUN      ] LinePrompt.FailedRowsAndGuidanceUseTheSharedRecoveryNewline\n[       OK ] LinePrompt.FailedRowsAndGuidanceUseTheSharedRecoveryNewline (25 ms)\n[ RUN      ] LinePrompt.ErasingTheFinalCharacterRemovesTheActiveOrdinaryPrompt\n[       OK ] LinePrompt.ErasingTheFinalCharacterRemovesTheActiveOrdinaryPrompt (0 ms)\n[ RUN      ] LinePrompt.DraftTrafficIsBoundedAndUnknownGeometryUsesSnapshots\n[       OK ] LinePrompt.DraftTrafficIsBoundedAndUnknownGeometryUsesSnapshots (152 ms)\n[ RUN      ] LinePrompt.FailedConfiguredSinkUsesTheInvocationGate\n[       OK ] LinePrompt.FailedConfiguredSinkUsesTheInvocationGate (0 ms)\n[ RUN      ] LinePrompt.InstructionDeliveryIsIndependentOfPromptDelivery\n[       OK ] LinePrompt.InstructionDeliveryIsIndependentOfPromptDelivery (0 ms)\n[ RUN      ] LinePrompt.KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure\n[       OK ] LinePrompt.KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure (0 ms)\n[ RUN      ] LinePrompt.FailedPromptIsSeparatedAndOnlyRetriedOnAnotherEvent\n[       OK ] LinePrompt.FailedPromptIsSeparatedAndOnlyRetriedOnAnotherEvent (0 ms)\n[----------] 18 tests from LinePrompt (183 ms total)\n\n[----------] Global test environment tear-down\n[==========] 29 tests from 3 test suites ran. (193 ms total)\n[  PASSED  ] 29 tests.\n",
+    "baseline_race": "==================\nWARNING: ThreadSanitizer: data race (pid=36588)\n  Read of size 8 at 0x0001050080a8 by main thread:\n    #0 codet::detail::LineDestinations::generation(int) const output_destination.hpp:86 (race:arm64+0x100004144)\n    #1 codet::detail::LinePrompt::geometry() line_prompt.hpp:99 (race:arm64+0x10000c7d4)\n    #2 codet::detail::LinePrompt::flush() line_prompt.hpp:278 (race:arm64+0x100005084)\n    #3 codet::detail::LinePrompt::append(char) line_prompt.hpp:329 (race:arm64+0x10000123c)\n    #4 main race.cpp:22 (race:arm64+0x100000dac)\n\n  Previous write of size 8 at 0x0001050080a8 by thread T1:\n    #0 auto codet::detail::LineDestinations::interrupt(int)::'lambda'(auto&)::operator()<codet::detail::LineDestinations::Channel>(auto&) const output_destination.hpp:82 (race:arm64+0x100032994)\n    #1 void codet::detail::LineDestinations::related<codet::detail::LineDestinations::interrupt(int)::'lambda'(auto&)>(int, auto) output_destination.hpp:31 (race:arm64+0x1000328dc)\n    #2 codet::detail::LineDestinations::interrupt(int) output_destination.hpp:80 (race:arm64+0x1000327b0)\n    #3 codet::(anonymous namespace)::NativeDiagnosticRecord::NativeDiagnosticRecord(int, codet::(anonymous namespace)::DescriptorDiagnosticState&, codet::detail::OutputAttempt&, bool) platform.cpp:380 (race:arm64+0x1000344f0)\n    #4 codet::(anonymous namespace)::NativeDiagnosticRecord::NativeDiagnosticRecord(int, codet::(anonymous namespace)::DescriptorDiagnosticState&, codet::detail::OutputAttempt&, bool) platform.cpp:376 (race:arm64+0x100017098)\n    #5 codet::(anonymous namespace)::immediate_record(codet::detail::OutputAttempt&) platform.cpp:410 (race:arm64+0x100015330)\n    #6 codet::detail::immediate_stderr(std::initializer_list<std::__1::basic_string_view<char, std::__1::char_traits<char>>>, bool) platform.cpp:416 (race:arm64+0x10001521c)\n    #7 main::$_0::operator()() const race.cpp:19 (race:arm64+0x1000107ec)\n    #8 std::__1::__invoke_result_impl<void, main::$_0>::type std::__1::__invoke[abi:nqe220106]<main::$_0>(main::$_0&&) invoke.h:90 (race:arm64+0x1000106c4)\n    #9 void std::__1::__thread_execute[abi:nqe220106]<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, main::$_0, 0ul>(std::__1::tuple<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, main::$_0>&, std::__1::__integer_sequence<unsigned long, 0ul>) thread.h:161 (race:arm64+0x1000105f0)\n    #10 void* std::__1::__thread_proxy[abi:nqe220106]<std::__1::tuple<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, main::$_0>>(void*) thread.h:169 (race:arm64+0x10000ff48)\n\n  Location is global 'codet::(anonymous namespace)::native_destinations' at 0x000105008010 (race+0x10038c0a8)\n\n  Thread T1 (tid=73374572, running) created by main thread at:\n    #0 pthread_create <null> (libclang_rt.tsan_osx_dynamic.dylib:arm64e+0x33bac)\n    #1 std::__1::__libcpp_thread_create[abi:nqe220106](_opaque_pthread_t**, void* (*)(void*), void*) pthread.h:182 (race:arm64+0x10000feb0)\n    #2 std::__1::thread::thread[abi:nqe220106]<main::$_0, 0>(main::$_0&&) thread.h:221 (race:arm64+0x10000fc5c)\n    #3 std::__1::thread::thread[abi:nqe220106]<main::$_0, 0>(main::$_0&&) thread.h:212 (race:arm64+0x1000012fc)\n    #4 main race.cpp:17 (race:arm64+0x100000d70)\n\nSUMMARY: ThreadSanitizer: data race output_destination.hpp:86 in codet::detail::LineDestinations::generation(int) const\n==================\n"
+  },
+  "negative_controls": {
+    "admission": "Note: Google Test filter = DiagnosticWriter.InterveningRecoverySeparatorCannotSuppressAnAdmittedRecord\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from DiagnosticWriter\n[ RUN      ] DiagnosticWriter.InterveningRecoverySeparatorCannotSuppressAnAdmittedRecord\n/Volumes/Pro2T/codet-compiled-agent/tests/cli_diagnostics_test.cpp:1213: Failure\nValue of: detail::immediate_stderr({\"admitted\"})\n  Actual: false\nExpected: true\n\n/Volumes/Pro2T/codet-compiled-agent/tests/cli_diagnostics_test.cpp:1217: Failure\nValue of: bytes\nExpected: has substring \"admitted\\n\"\n  Actual: \"pa\\nintervening\\n\\n\"\n\n[  FAILED  ] DiagnosticWriter.InterveningRecoverySeparatorCannotSuppressAnAdmittedRecord (0 ms)\n[----------] 1 test from DiagnosticWriter (0 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (0 ms total)\n[  PASSED  ] 0 tests.\n[  FAILED  ] 1 test, listed below:\n[  FAILED  ] DiagnosticWriter.InterveningRecoverySeparatorCannotSuppressAnAdmittedRecord\n\n 1 FAILED TEST\n",
+    "overlap_compile": "In file included from /Volumes/Pro2T/codet-compiled-agent/build/prompt-boundary-ownership-followup/overlap.cpp:1:\ninclude/codet/detail/warning_bits.hpp:14:26: error: static assertion failed due to requirement '(5U & (5U + 1U)) == 0': Warning kinds must fill one bit bank\n   14 |   static_assert(Kinds && (Kinds & (Kinds + 1u)) == 0, \"Warning kinds must fill one bit bank\");\n      |                          ^~~~~~~~~~~~~~~~~~~~~~~~~~~\n/Volumes/Pro2T/codet-compiled-agent/build/prompt-boundary-ownership-followup/overlap.cpp:2:30: note: in instantiation of template class 'codet::detail::WarningBits<5>' requested here\n    2 | static_assert(codet::detail::WarningBits<5>::shift > 0);\n      |                              ^\ninclude/codet/detail/warning_bits.hpp:14:49: note: expression evaluates to '4 == 0'\n   14 |   static_assert(Kinds && (Kinds & (Kinds + 1u)) == 0, \"Warning kinds must fill one bit bank\");\n      |                          ~~~~~~~~~~~~~~~~~~~~~~~^~~~\n1 error generated.\n",
+    "capacity_compile": "In file included from /Volumes/Pro2T/codet-compiled-agent/build/prompt-boundary-ownership-followup/capacity.cpp:1:\ninclude/codet/detail/warning_bits.hpp:15:17: error: static assertion failed due to requirement 'shift <= std::numeric_limits<unsigned int>::digits / 2': Warning and retry banks must fit without overlap\n   15 |   static_assert(shift <= std::numeric_limits<unsigned>::digits / 2,\n      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n/Volumes/Pro2T/codet-compiled-agent/build/prompt-boundary-ownership-followup/capacity.cpp:2:30: note: in instantiation of template class 'codet::detail::WarningBits<131071>' requested here\n    2 | static_assert(codet::detail::WarningBits<131071>::shift > 0);\n      |                              ^\ninclude/codet/detail/warning_bits.hpp:15:23: note: expression evaluates to '17 <= 16'\n   15 |   static_assert(shift <= std::numeric_limits<unsigned>::digits / 2,\n      |                 ~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n1 error generated.\n",
+    "reproduction": "Identical probe source demonstrates missing flush-only restoration, duplicate deferred escape after resize, and stale native row after rdbuf return on fetched main; all corrected by the change."
+  },
+  "static_analysis": {
+    "cppcheck": {
+      "exit": 0,
+      "findings_detail": [],
+      "baseline": [],
+      "same": true
+    },
+    "clang-tidy": {
+      "exit": 1,
+      "findings_detail": [
+        [
+          "bugprone-narrowing-conversions",
+          "src/modern/images.cpp",
+          "narrowing conversion from 'unsigned long' to 'double'"
+        ],
+        [
+          "bugprone-narrowing-conversions",
+          "src/modern/images.cpp",
+          "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+        ],
+        [
+          "bugprone-narrowing-conversions",
+          "src/modern/images.cpp",
+          "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+        ],
+        [
+          "bugprone-exception-escape",
+          "src/modern/main.cpp",
+          "an exception may be thrown in function 'main' which should not throw exceptions"
+        ],
+        [
+          "clang-diagnostic-error",
+          "src/modern/platform.cpp",
+          "implicit instantiation of undefined template 'std::basic_istringstream<char>'"
+        ],
+        [
+          "bugprone-exception-escape",
+          "src/modern/state.cpp",
+          "an exception may be thrown in function 'operator()' which should not throw exceptions"
+        ]
+      ],
+      "baseline": [
+        [
+          "bugprone-narrowing-conversions",
+          "src/modern/images.cpp",
+          "narrowing conversion from 'unsigned long' to 'double'"
+        ],
+        [
+          "bugprone-narrowing-conversions",
+          "src/modern/images.cpp",
+          "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+        ],
+        [
+          "bugprone-narrowing-conversions",
+          "src/modern/images.cpp",
+          "narrowing conversion from 'size_t' (aka 'unsigned long') to 'double'"
+        ],
+        [
+          "bugprone-exception-escape",
+          "src/modern/main.cpp",
+          "an exception may be thrown in function 'main' which should not throw exceptions"
+        ],
+        [
+          "clang-diagnostic-error",
+          "src/modern/platform.cpp",
+          "implicit instantiation of undefined template 'std::basic_istringstream<char>'"
+        ],
+        [
+          "bugprone-exception-escape",
+          "src/modern/state.cpp",
+          "an exception may be thrown in function 'operator()' which should not throw exceptions"
+        ]
+      ],
+      "same": true
+    },
+    "clang-analyzer": {
+      "exit": 1,
+      "findings_detail": [
+        [
+          "core.DivideZero",
+          "src/modern/context.cpp",
+          "Division by zero",
+          "project_history",
+          "b7fd78895b63841553e144fd774a0954"
+        ]
+      ],
+      "baseline": [
+        [
+          "core.DivideZero",
+          "src/modern/context.cpp",
+          "Division by zero",
+          "project_history",
+          "b7fd78895b63841553e144fd774a0954"
+        ]
+      ],
+      "same": true
+    }
+  },
+  "ubuntu": {
+    "conclusion": "success",
+    "headSha": "d8703895de6317951117e377b0f56b70e47efec7",
+    "status": "completed",
+    "url": "https://github.com/hbmartin/codet-compiled-agent/actions/runs/41209439402"
+  },
+  "performance": {
+    "protocol": "Identical arm64 Release -O3 compiler settings and harnesses. One warm-up plus five alternating measured runs, repeated twice. No concurrent local tests, analyzers or builds during timing.",
+    "variants": [
+      {
+        "name": "baseline",
+        "ref": "ed2311214d72766c85fb2f2f52aa04302ef25c04",
+        "configure": [
+          "cmake",
+          "-S",
+          "/Volumes/Pro2T/codet-compiled-agent/build/prompt-boundary-ownership-followup/baseline-src",
+          "-B",
+          "/Volumes/Pro2T/codet-compiled-agent/build/prompt-boundary-ownership-followup/baseline-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+          "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps"
+        ],
+        "harness_hashes": {
+          "tests/line_input_bench.cpp": "066f1018d619f4c09f789af0be1bdc50c9533b967a287e4775f1f8076228e40b",
+          "tests/ui_render_bench.cpp": "bd791a1d28089d08b6959826870ad45eb2c2a80c321ae98fc0aa1a4ccabb5a83",
+          "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+          "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+          "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+          "tests/native_stat_interposer.hpp": "1b18a6ad90b78d614d8665cfaeacd490b543071541cb63857ce919e1fdcc51ef",
+          "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6"
+        }
+      },
+      {
+        "name": "changed",
+        "ref": "d8703895de6317951117e377b0f56b70e47efec7",
+        "configure": [
+          "cmake",
+          "-S",
+          "/Volumes/Pro2T/codet-compiled-agent/build/prompt-boundary-ownership-followup/changed-src",
+          "-B",
+          "/Volumes/Pro2T/codet-compiled-agent/build/prompt-boundary-ownership-followup/changed-release",
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          "-DCMAKE_C_COMPILER=/usr/bin/cc",
+          "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+          "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps"
+        ],
+        "harness_hashes": {
+          "tests/line_input_bench.cpp": "066f1018d619f4c09f789af0be1bdc50c9533b967a287e4775f1f8076228e40b",
+          "tests/ui_render_bench.cpp": "bd791a1d28089d08b6959826870ad45eb2c2a80c321ae98fc0aa1a4ccabb5a83",
+          "tests/output_bench.cpp": "d1ceb48496a92b6fe1c973092a0a2c1ef98afb525e3ee3f57841b174488a29ee",
+          "tests/export_bench.cpp": "e53cb33a49dec8843e21efcbe82c175593a3635b5304aca03b8157cba8c17f32",
+          "tests/descriptor_bench_metrics.hpp": "38a2d5334181c517355c805b983788a893a63f4c20b50254a4356bf2dff828d4",
+          "tests/native_stat_interposer.hpp": "1b18a6ad90b78d614d8665cfaeacd490b543071541cb63857ce919e1fdcc51ef",
+          "tests/native_symbol.hpp": "250a7ec8e847f9df209e878984b36732e7174c8c8c1a4be05f712b86c16c29e6"
+        }
+      }
+    ],
+    "samples": 960,
+    "summary_rows": 160,
+    "selected": [
+      {
+        "set": 1,
+        "harness": "line",
+        "workload": "editing-basic",
+        "variant": "baseline",
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 20487,
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 20480,
+        "milliseconds": 2.506542,
+        "output_operations": 20480,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0
+      },
+      {
+        "set": 1,
+        "harness": "line",
+        "workload": "editing-basic",
+        "variant": "changed",
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 20487,
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 20480,
+        "milliseconds": 2.488667,
+        "output_operations": 20480,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0,
+        "latency_change_percent": -0.7131338712856206
+      },
+      {
+        "set": 1,
+        "harness": "line",
+        "workload": "editing-patterned",
+        "variant": "baseline",
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 3265359,
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 20480,
+        "milliseconds": 3.551083,
+        "output_operations": 81704,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0
+      },
+      {
+        "set": 1,
+        "harness": "line",
+        "workload": "editing-patterned",
+        "variant": "changed",
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 3265359,
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 20480,
+        "milliseconds": 3.52475,
+        "output_operations": 81704,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0,
+        "latency_change_percent": -0.7415484233964764
+      },
+      {
+        "set": 1,
+        "harness": "line",
+        "workload": "native-editing",
+        "variant": "baseline",
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 239,
+        "fcntl": 73,
+        "fpathconf": 0,
+        "fstat": 20553,
+        "geometry_queries": 20480,
+        "iterations": 20480,
+        "milliseconds": 19.868417,
+        "output_operations": 73,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0
+      },
+      {
+        "set": 1,
+        "harness": "line",
+        "workload": "native-editing",
+        "variant": "changed",
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 239,
+        "fcntl": 73,
+        "fpathconf": 0,
+        "fstat": 20553,
+        "geometry_queries": 20480,
+        "iterations": 20480,
+        "milliseconds": 20.416167,
+        "output_operations": 73,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0,
+        "latency_change_percent": 2.7568879795506707
+      },
+      {
+        "set": 1,
+        "harness": "line",
+        "workload": "native-boundary",
+        "variant": "baseline",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 7900,
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 300,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "milliseconds": 0.82525,
+        "output_operations": 100,
+        "prepared_input_bytes": 200,
+        "warning_attempts": 0
+      },
+      {
+        "set": 1,
+        "harness": "line",
+        "workload": "native-boundary",
+        "variant": "changed",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 7900,
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 300,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "milliseconds": 0.830833,
+        "output_operations": 100,
+        "prepared_input_bytes": 200,
+        "warning_attempts": 0,
+        "latency_change_percent": 0.6765222659800063
+      },
+      {
+        "set": 1,
+        "harness": "line",
+        "workload": "native-flush-boundary",
+        "variant": "baseline",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 0,
+        "fcntl": 100,
+        "fpathconf": 0,
+        "fstat": 100,
+        "geometry_queries": 0,
+        "iterations": 100,
+        "milliseconds": 0.260458,
+        "output_operations": 0,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0
+      },
+      {
+        "set": 1,
+        "harness": "line",
+        "workload": "native-flush-boundary",
+        "variant": "changed",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 7900,
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 300,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "milliseconds": 0.833708,
+        "output_operations": 100,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "latency_change_percent": 220.09306682843297
+      },
+      {
+        "set": 1,
+        "harness": "line",
+        "workload": "native-rebind",
+        "variant": "baseline",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 0,
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 100,
+        "milliseconds": 0.001167,
+        "output_operations": 0,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0
+      },
+      {
+        "set": 1,
+        "harness": "line",
+        "workload": "native-rebind",
+        "variant": "changed",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 15900,
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 400,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "milliseconds": 0.709583,
+        "output_operations": 300,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "latency_change_percent": 60704.02742073693
+      },
+      {
+        "set": 1,
+        "harness": "line",
+        "workload": "native-unchanged",
+        "variant": "baseline",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 0,
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 10000,
+        "milliseconds": 0.112292,
+        "output_operations": 0,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0
+      },
+      {
+        "set": 1,
+        "harness": "line",
+        "workload": "native-unchanged",
+        "variant": "changed",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 0,
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 10000,
+        "milliseconds": 0.183125,
+        "output_operations": 0,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "latency_change_percent": 63.07929327111459
+      },
+      {
+        "set": 1,
+        "harness": "output",
+        "workload": "diagnostics-amplified",
+        "variant": "baseline",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "fcntl": 200000,
+        "fpathconf": 0,
+        "fstat": 200000,
+        "milliseconds": 414.025958,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000
+      },
+      {
+        "set": 1,
+        "harness": "output",
+        "workload": "diagnostics-amplified",
+        "variant": "changed",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "fcntl": 200000,
+        "fpathconf": 0,
+        "fstat": 200000,
+        "milliseconds": 417.978708,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "latency_change_percent": 0.9547106705807051
+      },
+      {
+        "set": 1,
+        "harness": "output",
+        "workload": "diagnostics-standalone-amplified",
+        "variant": "baseline",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "fcntl": 200000,
+        "fpathconf": 0,
+        "fstat": 200000,
+        "milliseconds": 425.817125,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000
+      },
+      {
+        "set": 1,
+        "harness": "output",
+        "workload": "diagnostics-standalone-amplified",
+        "variant": "changed",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "fcntl": 200000,
+        "fpathconf": 0,
+        "fstat": 200000,
+        "milliseconds": 413.461041,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "latency_change_percent": -2.90173487033899
+      },
+      {
+        "set": 1,
+        "harness": "output",
+        "workload": "diagnostics-pipe-amplified",
+        "variant": "baseline",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "fcntl": 200000,
+        "fpathconf": 1,
+        "fstat": 200000,
+        "milliseconds": 406.046292,
+        "observed": 200000,
+        "readiness": 200000,
+        "writes": 200000
+      },
+      {
+        "set": 1,
+        "harness": "output",
+        "workload": "diagnostics-pipe-amplified",
+        "variant": "changed",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "fcntl": 200000,
+        "fpathconf": 1,
+        "fstat": 200000,
+        "milliseconds": 429.195291,
+        "observed": 200000,
+        "readiness": 200000,
+        "writes": 200000,
+        "latency_change_percent": 5.70107385686951
+      },
+      {
+        "set": 1,
+        "harness": "export",
+        "workload": "small",
+        "variant": "baseline",
+        "allocated_bytes": 31487000,
+        "allocations": 239500,
+        "descriptor_bytes": 1320000,
+        "descriptor_writes": 50,
+        "expected_bytes": 1320000,
+        "fcntl": 50,
+        "fpathconf": 0,
+        "fstat": 50,
+        "iterations": 50,
+        "messages": 100,
+        "milliseconds": 70.188375,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0
+      },
+      {
+        "set": 1,
+        "harness": "export",
+        "workload": "small",
+        "variant": "changed",
+        "allocated_bytes": 31487000,
+        "allocations": 239500,
+        "descriptor_bytes": 1320000,
+        "descriptor_writes": 50,
+        "expected_bytes": 1320000,
+        "fcntl": 50,
+        "fpathconf": 0,
+        "fstat": 50,
+        "iterations": 50,
+        "messages": 100,
+        "milliseconds": 64.063833,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0,
+        "latency_change_percent": -8.725863791546661
+      },
+      {
+        "set": 1,
+        "harness": "export",
+        "workload": "large",
+        "variant": "baseline",
+        "allocated_bytes": 450368064,
+        "allocations": 1500654,
+        "descriptor_bytes": 30960000,
+        "descriptor_writes": 474,
+        "expected_bytes": 30960000,
+        "fcntl": 3,
+        "fpathconf": 0,
+        "fstat": 3,
+        "iterations": 3,
+        "messages": 10000,
+        "milliseconds": 269.983333,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0
+      },
+      {
+        "set": 1,
+        "harness": "export",
+        "workload": "large",
+        "variant": "changed",
+        "allocated_bytes": 450368064,
+        "allocations": 1500654,
+        "descriptor_bytes": 30960000,
+        "descriptor_writes": 474,
+        "expected_bytes": 30960000,
+        "fcntl": 3,
+        "fpathconf": 0,
+        "fstat": 3,
+        "iterations": 3,
+        "messages": 10000,
+        "milliseconds": 275.052625,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0,
+        "latency_change_percent": 1.877631461050222
+      },
+      {
+        "set": 2,
+        "harness": "line",
+        "workload": "editing-basic",
+        "variant": "baseline",
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 20487,
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 20480,
+        "milliseconds": 2.542416,
+        "output_operations": 20480,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0
+      },
+      {
+        "set": 2,
+        "harness": "line",
+        "workload": "editing-basic",
+        "variant": "changed",
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 20487,
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 20480,
+        "milliseconds": 2.521166,
+        "output_operations": 20480,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0,
+        "latency_change_percent": -0.8358191578404117
+      },
+      {
+        "set": 2,
+        "harness": "line",
+        "workload": "editing-patterned",
+        "variant": "baseline",
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 3265359,
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 20480,
+        "milliseconds": 3.632625,
+        "output_operations": 81704,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0
+      },
+      {
+        "set": 2,
+        "harness": "line",
+        "workload": "editing-patterned",
+        "variant": "changed",
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 3265359,
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 20480,
+        "milliseconds": 3.642958,
+        "output_operations": 81704,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0,
+        "latency_change_percent": 0.284449950104948
+      },
+      {
+        "set": 2,
+        "harness": "line",
+        "workload": "native-editing",
+        "variant": "baseline",
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 239,
+        "fcntl": 73,
+        "fpathconf": 0,
+        "fstat": 20553,
+        "geometry_queries": 20480,
+        "iterations": 20480,
+        "milliseconds": 20.436708,
+        "output_operations": 73,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0
+      },
+      {
+        "set": 2,
+        "harness": "line",
+        "workload": "native-editing",
+        "variant": "changed",
+        "allocated_bytes": 884628,
+        "allocations": 36,
+        "bytes": 239,
+        "fcntl": 73,
+        "fpathconf": 0,
+        "fstat": 20553,
+        "geometry_queries": 20480,
+        "iterations": 20480,
+        "milliseconds": 21.151666,
+        "output_operations": 73,
+        "prepared_input_bytes": 40959,
+        "warning_attempts": 0,
+        "latency_change_percent": 3.4984010144882394
+      },
+      {
+        "set": 2,
+        "harness": "line",
+        "workload": "native-boundary",
+        "variant": "baseline",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 7900,
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 300,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "milliseconds": 0.867459,
+        "output_operations": 100,
+        "prepared_input_bytes": 200,
+        "warning_attempts": 0
+      },
+      {
+        "set": 2,
+        "harness": "line",
+        "workload": "native-boundary",
+        "variant": "changed",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 7900,
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 300,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "milliseconds": 0.886084,
+        "output_operations": 100,
+        "prepared_input_bytes": 200,
+        "warning_attempts": 0,
+        "latency_change_percent": 2.1470755390168295
+      },
+      {
+        "set": 2,
+        "harness": "line",
+        "workload": "native-flush-boundary",
+        "variant": "baseline",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 0,
+        "fcntl": 100,
+        "fpathconf": 0,
+        "fstat": 100,
+        "geometry_queries": 0,
+        "iterations": 100,
+        "milliseconds": 0.260041,
+        "output_operations": 0,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0
+      },
+      {
+        "set": 2,
+        "harness": "line",
+        "workload": "native-flush-boundary",
+        "variant": "changed",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 7900,
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 300,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "milliseconds": 0.82775,
+        "output_operations": 100,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "latency_change_percent": 218.31518875869574
+      },
+      {
+        "set": 2,
+        "harness": "line",
+        "workload": "native-rebind",
+        "variant": "baseline",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 0,
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 100,
+        "milliseconds": 0.001166,
+        "output_operations": 0,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0
+      },
+      {
+        "set": 2,
+        "harness": "line",
+        "workload": "native-rebind",
+        "variant": "changed",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 15900,
+        "fcntl": 200,
+        "fpathconf": 0,
+        "fstat": 400,
+        "geometry_queries": 100,
+        "iterations": 100,
+        "milliseconds": 0.720625,
+        "output_operations": 300,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "latency_change_percent": 61703.173241852484
+      },
+      {
+        "set": 2,
+        "harness": "line",
+        "workload": "native-unchanged",
+        "variant": "baseline",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 0,
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 10000,
+        "milliseconds": 0.112333,
+        "output_operations": 0,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0
+      },
+      {
+        "set": 2,
+        "harness": "line",
+        "workload": "native-unchanged",
+        "variant": "changed",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 0,
+        "fcntl": 0,
+        "fpathconf": 0,
+        "fstat": 0,
+        "geometry_queries": 0,
+        "iterations": 10000,
+        "milliseconds": 0.184375,
+        "output_operations": 0,
+        "prepared_input_bytes": 0,
+        "warning_attempts": 0,
+        "latency_change_percent": 64.13253451790659
+      },
+      {
+        "set": 2,
+        "harness": "output",
+        "workload": "diagnostics-amplified",
+        "variant": "baseline",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "fcntl": 200000,
+        "fpathconf": 0,
+        "fstat": 200000,
+        "milliseconds": 424.099292,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000
+      },
+      {
+        "set": 2,
+        "harness": "output",
+        "workload": "diagnostics-amplified",
+        "variant": "changed",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "fcntl": 200000,
+        "fpathconf": 0,
+        "fstat": 200000,
+        "milliseconds": 416.882958,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "latency_change_percent": -1.7015670943397843
+      },
+      {
+        "set": 2,
+        "harness": "output",
+        "workload": "diagnostics-standalone-amplified",
+        "variant": "baseline",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "fcntl": 200000,
+        "fpathconf": 0,
+        "fstat": 200000,
+        "milliseconds": 403.689542,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000
+      },
+      {
+        "set": 2,
+        "harness": "output",
+        "workload": "diagnostics-standalone-amplified",
+        "variant": "changed",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "fcntl": 200000,
+        "fpathconf": 0,
+        "fstat": 200000,
+        "milliseconds": 414.228667,
+        "observed": 200000,
+        "readiness": 0,
+        "writes": 200000,
+        "latency_change_percent": 2.6107005268915184
+      },
+      {
+        "set": 2,
+        "harness": "output",
+        "workload": "diagnostics-pipe-amplified",
+        "variant": "baseline",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "fcntl": 200000,
+        "fpathconf": 1,
+        "fstat": 200000,
+        "milliseconds": 402.587792,
+        "observed": 200000,
+        "readiness": 200000,
+        "writes": 200000
+      },
+      {
+        "set": 2,
+        "harness": "output",
+        "workload": "diagnostics-pipe-amplified",
+        "variant": "changed",
+        "allocated_bytes": 0,
+        "allocations": 0,
+        "bytes": 4000000,
+        "fcntl": 200000,
+        "fpathconf": 1,
+        "fstat": 200000,
+        "milliseconds": 480.352458,
+        "observed": 200000,
+        "readiness": 200000,
+        "writes": 200000,
+        "latency_change_percent": 19.316200725728926
+      },
+      {
+        "set": 2,
+        "harness": "export",
+        "workload": "small",
+        "variant": "baseline",
+        "allocated_bytes": 31487000,
+        "allocations": 239500,
+        "descriptor_bytes": 1320000,
+        "descriptor_writes": 50,
+        "expected_bytes": 1320000,
+        "fcntl": 50,
+        "fpathconf": 0,
+        "fstat": 50,
+        "iterations": 50,
+        "messages": 100,
+        "milliseconds": 55.393667,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0
+      },
+      {
+        "set": 2,
+        "harness": "export",
+        "workload": "small",
+        "variant": "changed",
+        "allocated_bytes": 31487000,
+        "allocations": 239500,
+        "descriptor_bytes": 1320000,
+        "descriptor_writes": 50,
+        "expected_bytes": 1320000,
+        "fcntl": 50,
+        "fpathconf": 0,
+        "fstat": 50,
+        "iterations": 50,
+        "messages": 100,
+        "milliseconds": 59.984167,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0,
+        "latency_change_percent": 8.287048409342535
+      },
+      {
+        "set": 2,
+        "harness": "export",
+        "workload": "large",
+        "variant": "baseline",
+        "allocated_bytes": 450368064,
+        "allocations": 1500654,
+        "descriptor_bytes": 30960000,
+        "descriptor_writes": 474,
+        "expected_bytes": 30960000,
+        "fcntl": 3,
+        "fpathconf": 0,
+        "fstat": 3,
+        "iterations": 3,
+        "messages": 10000,
+        "milliseconds": 275.640958,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0
+      },
+      {
+        "set": 2,
+        "harness": "export",
+        "workload": "large",
+        "variant": "changed",
+        "allocated_bytes": 450368064,
+        "allocations": 1500654,
+        "descriptor_bytes": 30960000,
+        "descriptor_writes": 474,
+        "expected_bytes": 30960000,
+        "fcntl": 3,
+        "fpathconf": 0,
+        "fstat": 3,
+        "iterations": 3,
+        "messages": 10000,
+        "milliseconds": 270.181833,
+        "stream_bytes": 0,
+        "stream_flushes": 0,
+        "stream_writes": 0,
+        "latency_change_percent": -1.9805202534523336
+      }
+    ],
+    "lock_counts": {
+      "ref": "7df8abac0da6565dbf4e496df7d6e7acb14a34a1",
+      "method": "Separate instrumented copy counts each NativeMetadataGuard acquisition; timings from this build are not used.",
+      "instrumented_hashes": {
+        "src/modern/platform.cpp": "9fc7b3e8dff47558211ecf86896641a7b206bd333e537a794cb0a91988c1b2b7",
+        "tests/line_input_bench.cpp": "7b32dc32b24ba9f41c07b952f5c30fb42499c1c5080daa15a72932c05a6aadcf"
+      },
+      "rows": [
+        {
+          "allocated_bytes": 0,
+          "allocations": 0,
+          "bytes": 0,
+          "case": "metadata-lock-positive",
+          "fcntl": 0,
+          "fpathconf": 0,
+          "fstat": 0,
+          "geometry_queries": 0,
+          "iterations": 1000,
+          "metadata_lock_acquisitions": 1000,
+          "milliseconds": 0.020667,
+          "output_operations": 0,
+          "prepared_input_bytes": 0,
+          "warning_attempts": 0
+        },
+        {
+          "allocated_bytes": 884628,
+          "allocations": 36,
+          "bytes": 239,
+          "case": "editing",
+          "fcntl": 0,
+          "fpathconf": 0,
+          "fstat": 0,
+          "geometry_queries": 0,
+          "iterations": 20480,
+          "metadata_lock_acquisitions": 0,
+          "milliseconds": 2.95925,
+          "output_operations": 76,
+          "prepared_input_bytes": 40959,
+          "warning_attempts": 0
+        },
+        {
+          "allocated_bytes": 884628,
+          "allocations": 36,
+          "bytes": 20487,
+          "case": "editing-basic",
+          "fcntl": 0,
+          "fpathconf": 0,
+          "fstat": 0,
+          "geometry_queries": 0,
+          "iterations": 20480,
+          "metadata_lock_acquisitions": 0,
+          "milliseconds": 2.5295,
+          "output_operations": 20480,
+          "prepared_input_bytes": 40959,
+          "warning_attempts": 0
+        },
+        {
+          "allocated_bytes": 884628,
+          "allocations": 36,
+          "bytes": 239,
+          "case": "native-editing",
+          "fcntl": 73,
+          "fpathconf": 0,
+          "fstat": 20553,
+          "geometry_queries": 20480,
+          "iterations": 20480,
+          "metadata_lock_acquisitions": 82212,
+          "milliseconds": 20.70975,
+          "output_operations": 73,
+          "prepared_input_bytes": 40959,
+          "warning_attempts": 0
+        },
+        {
+          "allocated_bytes": 0,
+          "allocations": 0,
+          "bytes": 8900,
+          "case": "native-busy",
+          "fcntl": 200,
+          "fpathconf": 0,
+          "fstat": 300,
+          "geometry_queries": 100,
+          "iterations": 100,
+          "metadata_lock_acquisitions": 1500,
+          "milliseconds": 0.765334,
+          "output_operations": 300,
+          "prepared_input_bytes": 0,
+          "warning_attempts": 0
+        },
+        {
+          "allocated_bytes": 0,
+          "allocations": 0,
+          "bytes": 7900,
+          "case": "native-boundary",
+          "fcntl": 200,
+          "fpathconf": 0,
+          "fstat": 300,
+          "geometry_queries": 100,
+          "iterations": 100,
+          "metadata_lock_acquisitions": 1200,
+          "milliseconds": 0.857875,
+          "output_operations": 100,
+          "prepared_input_bytes": 200,
+          "warning_attempts": 0
+        },
+        {
+          "allocated_bytes": 0,
+          "allocations": 0,
+          "bytes": 7900,
+          "case": "native-flush-boundary",
+          "fcntl": 200,
+          "fpathconf": 0,
+          "fstat": 300,
+          "geometry_queries": 100,
+          "iterations": 100,
+          "metadata_lock_acquisitions": 1200,
+          "milliseconds": 0.919834,
+          "output_operations": 100,
+          "prepared_input_bytes": 0,
+          "warning_attempts": 0
+        },
+        {
+          "allocated_bytes": 0,
+          "allocations": 0,
+          "bytes": 15900,
+          "case": "native-rebind",
+          "fcntl": 200,
+          "fpathconf": 0,
+          "fstat": 400,
+          "geometry_queries": 100,
+          "iterations": 100,
+          "metadata_lock_acquisitions": 1600,
+          "milliseconds": 0.713166,
+          "output_operations": 300,
+          "prepared_input_bytes": 0,
+          "warning_attempts": 0
+        },
+        {
+          "allocated_bytes": 0,
+          "allocations": 0,
+          "bytes": 0,
+          "case": "native-unchanged",
+          "fcntl": 0,
+          "fpathconf": 0,
+          "fstat": 0,
+          "geometry_queries": 0,
+          "iterations": 10000,
+          "metadata_lock_acquisitions": 10000,
+          "milliseconds": 0.200292,
+          "output_operations": 0,
+          "prepared_input_bytes": 0,
+          "warning_attempts": 0
+        },
+        {
+          "allocated_bytes": 0,
+          "allocations": 0,
+          "bytes": 0,
+          "case": "unchanged",
+          "fcntl": 0,
+          "fpathconf": 0,
+          "fstat": 0,
+          "geometry_queries": 0,
+          "iterations": 10000,
+          "metadata_lock_acquisitions": 0,
+          "milliseconds": 0.141209,
+          "output_operations": 0,
+          "prepared_input_bytes": 0,
+          "warning_attempts": 0
+        },
+        {
+          "allocated_bytes": 0,
+          "allocations": 0,
+          "bytes": 0,
+          "case": "warning-empty",
+          "fcntl": 0,
+          "fpathconf": 0,
+          "fstat": 0,
+          "geometry_queries": 0,
+          "iterations": 100000,
+          "metadata_lock_acquisitions": 0,
+          "milliseconds": 0.089542,
+          "output_operations": 0,
+          "prepared_input_bytes": 0,
+          "warning_attempts": 0
+        }
+      ]
+    },
+    "lock_count_caveat": "Counts use a separate explicitly instrumented source copy with a 1,000-acquisition positive control. Its timings are never used. Production timing builds contain no counter.",
+    "optional_optimization": "No optional metadata identity cache or speculative performance optimization retained. Lookup reuse is part of explicit presentation rebinding; latency costs are reported without a general speedup claim."
+  },
+  "sanitizer_subprocess_failure": {
+    "diagnosis": {
+      "procName": "codet_tests",
+      "procPath": "/Volumes/VOLUME/*/codet_tests",
+      "captureTime": "2026-10-31 07:06:52.6703 -0700",
+      "exception": {
+        "codes": "0x0000000000000001, 0x000000018d62442c",
+        "rawCodes": [
+          1,
+          6666994732
+        ],
+        "type": "EXC_BREAKPOINT",
+        "signal": "SIGKILL"
+      },
+      "termination": {
+        "namespace": "FOUNDATION",
+        "flags": 2,
+        "code": 1
+      },
+      "additional_info": {
+        "libsystem_platform.dylib": [
+          "BUG IN CLIENT OF LIBPLATFORM: os_unfair_lock is corrupt",
+          "Abort Cause 258"
+        ],
+        "libsystem_c.dylib": [
+          "crashed on child side of fork pre-exec"
+        ]
+      },
+      "frames": [
+        {
+          "symbol": "_os_unfair_lock_corruption_abort"
+        },
+        {
+          "symbol": "_os_unfair_lock_lock_slow"
+        },
+        {
+          "symbol": "__sanitizer::StackStore::BlockInfo::Create(__sanitizer::StackStore*)"
+        },
+        {
+          "symbol": "__sanitizer::StackStore::Alloc(unsigned long, unsigned long*, unsigned long*)"
+        },
+        {
+          "symbol": "__sanitizer::StackStore::Store(__sanitizer::StackTrace const&, unsigned long*)"
+        },
+        {
+          "symbol": "__sanitizer::StackDepotNode::store(unsigned int, __sanitizer::StackTrace const&, unsigned long long)"
+        },
+        {
+          "symbol": "__sanitizer::StackDepotBase<__sanitizer::StackDepotNode, 1, 20>::Put(__sanitizer::StackTrace, bool*)"
+        },
+        {
+          "symbol": "__asan::Allocator::QuarantineChunk(__asan::AsanChunk*, void*, __sanitizer::BufferedStackTrace*)"
+        },
+        {
+          "symbol": "wrap_free"
+        },
+        {
+          "symbol": "-[OS_xpc_object dealloc]"
+        },
+        {
+          "symbol": "xpc_atfork_child"
+        },
+        {
+          "symbol": "libSystem_atfork_child"
+        },
+        {
+          "symbol": "fork"
+        },
+        {
+          "symbol": "codet::test::start_helper(std::__1::vector<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, std::__1::allocator<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>> const&, std::__1::vector<int, std::__1::allocator<int>> const&)",
+          "sourceFile": "process_helper.hpp",
+          "sourceLine": 21
+        },
+        {
+          "symbol": "(anonymous namespace)::Followup_CaptureOwnershipCoordinatesAcrossProcesses_Test::TestBody()",
+          "sourceFile": "followup_test.cpp",
+          "sourceLine": 299
+        }
+      ]
+    },
+    "description": "A capture-ownership helper exited with signal 9 before readiness in one full ASan run. The macOS crash report identifies sanitizer StackStore/os_unfair_lock failure inside libxpc atfork cleanup before exec. No test assertion or product code was changed in response; isolated repetitions and the complete final rerun are recorded.",
+    "failure_excerpt": "[ RUN      ] Followup.CaptureOwnershipCoordinatesAcrossProcesses\n/Volumes/Pro2T/codet-compiled-agent/tests/followup_test.cpp:306: Failure\nValue of: codet::test::read_token(ready[0], token)\n  Actual: false\nExpected: true\n\n/Volumes/Pro2T/codet-compiled-agent/tests/followup_test.cpp:307: Failure\nExpected equality of these values:\n  token\n    Which is: '\\0'\n  'y'\n    Which is: 'y' (121, 0x79)\n\n/Volumes/Pro2T/codet-compiled-agent/tests/followup_test.cpp:311: Failure\nExpected equality of these values:\n  other.bytes()\n    Which is: 4\n  2u\n    Which is: 2\n\n/Volumes/Pro2T/codet-compiled-agent/tests/followup_test.cpp:312: Failure\nValue of: other.truncated()\n  Actual: false\nExpected: true\n\n/Volumes/Pro2T/codet-compiled-agent/tests/followup_test.cpp:316: Failure\nExpected equality of these values:\n  status\n    Which is: 9\n  0\n\n[  FAILED  ] Followup.CaptureOwnershipCoordinatesAcrossProcesses (115 ms)\n[ RUN      ] Followup.SpoolFailureKeepsExitStatusAndSerializablePreview\nOutput capture: Output directory must not be a symlink\n[       OK ] Followup.SpoolFailureKeepsExitStatusAndSerializablePreview (25 ms)\n[ RUN      ] Followup.BackgroundAndPtyCommandsRetainLargeOutput\n[       OK ] Followup.BackgroundAndPtyCommandsRetainLargeOutput (64 ms)\n[ RUN      ] Followup.OneShotExitSurvivesSignalAndReapFailures\n[       OK ] Followup.OneShotExitSurvivesSignalAndReapFailures (39 ms)\n[ RUN      ] Followup.OwnershipLossInvalidatesFurtherSignals\n[       OK ] Followup.OwnershipLossInvalidatesFurtherSignals (19 ms)\n[ RUN      ] Followup.ObservationOwnershipLossNeverSignals\n[       OK ] Followup.ObservationOwnershipLossNeverSignals (19 ms)\n[ RUN      ] Followup.HandshakeRetriesEintrAndCancellationWinsOverS",
+    "isolated_log_tail": "ASSED  ] 1 test.\n\nRepeating all tests (iteration 19) . . .\n\nNote: Google Test filter = Followup.CaptureOwnershipCoordinatesAcrossProcesses\n[==========] Running 1 test from 1 test suite.\n[----------] 1 test from Followup\n[ RUN      ] Followup.CaptureOwnershipCoordinatesAcrossProcesses\n[       OK ] Followup.CaptureOwnershipCoordinatesAcrossProcesses (89 ms)\n[----------] 1 test from Followup (89 ms total)\n\n[==========] 1 test from 1 test suite ran. (89 ms total)\n[  PASSED  ] 1 test.\n\nRepeating all tests (iteration 20) . . .\n\nNote: Google Test filter = Followup.CaptureOwnershipCoordinatesAcrossProcesses\n[==========] Running 1 test from 1 test suite.\n[----------] 1 test from Followup\n[ RUN      ] Followup.CaptureOwnershipCoordinatesAcrossProcesses\n[       OK ] Followup.CaptureOwnershipCoordinatesAcrossProcesses (87 ms)\n[----------] 1 test from Followup (87 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (87 ms total)\n[  PASSED  ] 1 test.\n"
+  },
+  "initial_ci_failure": {
+    "runs": [
+      41207591931,
+      41208326621
+    ],
+    "findings": [
+      {
+        "DiagnosticName": "bugprone-macro-parentheses",
+        "DiagnosticMessage": {
+          "Message": "macro argument should be enclosed in parentheses",
+          "FilePath": "/home/runner/work/codet-compiled-agent/codet-compiled-agent/include/codet/interaction.hpp",
+          "FileOffset": 1097,
+          "Replacements": [
+            {
+              "FilePath": "/home/runner/work/codet-compiled-agent/codet-compiled-agent/include/codet/interaction.hpp",
+              "Offset": 1097,
+              "Length": 0,
+              "ReplacementText": "("
+            },
+            {
+              "FilePath": "/home/runner/work/codet-compiled-agent/codet-compiled-agent/include/codet/interaction.hpp",
+              "Offset": 1100,
+              "Length": 0,
+              "ReplacementText": ")"
+            }
+          ]
+        },
+        "Level": "Error",
+        "BuildDirectory": "/home/runner/work/codet-compiled-agent/codet-compiled-agent/build/modern-checks"
+      },
+      {
+        "DiagnosticName": "bugprone-macro-parentheses",
+        "DiagnosticMessage": {
+          "Message": "macro argument should be enclosed in parentheses",
+          "FilePath": "/home/runner/work/codet-compiled-agent/codet-compiled-agent/include/codet/interaction.hpp",
+          "FileOffset": 1097,
+          "Replacements": [
+            {
+              "FilePath": "/home/runner/work/codet-compiled-agent/codet-compiled-agent/include/codet/interaction.hpp",
+              "Offset": 1097,
+              "Length": 0,
+              "ReplacementText": "("
+            },
+            {
+              "FilePath": "/home/runner/work/codet-compiled-agent/codet-compiled-agent/include/codet/interaction.hpp",
+              "Offset": 1100,
+              "Length": 0,
+              "ReplacementText": ")"
+            }
+          ]
+        },
+        "Level": "Error",
+        "BuildDirectory": "/home/runner/work/codet-compiled-agent/codet-compiled-agent/build/modern-checks"
+      },
+      {
+        "DiagnosticName": "bugprone-macro-parentheses",
+        "DiagnosticMessage": {
+          "Message": "macro argument should be enclosed in parentheses",
+          "FilePath": "/home/runner/work/codet-compiled-agent/codet-compiled-agent/include/codet/interaction.hpp",
+          "FileOffset": 1097,
+          "Replacements": [
+            {
+              "FilePath": "/home/runner/work/codet-compiled-agent/codet-compiled-agent/include/codet/interaction.hpp",
+              "Offset": 1097,
+              "Length": 0,
+              "ReplacementText": "("
+            },
+            {
+              "FilePath": "/home/runner/work/codet-compiled-agent/codet-compiled-agent/include/codet/interaction.hpp",
+              "Offset": 1100,
+              "Length": 0,
+              "ReplacementText": ")"
+            }
+          ]
+        },
+        "Level": "Error",
+        "BuildDirectory": "/home/runner/work/codet-compiled-agent/codet-compiled-agent/build/modern-checks"
+      }
+    ],
+    "fix": "The mask was parenthesized first, but the actual finding was the enum initializer; the enum expansion was then fixed and checked locally with the same rule and codet-header filter. No suppression or check weakening.",
+    "admission_regression": "Reserved records before separator I/O and removed the redundant later admission phase; a reentrant separator regression proves another record cannot suppress the body."
+  },
+  "limitations": [
+    "Blocking TTY output remains outside the bounded cancellation guarantee.",
+    "Emergency/standalone output remains best effort without EAGAIN waits; partial duplicates and conservative extra newlines remain possible.",
+    "The mutex protects metadata, not atomic whole-record byte output. Concurrent diagnostic bytes may interleave.",
+    "Injected ostream use and rdbuf replacement require caller synchronization; replacements are exercised between deliveries. Concurrent interactive cli_main invocations are not introduced.",
+    "The existing local SDK/Clang findings and compiler warning demotions are retained as explicit evidence; strict Ubuntu checks pass without weakening. One macOS ASan runtime child-side atfork failure is preserved with crash-report frames; no sanitizer setting or assertion was weakened.",
+    "Host cross-selection build/link/runtime excludes interposers and metrics but is not native PPC/Tiger verification. Native PPC/Tiger compiler, SDK and runtime are unavailable."
+  ]
+}
