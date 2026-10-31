@@ -21,6 +21,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <type_traits>
 #include <unistd.h>
 #ifdef __APPLE__
 #include <sys/event.h>
@@ -548,9 +549,6 @@ bool detail::recover_diagnostic_stream(std::ostream &output) noexcept {
 }
 detail::DiagnosticWriter::DiagnosticWriter(std::ostream &output, IoContext *io) noexcept
     : output_(output), file_(diagnostic_file(output)), io_(io) {}
-int detail::DiagnosticWriter::native_descriptor() const noexcept {
-  return destination().descriptor;
-}
 detail::StreamDestination detail::DiagnosticWriter::destination() const noexcept {
   auto *buffer = output_.rdbuf();
   return {native_diagnostic_descriptor(output_, buffer), buffer};
@@ -559,46 +557,38 @@ bool detail::inspect_output_destination(int descriptor, struct stat &identity,
                                         OutputAttempt &attempt) noexcept {
   return attempt.inspect([&] { return ::fstat(descriptor, &identity); }) == 0;
 }
+namespace {
+template <class Operation>
+auto boundary_access(detail::LineDestinations *local,
+                     Operation operation) noexcept -> decltype(operation(*local)) {
+  if (local)
+    return operation(*local);
+  NativeMetadataGuard guard;
+  if (guard.locked)
+    return operation(native_destinations);
+  using Result = decltype(operation(*local));
+  if constexpr (!std::is_void_v<Result>)
+    return Result{};
+}
+} // namespace
 void detail::BoundaryAccess::bind(int descriptor, const struct stat &identity) const noexcept {
-  if (local_)
-    local_->bind(descriptor, identity);
-  else {
-    NativeMetadataGuard guard;
-    if (guard.locked)
-      native_destinations.bind(descriptor, identity);
-  }
+  boundary_access(local_, [&](auto &owner) { owner.bind(descriptor, identity); });
 }
 bool detail::BoundaryAccess::row(const struct stat &identity) const noexcept {
-  if (local_)
-    return local_->row(identity);
-  NativeMetadataGuard guard;
-  return guard.locked && native_destinations.row(identity);
+  return boundary_access(local_, [&](auto &owner) { return owner.row(identity); });
 }
 void detail::BoundaryAccess::open(const struct stat &identity) const noexcept {
-  if (local_)
-    local_->open(identity);
-  else {
-    NativeMetadataGuard guard;
-    if (guard.locked)
-      native_destinations.open(identity);
-  }
+  boundary_access(local_, [&](auto &owner) { owner.open(identity); });
 }
 bool detail::BoundaryAccess::separate(const struct stat &identity) const noexcept {
-  if (local_)
-    return local_->separate(identity);
-  NativeMetadataGuard guard;
-  return guard.locked && native_destinations.separate(identity);
+  return boundary_access(local_, [&](auto &owner) { return owner.separate(identity); });
 }
 detail::BoundarySnapshot
 detail::BoundaryAccess::snapshot(int descriptor, const struct stat &identity) const noexcept {
-  if (local_)
-    return {true, local_->row(identity), local_->generation(descriptor),
-            local_->active(descriptor)};
-  NativeMetadataGuard guard;
-  if (!guard.locked)
-    return {};
-  return {true, native_destinations.row(identity), native_destinations.generation(descriptor),
-          native_destinations.active(descriptor)};
+  return boundary_access(local_, [&](auto &owner) {
+    return BoundarySnapshot{true, owner.row(identity), owner.generation(descriptor),
+                            owner.active(descriptor)};
+  });
 }
 detail::BoundaryAccess detail::native_line_destinations() noexcept {
   return BoundaryAccess{};

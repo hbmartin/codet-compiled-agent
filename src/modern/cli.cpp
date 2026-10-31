@@ -473,7 +473,7 @@ public:
       resources_.start_editor();
       struct stat destination {};
       detail::OutputAttempt inspection(io.cancel, detail::OutputMode::diagnostic);
-      if (inspection.inspect([&] { return ::fstat(STDOUT_FILENO, &destination); }) < 0)
+      if (!detail::inspect_output_destination(STDOUT_FILENO, destination, inspection))
         throw Error("Cannot inspect prompt terminal");
       line_.emplace(input_, output_, io, prompt_, destination);
       el_set(

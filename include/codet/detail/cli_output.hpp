@@ -40,9 +40,6 @@ public:
   StreamDestination presentation_destination() const noexcept {
     return writer_.destination();
   }
-  int presentation_descriptor() const noexcept {
-    return writer_.native_descriptor();
-  }
   int status(int prior) const noexcept {
     return prior ? prior : cancelled_ ? 130 : failed_ ? 1 : 0;
   }

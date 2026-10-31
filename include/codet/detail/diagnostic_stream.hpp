@@ -76,7 +76,6 @@ public:
   DiagnosticWriter &operator=(const DiagnosticWriter &) = delete;
   bool write(std::initializer_list<std::string_view>, bool newline = true, bool flush = false);
   DiagnosticResult write_result(std::initializer_list<std::string_view>, bool newline, bool flush);
-  int native_descriptor() const noexcept;
   StreamDestination destination() const noexcept;
   void file(const std::string &);
 };

@@ -1,9 +1,11 @@
 #include "codet/detail/line_prompt.hpp"
 #include "codet/diagnostics.hpp"
 #include "native_io_metrics.hpp"
+#include <condition_variable>
 #include <fcntl.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <mutex>
 #include <thread>
 #ifdef __APPLE__
 #include <util.h>
@@ -112,6 +114,90 @@ TEST_F(NativeRecordLifecycle, PromptWaitsForCompletionAndRecoversWithoutAnotherK
   line->flush();
   EXPECT_TRUE(read().empty());
   EXPECT_EQ(input.input().raw(), "abc");
+}
+TEST_F(NativeRecordLifecycle, ConcurrentDeliveryDefersBothSnapshotAndAdmissionRaces) {
+  for (bool during_geometry : {false, true}) {
+    draft();
+    (void)read();
+    struct Gate {
+      std::mutex mutex;
+      std::condition_variable changed;
+      bool start = false, entered = false, released = false, finished = false;
+      void begin() {
+        std::unique_lock<std::mutex> lock(mutex);
+        start = true;
+        changed.notify_all();
+        EXPECT_TRUE(changed.wait_for(lock, std::chrono::seconds(5), [&] { return entered; }));
+      }
+      static void geometry(void *context) {
+        static_cast<Gate *>(context)->begin();
+      }
+      static void output(void *context) {
+        auto &gate = *static_cast<Gate *>(context);
+        std::unique_lock<std::mutex> lock(gate.mutex);
+        gate.entered = true;
+        gate.changed.notify_all();
+        EXPECT_TRUE(
+            gate.changed.wait_for(lock, std::chrono::seconds(5), [&] { return gate.released; }));
+      }
+    } gate;
+    std::thread worker([&] {
+      {
+        std::unique_lock<std::mutex> lock(gate.mutex);
+        if (!gate.changed.wait_for(lock, std::chrono::seconds(5), [&] { return gate.start; }))
+          return;
+      }
+      auto &metrics = test::native_io_metrics;
+      metrics.interrupt_fd = STDERR_FILENO;
+      metrics.before_output = Gate::output;
+      metrics.output_context = &gate;
+      EXPECT_TRUE(detail::immediate_stderr({"worker warning"}));
+      metrics = {};
+      {
+        std::lock_guard<std::mutex> lock(gate.mutex);
+        gate.finished = true;
+      }
+      gate.changed.notify_all();
+    });
+    struct Join {
+      Gate &gate;
+      std::thread &worker;
+      ~Join() {
+        {
+          std::lock_guard<std::mutex> lock(gate.mutex);
+          gate.released = gate.start = true;
+        }
+        gate.changed.notify_all();
+        worker.join();
+      }
+    } join{gate, worker};
+    if (during_geometry) {
+      auto &metrics = test::native_io_metrics;
+      metrics.interrupt_fd = STDOUT_FILENO;
+      metrics.after_stat = Gate::geometry;
+      metrics.stat_context = &gate;
+      line->append('x');
+      metrics = {};
+    } else {
+      gate.begin();
+      line->flush();
+    }
+    EXPECT_FALSE(output.failed());
+    EXPECT_TRUE(read().empty());
+    {
+      std::lock_guard<std::mutex> lock(gate.mutex);
+      gate.released = true;
+    }
+    gate.changed.notify_all();
+    // The scope-bound join also protects assertions and exceptional exits.
+    {
+      std::unique_lock<std::mutex> lock(gate.mutex);
+      EXPECT_TRUE(
+          gate.changed.wait_for(lock, std::chrono::seconds(5), [&] { return gate.finished; }));
+    }
+    line->flush();
+    EXPECT_THAT(read(), EndsWith(during_geometry ? "codet> abcabcx" : "codet> abc"));
+  }
 }
 TEST_F(NativeRecordLifecycle, ObserverCannotExposeAnUnreservedSeparatorGap) {
   draft();

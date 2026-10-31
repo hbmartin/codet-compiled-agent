@@ -99,6 +99,7 @@ class LinePrompt final : public LineOutputObserver {
     previous_bytes_ = 0;
   }
   void abandon_geometry() noexcept {
+    boundary_busy_ = false;
     append_valid_ = false;
     dirty_ = visible_ = false;
     painted_ = columns_ = 0;

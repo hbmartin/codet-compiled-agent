@@ -1,7 +1,18 @@
 #pragma once
+#include <cstddef>
 #include <limits>
 
 namespace codet::detail {
+template <size_t Count>
+constexpr bool valid_warning_values(const unsigned (&values)[Count]) noexcept {
+  unsigned seen = 0;
+  for (const auto value : values) {
+    if (!value || (value & (value - 1u)) || (seen & value))
+      return false;
+    seen |= value;
+  }
+  return true;
+}
 // One contiguous bank for new warnings, followed by an equally wide retry bank.
 template <unsigned Kinds> struct WarningBits {
   static constexpr unsigned width() noexcept {
