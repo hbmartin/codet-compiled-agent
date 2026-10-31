@@ -2274,8 +2274,36 @@ TEST_F(PublicationFault, ProvisionalBatchAcknowledgementDoesNotAllocateAfterComm
   EXPECT_EQ(f.store.load_id(f.session.id).messages[2].text, "new");
 }
 
+TEST_F(PublicationFault, NativeMetadataFirstUseAndEmergencyDeliveryDoNotAllocate) {
+  const auto child = test::start_helper({"--codet-native-metadata-helper"});
+  ASSERT_GT(child, 0);
+  int status = 0;
+  ASSERT_TRUE(test::wait_helper(child, status));
+  ASSERT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
+}
+
 std::string codet::test::executable;
 namespace {
+int check_native_metadata() {
+  struct stat identity {};
+  if (::fstat(STDERR_FILENO, &identity) < 0)
+    return 2;
+  FileNotice notice("/complete/preallocated/path", FileNoticeKind::tool_result);
+  fault::fired = false;
+  fault::countdown = 0;
+  detail::reset_standard_diagnostics();
+  const auto owner = detail::native_line_destinations();
+  owner.bind(STDOUT_FILENO, identity);
+  owner.open(identity);
+  const bool observed = owner.snapshot(STDOUT_FILENO, identity).available;
+  (void)owner.separate(identity);
+  const bool delivered = detail::immediate_stderr({"native metadata"});
+  emergency_file_diagnostic(notice);
+  const bool allocated = fault::fired;
+  fault::disable();
+  return observed && delivered && !allocated ? 0 : 3;
+}
 int check_default_sink() {
   fault::fired = false;
   fault::countdown = 0;
@@ -2326,6 +2354,8 @@ int main(int argc, char **argv) {
       return 5;
     return check_default_sink();
   }
+  if (argc == 2 && std::string_view(argv[1]) == "--codet-native-metadata-helper")
+    return check_native_metadata();
   testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }

@@ -15,6 +15,7 @@
 #include <limits>
 #include <new>
 #include <poll.h>
+#include <pthread.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -251,55 +252,67 @@ const char *FileNotice::label() const noexcept {
 namespace {
 // Fixed, trivially destructible fallback owners also serve late shutdown diagnostics.
 detail::DiagnosticState stderr_stream_state, stdout_stream_state;
+// Statically initialized, allocation-free metadata only; no native I/O or callbacks under it.
+pthread_mutex_t native_metadata_mutex = PTHREAD_MUTEX_INITIALIZER;
+struct NativeMetadataGuard {
+  bool locked = ::pthread_mutex_lock(&native_metadata_mutex) == 0;
+  ~NativeMetadataGuard() {
+    if (locked)
+      (void)::pthread_mutex_unlock(&native_metadata_mutex);
+  }
+  NativeMetadataGuard() = default;
+  NativeMetadataGuard(const NativeMetadataGuard &) = delete;
+  NativeMetadataGuard &operator=(const NativeMetadataGuard &) = delete;
+};
 detail::LineDestinations native_destinations;
+uint64_t native_epoch = 0;
 auto *const native_stderr_buffer = std::cerr.rdbuf();
 auto *const native_stdout_buffer = std::cout.rdbuf();
 struct DescriptorDiagnosticState {
   struct stat identity {};
-  bool known = false, inspected = false;
+  bool known = false;
   size_t pipe_limit = 0;
-  void bind(int descriptor, detail::OutputAttempt &attempt) noexcept {
-    struct stat current {};
-    const auto status = attempt.inspect([&] { return ::fstat(descriptor, &current); });
-    inspected = status == 0;
-    if (!inspected)
-      return; // An interruption cannot establish a different destination or erase its boundary.
-    if (!known || !detail::same_destination(current, identity)) {
-      pipe_limit = 0;
-    }
-    known = true;
-    identity = current;
-    native_destinations.bind(descriptor, current);
-  }
-  void reset() noexcept {
-    known = false;
-    inspected = false;
-    pipe_limit = 0;
-  }
 } stderr_descriptor_state, stdout_descriptor_state;
-struct DiagnosticDestination {
-  detail::DiagnosticState &state;
-  int native = -1;
-  DescriptorDiagnosticState *owner = nullptr;
-};
-int native_diagnostic_descriptor(std::ostream &output) noexcept {
-  return &output == &std::cerr && output.rdbuf() == native_stderr_buffer   ? STDERR_FILENO
-         : &output == &std::cout && output.rdbuf() == native_stdout_buffer ? STDOUT_FILENO
-                                                                           : -1;
+DescriptorDiagnosticState &descriptor_state(int descriptor) noexcept {
+  return descriptor == STDERR_FILENO ? stderr_descriptor_state : stdout_descriptor_state;
 }
-DiagnosticDestination diagnostic_destination(std::ostream &output, detail::DiagnosticState &local,
-                                             detail::OutputAttempt &attempt) noexcept {
-  const int native = native_diagnostic_descriptor(output);
-  if (native >= 0) {
-    auto &owner = native == STDERR_FILENO ? stderr_descriptor_state : stdout_descriptor_state;
-    owner.bind(native, attempt);
-    return {local, native, &owner};
+struct NativeInspection {
+  struct stat identity {};
+  bool available = false, inspected = false;
+  size_t pipe_limit = 0;
+  uint64_t epoch = 0;
+};
+NativeInspection inspect_native(int descriptor, detail::OutputAttempt &attempt) noexcept {
+  NativeInspection result;
+  result.inspected = detail::inspect_output_destination(descriptor, result.identity, attempt);
+  NativeMetadataGuard guard;
+  if (!guard.locked)
+    return result;
+  result.available = true;
+  result.epoch = native_epoch;
+  auto &owner = descriptor_state(descriptor);
+  if (result.inspected) {
+    if (!owner.known || !detail::same_destination(result.identity, owner.identity))
+      owner.pipe_limit = 0;
+    owner.known = true;
+    owner.identity = result.identity;
+    native_destinations.bind(descriptor, result.identity);
+    result.pipe_limit = owner.pipe_limit;
   }
+  return result;
+}
+int native_diagnostic_descriptor(std::ostream &output, std::streambuf *buffer) noexcept {
+  return &output == &std::cerr && buffer == native_stderr_buffer   ? STDERR_FILENO
+         : &output == &std::cout && buffer == native_stdout_buffer ? STDOUT_FILENO
+                                                                   : -1;
+}
+detail::DiagnosticState &stream_diagnostic_state(std::ostream &output,
+                                                 detail::DiagnosticState &local) noexcept {
   auto &state = &output == &std::cerr   ? stderr_stream_state
                 : &output == &std::cout ? stdout_stream_state
                                         : local;
   state.bind(output.rdbuf());
-  return {state, -1};
+  return state;
 }
 bool unsafe_unicode_control(uint32_t point) noexcept {
   return (point >= 0x80 && point <= 0x9f) || point == 0x61c || point == 0x200e || point == 0x200f ||
@@ -365,26 +378,45 @@ namespace {
 class NativeDiagnosticRecord {
   detail::OutputAttempt &attempt_;
   int native_;
+  NativeInspection inspection_;
   detail::DescriptorOutput descriptor_;
-  bool ready_ = true;
+  uint64_t generation_ = 0;
+  bool ready_ = false;
+  bool current() const noexcept {
+    return inspection_.available && inspection_.epoch == native_epoch &&
+           (!inspection_.inspected ||
+            (descriptor_state(native_).known &&
+             detail::same_destination(inspection_.identity, descriptor_state(native_).identity)));
+  }
+  bool unchanged() const noexcept {
+    return current() && generation_ == native_destinations.generation(native_);
+  }
 
 public:
-  NativeDiagnosticRecord(int descriptor, DescriptorDiagnosticState &owner,
+  NativeDiagnosticRecord(int descriptor, NativeInspection inspection,
                          detail::OutputAttempt &attempt, bool presentation = false) noexcept
-      : attempt_(attempt), native_(descriptor),
-        descriptor_(descriptor, attempt, owner.inspected ? &owner.identity : nullptr,
-                    owner.pipe_limit) {
-    bool separator = native_destinations.pending(native_);
-    if (!presentation) {
-      separator = native_destinations.separate(native_) || separator;
-      native_destinations.interrupt(native_);
-    }
-    if (separator) {
+      : attempt_(attempt), native_(descriptor), inspection_(inspection),
+        descriptor_(descriptor, attempt, inspection_.inspected ? &inspection_.identity : nullptr,
+                    inspection_.pipe_limit) {
+    bool separator = false;
+    {
+      NativeMetadataGuard guard;
+      if (!guard.locked || !current())
+        return;
+      if (inspection_.inspected)
+        descriptor_state(native_).pipe_limit = inspection_.pipe_limit;
+      separator = native_destinations.pending(native_);
+      if (!presentation) {
+        separator = native_destinations.separate(native_) || separator;
+        native_destinations.interrupt(native_);
+      }
+      generation_ = native_destinations.generation(native_);
+      // Reserve the whole record before I/O, including a recovery separator.
       native_destinations.pending(native_, true);
-      ready_ = write({"\n"});
-      if (ready_)
-        native_destinations.pending(native_, false);
+      ready_ = true;
     }
+    if (separator)
+      ready_ = write({"\n"});
   }
   bool write(std::initializer_list<std::string_view> parts, bool newline = false) noexcept {
     if (!ready_)
@@ -392,35 +424,34 @@ public:
     ready_ = descriptor_.result(parts, newline, attempt_) == detail::OutputResult::success;
     return ready_;
   }
-  void begin() noexcept {
-    if (ready_)
-      native_destinations.pending(native_, true);
-  }
   bool finish(std::initializer_list<std::string_view> tail = {}, bool newline = true) noexcept {
-    if (!write(tail, newline)) {
-      native_destinations.interrupt(native_);
+    const bool success = write(tail, newline);
+    NativeMetadataGuard guard;
+    if (!guard.locked)
       return false;
+    if (current()) {
+      if (!success) {
+        native_destinations.pending(native_, true);
+        native_destinations.interrupt(native_);
+      } else if (unchanged())
+        native_destinations.pending(native_, false);
     }
-    native_destinations.pending(native_, false);
-    return true;
+    return success;
   }
 };
 NativeDiagnosticRecord immediate_record(detail::OutputAttempt &attempt) noexcept {
-  stderr_descriptor_state.bind(STDERR_FILENO, attempt);
-  return {STDERR_FILENO, stderr_descriptor_state, attempt};
+  return {STDERR_FILENO, inspect_native(STDERR_FILENO, attempt), attempt};
 }
 } // namespace
 bool detail::immediate_stderr(std::initializer_list<std::string_view> parts,
                               bool newline) noexcept {
   OutputAttempt attempt(nullptr, OutputMode::immediate);
   auto record = immediate_record(attempt);
-  record.begin(); // Keep the conservative boundary even for a failed unterminated warning.
   return record.finish(parts, newline);
 }
 void emergency_file_diagnostic(const FileNotice &notice) noexcept {
   detail::OutputAttempt attempt(nullptr, detail::OutputMode::immediate);
   auto record = immediate_record(attempt);
-  record.begin();
   if (!record.write({notice.label()}))
     return;
   if (escaped_file_path(notice.path, [&](const char *bytes, size_t size) {
@@ -454,45 +485,96 @@ bool detail::recover_diagnostic_stream(std::ostream &output) noexcept {
 detail::DiagnosticWriter::DiagnosticWriter(std::ostream &output, IoContext *io) noexcept
     : output_(output), state_(&local_), file_(diagnostic_file(output)), io_(io) {}
 int detail::DiagnosticWriter::native_descriptor() const noexcept {
-  return native_diagnostic_descriptor(output_);
+  return destination().descriptor;
 }
-detail::LineDestinations &detail::native_line_destinations() noexcept {
-  return native_destinations;
+detail::StreamDestination detail::DiagnosticWriter::destination() const noexcept {
+  auto *buffer = output_.rdbuf();
+  return {native_diagnostic_descriptor(output_, buffer), buffer};
+}
+bool detail::inspect_output_destination(int descriptor, struct stat &identity,
+                                        OutputAttempt &attempt) noexcept {
+  return attempt.inspect([&] { return ::fstat(descriptor, &identity); }) == 0;
+}
+void detail::BoundaryAccess::bind(int descriptor, const struct stat &identity) const noexcept {
+  if (local_)
+    local_->bind(descriptor, identity);
+  else {
+    NativeMetadataGuard guard;
+    if (guard.locked)
+      native_destinations.bind(descriptor, identity);
+  }
+}
+bool detail::BoundaryAccess::row(const struct stat &identity) const noexcept {
+  if (local_)
+    return local_->row(identity);
+  NativeMetadataGuard guard;
+  return guard.locked && native_destinations.row(identity);
+}
+void detail::BoundaryAccess::open(const struct stat &identity) const noexcept {
+  if (local_)
+    local_->open(identity);
+  else {
+    NativeMetadataGuard guard;
+    if (guard.locked)
+      native_destinations.open(identity);
+  }
+}
+bool detail::BoundaryAccess::separate(const struct stat &identity) const noexcept {
+  if (local_)
+    return local_->separate(identity);
+  NativeMetadataGuard guard;
+  return guard.locked && native_destinations.separate(identity);
+}
+detail::BoundarySnapshot
+detail::BoundaryAccess::snapshot(int descriptor, const struct stat &identity) const noexcept {
+  if (local_)
+    return {true, local_->row(identity), local_->generation(descriptor)};
+  NativeMetadataGuard guard;
+  if (!guard.locked)
+    return {};
+  return {true, native_destinations.row(identity), native_destinations.generation(descriptor)};
+}
+detail::BoundaryAccess detail::native_line_destinations() noexcept {
+  return BoundaryAccess{};
 }
 void detail::reset_standard_diagnostics() noexcept {
-  native_destinations = {};
+  NativeMetadataGuard guard;
+  if (!guard.locked)
+    return;
+  ++native_epoch;
+  native_destinations.reset();
   stderr_stream_state.reset(std::cerr.rdbuf());
   stdout_stream_state.reset(std::cout.rdbuf());
-  stderr_descriptor_state.reset();
-  stdout_descriptor_state.reset();
+  stderr_descriptor_state = {};
+  stdout_descriptor_state = {};
 }
 bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> parts, bool newline,
                                      bool flush) {
   const auto mode = io_ ? OutputMode::diagnostic : OutputMode::immediate;
   OutputAttempt attempt(io_ ? io_->cancel : nullptr, mode);
-  const auto destination = diagnostic_destination(output_, local_, attempt);
-  state_ = &destination.state;
-  const int native = destination.native;
+  const int native = destination().descriptor;
   if (native >= 0) {
-    if (io_ && destination.owner->inspected) {
-      const auto &identity = destination.owner->identity;
-      bool separate = false;
-      if (io_->line_output)
-        separate = io_->line_output->before_output(native, identity);
-      else {
-        native_destinations.bind(native, identity);
-        separate = native_destinations.separate(identity);
-      }
-      if (separate)
+    const auto inspection = inspect_native(native, attempt);
+    if (io_ && inspection.inspected && io_->line_output &&
+        io_->line_output->before_output(native, inspection.identity)) {
+      NativeMetadataGuard guard;
+      if (guard.locked && inspection.epoch == native_epoch)
         native_destinations.pending(native, true);
     }
-    if (!output_ || (file_ && std::ferror(file_)))
-      (void)recover_diagnostic_stream(output_);
+    {
+      NativeMetadataGuard guard;
+      if (!guard.locked)
+        return false;
+      if (!output_ || (file_ && std::ferror(file_)))
+        (void)recover_diagnostic_stream(output_);
+    }
     const bool presentation = io_ && io_->line_output && io_->line_output->presenting();
-    NativeDiagnosticRecord record(native, *destination.owner, attempt, presentation);
-    record.begin();
+    NativeDiagnosticRecord record(native, inspection, attempt, presentation);
     const bool success = record.finish(parts, newline);
     if (!success) {
+      NativeMetadataGuard guard;
+      if (!guard.locked)
+        return false;
       try {
         output_.setstate(std::ios::badbit);
       } catch (...) {
@@ -503,6 +585,7 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
     }
     return success;
   }
+  state_ = &stream_diagnostic_state(output_, local_);
 
   struct Recovery {
     std::ostream &stream;

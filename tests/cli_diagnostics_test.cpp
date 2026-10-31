@@ -67,6 +67,14 @@ TEST(TerminalInput, TransientReadinessFailuresRemainRetryableAndOnlyReadsIndicat
   EXPECT_EQ(byte, 'x');
 }
 #endif
+TEST(InteractionWarnings, FourthKindCannotAliasAnExistingRetry) {
+  using Four = detail::WarningBits<15>;
+  static_assert(Four::shift == 4 && (Four::retries & 8u) == 0);
+  const auto fourth = 8u;
+  EXPECT_EQ((fourth | (fourth >> Four::shift)) & Four::kinds, fourth);
+  EXPECT_EQ(((fourth << Four::shift) >> Four::shift) & Four::kinds, fourth);
+  EXPECT_EQ((1u << Four::shift) & fourth, 0u);
+}
 TEST(InteractionWarnings, RetainedWarningsAreNotReadmittedAfterRefreshThrows) {
   Interaction interaction;
   detail::UiHistory history;
@@ -1167,6 +1175,76 @@ TEST(DiagnosticWriter, TurnCleanupKeepsOriginalFailureAfterQuiescenceAndResetsCa
   }
 }
 #ifdef CODET_NATIVE_TERMINAL_METRICS
+// Runs between native record admission and delivery, outside every metadata guard.
+void competing_native_record(void *reset) {
+  if (*static_cast<bool *>(reset))
+    detail::reset_standard_diagnostics();
+  auto &metrics = test::native_io_metrics;
+  metrics.vector_partial = true;
+  EXPECT_FALSE(detail::immediate_stderr({"newer failure"}));
+}
+TEST(DiagnosticWriter, OlderCompletionCannotClearNewerFailureOrResetEpoch) {
+  for (bool reset : {false, true}) {
+    detail::reset_standard_diagnostics();
+    testing::internal::CaptureStderr();
+    auto &metrics = test::native_io_metrics;
+    metrics.interrupt_fd = STDERR_FILENO;
+    metrics.before_output = competing_native_record;
+    metrics.output_context = &reset;
+    EXPECT_TRUE(detail::immediate_stderr({"older success"}));
+    metrics = {};
+    EXPECT_TRUE(detail::immediate_stderr({"later"}));
+    const auto bytes = testing::internal::GetCapturedStderr();
+    EXPECT_THAT(bytes, HasSubstr("older success\n\nlater\n"));
+  }
+  detail::reset_standard_diagnostics();
+}
+void intervening_success(void *) {
+  EXPECT_TRUE(detail::immediate_stderr({"intervening"}));
+}
+TEST(DiagnosticWriter, InterveningRecoverySeparatorCannotSuppressAnAdmittedRecord) {
+  detail::reset_standard_diagnostics();
+  testing::internal::CaptureStderr();
+  auto &metrics = test::native_io_metrics;
+  metrics.interrupt_fd = STDERR_FILENO;
+  metrics.vector_partial = true;
+  EXPECT_FALSE(detail::immediate_stderr({"partial"}));
+  metrics.before_output = intervening_success;
+  EXPECT_TRUE(detail::immediate_stderr({"admitted"}));
+  metrics = {};
+  const auto bytes = testing::internal::GetCapturedStderr();
+  EXPECT_THAT(bytes, HasSubstr("intervening\n"));
+  EXPECT_THAT(bytes, HasSubstr("admitted\n"));
+  detail::reset_standard_diagnostics();
+}
+TEST(DiagnosticWriter, ConcurrentFallbackAndNativeBoundarySnapshotsAreSynchronized) {
+  testing::internal::CaptureStderr();
+  detail::reset_standard_diagnostics();
+  struct stat identity {};
+  ASSERT_EQ(::fstat(STDERR_FILENO, &identity), 0);
+  const auto boundary = detail::native_line_destinations();
+  boundary.bind(STDOUT_FILENO, identity);
+  std::atomic<bool> start{false};
+  std::thread worker([&] {
+    while (!start.load())
+      std::this_thread::yield();
+    for (unsigned i = 0; i != 100; ++i) {
+      (void)detail::immediate_stderr({"warning"});
+      FileNotice notice("/complete/path", FileNoticeKind::tool_result);
+      emergency_file_diagnostic(notice);
+      (void)detail::write_diagnostic(std::cerr, {"ordinary"});
+    }
+  });
+  start = true;
+  for (unsigned i = 0; i != 1000; ++i) {
+    boundary.open(identity);
+    EXPECT_TRUE(boundary.snapshot(STDOUT_FILENO, identity).available);
+    (void)boundary.separate(identity);
+  }
+  worker.join();
+  EXPECT_THAT(testing::internal::GetCapturedStderr(), HasSubstr("/complete/path"));
+  detail::reset_standard_diagnostics();
+}
 TEST(DiagnosticWriter, IndeterminatePipeBoundsDoNotRetryStaleInterruptedErrno) {
   int descriptors[2];
   ASSERT_EQ(::pipe(descriptors), 0);

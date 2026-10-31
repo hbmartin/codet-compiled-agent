@@ -134,8 +134,9 @@ int main(int argc, char **argv) {
     return 2;
   (void)std::setlocale(LC_ALL, "C");
   const std::string mode = argv[1];
-  const bool native =
-      mode == "native-busy" || mode == "native-editing" || mode == "native-boundary";
+  const bool native = mode == "native-busy" || mode == "native-editing" ||
+                      mode == "native-boundary" || mode == "native-flush-boundary" ||
+                      mode == "native-rebind" || mode == "native-unchanged";
   const bool warnings =
       mode == "warning-empty" || mode == "warning-new" || mode == "warning-failed-idle";
   const bool deferred = mode == "deferred-tail";
@@ -167,7 +168,8 @@ int main(int argc, char **argv) {
     if (::dup2(slave, STDOUT_FILENO) < 0 || ::fstat(STDOUT_FILENO, &tty) < 0)
       return 3;
     ::close(slave);
-    if (mode == "native-boundary" && ::dup2(STDOUT_FILENO, STDERR_FILENO) < 0)
+    if ((mode == "native-boundary" || mode == "native-flush-boundary") &&
+        ::dup2(STDOUT_FILENO, STDERR_FILENO) < 0)
       return 3;
   }
   Cancellation cancel;
@@ -179,7 +181,8 @@ int main(int argc, char **argv) {
   detail::RequestInputController input;
   if (!editing && !deferred && !warnings && mode != "allocation-positive" &&
       mode != "geometry-positive")
-    for (size_t i = 0; i < (mode == "unchanged" ? 65536u : 20480u); ++i)
+    for (size_t i = 0; i < ((mode == "unchanged" || mode == "native-unchanged") ? 65536u : 20480u);
+         ++i)
       input.append('x');
   const std::string label = "codet> ";
   auto line = prompt<detail::LinePrompt>(0, mode == "editing-basic" || deferred ? 0u : 80u, input,
@@ -195,11 +198,11 @@ int main(int argc, char **argv) {
   };
   if (mode == "warning-failed-idle")
     interaction.warn(Interaction::Warning::exec_stop);
-  const size_t count = warnings              ? 100000
-                       : editing             ? 20480
-                       : mode == "unchanged" ? 10000
-                       : native              ? 100
-                                             : 1000;
+  const size_t count = warnings                                              ? 100000
+                       : editing                                             ? 20480
+                       : (mode == "unchanged" || mode == "native-unchanged") ? 10000
+                       : native                                              ? 100
+                                                                             : 1000;
   allocations = allocated = operations = bytes = geometry = 0;
   test::descriptor_bench::stats = test::descriptor_bench::flags = test::descriptor_bench::bounds =
       0;
@@ -215,6 +218,14 @@ int main(int argc, char **argv) {
       line->append(static_cast<char>(0xe9));
       if (line->take().text != std::string("a\xe9"))
         return 6;
+    } else if (mode == "native-rebind") {
+      auto *prior = std::cout.rdbuf(&discard);
+      line->flush();
+      std::cout.rdbuf(prior);
+      line->flush();
+    } else if (mode == "native-flush-boundary") {
+      (void)detail::write_diagnostic(std::cerr, {"progress"});
+      line->flush();
     } else if (mode == "native-boundary") {
       (void)detail::write_diagnostic(std::cerr, {"progress"});
       line->append('x');
@@ -228,7 +239,7 @@ int main(int argc, char **argv) {
       line->append(mode == "editing-patterned" ? static_cast<char>('a' + i % 26) : 'x');
     else if (mode == "deletion")
       line->erase_character();
-    else if (mode == "unchanged")
+    else if (mode == "unchanged" || mode == "native-unchanged")
       line->flush();
     else {
       if (!native)
@@ -241,7 +252,7 @@ int main(int argc, char **argv) {
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
   observing = test::descriptor_bench::observing = false;
   if (native) {
-    if (mode == "native-boundary")
+    if (mode == "native-boundary" || mode == "native-flush-boundary")
       ::close(STDERR_FILENO);
     ::close(STDOUT_FILENO);
     int status;

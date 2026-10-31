@@ -1,5 +1,6 @@
 #pragma once
 #include "codet/core.hpp"
+#include "codet/detail/warning_bits.hpp"
 #include <condition_variable>
 #include <deque>
 #include <mutex>
@@ -23,14 +24,34 @@ class Interaction {
   std::map<std::string, uint64_t> requests_;
 
 public:
-  enum class Warning : uint8_t { exec_stop = 1, exec_original = 2, event_render = 4 };
+#define CODET_INTERACTION_WARNINGS(X)                                                              \
+  X(exec_stop, 1, "Exec cleanup failed while stopping owned process")                              \
+  X(exec_original, 2, "Exec cleanup failed; preserving original error")                            \
+  X(event_render, 4, "Worker event diagnostic could not be displayed")
+#define CODET_WARNING_ENUM(name, bit, message) name = (bit),
+  enum class Warning : uint8_t { CODET_INTERACTION_WARNINGS(CODET_WARNING_ENUM) };
+#undef CODET_WARNING_ENUM
+
+private:
+#define CODET_WARNING_MASK(name, bit, message) | (bit)
+  using WarningEncoding = detail::WarningBits<0 CODET_INTERACTION_WARNINGS(CODET_WARNING_MASK)>;
+#undef CODET_WARNING_MASK
+#define CODET_WARNING_MESSAGE(name, bit, message) {Warning::name, message},
+  static constexpr std::pair<Warning, std::string_view> warning_messages[] = {
+      CODET_INTERACTION_WARNINGS(CODET_WARNING_MESSAGE)};
+#undef CODET_WARNING_MESSAGE
+  static_assert(sizeof(warning_messages) / sizeof(warning_messages[0]) == WarningEncoding::shift,
+                "Every warning must have one unique bit and message");
+#undef CODET_INTERACTION_WARNINGS
+
+public:
   // Producers never format, allocate, or invoke a renderer. One pending bit per warning kind.
   void warn(Warning kind) noexcept {
     warnings_.fetch_or(static_cast<unsigned>(kind), std::memory_order_relaxed);
   }
   template <class Consumer> void drain_warnings(Consumer consume, bool retry = true) noexcept {
     // Low bits are new occurrences; high bits are failed attempts awaiting a real UI event.
-    constexpr unsigned kinds = 7, shift = 3;
+    constexpr unsigned kinds = WarningEncoding::kinds, shift = WarningEncoding::shift;
     auto snapshot = warnings_.load(std::memory_order_relaxed);
     unsigned pending;
     do {
@@ -39,11 +60,7 @@ public:
         return;
     } while (!warnings_.compare_exchange_weak(snapshot, snapshot & ~(pending | (pending << shift)),
                                               std::memory_order_relaxed));
-    constexpr std::pair<Warning, std::string_view> messages[] = {
-        {Warning::exec_stop, "Exec cleanup failed while stopping owned process"},
-        {Warning::exec_original, "Exec cleanup failed; preserving original error"},
-        {Warning::event_render, "Worker event diagnostic could not be displayed"}};
-    for (const auto &entry : messages) {
+    for (const auto &entry : warning_messages) {
       const auto bit = static_cast<unsigned>(entry.first);
       if (pending & bit)
         try {

@@ -55,11 +55,10 @@ public:
         channel.row = true;
   }
   bool separate(const struct stat &identity) noexcept {
-    const bool pending = row(identity);
-    for (auto &channel : channels_)
-      if (channel.known && same_destination(channel.identity, identity))
-        channel.row = false;
-    return pending;
+    for (size_t i = 0; i != channels_.size(); ++i)
+      if (channels_[i].known && same_destination(channels_[i].identity, identity))
+        return separate(i == 0 ? STDOUT_FILENO : STDERR_FILENO);
+    return false;
   }
   bool separate(int descriptor) noexcept {
     bool result = false;
@@ -85,7 +84,33 @@ public:
   uint64_t generation(int descriptor) const noexcept {
     return channels_[index(descriptor)].generation;
   }
+  void reset() noexcept {
+    channels_ = {};
+    presented_ = false;
+    // Keep reset distinguishable from a completion belonging to an earlier invocation.
+    const auto next = ++generation_;
+    for (auto &channel : channels_)
+      channel.generation = next;
+  }
 };
-// Fixed, trivially destructible native owners; standalone writers and active UI share them.
-LineDestinations &native_line_destinations() noexcept;
+struct BoundarySnapshot {
+  bool available = false, row = false;
+  uint64_t generation = 0;
+};
+// Null selects the synchronized native owner. No mutable native references escape its guard.
+class BoundaryAccess {
+  LineDestinations *local_;
+
+public:
+  explicit BoundaryAccess(LineDestinations *local = nullptr) noexcept : local_(local) {}
+  void bind(int, const struct stat &) const noexcept;
+  bool row(const struct stat &) const noexcept;
+  void open(const struct stat &) const noexcept;
+  bool separate(const struct stat &) const noexcept;
+  BoundarySnapshot snapshot(int, const struct stat &) const noexcept;
+};
+BoundaryAccess native_line_destinations() noexcept;
+// Stack-owned inspection uses the logical delivery's EINTR policy and never holds a state lock.
+class OutputAttempt;
+bool inspect_output_destination(int, struct stat &, OutputAttempt &) noexcept;
 } // namespace codet::detail
