@@ -145,6 +145,35 @@ TEST_F(NativeRecordLifecycle, DeferredEraseRetainsWorkUntilDiagnosticCompletion)
   EXPECT_TRUE(read().empty());
 }
 
+TEST_F(NativeRecordLifecycle, InjectedStdoutSharesSeparatorWithNativeStderr) {
+  line.reset();
+  struct Forward : std::streambuf {
+    std::streamsize xsputn(const char *p, std::streamsize n) override {
+      return ::write(STDOUT_FILENO, p, static_cast<size_t>(n));
+    }
+    int_type overflow(int_type c) override {
+      if (traits_type::eq_int_type(c, traits_type::eof()))
+        return traits_type::not_eof(c);
+      char ch = traits_type::to_char_type(c);
+      return ::write(STDOUT_FILENO, &ch, 1) == 1 ? c : traits_type::eof();
+    }
+  } forward;
+  struct Restore {
+    std::streambuf *old;
+    ~Restore() {
+      std::cout.rdbuf(old);
+    }
+  } restore{std::cout.rdbuf(&forward)};
+  line.emplace(input, output, io, prompt, identity, 80);
+  line->acquire();
+  draft();
+  EXPECT_EQ(read(), "codet> abc");
+  detail::DiagnosticWriter errors(std::cerr, &io);
+  EXPECT_TRUE(errors.write({"warning"}));
+  const auto bytes = read();
+  EXPECT_EQ(bytes, "\r\nwarning\r\n");
+}
+
 TEST_F(NativeRecordLifecycle, FailedPromptDoesNotGenerateIdleRetryEvents) {
   int descriptors[2];
   ASSERT_EQ(::pipe(descriptors), 0);
