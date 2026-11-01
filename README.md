@@ -209,6 +209,8 @@ python3 scripts/validation_evidence.py bundle \
 
 Provision pinned dependencies and tools first. The Python 3.9 checks verify the selected
 interpreter's major/minor version; select a real 3.9 interpreter for that option.
+Use `--clang-tidy` and `--cppcheck` when the selected analyzers are not on PATH;
+the resolved manifest records those environment overrides.
 The cross-selection checks require the existing host cross-mode configuration and
 are not native Tiger verification. Add `--ci-run RUN_ID` to include a fresh matching
 GitHub Actions run. Existing report bundles are immutable and historical captures

@@ -134,7 +134,7 @@ def capture(manifest_path, folder, *, campaign_id=None):
         before, validation = production_hashes(root), validation_hashes(root)
         context = _context(root, run, name, before, validation)
         record = dict(schema_version=SCHEMA_VERSION, id=name, run_id=run["id"], campaign_id=run["campaign_id"],
-                      argv=check["argv"], cwd=str(Path(check.get("cwd", root)).resolve()),
+                      argv=check["argv"], env=check.get("env", {}), cwd=str(Path(check.get("cwd", root)).resolve()),
                       manifest_sha256=signature, source_before=before, validation_before=validation,
                       started_ns=time.time_ns(), exit=None, outcome="not-run", log=log.name, artifacts=[])
         log.write_text("")
@@ -156,7 +156,9 @@ def capture(manifest_path, folder, *, campaign_id=None):
                         log.write_text(str(error) + "\n")
                         continue
                 with log.open("wb") as stream:
-                    env = dict(os.environ, CODET_EVIDENCE_CONTEXT=json.dumps(context))
+                    env = dict(os.environ)
+                    env.update(check.get("env", {}))
+                    env["CODET_EVIDENCE_CONTEXT"] = json.dumps(context)
                     process = subprocess.Popen(check["argv"], cwd=record["cwd"], stdout=stream,
                                                stderr=subprocess.STDOUT, start_new_session=True, env=env)
                     try:
@@ -213,7 +215,7 @@ def validate_capture(manifest_path, folder):
         record = json.loads((folder / (check["id"] + ".json")).read_text())
         if (record.get("schema_version") != SCHEMA_VERSION or record["id"] != check["id"] or
                 record["run_id"] != run["id"] or record["campaign_id"] != run["campaign_id"] or
-                record["argv"] != check["argv"] or
+                record["argv"] != check["argv"] or record.get("env") != check.get("env", {}) or
                 record["cwd"] != str(Path(check.get("cwd", root)).resolve()) or
                 record["manifest_sha256"] != signature or
                 record["source_before"] != current or record["source_after"] != current or

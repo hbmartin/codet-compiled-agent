@@ -282,6 +282,15 @@ class ProvenanceGuards(unittest.TestCase):
             evidence.publish_bundle(self.manifest, self.folder, target)
         self.assertFalse(target.exists())
 
+    def test_environment_override_changes_invalidate_capture(self):
+        self.checks[0]["env"] = {"EVIDENCE_TEST": "value"}
+        self.capture()
+        record = json.loads((self.folder / "test.json").read_text())
+        self.assertEqual(record["env"], {"EVIDENCE_TEST": "value"})
+        self.checks[0]["env"]["EVIDENCE_TEST"] = "changed"
+        self.setup_manifest()
+        self.rejected("Capture manifest has changed")
+
     def test_archived_outputs_are_protected(self):
         self.capture()
         for name in ("prompt-recovery-evidence-followup.json", "diagnostic-record-lifecycle-followup.json"):

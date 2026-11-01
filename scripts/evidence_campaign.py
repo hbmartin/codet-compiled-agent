@@ -32,16 +32,18 @@ def command(argv, *, cwd=None, timeout=30):
     return subprocess.check_output([str(s) for s in argv], cwd=cwd, text=True, timeout=timeout).strip()
 
 
-def prepare(root, folder, baseline, check_python, python39, analysis_python, ci_run=None):
+def prepare(root, folder, baseline, check_python, python39, analysis_python, ci_run=None, clang_tidy=None, cppcheck=None):
     root = root.resolve()
     folder = (root / folder).resolve()
     check_python = shutil.which(check_python) or check_python
     folder.mkdir(parents=True, exist_ok=True)
     baseline = command(["git", "-C", root, "rev-parse", baseline + "^{commit}"])
     template = json.loads((Path(__file__).resolve().parents[1] / "checks/validation-replay.json").read_text())
+    analyzer_env = dict(CLANG_TIDY=clang_tidy or shutil.which("clang-tidy-18") or shutil.which("clang-tidy") or "clang-tidy-18",
+                        CPPCHECK=cppcheck or str(root / "build/analysis-tools/cppcheck/bin/cppcheck"))
     config_path = folder / "config.json"
     config = dict(root=str(root), folder=str(folder), baseline=baseline,
-                  validated_ref=command(["git", "-C", root, "rev-parse", "HEAD"]), ci_run=ci_run,
+                  validated_ref=command(["git", "-C", root, "rev-parse", "HEAD"]), ci_run=ci_run, analyzer_env=analyzer_env,
                   check_python=str(Path(check_python).absolute()), python39=python39, analysis_python=analysis_python,
                   cases=CASES, sets=template["benchmark"]["sets"], measured=template["benchmark"]["measured_per_set"])
     atomic_json(config_path, config)
@@ -85,7 +87,7 @@ def prepare(root, folder, baseline, check_python, python39, analysis_python, ci_
     add("cross-build", ["cmake", "--build", cross, "--target", "codet_tests", "-j4"])
     add("cross-tests", [cross / "codet_tests", "--gtest_filter=LinePrompt.*:InteractionWarnings.*:CursesInput.*"], ["cross-build"])
     if (folder / "preliminary-capture").exists():
-        history_inputs = [str(p.relative_to(root)) for p in sorted((folder / "preliminary-capture").glob("*")) if p.is_file()]
+        history_inputs = [str(p.relative_to(root)) for p in sorted((folder / "preliminary-capture").rglob("*")) if p.is_file()]
         producer("historical-attempt", "history", inputs=history_inputs)
     producer("baseline-source", "archive")
     for variant in ("baseline", "changed"):
@@ -93,8 +95,8 @@ def prepare(root, folder, baseline, check_python, python39, analysis_python, ci_
         build = folder / (variant + "-release")
         add(variant + "-configure", configure(source, build, "Release"), ["baseline-source"] if variant == "baseline" else [])
         add(variant + "-build", ["cmake", "--build", build, "--target", "codet_line_input_bench", "codet_output_bench", "codet_export_bench", "-j4"], [variant + "-configure"])
-        add(variant + "-selftest", [analysis_python, source / "scripts/analyze-modern.py", "--build-dir", build, "--selftest", "--jobs", "4"], [variant + "-configure"])
-        add(variant + "-analysis", [analysis_python, source / "scripts/analyze-modern.py", "--build-dir", build, "--tool", "all", "--jobs", "4"], [variant + "-selftest"], policy="observation", timeout=1800)
+        add(variant + "-selftest", [analysis_python, source / "scripts/analyze-modern.py", "--build-dir", build, "--selftest", "--jobs", "4"], [variant + "-configure"], env=analyzer_env)
+        add(variant + "-analysis", [analysis_python, source / "scripts/analyze-modern.py", "--build-dir", build, "--tool", "all", "--jobs", "4"], [variant + "-selftest"], policy="observation", timeout=1800, env=analyzer_env)
     analysis_inputs = [str((folder / (v + "-release") / "analysis" / t / "manifest.json").relative_to(root))
                        for v in ("baseline", "changed") for t in TOOLS]
     analysis_inputs += [str((folder / (v + "-release") / "analysis/selftest/selftest.json").relative_to(root)) for v in ("baseline", "changed")]
@@ -140,8 +142,8 @@ def measure(config):
         for line in cache.read_text().splitlines():
             if line.startswith(("CMAKE_C_FLAGS:", "CMAKE_CXX_FLAGS:", "CMAKE_C_FLAGS_RELEASE:", "CMAKE_CXX_FLAGS_RELEASE:", "CMAKE_BUILD_TYPE:", "CMAKE_C_COMPILER:", "CMAKE_CXX_COMPILER:", "CMAKE_OSX_ARCHITECTURES:")):
                 key, value = line.split("=", 1)
-                values[key] = value
-        configurations[variant] = dict(values=values, cache_sha256=digest(cache), compiler=command([values.get("CMAKE_CXX_COMPILER:FILEPATH", "c++"), "--version"]))
+                values[key.split(":", 1)[0]] = value
+        configurations[variant] = dict(values=values, cache_sha256=digest(cache), compiler=command([values["CMAKE_CXX_COMPILER"], "--version"]))
     if configurations["baseline"]["values"] != configurations["changed"]["values"]:
         raise ValueError("Release compiler settings differ")
     rows, invocations = [], []
@@ -188,7 +190,7 @@ def produce(config_path, action):
     root, folder = Path(config["root"]), Path(config["folder"])
     inputs = [str(config_path.relative_to(root))]
     if action == "history":
-        paths = sorted(p for p in (folder / "preliminary-capture").glob("*") if p.is_file())
+        paths = sorted(p for p in (folder / "preliminary-capture").rglob("*") if p.is_file())
         inputs.extend(str(p.relative_to(root)) for p in paths)
         payload = dict(label="Interrupted preliminary capture; historical only, never a required-check substitute",
                        files=[dict(path=str(p.relative_to(root)), sha256=digest(p), content=json.loads(p.read_text()) if p.suffix == ".json" else p.read_text(errors="replace")) for p in paths])
@@ -264,12 +266,14 @@ def main():
     replay.add_argument("--python39", default="python3.9")
     replay.add_argument("--analysis-python", default=sys.executable)
     replay.add_argument("--ci-run")
+    replay.add_argument("--clang-tidy")
+    replay.add_argument("--cppcheck")
     producer = sub.add_parser("produce")
     producer.add_argument("config", type=Path)
     producer.add_argument("kind", choices=("archive", "analysis", "measure", "negative-controls", "build-info", "ci", "history"))
     args = parser.parse_args()
     if args.action == "prepare":
-        print(prepare(args.root, args.folder, args.baseline, args.check_python, args.python39, args.analysis_python, args.ci_run))
+        print(prepare(args.root, args.folder, args.baseline, args.check_python, args.python39, args.analysis_python, args.ci_run, args.clang_tidy, args.cppcheck))
     else:
         produce(args.config, args.kind)
 
