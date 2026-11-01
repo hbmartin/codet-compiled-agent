@@ -191,3 +191,14 @@ The reconstructed C application remains available with `make legacy` / `make app
 ## License
 
 [GPL v3](LICENSE.md). Dependency versions, source locations, hashes and patch provenance are recorded in the lock files; release bundles include notices for statically linked C++ dependencies.
+
+Validation evidence can be captured with `python3 scripts/validation_evidence.py capture
+MANIFEST FOLDER` and published with its `publish` subcommand. The manifest declares
+argument vectors, working directories, prerequisites, timeouts, and required checks
+or analyzer observations. Each capture records actual command outcomes and source
+hashes; a failed prerequisite prevents dependent commands from running. Publication
+requires complete, successful required results from the same capture and current
+production sources. Analyzer observations retain their actual nonzero statuses.
+Log text never substitutes for a command's exit status. Benchmark source equivalence
+is computed from hashes; measurements for different sources remain explicitly separate.
+Historical reports and samples are retained rather than reconstructed from old logs.
