@@ -15,7 +15,7 @@ def main():
     parser.add_argument("manifest", type=Path, help="Expected checks used by the capture runner")
     parser.add_argument("folder", type=Path, help="Captured command outcomes, not inferred log statuses")
     parser.add_argument("--benchmark", type=Path, help="Benchmark provenance including full production_hashes")
-    parser.add_argument("--output", type=Path, default=ROOT / "docs/validation/prompt-recovery-evidence-followup.json")
+    parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     archived = ROOT / "docs/validation/diagnostic-record-lifecycle-followup.json"
     if args.output.resolve() == archived:

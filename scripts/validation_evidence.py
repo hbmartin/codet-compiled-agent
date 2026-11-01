@@ -124,6 +124,7 @@ def capture(manifest_path, folder, *, campaign_id=None):
                campaign_id=campaign_id or uuid.uuid4().hex, manifest_sha256=signature)
     atomic_json(folder / "run.json", run)
     results = {}
+    policies = {c["id"]: c.get("policy", "required") for c in manifest["checks"]}
     for check in manifest["checks"]:
         name = check["id"]
         log = folder / (name + ".log")
@@ -133,8 +134,13 @@ def capture(manifest_path, folder, *, campaign_id=None):
                       argv=check["argv"], cwd=str(Path(check.get("cwd", root)).resolve()),
                       manifest_sha256=signature, source_before=before, validation_before=validation,
                       started_ns=time.time_ns(), exit=None, outcome="not-run", log=log.name, artifacts=[])
+        log.write_text("")
         try:
-            if any(results[parent]["outcome"] != "passed" for parent in check.get("requires", [])):
+            names = sorted({n for a in check.get("artifacts", []) for n in a.get("inputs", [])})
+            record["input_before"] = input_hashes(root, names)
+            if any(results[parent]["outcome"] != "passed" and not (policies[parent] == "observation" and
+                   results[parent]["outcome"] == "failed" and type(results[parent]["exit"]) is int)
+                   for parent in check.get("requires", [])):
                 record["outcome"] = "blocked"
                 log.write_text("Prerequisite did not pass; command was not launched.\n")
             else:
@@ -178,6 +184,8 @@ def capture(manifest_path, folder, *, campaign_id=None):
             with log.open("a") as stream:
                 stream.write(str(error) + "\n")
         finally:
+            record["input_after"] = {n: digest(root / n) if (root / n).is_file() else None
+                                     for n in record.get("input_before", {})}
             record["source_after"] = production_hashes(root)
             record["validation_after"] = validation_hashes(root)
             record["finished_ns"] = time.time_ns()
@@ -213,6 +221,9 @@ def validate_capture(manifest_path, folder):
             raise ValueError("Command did not complete: " + check["id"] + " (" + record["outcome"] + ")")
         if check.get("policy", "required") == "required" and (record["outcome"] != "passed" or record["exit"] != 0):
             raise ValueError("Required check did not pass: " + check["id"])
+        names = sorted({n for a in check.get("artifacts", []) for n in a.get("inputs", [])})
+        if record.get("input_before") != input_hashes(root, names) or record.get("input_after") != record["input_before"]:
+            raise ValueError("Artifact producer inputs changed: " + check["id"])
         expected = check.get("artifacts", [])
         if len(record["artifacts"]) != len(expected):
             raise ValueError("Missing produced artifacts: " + check["id"])
