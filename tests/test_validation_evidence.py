@@ -286,6 +286,114 @@ class ProvenanceGuards(unittest.TestCase):
                 evidence.publish(self.manifest, self.folder, self.root / name)
 
 
+class ComparisonGuards(unittest.TestCase):
+    def analysis(self, root, tool="cppcheck"):
+        return dict(tool=tool, versions=[], expected_sources=[str(root / "src/a.cpp")],
+                    completed_sources=[str(root / "src/a.cpp")], passed=True, findings=0,
+                    canaries=[dict(passed=True)], results=[dict(source=str(root / "src/a.cpp"),
+                    completed_sources=[str(root / "src/a.cpp")], status="passed", failure=None, findings=[])])
+
+    def test_analyzer_completeness_and_canaries(self):
+        import copy
+
+        from evidence_analysis import compare_analysis
+        root = Path("/project")
+        source = self.analysis(root)
+        for change in ("incomplete", "duplicate", "canary", "failure", "count", "results"):
+            value = copy.deepcopy(source)
+            if change == "incomplete":
+                value["completed_sources"] = []
+            elif change == "duplicate":
+                value["completed_sources"] *= 2
+            elif change == "canary":
+                value["canaries"][0]["passed"] = False
+            elif change == "failure":
+                value["results"][0]["failure"] = "parser failure"
+            elif change == "count":
+                value["findings"] = 1
+            else:
+                value["results"] = []
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "coverage|canary|failure|count"):
+                compare_analysis(source, value, root, root, ["src/a.cpp"])
+
+    def test_cppcheck_locations_and_msg_are_preserved(self):
+        import copy
+
+        from evidence_analysis import compare_analysis
+        root = Path("/project")
+        source = self.analysis(root)
+        source.update(findings=1, passed=False)
+        source["results"][0].update(status="findings", findings=[dict(id="same", msg="message", locations=[dict(file="src/a.cpp", line="1", column="2")])])
+        self.assertFalse(compare_analysis(source, source, root, root, ["src/a.cpp"])["baseline_passed"])
+        for field in ("msg", "line", "file", "column"):
+            other = copy.deepcopy(source)
+            target = other["results"][0]["findings"][0]
+            if field == "msg":
+                target[field] = "different"
+            else:
+                target["locations"][0][field] = "different"
+            self.assertFalse(compare_analysis(source, other, root, root, ["src/a.cpp"])["equal"])
+
+    def samples(self):
+        rows, summary = [], []
+        for s in (1, 2):
+            for variant in ("baseline", "changed"):
+                for sample in range(6):
+                    rows.append(dict(set=s, harness="test", workload="case", variant=variant, sample=sample,
+                                     warmup=sample == 0, milliseconds=float(sample), allocations=0, allocated_bytes=0))
+                summary.append(dict(set=s, harness="test", workload="case", variant=variant,
+                                    milliseconds=3.0, allocations=0, allocated_bytes=0))
+        return rows, summary
+
+    def test_raw_samples_define_medians_and_counts(self):
+        from evidence_benchmarks import verify_samples
+        rows, summary = self.samples()
+        value = verify_samples(rows, summary, dict(test=["case"]))
+        self.assertEqual((value["samples"], value["measured_samples"], value["workloads"]), (24, 20, 1))
+        self.assertTrue(value["all_measured_work_equal"])
+        rows[3]["milliseconds"] = 99
+        with self.assertRaisesRegex(ValueError, "Raw samples"):
+            verify_samples(rows, summary, dict(test=["case"]))
+
+    def test_missing_duplicate_or_malformed_samples_rejected(self):
+        from evidence_benchmarks import verify_samples
+        for mode in ("missing", "duplicate", "warmup", "nan"):
+            rows, summary = self.samples()
+            if mode == "missing":
+                rows.pop()
+            elif mode == "duplicate":
+                rows.append(dict(rows[0]))
+            elif mode == "warmup":
+                rows[0]["warmup"] = False
+            else:
+                rows[2]["milliseconds"] = float("nan")
+            with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, "samples|sample|warmup|metrics"):
+                verify_samples(rows, summary, dict(test=["case"]))
+
+    def test_work_difference_is_not_called_equal(self):
+        from evidence_benchmarks import verify_samples
+        rows, summary = self.samples()
+        for r in rows + summary:
+            if r["variant"] == "changed":
+                r["allocations"] = 1
+        value = verify_samples(rows, summary, dict(test=["case"]))
+        self.assertFalse(value["all_measured_work_equal"])
+        self.assertIn("allocations", value["comparisons"][0]["work_differences"])
+
+    def test_mutants_require_passing_baseline_and_assertion_failure(self):
+        from evidence_benchmarks import replace_once, verify_unittest_result
+        baseline = dict(tests_run=1, errors=0, skipped=0, failures=0, exit=0)
+        mutant = dict(baseline, failures=1, exit=1, assertion_failure=True)
+        verify_unittest_result(baseline, mutant)
+        for bad in (dict(mutant, errors=1), dict(mutant, tests_run=0), dict(mutant, assertion_failure=False)):
+            with self.assertRaisesRegex(ValueError, "assertion|exactly one"):
+                verify_unittest_result(baseline, bad)
+        with self.assertRaisesRegex(ValueError, "baseline failed"):
+            verify_unittest_result(mutant, mutant)
+        with self.assertRaisesRegex(ValueError, "exactly once"):
+            replace_once("aa", "a", "b")
+
+
 class ExactProcessArguments(unittest.TestCase):
     def test_darwin_decoder_preserves_spaces(self):
         import ctypes
