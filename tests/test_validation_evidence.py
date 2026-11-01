@@ -425,5 +425,66 @@ class ExactProcessArguments(unittest.TestCase):
             evidence.require_quiet_processes()
 
 
+    def test_vanished_process_is_skipped_but_denial_is_not_clean(self):
+        import errno
+
+        import evidence_processes as processes
+        with patch.object(processes.subprocess, "check_output", return_value="123 /usr/bin/python3\n"), patch.object(processes, "read_argv", side_effect=OSError(errno.ESRCH, "gone")):
+            with self.assertRaisesRegex(ValueError, "no usable records"):
+                processes.process_snapshot()
+        with patch.object(processes.subprocess, "check_output", return_value="123 /usr/bin/python3\n"), patch.object(processes, "read_argv", side_effect=PermissionError(errno.EPERM, "denied")):
+            with self.assertRaises(PermissionError):
+                processes.process_snapshot()
+
+
+class ReplayAndGitGuards(unittest.TestCase):
+    def git_fixture(self, root):
+        (root / "src").mkdir()
+        (root / "src/a.cpp").write_text("original")
+        (root / "CMakeLists.txt").write_text("project(test)")
+        for args in (["init", "-q"], ["add", "."], ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture"]):
+            subprocess.run(["git", "-C", str(root)] + args, check=True, capture_output=True, timeout=5)
+
+    def test_wrong_git_baseline_rejected(self):
+        from evidence_benchmarks import verify_git_source
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self.git_fixture(root)
+            value = verify_git_source(root, root, "HEAD")
+            self.assertEqual(len(value["production_hashes"]), 2)
+            (root / "src/a.cpp").write_text("changed")
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                verify_git_source(root, root, "HEAD")
+
+    def test_portable_manifest_has_no_shell_path_and_checks_python(self):
+        from evidence_campaign import prepare
+        with tempfile.TemporaryDirectory(prefix="replay space ") as d:
+            root = Path(d)
+            self.git_fixture(root)
+            manifest = json.loads(prepare(root, Path("build/campaign"), "HEAD", sys.executable, "python3.9", sys.executable).read_text())
+            self.assertEqual(manifest["root"], str(root.resolve()))
+            for c in manifest["checks"]:
+                self.assertFalse(any(s.startswith("PATH=") for s in c["argv"]))
+                if c["id"].startswith("python39"):
+                    self.assertEqual(c["python_version"], [3, 9])
+
+    def test_optimized_python_keeps_publication_guard(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "src").mkdir()
+            (root / "src/a.cpp").write_text("original")
+            (root / "CMakeLists.txt").write_text("project(test)")
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(dict(root=str(root), checks=[dict(id="test", argv=[sys.executable, "-c", "pass"])])))
+            evidence.capture(manifest, root / "capture")
+            (root / "src/a.cpp").write_text("changed")
+            output = root / "report.json"
+            output.write_text("previous")
+            process = subprocess.run([sys.executable, "-O", evidence.__file__, "publish", str(manifest), str(root / "capture"), "--output", str(output)], capture_output=True, text=True, timeout=5)
+            self.assertNotEqual(process.returncode, 0)
+            self.assertIn("Stale or mismatched evidence", process.stderr)
+            self.assertEqual(output.read_text(), "previous")
+
+
 if __name__ == "__main__":
     unittest.main()

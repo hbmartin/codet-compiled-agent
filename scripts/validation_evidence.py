@@ -1,6 +1,7 @@
 """Capture actual command outcomes and publish versioned, source-bound evidence."""
 
 import argparse
+import csv
 import hashlib
 import json
 import os
@@ -93,6 +94,8 @@ def validate_artifact(path, spec, context):
     for key in ("schema_version", "campaign_id", "capture_run_id", "check_id", "production_hashes", "validation_hashes"):
         if value.get(key) != context[key]:
             raise ValueError("Stale artifact " + str(path) + ": " + key)
+    if "payload" not in value:
+        raise ValueError("Artifact payload missing: " + str(path))
     if value.get("kind") != spec["kind"]:
         raise ValueError("Artifact kind mismatch: " + str(path))
     if value.get("input_hashes") != input_hashes(Path(context["root"]), spec.get("inputs", [])):
@@ -275,6 +278,14 @@ def publish_bundle(manifest_path, folder, destination):
                 target = stage / "artifacts" / record["id"] / Path(artifact["path"]).name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(root / artifact["path"], target)
+        for artifact in value["derived_artifacts"]:
+            if artifact["kind"] == "measure":
+                for key, name in (("rows", "samples.csv"), ("summary", "medians.csv")):
+                    rows = artifact["payload"][key]
+                    with (stage / name).open("w", newline="") as stream:
+                        writer = csv.DictWriter(stream, fieldnames=sorted(set().union(*(r.keys() for r in rows))), lineterminator="\n")
+                        writer.writeheader()
+                        writer.writerows(rows)
         atomic_json(stage / "report.json", value)
         if validate_capture(stage / "manifest.json", stage / "capture") != value:
             raise ValueError("Staged capture mismatch")
@@ -288,6 +299,8 @@ def publish_bundle(manifest_path, folder, destination):
             raise ValueError("Evidence changed during staging")
         if destination.exists():
             raise ValueError("Bundle destination already exists")
+        atomic_json(stage / "inventory.json", {str(p.relative_to(stage)): digest(p)
+                    for p in sorted(stage.rglob("*")) if p.is_file()})
         os.rename(stage, destination)
     return value
 
