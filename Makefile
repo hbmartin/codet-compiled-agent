@@ -130,6 +130,7 @@ check-shell:
 check-workflows:
 	$(CHECK_PYTHON) scripts/lint.py workflows
 test-lint-runners:
+	$(CHECK_PYTHON) -m unittest discover -s tests -p test_validation_evidence.py -v
 	$(CHECK_PYTHON) -m unittest discover -s tests -p test_semgrep_report.py -v
 	$(CHECK_PYTHON) -m unittest discover -s tests -p test_lint.py -v
 
