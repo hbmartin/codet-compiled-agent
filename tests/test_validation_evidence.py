@@ -47,7 +47,9 @@ class ValidationEvidence(unittest.TestCase):
         self.assertEqual(result["argv"], self.checks[0]["argv"])
         self.assertEqual(result["cwd"], str(self.root.resolve()))
         value = self.publish(dict(production_hashes=evidence.production_hashes(self.root)))
-        self.assertTrue(value["measurements_apply_to_current_source"])
+        self.assertFalse(value["measurements_apply_to_current_source"])
+        self.assertTrue(value["source_equivalence"]["production_files_unchanged_since_correctness_benchmark"])
+        self.assertTrue(value["source_equivalence"]["historical_unlinked_reference"])
         self.assertIn("passed", value["validation"][0]["log_tail"])
 
     def test_missing_result_rejected(self):
@@ -115,6 +117,7 @@ class ValidationEvidence(unittest.TestCase):
         self.capture()
         value = self.publish(benchmark)
         self.assertFalse(value["measurements_apply_to_current_source"])
+        self.assertFalse(value["source_equivalence"]["production_files_unchanged_since_correctness_benchmark"])
         self.assertEqual(value["source_equivalence"]["benchmark"], benchmark)
 
     def test_analyzer_observations_keep_their_failure_status(self):

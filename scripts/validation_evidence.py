@@ -256,7 +256,9 @@ def publish(manifest_path, folder, output, benchmark=None):
         equivalent = benchmark["production_hashes"] == value["production_hashes"]
         value["source_equivalence"] = dict(production_files_unchanged_since_correctness_benchmark=equivalent,
                                            benchmark=benchmark)
-        value["measurements_apply_to_current_source"] = equivalent
+        linked = benchmark in value["derived_artifacts"] and benchmark.get("kind") == "measure"
+        value["measurements_apply_to_current_source"] = equivalent and linked
+        value["source_equivalence"]["historical_unlinked_reference"] = not linked
     atomic_json(output, value)
     return value
 

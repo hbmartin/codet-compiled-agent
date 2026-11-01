@@ -84,6 +84,9 @@ def prepare(root, folder, baseline, check_python, python39, analysis_python, ci_
     # Existing cross-selection configuration is a host portability check, not native Tiger evidence.
     add("cross-build", ["cmake", "--build", cross, "--target", "codet_tests", "-j4"])
     add("cross-tests", [cross / "codet_tests", "--gtest_filter=LinePrompt.*:InteractionWarnings.*:CursesInput.*"], ["cross-build"])
+    if (folder / "preliminary-capture").exists():
+        history_inputs = [str(p.relative_to(root)) for p in sorted((folder / "preliminary-capture").glob("*")) if p.is_file()]
+        producer("historical-attempt", "history", inputs=history_inputs)
     producer("baseline-source", "archive")
     for variant in ("baseline", "changed"):
         source = folder / "baseline-src" if variant == "baseline" else root
@@ -184,7 +187,12 @@ def produce(config_path, action):
     config = json.loads(config_path.read_text())
     root, folder = Path(config["root"]), Path(config["folder"])
     inputs = [str(config_path.relative_to(root))]
-    if action == "archive":
+    if action == "history":
+        paths = sorted(p for p in (folder / "preliminary-capture").glob("*") if p.is_file())
+        inputs.extend(str(p.relative_to(root)) for p in paths)
+        payload = dict(label="Interrupted preliminary capture; historical only, never a required-check substitute",
+                       files=[dict(path=str(p.relative_to(root)), sha256=digest(p), content=json.loads(p.read_text()) if p.suffix == ".json" else p.read_text(errors="replace")) for p in paths])
+    elif action == "archive":
         source = folder / "baseline-src"
         if source.exists():
             raise ValueError("Baseline archive destination already exists")
@@ -258,7 +266,7 @@ def main():
     replay.add_argument("--ci-run")
     producer = sub.add_parser("produce")
     producer.add_argument("config", type=Path)
-    producer.add_argument("kind", choices=("archive", "analysis", "measure", "negative-controls", "build-info", "ci"))
+    producer.add_argument("kind", choices=("archive", "analysis", "measure", "negative-controls", "build-info", "ci", "history"))
     args = parser.parse_args()
     if args.action == "prepare":
         print(prepare(args.root, args.folder, args.baseline, args.check_python, args.python39, args.analysis_python, args.ci_run))
