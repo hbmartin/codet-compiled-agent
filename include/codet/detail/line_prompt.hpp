@@ -87,16 +87,32 @@ class LinePrompt final : public LineOutputObserver {
     return owned_ &&
            (input_.stale() || input_.kind() != RequestKind::message || !input_.input().empty());
   }
-  void separate() {
+  DiagnosticResult separate() {
     if (dirty_) {
       Internal guard(internal_);
-      if (output_.present({"\n"}, false, true))
+      const bool written = output_.present({"\n"}, false, true);
+      if (output_.presentation_deferred())
+        return DiagnosticResult::deferred;
+      if (written)
         (void)boundaries().separate(terminal_);
       dirty_ = false;
+      if (!written) {
+        visible_ = append_valid_ = false;
+        painted_ = previous_bytes_ = 0;
+        return DiagnosticResult::failure;
+      }
     }
     visible_ = false;
     painted_ = 0;
     previous_bytes_ = 0;
+    return DiagnosticResult::success;
+  }
+  bool separate_for_flush() {
+    const auto result = separate();
+    if (result == DiagnosticResult::success)
+      return true;
+    due_ = result == DiagnosticResult::deferred;
+    return false;
   }
   void abandon_geometry() noexcept {
     boundary_busy_ = false;
@@ -117,7 +133,7 @@ class LinePrompt final : public LineOutputObserver {
       due_ = true;
     }
   }
-  void geometry() {
+  bool geometry() {
     size_t columns = test_columns_;
     const int descriptor = binding_.descriptor;
     if (descriptor >= 0) {
@@ -139,10 +155,12 @@ class LinePrompt final : public LineOutputObserver {
     columns = columns >= 10 ? std::min(columns - 1, size_t{256}) : 0;
     if (columns_ != columns) {
       // Never erase using geometry established before a resize.
-      separate();
+      if (!separate_for_flush())
+        return false;
       columns_ = columns;
       due_ = true;
     }
+    return true;
   }
   std::string_view prefix(size_t width) const noexcept {
     if (input_.stale())
@@ -226,8 +244,8 @@ class LinePrompt final : public LineOutputObserver {
         painted_ = std::max(painted_, used);
       }
     } else {
-      if (was_dirty)
-        separate();
+      if (was_dirty && !separate_for_flush())
+        return;
       dirty_ = true;
       boundaries().open(terminal_);
       visible_ = present({std::string_view(row_.data(), bytes)}, false);
@@ -312,30 +330,31 @@ public:
     if (!due_ && !inspection_due_)
       return;
     inspection_due_ = false;
-    geometry();
-    if (!due_)
+    output_.begin_presentation();
+    if (!geometry() || !due_)
       return;
     Internal guard(internal_);
-    output_.begin_presentation();
     if (!eligible()) {
-      if (owned_ && dirty_ && !columns_)
-        separate();
-      else if (owned_ && dirty_) {
+      if (owned_ && dirty_ && !columns_) {
+        if (!separate_for_flush())
+          return;
+      } else if (owned_ && dirty_) {
         const auto parts = {std::string_view("\r"), std::string_view(spaces_.data(), painted_),
                             std::string_view("\r")};
-        if (echo_update_)
-          (void)output_.present(parts, false, true);
-        else
-          (void)output_.present(parts, false);
+        const bool written = output_.present(parts, false, echo_update_);
+        if (output_.presentation_deferred())
+          return;
         dirty_ = visible_ = false;
-        painted_ = 0;
-        (void)boundaries().separate(terminal_);
+        painted_ = previous_bytes_ = 0;
+        if (written)
+          (void)boundaries().separate(terminal_);
       }
       due_ = false;
       return;
     }
     if (input_.stale() && !explained_) {
-      separate();
+      if (!separate_for_flush())
+        return;
       dirty_ = true;
       boundaries().open(terminal_);
       explained_ = output_.present({RequestInput::discard_instruction}, true);
@@ -348,7 +367,8 @@ public:
     }
     if (!input_.stale() && guidance_due_ && input_.kind() != RequestKind::message &&
         prefix(columns_ ? columns_ : 80) != input_.guidance()) {
-      separate();
+      if (!separate_for_flush())
+        return;
       dirty_ = true;
       boundaries().open(terminal_);
       guidance_due_ = !output_.present({input_.guidance()}, true);
@@ -388,12 +408,13 @@ public:
         input_.input().committed_end() < input_.input().prepared().size()) {
       // Typing holds valid prefixes; submission must expose the unresolved bytes.
       flush();
+      if (output_.presentation_deferred())
+        return;
       if (!columns_ && visible_ && committed_ <= input_.input().prepared().size())
         (void)output_.present({input_.input().prepared().substr(committed_)}, false, true);
     }
-    if (dirty_)
-      if (output_.present({"\n"}, false, true))
-        (void)boundaries().separate(terminal_);
+    if (separate() == DiagnosticResult::deferred)
+      return;
     dirty_ = visible_ = explained_ = false;
     append_valid_ = false;
     painted_ = 0;

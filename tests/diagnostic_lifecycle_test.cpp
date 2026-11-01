@@ -68,6 +68,83 @@ public:
       line->append(byte);
   }
 };
+TEST_F(NativeRecordLifecycle, DeferredEraseRetainsWorkUntilDiagnosticCompletion) {
+  line->append('a');
+  EXPECT_EQ(read(), "codet> a");
+  struct Gate {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool start = false, entered = false, release = false;
+    unsigned inspections = 0;
+    static void before_write(void *p) {
+      auto &g = *static_cast<Gate *>(p);
+      std::unique_lock<std::mutex> l(g.mutex);
+      g.entered = true;
+      g.cv.notify_all();
+      g.cv.wait_for(l, std::chrono::seconds(5), [&] { return g.release; });
+    }
+    static void after_stat(void *p) {
+      auto &g = *static_cast<Gate *>(p);
+      if (++g.inspections == 1) {
+        test::native_io_metrics.after_stat = after_stat;
+        return;
+      }
+      std::unique_lock<std::mutex> l(g.mutex);
+      g.start = true;
+      g.cv.notify_all();
+      g.cv.wait_for(l, std::chrono::seconds(5), [&] { return g.entered; });
+    }
+  } gate;
+  std::thread worker([&] {
+    {
+      std::unique_lock<std::mutex> l(gate.mutex);
+      if (!gate.cv.wait_for(l, std::chrono::seconds(5), [&] { return gate.start; }))
+        return;
+    }
+    auto &m = test::native_io_metrics;
+    m.interrupt_fd = STDERR_FILENO;
+    m.before_output = Gate::before_write;
+    m.output_context = &gate;
+    (void)detail::immediate_stderr({"held diagnostic"});
+    m = {};
+  });
+  struct Join {
+    Gate &g;
+    std::thread &w;
+    void release() {
+      {
+        std::lock_guard<std::mutex> l(g.mutex);
+        g.start = g.release = true;
+      }
+      g.cv.notify_all();
+      if (w.joinable())
+        w.join();
+    }
+    ~Join() {
+      release();
+    }
+  } join{gate, worker};
+  auto &m = test::native_io_metrics;
+  m.interrupt_fd = STDOUT_FILENO;
+  m.after_stat = Gate::after_stat;
+  m.stat_context = &gate;
+  line->erase_character();
+  const bool deferred = output.presentation_deferred();
+  m = {};
+  join.release();
+  (void)read();
+  m.interrupt_fd = STDOUT_FILENO;
+  line->flush();
+  const auto inspections = m.inspections;
+  m = {};
+  EXPECT_TRUE(deferred);
+  EXPECT_GT(inspections, 0u); // Completion is observed before resolving the pending erase.
+  EXPECT_TRUE(input.input().empty());
+  EXPECT_FALSE(output.failed());
+  line->flush();
+  EXPECT_TRUE(read().empty());
+}
+
 TEST_F(NativeRecordLifecycle, FailedPromptDoesNotGenerateIdleRetryEvents) {
   int descriptors[2];
   ASSERT_EQ(::pipe(descriptors), 0);
