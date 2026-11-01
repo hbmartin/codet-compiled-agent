@@ -11,8 +11,13 @@ import sys
 import time
 from pathlib import Path
 
-from evidence_analysis import compare_analysis
-from evidence_benchmarks import executable_provenance, verify_git_source, verify_samples
+from evidence_analysis import compare_analysis, verify_analysis
+from evidence_benchmarks import (
+    executable_provenance,
+    verify_git_source,
+    verify_git_validation,
+    verify_samples,
+)
 from modern_sources import application_sources
 from validation_evidence import atomic_json, digest, require_quiet_processes, write_artifact
 
@@ -96,10 +101,12 @@ def prepare(root, folder, baseline, check_python, python39, analysis_python, ci_
         add(variant + "-configure", configure(source, build, "Release"), ["baseline-source"] if variant == "baseline" else [])
         add(variant + "-build", ["cmake", "--build", build, "--target", "codet_line_input_bench", "codet_output_bench", "codet_export_bench", "-j4"], [variant + "-configure"])
         add(variant + "-selftest", [analysis_python, source / "scripts/analyze-modern.py", "--build-dir", build, "--selftest", "--jobs", "4"], [variant + "-configure"], env=analyzer_env)
-        add(variant + "-analysis", [analysis_python, source / "scripts/analyze-modern.py", "--build-dir", build, "--tool", "all", "--jobs", "4"], [variant + "-selftest"], policy="observation", timeout=1800, env=analyzer_env)
-    analysis_inputs = [str((folder / (v + "-release") / "analysis" / t / "manifest.json").relative_to(root))
-                       for v in ("baseline", "changed") for t in TOOLS]
-    analysis_inputs += [str((folder / (v + "-release") / "analysis/selftest/selftest.json").relative_to(root)) for v in ("baseline", "changed")]
+        report = str((folder / ("analysis-" + variant + ".json")).relative_to(root))
+        probe = str((build / "analysis/selftest/selftest.json").relative_to(root))
+        add(variant + "-analysis", [python, "scripts/evidence_campaign.py", "produce", config_path, "analysis-" + variant],
+            [variant + "-selftest"], policy="observation", timeout=1800, env=analyzer_env,
+            artifacts=[dict(path=report, kind="analysis-" + variant, inputs=[str(config_path.relative_to(root)), probe])])
+    analysis_inputs = [str((folder / ("analysis-" + v + ".json")).relative_to(root)) for v in ("baseline", "changed")]
     producer("static-comparison", "analysis", ["baseline-analysis", "changed-analysis"], analysis_inputs)
     producer("negative-controls", "negative-controls", ["runner-tests"], timeout=600)
     producer("benchmarks", "measure", ["baseline-build", "changed-build", "static-comparison", "negative-controls"], timeout=1800)
@@ -204,18 +211,42 @@ def produce(config_path, action):
         command(["tar", "-xf", archive, "-C", source])
         (source / ".deps").symlink_to(root / ".deps", target_is_directory=True)
         payload = verify_git_source(root, source, config["baseline"])
+    elif action.startswith("analysis-"):
+        variant = action.removeprefix("analysis-")
+        source = folder / "baseline-src" if variant == "baseline" else root
+        build = folder / (variant + "-release")
+        probe = build / "analysis/selftest/selftest.json"
+        inputs.append(str(probe.relative_to(root)))
+        if json.loads(probe.read_text()) != {t: True for t in TOOLS}:
+            raise ValueError("Analyzer self-check did not pass")
+        for tool in TOOLS:
+            directory = build / "analysis" / tool
+            if directory.exists():
+                shutil.rmtree(directory)
+        run = subprocess.run([config["analysis_python"], str(source / "scripts/analyze-modern.py"),
+                              "--build-dir", str(build), "--tool", "all", "--jobs", "4"], timeout=1750)
+        if variant == "baseline":
+            verify_git_source(root, source, config["baseline"])
+            verify_git_validation(root, source, config["baseline"])
+        expected = [str(p.relative_to(source)) for p in application_sources(source)]
+        manifests = {t: json.loads((build / "analysis" / t / "manifest.json").read_text()) for t in TOOLS}
+        for manifest in manifests.values():
+            verify_analysis(manifest, source, expected)
+        if run.returncode not in (0, 1):
+            raise ValueError("Analyzer runner did not complete")
+        from validation_evidence import production_hashes
+        payload = dict(argv=[config["analysis_python"], str(source / "scripts/analyze-modern.py")],
+                       exit=run.returncode, source_hashes=production_hashes(source), manifests=manifests)
+        write_artifact(folder / (action + ".json"), action, payload, inputs)
+        return run.returncode
     elif action == "analysis":
         expected = [str(p.relative_to(root)) for p in application_sources(root)]
+        paths = [folder / ("analysis-" + v + ".json") for v in ("baseline", "changed")]
+        inputs.extend(str(p.relative_to(root)) for p in paths)
+        values = [json.loads(p.read_text())["payload"] for p in paths]
         payload = []
-        for variant in ("baseline", "changed"):
-            probe = folder / (variant + "-release") / "analysis/selftest/selftest.json"
-            inputs.append(str(probe.relative_to(root)))
-            if json.loads(probe.read_text()) != {t: True for t in TOOLS}:
-                raise ValueError("Analyzer self-check did not pass")
         for tool in TOOLS:
-            paths = [folder / (v + "-release") / "analysis" / tool / "manifest.json" for v in ("baseline", "changed")]
-            inputs.extend(str(p.relative_to(root)) for p in paths)
-            value = compare_analysis(*(json.loads(p.read_text()) for p in paths), folder / "baseline-src", root, expected)
+            value = compare_analysis(values[0]["manifests"][tool], values[1]["manifests"][tool], folder / "baseline-src", root, expected)
             if not value["equal"]:
                 raise ValueError("Analyzer findings differ: " + repr(value))
             payload.append(value)
@@ -234,6 +265,8 @@ def produce(config_path, action):
         deadline = time.monotonic() + 1700
         while True:
             payload = json.loads(command(["gh", "run", "view", str(config["ci_run"]), "--json", "status,conclusion,headSha,jobs,url"]))
+            verify_git_source(root, root, payload["headSha"])
+            verify_git_validation(root, root, payload["headSha"])
             if payload["headSha"] != config["validated_ref"]:
                 raise ValueError("CI head does not match validated source commit")
             if payload["status"] == "completed":
@@ -270,13 +303,13 @@ def main():
     replay.add_argument("--cppcheck")
     producer = sub.add_parser("produce")
     producer.add_argument("config", type=Path)
-    producer.add_argument("kind", choices=("archive", "analysis", "measure", "negative-controls", "build-info", "ci", "history"))
+    producer.add_argument("kind", choices=("archive", "analysis", "analysis-baseline", "analysis-changed", "measure", "negative-controls", "build-info", "ci", "history"))
     args = parser.parse_args()
     if args.action == "prepare":
         print(prepare(args.root, args.folder, args.baseline, args.check_python, args.python39, args.analysis_python, args.ci_run, args.clang_tidy, args.cppcheck))
     else:
-        produce(args.config, args.kind)
+        return produce(args.config, args.kind)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

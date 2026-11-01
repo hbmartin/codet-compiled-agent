@@ -173,7 +173,7 @@ def capture(manifest_path, folder, *, campaign_id=None):
                         record["outcome"] = "timeout" if isinstance(error, subprocess.TimeoutExpired) else "interrupted"
                         if isinstance(error, KeyboardInterrupt):
                             raise
-                if record["outcome"] == "passed":
+                if record["outcome"] == "passed" or (record["outcome"] == "failed" and check.get("policy") == "observation"):
                     for spec in check.get("artifacts", []):
                         path = root / spec["path"]
                         validate_artifact(path, spec, context)

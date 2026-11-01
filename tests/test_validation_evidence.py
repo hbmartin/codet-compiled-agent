@@ -282,6 +282,15 @@ class ProvenanceGuards(unittest.TestCase):
             evidence.publish_bundle(self.manifest, self.folder, target)
         self.assertFalse(target.exists())
 
+    def test_failed_observation_keeps_its_produced_artifact(self):
+        self.producer()
+        script = self.root / "scripts/producer.py"
+        script.write_text(script.read_text() + "raise SystemExit(1)\n")
+        self.checks[0]["policy"] = "observation"
+        record = self.capture()["test"]
+        self.assertEqual((record["outcome"], record["exit"], len(record["artifacts"])), ("failed", 1, 1))
+        self.assertEqual(self.publish()["validation"][0]["exit"], 1)
+
     def test_environment_override_changes_invalidate_capture(self):
         self.checks[0]["env"] = {"EVIDENCE_TEST": "value"}
         self.capture()
@@ -467,6 +476,18 @@ class ReplayAndGitGuards(unittest.TestCase):
             (root / "src/a.cpp").write_text("changed")
             with self.assertRaisesRegex(ValueError, "does not match"):
                 verify_git_source(root, root, "HEAD")
+
+    def test_ci_validation_inputs_must_match_commit(self):
+        from evidence_benchmarks import verify_git_validation
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "tests").mkdir()
+            (root / "tests/input.py").write_text("original")
+            self.git_fixture(root)
+            self.assertEqual(len(verify_git_validation(root, root, "HEAD")), 1)
+            (root / "tests/input.py").write_text("changed")
+            with self.assertRaisesRegex(ValueError, "Validation inputs do not match"):
+                verify_git_validation(root, root, "HEAD")
 
     def test_portable_manifest_has_no_shell_path_and_checks_python(self):
         from evidence_campaign import prepare
