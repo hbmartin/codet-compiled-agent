@@ -42,10 +42,10 @@ def prepare(root, folder, baseline, check_python, python39, analysis_python, ci_
     config_path = folder / "config.json"
     config = dict(root=str(root), folder=str(folder), baseline=baseline,
                   validated_ref=command(["git", "-C", root, "rev-parse", "HEAD"]), ci_run=ci_run,
-                  check_python=str(Path(check_python).resolve()), python39=python39, analysis_python=analysis_python,
+                  check_python=str(Path(check_python).absolute()), python39=python39, analysis_python=analysis_python,
                   cases=CASES, sets=template["benchmark"]["sets"], measured=template["benchmark"]["measured_per_set"])
     atomic_json(config_path, config)
-    python = str(Path(check_python).resolve())
+    python = str(Path(check_python).absolute())
     checks = []
     def add(name, argv, requires=(), policy="required", timeout=600, artifacts=(), **extra):
         checks.append(dict(id=name, argv=[str(a) for a in argv], requires=list(requires), policy=policy,

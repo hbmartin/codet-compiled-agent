@@ -461,7 +461,11 @@ class ReplayAndGitGuards(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="replay space ") as d:
             root = Path(d)
             self.git_fixture(root)
-            manifest = json.loads(prepare(root, Path("build/campaign"), "HEAD", sys.executable, "python3.9", sys.executable).read_text())
+            alias = root / "python-venv"
+            alias.symlink_to(sys.executable)
+            manifest = json.loads(prepare(root, Path("build/campaign"), "HEAD", str(alias), "python3.9", sys.executable).read_text())
+            config = json.loads((root / "build/campaign/config.json").read_text())
+            self.assertEqual(config["check_python"], str(alias))
             self.assertEqual(manifest["root"], str(root.resolve()))
             for c in manifest["checks"]:
                 self.assertFalse(any(s.startswith("PATH=") for s in c["argv"]))
