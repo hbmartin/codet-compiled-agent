@@ -1,0 +1,15 @@
+{
+  "root": "/Volumes/Pro2T/codet-compiled-agent",
+  "checks": [
+    {
+      "id": "tiger-availability",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "-c",
+        "import json,shutil,sys;from pathlib import Path;v=dict(docker=shutil.which('docker'),ppc_compiler=Path('/usr/local/bin/powerpc-apple-darwin8-g++').is_file(),tiger_sdk=Path('/usr/local/MacOSX10.4u.sdk').is_dir());print(json.dumps(v));sys.exit(0 if v['docker'] or (v['ppc_compiler'] and v['tiger_sdk']) else 2)"
+      ],
+      "policy": "observation",
+      "timeout_seconds": 5
+    }
+  ]
+}

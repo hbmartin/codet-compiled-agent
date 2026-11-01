@@ -1,0 +1,3 @@
+clang-tidy: FAIL; 150 findings
+cppcheck: PASS; 0 findings
+clang-analyzer: FAIL; 1 findings
