@@ -1,0 +1,215 @@
+{
+  "root": "/Volumes/Pro2T/codet-compiled-agent",
+  "baseline": "ef2155c7be251ae37d13ead8c5d0a34f37dbc3e2",
+  "checks": [
+    {
+      "id": "debug-build",
+      "argv": [
+        "cmake",
+        "--build",
+        "build/host",
+        "--target",
+        "all",
+        "-j4"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600
+    },
+    {
+      "id": "debug-ctest",
+      "argv": [
+        "ctest",
+        "--test-dir",
+        "build/host",
+        "--output-on-failure",
+        "-j2"
+      ],
+      "requires": [
+        "debug-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600
+    },
+    {
+      "id": "asan-build",
+      "argv": [
+        "cmake",
+        "--build",
+        "build/sanitize",
+        "--target",
+        "all",
+        "-j4"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600
+    },
+    {
+      "id": "asan-ctest",
+      "argv": [
+        "ctest",
+        "--test-dir",
+        "build/sanitize",
+        "--output-on-failure",
+        "-j2"
+      ],
+      "requires": [
+        "asan-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600
+    },
+    {
+      "id": "focused-20",
+      "argv": [
+        "build/host/codet_tests",
+        "--gtest_filter=NativeRecordLifecycle.*:DiagnosticFixture.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.*",
+        "--gtest_repeat=20"
+      ],
+      "requires": [
+        "debug-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600
+    },
+    {
+      "id": "tsan-build",
+      "argv": [
+        "cmake",
+        "--build",
+        "build/prompt-boundary-ownership-followup/tsan",
+        "--target",
+        "codet_tests",
+        "-j4"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600
+    },
+    {
+      "id": "tsan-20",
+      "argv": [
+        "build/prompt-boundary-ownership-followup/tsan/codet_tests",
+        "--gtest_filter=NativeRecordLifecycle.*:DiagnosticFixture.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.*",
+        "--gtest_repeat=20"
+      ],
+      "requires": [
+        "tsan-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600
+    },
+    {
+      "id": "python39",
+      "argv": [
+        "/usr/bin/python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_validation_evidence.py",
+        "-v"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600
+    },
+    {
+      "id": "python39-integration",
+      "argv": [
+        "/usr/bin/python3",
+        "tests/hermetic.py",
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/host/codet"
+      ],
+      "requires": [
+        "debug-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600
+    },
+    {
+      "id": "lint",
+      "argv": [
+        "make",
+        "check-lint",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600
+    },
+    {
+      "id": "semgrep",
+      "argv": [
+        "env",
+        "PATH=/Volumes/Pro2T/codet-compiled-agent/build/semgrep-venv/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/haroldmartin/.grok/bin:/Users/haroldmartin/.local/bin:/Users/haroldmartin/.local/bin:/opt/homebrew/lib/ruby/gems/3.4.0/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/haroldmartin/.codex/tmp/arg0-macos/codex-arg0nUUq3H:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/haroldmartin/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/haroldmartin/.grok/bin:/Users/haroldmartin/.local/bin:/Users/haroldmartin/Library/pnpm:/Users/haroldmartin/.local/share/mise/shims:/opt/homebrew/lib/ruby/gems/3.4.0/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/haroldmartin/.cargo/bin:/opt/homebrew/opt/fzf/bin:/Users/haroldmartin/.rvm/bin:/Users/haroldmartin/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS:/Users/haroldmartin/.cargo/bin:/Users/haroldmartin/.local/bin:/Users/haroldmartin/.rvm/bin:/Users/haroldmartin/.local/bin",
+        "make",
+        "check-semgrep",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600
+    },
+    {
+      "id": "runner-tests",
+      "argv": [
+        "make",
+        "test-lint-runners",
+        "test-modern-analysis-runner",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "ANALYSIS_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600
+    },
+    {
+      "id": "cross-build",
+      "argv": [
+        "cmake",
+        "--build",
+        "build/basic-input-boundary-followup/cross-mode",
+        "--target",
+        "codet_tests",
+        "-j4"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600
+    },
+    {
+      "id": "cross-tests",
+      "argv": [
+        "build/basic-input-boundary-followup/cross-mode/codet_tests",
+        "--gtest_filter=LinePrompt.*:InteractionWarnings.*:CursesInput.*"
+      ],
+      "requires": [
+        "cross-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600
+    },
+    {
+      "id": "static-analysis",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/analyze-modern.py",
+        "--build-dir",
+        "build/host",
+        "--tool",
+        "all",
+        "--jobs",
+        "4"
+      ],
+      "requires": [],
+      "policy": "observation",
+      "timeout_seconds": 1800
+    }
+  ]
+}

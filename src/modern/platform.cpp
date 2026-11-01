@@ -450,7 +450,7 @@ class NativeDiagnosticRecord {
   NativeInspection inspection_;
   detail::DescriptorOutput descriptor_;
   detail::LineDestinations::Reservation reservation_;
-  bool ready_ = false, finished_ = false, deferred_ = false;
+  bool ready_ = false, finished_ = false, deferred_ = false, separator_due_ = false;
 
 public:
   NativeDiagnosticRecord(int descriptor, NativeInspection inspection,
@@ -473,8 +473,7 @@ public:
       ready_ = reservation_.admitted;
       deferred_ = presentation && !reservation_.admitted;
     }
-    if (ready_ && reservation_.separator)
-      ready_ = write({"\n"});
+    separator_due_ = reservation_.separator;
   }
   NativeDiagnosticRecord(const NativeDiagnosticRecord &) = delete;
   NativeDiagnosticRecord &operator=(const NativeDiagnosticRecord &) = delete;
@@ -483,6 +482,9 @@ public:
   }
   bool deferred() const noexcept {
     return deferred_;
+  }
+  void request_separator(bool requested) noexcept {
+    separator_due_ |= requested;
   }
   void complete(bool success, bool newline) noexcept {
     if (finished_)
@@ -495,6 +497,12 @@ public:
   bool write(std::initializer_list<std::string_view> parts, bool newline = false) noexcept {
     if (!ready_)
       return false;
+    if (separator_due_) {
+      separator_due_ = false;
+      ready_ = descriptor_.result({"\n"}, false, attempt_) == detail::OutputResult::success;
+      if (!ready_)
+        return false;
+    }
     ready_ = descriptor_.result(parts, newline, attempt_) == detail::OutputResult::success;
     return ready_;
   }
@@ -630,7 +638,7 @@ detail::DiagnosticWriter::write_result(std::initializer_list<std::string_view> p
     if (presentation && record.deferred())
       return DiagnosticResult::deferred;
     if (!presentation && io_ && inspection.inspected && io_->line_output)
-      (void)io_->line_output->before_output(native, inspection.identity);
+      record.request_separator(io_->line_output->before_output(native, inspection.identity));
     const bool success = record.finish(parts, newline);
     if (!success) {
       NativeMetadataGuard guard;

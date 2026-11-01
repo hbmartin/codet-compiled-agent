@@ -8,8 +8,11 @@ cases={
  'output': ['write-positive','stat-positive','flags-positive','bounds-positive','diagnostics-amplified','diagnostics-standalone-amplified','diagnostics-pipe-amplified','budget-full','jsonl-small','pipe-jsonl-small','editor'],
  'export': ['small','large']}
 started=time.monotonic()
-processes=subprocess.check_output(['ps','-axo','command'],text=True)
-assert not any('scripts/analyze-modern.py' in line or 'ctest --test-dir' in line or 'codet_tests --gtest' in line for line in processes.splitlines()),processes[-6000:]
+# Share executable-aware inspection with the validation runner.
+import sys
+sys.path.insert(0, str(root / 'scripts'))
+from validation_evidence import require_quiet_processes
+require_quiet_processes()
 for number in (1,2):
  for harness,workloads in cases.items():
   for case in workloads:

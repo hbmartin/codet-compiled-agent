@@ -1,6 +1,7 @@
 #include "codet/detail/line_prompt.hpp"
 #include "codet/diagnostics.hpp"
 #include "native_io_metrics.hpp"
+#include "process_helper.hpp"
 #include <condition_variable>
 #include <fcntl.h>
 #include <gmock/gmock.h>
@@ -26,6 +27,20 @@ public:
   std::string prompt = "codet> ";
   struct stat identity {};
   std::optional<detail::LinePrompt> line;
+
+  // Assertions belong outside this scope. Callbacks collect observations only.
+  template <class Operation> decltype(auto) capture(Operation operation) {
+    struct Restore {
+      int out, error;
+      ~Restore() {
+        (void)::dup2(out, STDOUT_FILENO);
+        (void)::dup2(error, STDERR_FILENO);
+      }
+    } restore{saved_out, saved_error};
+    if (::dup2(slave, STDOUT_FILENO) < 0 || ::dup2(slave, STDERR_FILENO) < 0)
+      throw Error("Cannot capture fixture descriptors");
+    return operation();
+  }
   void SetUp() override {
     struct winsize size {};
     size.ws_row = 24;
@@ -35,21 +50,17 @@ public:
     saved_error = ::dup(STDERR_FILENO);
     ASSERT_GE(saved_out, 0);
     ASSERT_GE(saved_error, 0);
-    ASSERT_EQ(::dup2(slave, STDOUT_FILENO), STDOUT_FILENO);
-    ASSERT_EQ(::dup2(slave, STDERR_FILENO), STDERR_FILENO);
-    ASSERT_EQ(::fstat(STDOUT_FILENO, &identity), 0);
+    ASSERT_EQ(::fstat(slave, &identity), 0);
     ASSERT_EQ(::fcntl(master, F_SETFL, O_NONBLOCK), 0);
     detail::reset_standard_diagnostics();
-    line.emplace(input, output, io, prompt, identity);
-    line->acquire();
+    capture([&] {
+      line.emplace(input, output, io, prompt, identity);
+      line->acquire();
+    });
   }
   void TearDown() override {
     test::native_io_metrics = {};
     line.reset();
-    if (saved_out >= 0)
-      (void)::dup2(saved_out, STDOUT_FILENO);
-    if (saved_error >= 0)
-      (void)::dup2(saved_error, STDERR_FILENO);
     for (int fd : {master, slave, saved_out, saved_error})
       if (fd >= 0)
         ::close(fd);
@@ -64,28 +75,207 @@ public:
     return result;
   }
   void draft() {
-    for (char byte : std::string("abc"))
-      line->append(byte);
+    capture([&] {
+      for (char byte : std::string("abc"))
+        line->append(byte);
+    });
   }
 };
+struct DeliveryGate {
+  std::mutex mutex;
+  std::condition_variable changed;
+  bool start = false, entered = false, released = false, finished = false, timed_out = false;
+  unsigned inspections = 0;
+  void begin() {
+    std::unique_lock<std::mutex> lock(mutex);
+    start = true;
+    changed.notify_all();
+    timed_out |= !changed.wait_for(lock, std::chrono::seconds(5), [&] { return entered; });
+  }
+  static void output(void *context) {
+    auto &gate = *static_cast<DeliveryGate *>(context);
+    std::unique_lock<std::mutex> lock(gate.mutex);
+    gate.entered = true;
+    gate.changed.notify_all();
+    gate.timed_out |=
+        !gate.changed.wait_for(lock, std::chrono::seconds(5), [&] { return gate.released; });
+  }
+  static void geometry(void *context) {
+    static_cast<DeliveryGate *>(context)->begin();
+  }
+  static void second_stat(void *context) {
+    auto &gate = *static_cast<DeliveryGate *>(context);
+    if (++gate.inspections == 1)
+      test::native_io_metrics.after_stat = second_stat;
+    else
+      gate.begin();
+  }
+  bool wait_for_start() {
+    std::unique_lock<std::mutex> lock(mutex);
+    return changed.wait_for(lock, std::chrono::seconds(5), [&] { return start; });
+  }
+  void release() {
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      released = start = true;
+    }
+    changed.notify_all();
+  }
+};
+struct JoinDelivery {
+  DeliveryGate &gate;
+  std::thread &worker;
+  ~JoinDelivery() {
+    gate.release();
+    if (worker.joinable())
+      worker.join();
+  }
+};
+TEST_F(NativeRecordLifecycle, DeferredEraseRetainsWorkUntilDiagnosticCompletion) {
+  for (unsigned columns : {0u, 80u}) {
+    struct winsize size {};
+    size.ws_row = 24;
+    size.ws_col = static_cast<unsigned short>(columns);
+    ASSERT_EQ(::ioctl(slave, TIOCSWINSZ, &size), 0);
+    capture([&] { line->append('a'); });
+    EXPECT_THAT(read(), EndsWith("codet> a"));
+    DeliveryGate gate;
+    bool delivered = false, deferred = false;
+    unsigned inspected = 0;
+    capture([&] {
+      std::thread worker([&] {
+        if (!gate.wait_for_start())
+          return;
+        auto &metrics = test::native_io_metrics;
+        metrics.interrupt_fd = STDERR_FILENO;
+        metrics.before_output = DeliveryGate::output;
+        metrics.output_context = &gate;
+        delivered = detail::immediate_stderr({"held diagnostic"});
+        metrics = {};
+      });
+      JoinDelivery join{gate, worker};
+      auto &metrics = test::native_io_metrics;
+      metrics.interrupt_fd = STDOUT_FILENO;
+      metrics.after_stat = DeliveryGate::second_stat;
+      metrics.stat_context = &gate;
+      line->erase_character();
+      deferred = output.presentation_deferred();
+      metrics = {};
+      gate.release();
+      worker.join();
+      metrics.interrupt_fd = STDOUT_FILENO;
+      line->flush();
+      inspected = metrics.inspections;
+      metrics = {};
+    });
+    EXPECT_TRUE(deferred);
+    EXPECT_TRUE(delivered);
+    EXPECT_FALSE(gate.timed_out);
+    EXPECT_GT(inspected, 0u);
+    EXPECT_FALSE(output.failed());
+    EXPECT_TRUE(input.input().empty());
+    // The completed diagnostic already separated the obsolete draft. No stale-width erase.
+    EXPECT_EQ(read(), "\r\nheld diagnostic\r\n");
+    capture([&] { line->flush(); });
+    EXPECT_TRUE(read().empty());
+  }
+}
+TEST_F(NativeRecordLifecycle, InjectedStdoutSharesSeparatorWithNativeStderr) {
+  line.reset();
+  struct Forward : std::streambuf {
+    std::streamsize xsputn(const char *p, std::streamsize n) override {
+      return ::write(STDOUT_FILENO, p, static_cast<size_t>(n));
+    }
+    int_type overflow(int_type c) override {
+      if (traits_type::eq_int_type(c, traits_type::eof()))
+        return traits_type::not_eof(c);
+      char ch = traits_type::to_char_type(c);
+      return ::write(STDOUT_FILENO, &ch, 1) == 1 ? c : traits_type::eof();
+    }
+  } forward;
+  struct Restore {
+    std::streambuf *old;
+    ~Restore() {
+      std::cout.rdbuf(old);
+    }
+  } restore{std::cout.rdbuf(&forward)};
+  capture([&] { line.emplace(input, output, io, prompt, identity, 80); });
+  line->acquire();
+  draft();
+  EXPECT_EQ(read(), "codet> abc");
+  detail::DiagnosticWriter errors(std::cerr, &io);
+  EXPECT_TRUE(capture([&] { return errors.write({"warning"}); }));
+  EXPECT_EQ(read(), "\r\nwarning\r\n");
+}
+TEST_F(NativeRecordLifecycle, ObserverAndNativeReservationRequestOnlyOneSeparator) {
+  draft();
+  (void)read();
+  struct Observer : detail::LineOutputObserver {
+    bool before_output(int, const struct stat &) override {
+      return true;
+    }
+  } observer;
+  io.line_output = &observer;
+  detail::DiagnosticWriter errors(std::cerr, &io);
+  EXPECT_TRUE(capture([&] { return errors.write({"warning"}); }));
+  io.line_output = &*line;
+  EXPECT_EQ(read(), "\r\nwarning\r\n");
+  EXPECT_EQ(detail::native_line_destinations().snapshot(1, identity).active, 0u);
+}
+TEST_F(NativeRecordLifecycle, ThrowingObserverReleasesReservationAndPreservesException) {
+  draft();
+  (void)read();
+  const auto original = std::make_exception_ptr(Error("observer failed"));
+  struct Observer : detail::LineOutputObserver {
+    std::exception_ptr error;
+    explicit Observer(std::exception_ptr value) : error(value) {}
+    bool before_output(int, const struct stat &) override {
+      std::rethrow_exception(error);
+    }
+  } observer{original};
+  io.line_output = &observer;
+  detail::DiagnosticWriter errors(std::cerr, &io);
+  std::exception_ptr caught;
+  try {
+    capture([&] { (void)errors.write({"must not print"}); });
+  } catch (...) {
+    caught = std::current_exception();
+  }
+  io.line_output = &*line;
+  EXPECT_EQ(caught, original);
+  EXPECT_TRUE(read().empty());
+  EXPECT_EQ(detail::native_line_destinations().snapshot(1, identity).active, 0u);
+  capture([&] { line->flush(); });
+  EXPECT_THAT(read(), EndsWith("codet> abc"));
+}
 TEST_F(NativeRecordLifecycle, FailedPromptDoesNotGenerateIdleRetryEvents) {
   int descriptors[2];
   ASSERT_EQ(::pipe(descriptors), 0);
   ::close(descriptors[0]);
-  const auto replaced = ::dup2(descriptors[1], STDOUT_FILENO);
-  ::close(descriptors[1]);
-  ASSERT_EQ(replaced, STDOUT_FILENO);
-  line->append('a');
-  const auto generation = detail::native_line_destinations().snapshot(1, identity).generation;
-  auto &metrics = test::native_io_metrics;
-  metrics.interrupt_fd = STDOUT_FILENO;
-  for (unsigned i = 0; i != 20; ++i)
-    line->flush();
-  EXPECT_EQ(metrics.inspections, 0u);
-  EXPECT_EQ(metrics.writes + metrics.vectors, 0u);
-  EXPECT_EQ(detail::native_line_destinations().snapshot(1, identity).generation, generation);
-  line->append('b');
-  EXPECT_GT(metrics.inspections, 0u);
+  unsigned inspections = 0, writes = 0, edited_inspections = 0;
+  uint64_t before = 0, after = 0;
+  capture([&] {
+    const auto replaced = ::dup2(descriptors[1], STDOUT_FILENO);
+    ::close(descriptors[1]);
+    if (replaced < 0)
+      throw Error("Cannot install failed-prompt fixture");
+    line->append('a');
+    before = detail::native_line_destinations().snapshot(1, identity).generation;
+    auto &metrics = test::native_io_metrics;
+    metrics.interrupt_fd = STDOUT_FILENO;
+    for (unsigned i = 0; i != 20; ++i)
+      line->flush();
+    inspections = metrics.inspections;
+    writes = metrics.writes + metrics.vectors;
+    after = detail::native_line_destinations().snapshot(1, identity).generation;
+    line->append('b');
+    edited_inspections = metrics.inspections;
+    metrics = {};
+  });
+  EXPECT_EQ(inspections, 0u);
+  EXPECT_EQ(writes, 0u);
+  EXPECT_EQ(after, before);
+  EXPECT_GT(edited_inspections, 0u);
   EXPECT_EQ(input.input().raw(), "ab");
 }
 TEST_F(NativeRecordLifecycle, PromptWaitsForCompletionAndRecoversWithoutAnotherKey) {
@@ -93,25 +283,35 @@ TEST_F(NativeRecordLifecycle, PromptWaitsForCompletionAndRecoversWithoutAnotherK
   EXPECT_EQ(read(), "codet> abc");
   struct Gate {
     NativeRecordLifecycle *fixture;
+    size_t active = 0;
+    bool empty = false, failed = true;
     static void run(void *context) {
-      auto &f = *static_cast<Gate *>(context)->fixture;
-      EXPECT_EQ(detail::native_line_destinations().snapshot(1, f.identity).active, 1u);
+      auto &g = *static_cast<Gate *>(context);
+      auto &f = *g.fixture;
+      g.active = detail::native_line_destinations().snapshot(1, f.identity).active;
       f.line->flush();
-      EXPECT_TRUE(f.read().empty());
-      EXPECT_FALSE(f.output.failed());
+      g.empty = f.read().empty();
+      g.failed = f.output.failed();
     }
   } gate{this};
-  auto &metrics = test::native_io_metrics;
-  metrics.interrupt_fd = STDERR_FILENO;
-  metrics.before_output = Gate::run;
-  metrics.output_context = &gate;
-  EXPECT_TRUE(detail::immediate_stderr({"warning"}));
-  metrics = {};
+  const bool delivered = capture([&] {
+    auto &metrics = test::native_io_metrics;
+    metrics.interrupt_fd = STDERR_FILENO;
+    metrics.before_output = Gate::run;
+    metrics.output_context = &gate;
+    const auto result = detail::immediate_stderr({"warning"});
+    metrics = {};
+    return result;
+  });
+  EXPECT_TRUE(delivered);
+  EXPECT_EQ(gate.active, 1u);
+  EXPECT_TRUE(gate.empty);
+  EXPECT_FALSE(gate.failed);
   EXPECT_EQ(read(), "\r\nwarning\r\n");
   EXPECT_EQ(detail::native_line_destinations().snapshot(1, identity).active, 0u);
-  line->flush();
+  capture([&] { line->flush(); });
   EXPECT_EQ(read(), "codet> abc");
-  line->flush();
+  capture([&] { line->flush(); });
   EXPECT_TRUE(read().empty());
   EXPECT_EQ(input.input().raw(), "abc");
 }
@@ -119,83 +319,40 @@ TEST_F(NativeRecordLifecycle, ConcurrentDeliveryDefersBothSnapshotAndAdmissionRa
   for (bool during_geometry : {false, true}) {
     draft();
     (void)read();
-    struct Gate {
-      std::mutex mutex;
-      std::condition_variable changed;
-      bool start = false, entered = false, released = false, finished = false;
-      void begin() {
-        std::unique_lock<std::mutex> lock(mutex);
-        start = true;
-        changed.notify_all();
-        EXPECT_TRUE(changed.wait_for(lock, std::chrono::seconds(5), [&] { return entered; }));
-      }
-      static void geometry(void *context) {
-        static_cast<Gate *>(context)->begin();
-      }
-      static void output(void *context) {
-        auto &gate = *static_cast<Gate *>(context);
-        std::unique_lock<std::mutex> lock(gate.mutex);
-        gate.entered = true;
-        gate.changed.notify_all();
-        EXPECT_TRUE(
-            gate.changed.wait_for(lock, std::chrono::seconds(5), [&] { return gate.released; }));
-      }
-    } gate;
-    std::thread worker([&] {
-      {
-        std::unique_lock<std::mutex> lock(gate.mutex);
-        if (!gate.changed.wait_for(lock, std::chrono::seconds(5), [&] { return gate.start; }))
+    DeliveryGate gate;
+    bool delivered = false, empty = false;
+    capture([&] {
+      std::thread worker([&] {
+        if (!gate.wait_for_start())
           return;
+        auto &metrics = test::native_io_metrics;
+        metrics.interrupt_fd = STDERR_FILENO;
+        metrics.before_output = DeliveryGate::output;
+        metrics.output_context = &gate;
+        delivered = detail::immediate_stderr({"worker warning"});
+        metrics = {};
+      });
+      JoinDelivery join{gate, worker};
+      if (during_geometry) {
+        auto &metrics = test::native_io_metrics;
+        metrics.interrupt_fd = STDOUT_FILENO;
+        metrics.after_stat = DeliveryGate::geometry;
+        metrics.stat_context = &gate;
+        line->append('x');
+        metrics = {};
+      } else {
+        gate.begin();
+        line->flush();
       }
-      auto &metrics = test::native_io_metrics;
-      metrics.interrupt_fd = STDERR_FILENO;
-      metrics.before_output = Gate::output;
-      metrics.output_context = &gate;
-      EXPECT_TRUE(detail::immediate_stderr({"worker warning"}));
-      metrics = {};
-      {
-        std::lock_guard<std::mutex> lock(gate.mutex);
-        gate.finished = true;
-      }
-      gate.changed.notify_all();
-    });
-    struct Join {
-      Gate &gate;
-      std::thread &worker;
-      ~Join() {
-        {
-          std::lock_guard<std::mutex> lock(gate.mutex);
-          gate.released = gate.start = true;
-        }
-        gate.changed.notify_all();
-        worker.join();
-      }
-    } join{gate, worker};
-    if (during_geometry) {
-      auto &metrics = test::native_io_metrics;
-      metrics.interrupt_fd = STDOUT_FILENO;
-      metrics.after_stat = Gate::geometry;
-      metrics.stat_context = &gate;
-      line->append('x');
-      metrics = {};
-    } else {
-      gate.begin();
+      empty = read().empty();
+      gate.release();
+      worker.join();
       line->flush();
-    }
+    });
+    EXPECT_TRUE(delivered);
+    EXPECT_TRUE(empty);
+    EXPECT_FALSE(gate.timed_out);
     EXPECT_FALSE(output.failed());
-    EXPECT_TRUE(read().empty());
-    {
-      std::lock_guard<std::mutex> lock(gate.mutex);
-      gate.released = true;
-    }
-    gate.changed.notify_all();
-    // The scope-bound join also protects assertions and exceptional exits.
-    {
-      std::unique_lock<std::mutex> lock(gate.mutex);
-      EXPECT_TRUE(
-          gate.changed.wait_for(lock, std::chrono::seconds(5), [&] { return gate.finished; }));
-    }
-    line->flush();
     EXPECT_THAT(read(), EndsWith(during_geometry ? "codet> abcabcx" : "codet> abc"));
   }
 }
@@ -203,18 +360,20 @@ TEST_F(NativeRecordLifecycle, ObserverCannotExposeAnUnreservedSeparatorGap) {
   draft();
   struct Observer : detail::LineOutputObserver {
     detail::LinePrompt &line;
+    bool delivered = false;
     explicit Observer(detail::LinePrompt &value) : line(value) {}
     bool before_output(int fd, const struct stat &value) override {
       (void)line.before_output(fd, value);
-      EXPECT_TRUE(detail::immediate_stderr({"intervening"}));
+      delivered = detail::immediate_stderr({"intervening"});
       return false;
     }
   } observer{*line};
   io.line_output = &observer;
   detail::DiagnosticWriter errors(std::cerr, &io);
-  EXPECT_TRUE(errors.write({"outer"}));
+  EXPECT_TRUE(capture([&] { return errors.write({"outer"}); }));
   io.line_output = &*line;
-  line->flush();
+  capture([&] { line->flush(); });
+  EXPECT_TRUE(observer.delivered);
   const auto bytes = read();
   EXPECT_THAT(bytes, Not(HasSubstr("abcintervening")));
   EXPECT_THAT(bytes, HasSubstr("intervening\r\n"));
@@ -222,14 +381,16 @@ TEST_F(NativeRecordLifecycle, ObserverCannotExposeAnUnreservedSeparatorGap) {
 }
 TEST_F(NativeRecordLifecycle, EarlyEmergencyFailureReleasesItsReservation) {
   draft();
-  auto &metrics = test::native_io_metrics;
-  metrics.interrupt_fd = STDERR_FILENO;
-  metrics.writes_interrupted = 9;
-  FileNotice notice(std::string(2048, 'x'), FileNoticeKind::tool_result);
-  emergency_file_diagnostic(notice);
+  capture([&] {
+    auto &metrics = test::native_io_metrics;
+    metrics.interrupt_fd = STDERR_FILENO;
+    metrics.writes_interrupted = 9;
+    FileNotice notice(std::string(2048, 'x'), FileNoticeKind::tool_result);
+    emergency_file_diagnostic(notice);
+    metrics = {};
+  });
   EXPECT_EQ(detail::native_line_destinations().snapshot(1, identity).active, 0u);
-  metrics = {};
-  line->flush();
+  capture([&] { line->flush(); });
   EXPECT_THAT(read(), EndsWith("codet> abc"));
 }
 TEST_F(NativeRecordLifecycle, NullStreamCannotMutateNativeBoundaryOwnership) {
@@ -239,13 +400,15 @@ TEST_F(NativeRecordLifecycle, NullStreamCannotMutateNativeBoundaryOwnership) {
   detail::RequestInputController other;
   detail::LinePrompt null_line(other, injected, io, prompt, identity);
   null_line.acquire();
-  null_line.append('x');
+  capture([&] { null_line.append('x'); });
   EXPECT_EQ(detail::native_line_destinations().row(identity), before);
   EXPECT_TRUE(io.line_destinations.row(identity));
 }
 TEST_F(NativeRecordLifecycle, ReturningFromInjectedBufferAbandonsTheOldLongerRow) {
-  for (char byte : std::string("abcdef"))
-    line->append(byte);
+  capture([&] {
+    for (char byte : std::string("abcdef"))
+      line->append(byte);
+  });
   std::ostringstream buffer;
   struct Restore {
     std::streambuf *saved;
@@ -253,21 +416,25 @@ TEST_F(NativeRecordLifecycle, ReturningFromInjectedBufferAbandonsTheOldLongerRow
       std::cout.rdbuf(saved);
     }
   } restore{std::cout.rdbuf(buffer.rdbuf())};
-  for (unsigned i = 0; i != 3; ++i)
-    line->erase_character();
-  std::cout.rdbuf(restore.saved);
-  line->flush();
+  capture([&] {
+    for (unsigned i = 0; i != 3; ++i)
+      line->erase_character();
+    std::cout.rdbuf(restore.saved);
+    line->flush();
+  });
   EXPECT_EQ(read(), "codet> abcdef\r\ncodet> abc");
   EXPECT_EQ(input.input().raw(), "abc");
 }
 TEST_F(NativeRecordLifecycle, OlderInspectionRefreshesWithoutDroppingTheCurrentRecord) {
   struct Gate {
     NativeRecordLifecycle *fixture;
+    bool passed = false;
     static void run(void *context) {
-      auto &f = *static_cast<Gate *>(context)->fixture;
-      // The interrupted fstat has captured the PTY. Publish a newer identity before it returns.
+      auto &g = *static_cast<Gate *>(context);
+      auto &f = *g.fixture;
       int descriptors[2];
-      ASSERT_EQ(::pipe(descriptors), 0);
+      if (::pipe(descriptors) != 0)
+        return;
       struct Close {
         int a, b;
         ~Close() {
@@ -275,50 +442,34 @@ TEST_F(NativeRecordLifecycle, OlderInspectionRefreshesWithoutDroppingTheCurrentR
           ::close(b);
         }
       } close{descriptors[0], descriptors[1]};
-      ASSERT_EQ(::dup2(descriptors[1], STDERR_FILENO), STDERR_FILENO);
-      EXPECT_TRUE(detail::immediate_stderr({"newer identity"}));
+      if (::dup2(descriptors[1], STDERR_FILENO) < 0)
+        return;
+      const bool delivered = detail::immediate_stderr({"newer identity"});
       pollfd ready{descriptors[0], POLLIN, 0};
-      ASSERT_GT(::poll(&ready, 1, 1000), 0);
       char bytes[64];
-      ASSERT_EQ(::read(descriptors[0], bytes, sizeof(bytes)), 15);
-      // Leave a different confirmed observation in the cache while restoring the writable PTY.
-      ASSERT_EQ(::dup2(f.slave, STDERR_FILENO), STDERR_FILENO);
+      g.passed = delivered && ::poll(&ready, 1, 1000) > 0 &&
+                 ::read(descriptors[0], bytes, sizeof(bytes)) == 15;
+      g.passed &= ::dup2(f.slave, STDERR_FILENO) == STDERR_FILENO;
     }
   } gate{this};
-  auto &metrics = test::native_io_metrics;
-  metrics.interrupt_fd = STDERR_FILENO;
-  metrics.after_stat = Gate::run;
-  metrics.stat_context = &gate;
-  EXPECT_TRUE(detail::immediate_stderr({"current record"}));
-  EXPECT_GE(metrics.inspections, 3u); // Old snapshot, intervening identity, fresh validation.
-  metrics = {};
+  bool delivered = false;
+  unsigned inspections = 0;
+  capture([&] {
+    auto &metrics = test::native_io_metrics;
+    metrics.interrupt_fd = STDERR_FILENO;
+    metrics.after_stat = Gate::run;
+    metrics.stat_context = &gate;
+    delivered = detail::immediate_stderr({"current record"});
+    inspections = metrics.inspections;
+    metrics = {};
+  });
+  EXPECT_TRUE(delivered);
+  EXPECT_TRUE(gate.passed);
+  EXPECT_GE(inspections, 3u);
   EXPECT_EQ(read(), "current record\r\n");
 }
 TEST_F(NativeRecordLifecycle, StaleInspectionCannotSuppressAnEmergencyOnTheCurrentDescriptor) {
-  struct Gate {
-    std::mutex mutex;
-    std::condition_variable changed;
-    bool entered = false, released = false;
-    static void pause(void *context) {
-      auto &gate = *static_cast<Gate *>(context);
-      std::unique_lock<std::mutex> lock(gate.mutex);
-      gate.entered = true;
-      gate.changed.notify_all();
-      EXPECT_TRUE(
-          gate.changed.wait_for(lock, std::chrono::seconds(5), [&] { return gate.released; }));
-    }
-    bool wait() {
-      std::unique_lock<std::mutex> lock(mutex);
-      return changed.wait_for(lock, std::chrono::seconds(5), [&] { return entered; });
-    }
-    void release() {
-      {
-        std::lock_guard<std::mutex> lock(mutex);
-        released = true;
-      }
-      changed.notify_all();
-    }
-  } old_gate, current_gate;
+  DeliveryGate old_gate, current_gate;
   int descriptors[2];
   ASSERT_EQ(::pipe(descriptors), 0);
   struct Close {
@@ -328,43 +479,47 @@ TEST_F(NativeRecordLifecycle, StaleInspectionCannotSuppressAnEmergencyOnTheCurre
       ::close(b);
     }
   } close{descriptors[0], descriptors[1]};
-  std::thread older([&] {
-    auto &metrics = test::native_io_metrics;
-    metrics.interrupt_fd = STDERR_FILENO;
-    metrics.after_stat = Gate::pause;
-    metrics.stat_context = &old_gate;
-    EXPECT_TRUE(detail::immediate_stderr({"older"}));
-    metrics = {};
-  });
-  std::thread current;
-  struct Join {
-    Gate &a, &b;
-    std::thread &older, &current;
-    ~Join() {
-      a.release();
-      b.release();
-      if (older.joinable())
-        older.join();
-      if (current.joinable())
-        current.join();
-    }
-  } join{old_gate, current_gate, older, current};
-  ASSERT_TRUE(old_gate.wait());
-  ASSERT_EQ(::dup2(descriptors[1], STDERR_FILENO), STDERR_FILENO);
+  bool ready = false, replaced = false, delivered = false;
   const FileNotice notice("/current/preserved/result", FileNoticeKind::tool_result);
-  current = std::thread([&] {
-    auto &metrics = test::native_io_metrics;
-    metrics.interrupt_fd = STDERR_FILENO;
-    metrics.before_bound = Gate::pause;
-    metrics.bound_context = &current_gate;
-    emergency_file_diagnostic(notice);
-    metrics = {};
+  capture([&] {
+    std::thread older([&] {
+      auto &metrics = test::native_io_metrics;
+      metrics.interrupt_fd = STDERR_FILENO;
+      metrics.after_stat = DeliveryGate::output;
+      metrics.stat_context = &old_gate;
+      delivered = detail::immediate_stderr({"older"});
+      metrics = {};
+    });
+    JoinDelivery join_old{old_gate, older};
+    {
+      std::unique_lock<std::mutex> lock(old_gate.mutex);
+      ready = old_gate.changed.wait_for(lock, std::chrono::seconds(5),
+                                        [&] { return old_gate.entered; });
+    }
+    replaced = ::dup2(descriptors[1], STDERR_FILENO) == STDERR_FILENO;
+    std::thread current([&] {
+      auto &metrics = test::native_io_metrics;
+      metrics.interrupt_fd = STDERR_FILENO;
+      metrics.before_bound = DeliveryGate::output;
+      metrics.bound_context = &current_gate;
+      emergency_file_diagnostic(notice);
+      metrics = {};
+    });
+    JoinDelivery join_current{current_gate, current};
+    {
+      std::unique_lock<std::mutex> lock(current_gate.mutex);
+      ready &= current_gate.changed.wait_for(lock, std::chrono::seconds(5),
+                                             [&] { return current_gate.entered; });
+    }
+    old_gate.release();
+    older.join();
+    current_gate.release();
+    current.join();
   });
-  ASSERT_TRUE(current_gate.wait());
-  old_gate.release();
-  older.join();
-  current_gate.release();
-  current.join();
+  EXPECT_TRUE(ready);
+  EXPECT_TRUE(replaced);
+  EXPECT_TRUE(delivered);
+  EXPECT_FALSE(old_gate.timed_out || current_gate.timed_out);
   ASSERT_EQ(::fcntl(descriptors[0], F_SETFL, O_NONBLOCK), 0);
   std::string bytes;
   char buffer[256];
@@ -373,6 +528,47 @@ TEST_F(NativeRecordLifecycle, StaleInspectionCannotSuppressAnEmergencyOnTheCurre
     bytes.append(buffer, static_cast<size_t>(count));
   EXPECT_THAT(bytes, HasSubstr("older\n"));
   EXPECT_THAT(bytes, HasSubstr(notice.text() + "\n"));
+}
+TEST_F(NativeRecordLifecycle, CaptureRestoresDescriptorsOnExceptions) {
+  EXPECT_THROW(capture([&] { throw Error("original capture exception"); }), Error);
+  struct stat restored {};
+  ASSERT_EQ(::fstat(STDOUT_FILENO, &restored), 0);
+  struct stat expected {};
+  ASSERT_EQ(::fstat(saved_out, &expected), 0);
+  EXPECT_TRUE(detail::same_destination(restored, expected));
+}
+TEST_F(NativeRecordLifecycle, DISABLED_FailurePrinterProbe) {
+  capture([&] { line->append('x'); });
+  EXPECT_EQ(1, 2) << "LIFECYCLE_FAILURE_SENTINEL";
+  EXPECT_EQ(read(), "codet> x");
+}
+TEST(DiagnosticFixture, FailureDetailsReachParentLogAndDoNotContaminatePty) {
+  struct Capture {
+    bool active = true;
+    Capture() {
+      internal::CaptureStdout();
+    }
+    std::string finish() {
+      active = false;
+      return internal::GetCapturedStdout();
+    }
+    ~Capture() {
+      if (active)
+        (void)internal::GetCapturedStdout();
+    }
+  } capture;
+  const auto child =
+      test::start_helper({"--gtest_filter=NativeRecordLifecycle.DISABLED_FailurePrinterProbe",
+                          "--gtest_also_run_disabled_tests"});
+  int status = 0;
+  const bool waited = child > 0 && test::wait_helper(child, status);
+  const auto text = capture.finish();
+  EXPECT_TRUE(waited);
+  ASSERT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 1);
+  EXPECT_THAT(text, HasSubstr("LIFECYCLE_FAILURE_SENTINEL"));
+  EXPECT_THAT(text, HasSubstr("Expected equality of these values"));
+  EXPECT_THAT(text, Not(HasSubstr("Which is: \"codet> x")));
 }
 TEST(DiagnosticFallbackMetadata, ResetMayOverlapAStableReplacedBuffer) {
   struct Sink : std::streambuf {
