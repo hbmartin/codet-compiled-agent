@@ -131,6 +131,9 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     add("cross-build", [native["cmake"], "--build", cross, "--target", "codet_tests", "-j4"], ["cross-configure"],
         outputs=[dict(path=rel(cross / "codet_tests"), archive=False)])
     add("cross-tests", [cross / "codet_tests", "--gtest_filter=LinePrompt.*:InteractionWarnings.*:CursesInput.*"], ["cross-build"])
+    if (folder / "preliminary-capture").exists():
+        history_inputs = [rel(p) for p in sorted((folder / "preliminary-capture").rglob("*")) if p.is_file()]
+        producer("historical-attempt", "history", inputs=history_inputs)
     producer("baseline-source", "archive")
     for variant in ("baseline", "changed"):
         source = folder / "baseline-src" if variant == "baseline" else root

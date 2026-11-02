@@ -675,9 +675,9 @@ class ReplayIntegrity(unittest.TestCase):
         original = evidence.atomic_json
         for position in (1, 2, 3, 4):
             calls = []
-            def fail(path, value, _position=position):
-                calls.append(path)
-                if len(calls) == _position:
+            def fail(path, value, _position=position, _calls=calls):
+                _calls.append(path)
+                if len(_calls) == _position:
                     raise OSError("intentional staging failure")
                 return original(path, value)
             target = self.root / ("bundle-" + str(position))
