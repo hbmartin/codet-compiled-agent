@@ -11,5 +11,6 @@ from evidence_campaign import produce
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", type=Path, help="Resolved campaign config from evidence_campaign.py prepare")
+    parser.add_argument("--output", type=Path, required=True, help="Standalone unbound result; cannot satisfy capture validation")
     args = parser.parse_args()
-    produce(args.config, 'negative-controls')
+    raise SystemExit(produce(args.config, 'negative-controls', output=args.output))
