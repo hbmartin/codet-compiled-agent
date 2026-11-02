@@ -4,6 +4,7 @@ import ctypes
 import errno
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -12,13 +13,28 @@ NATIVE_BLOCKERS = {"ctest", "codet_tests", "codet_publication_fault_tests", "cla
 SCRIPT_BLOCKERS = {"analyze-modern.py", "cli_integration.py", "test_validation_evidence.py"}
 
 
+def matches_native(name):
+    name = Path(name).name
+    return (name in NATIVE_BLOCKERS or re.sub(r"-\d+(?:\.\d+)*$", "", name) in NATIVE_BLOCKERS or
+            (len(name) in (15, 16) and any(len(n) > len(name) and n.startswith(name) for n in NATIVE_BLOCKERS)))
+
+
+def script_identity(name):
+    name = Path(name).name
+    return name in SCRIPT_BLOCKERS or (len(name) == 15 and any(n.startswith(name) for n in SCRIPT_BLOCKERS))
+
+
+def needs_arguments(name):
+    return Path(name).name.lower().startswith("python") or matches_native(name) or script_identity(name)
+
+
 def blocking_processes(processes):
     found = []
     for process in processes:
         executable, argv = Path(process["executable"]).name, process["argv"]
-        if executable in NATIVE_BLOCKERS:
+        if matches_native(executable) or (argv and matches_native(argv[0])) or script_identity(executable):
             found.append(process)
-        elif executable.lower().startswith("python"):
+        elif executable.lower().startswith("python") or (argv and Path(argv[0]).name.lower().startswith("python")):
             arguments = list(argv[1:])
             while arguments and arguments[0] in ("-u", "-B", "-E", "-I"):
                 arguments.pop(0)
@@ -84,13 +100,20 @@ def process_snapshot():
             raise ValueError("Malformed process identity: " + line)
         pid, executable = fields
         arguments = [executable]
-        if Path(executable).name.lower().startswith("python"):
+        if needs_arguments(executable):
             try:
                 arguments = read_argv(pid)
             except OSError as error:
                 if error.errno in (errno.ENOENT, errno.ESRCH):
                     continue
                 raise
+            if sys.platform.startswith("linux"):
+                try:
+                    executable = os.readlink("/proc/" + pid + "/exe")
+                except OSError as error:
+                    if error.errno in (errno.ENOENT, errno.ESRCH):
+                        continue
+                    raise
         processes.append(dict(pid=pid, executable=executable, argv=arguments))
     if not processes:
         raise ValueError("Process inspection returned no usable records")

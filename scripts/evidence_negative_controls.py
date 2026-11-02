@@ -37,14 +37,20 @@ def run_controls(root, folder):
          'if False:', "ValidationEvidence.test_nonzero_cannot_be_overridden_by_success_log"),
         ("equivalence", "validation_evidence", "equivalent = benchmark[\"production_hashes\"] == value[\"production_hashes\"]",
          "equivalent = True", "ValidationEvidence.test_changed_benchmark_sources_are_explicit"),
-        ("process", "evidence_processes", "if executable in NATIVE_BLOCKERS:",
-         'if "ctest" in repr(process) or executable in NATIVE_BLOCKERS:', "ProcessInspection.test_executables_and_exact_script_arguments"),
+        ("process", "evidence_processes", 'if matches_native(executable) or (argv and matches_native(argv[0])) or script_identity(executable):',
+         'if "ctest" in repr(process) or matches_native(executable) or (argv and matches_native(argv[0])) or script_identity(executable):', "ProcessInspection.test_executables_and_exact_script_arguments"),
         ("validation-inputs", "validation_evidence", 'record.get("validation_before") != validation or record.get("validation_after") != validation',
          'False', "ProvenanceGuards.test_validation_changes_invalidate_capture"),
         ("raw-medians", "evidence_benchmarks", 'if summaries[key] != row:',
          'if False:', "ComparisonGuards.test_raw_samples_define_medians_and_counts"),
         ("cppcheck-location", "evidence_analysis", 'return finding["id"], finding["msg"], locations',
          'return finding["id"],', "ComparisonGuards.test_cppcheck_locations_and_msg_are_preserved"),
+        ("build-consumer", "validation_evidence", 'if not (root / output["path"]).is_file() or digest(root / output["path"]) != output["sha256"]:',
+         'if False:', "ReplayIntegrity.test_consumer_rejects_replaced_prerequisite_executable"),
+        ("capture-extras", "evidence_bundle", 'shutil.copyfile(folder / "run.json", stage / "capture/run.json")',
+         'shutil.copytree(folder, stage / "capture", dirs_exist_ok=True)', "ReplayIntegrity.test_archive_excludes_stale_records_and_survives_relocation"),
+        ("versioned-process", "evidence_processes", 'name in NATIVE_BLOCKERS or re.sub(r"-\\d+(?:\\.\\d+)*$", "", name) in NATIVE_BLOCKERS or',
+         'name in NATIVE_BLOCKERS or False or', "ReplayIntegrity.test_process_gate_matches_versioned_and_truncated_names"),
     ]
     results = []
     for name, module, before, after, target in cases:
