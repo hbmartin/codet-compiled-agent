@@ -13,6 +13,14 @@ import validation_evidence as evidence
 
 class ValidationEvidence(unittest.TestCase):
     def setUp(self):
+        import os
+        # A captured CTest run carries its own producer identity. Unit fixtures
+        # create nested captures or explicit standalone runs, never that producer.
+        clean = dict(os.environ)
+        clean.pop("CODET_EVIDENCE_CONTEXT", None)
+        context = patch.dict(os.environ, clean, clear=True)
+        context.start()
+        self.addCleanup(context.stop)
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
