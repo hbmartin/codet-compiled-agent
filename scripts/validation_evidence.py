@@ -2,10 +2,10 @@
 
 import argparse
 import csv
+import shutil
 import hashlib
 import json
 import os
-import shutil
 import signal
 import subprocess
 import tempfile
@@ -13,9 +13,19 @@ import time
 import uuid
 from pathlib import Path
 
+from evidence_inputs import (
+    directory_hashes,
+    environment,
+    executable,
+    file_hashes,
+    file_specs,
+    output_hashes,
+    source_inputs,
+    verify_tools,
+)
 from evidence_processes import blocking_processes, require_quiet_processes  # noqa: F401
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def digest(path):
@@ -79,7 +89,7 @@ def load_manifest(path):
 
 
 def input_hashes(root, names):
-    return {name: digest(root / name) for name in names}
+    return file_hashes(root, names)
 
 
 def write_artifact(path, kind, payload, inputs=()):
@@ -109,10 +119,10 @@ def _context(root, run, name, production, validation):
                 production_hashes=production, validation_hashes=validation)
 
 
-def _python_identity(argv, required):
+def _python_identity(argv, required, env=None):
     value = json.loads(subprocess.check_output(
         [argv[0], "-c", "import json,sys;print(json.dumps(dict(executable=sys.executable,version=list(sys.version_info[:3]))))"],
-        text=True, timeout=5))
+        text=True, timeout=5, env=env))
     if value["version"][:2] != required:
         raise ValueError("Required Python " + ".".join(map(str, required)) + "; found " + repr(value))
     return value
@@ -121,6 +131,7 @@ def _python_identity(argv, required):
 def capture(manifest_path, folder, *, campaign_id=None):
     manifest = load_manifest(manifest_path)
     root = Path(manifest["root"]).resolve()
+    verify_tools(manifest)
     folder.mkdir(parents=True, exist_ok=True)
     signature = digest(manifest_path)
     run = dict(schema_version=SCHEMA_VERSION, id=uuid.uuid4().hex,
@@ -136,30 +147,45 @@ def capture(manifest_path, folder, *, campaign_id=None):
         record = dict(schema_version=SCHEMA_VERSION, id=name, run_id=run["id"], campaign_id=run["campaign_id"],
                       argv=check["argv"], env=check.get("env", {}), cwd=str(Path(check.get("cwd", root)).resolve()),
                       manifest_sha256=signature, source_before=before, validation_before=validation,
-                      started_ns=time.time_ns(), exit=None, outcome="not-run", log=log.name, artifacts=[])
+                      started_ns=time.time_ns(), exit=None, outcome="not-run", log=log.name, artifacts=[], outputs=[])
         log.write_text("")
         try:
-            names = sorted({n for a in check.get("artifacts", []) for n in a.get("inputs", [])})
-            record["input_before"] = input_hashes(root, names)
             if any(results[parent]["outcome"] != "passed" and not (policies[parent] == "observation" and
                    results[parent]["outcome"] == "failed" and type(results[parent]["exit"]) is int)
                    for parent in check.get("requires", [])):
                 record["outcome"] = "blocked"
                 log.write_text("Prerequisite did not pass; command was not launched.\n")
             else:
-                record["resolved_executable"] = shutil.which(check["argv"][0])
+                for parent in check.get("requires", []):
+                    for output in results[parent]["outputs"]:
+                        if not (root / output["path"]).is_file() or digest(root / output["path"]) != output["sha256"]:
+                            raise ValueError("Prerequisite output changed: " + parent + ": " + output["path"])
+                record["input_before"] = input_hashes(root, file_specs(check))
+                record["build_inputs_before"] = source_inputs(root, check.get("source_inputs", [{"path": "."}]))
+                record["external_inputs_before"] = directory_hashes(root, check.get("directory_inputs", []))
+                env = environment(manifest, check)
+                record["effective_environment"] = dict(manifest.get("environment", {"PATH": os.defpath}), **check.get("env", {}))
+                try:
+                    record["executable"] = executable(check["argv"], env)
+                except FileNotFoundError as error:
+                    if "python_version" not in check:
+                        raise
+                    record["outcome"] = "unavailable"
+                    log.write_text(str(error) + "\n")
+                    continue
+                record["resolved_executable"] = record["executable"]["path"]
+                argv = [record["resolved_executable"]] + check["argv"][1:]
+                record["executed_argv"] = argv
                 if "python_version" in check:
                     try:
-                        record["interpreter"] = _python_identity(check["argv"], check["python_version"])
+                        record["interpreter"] = _python_identity(argv, check["python_version"], env)
                     except (ValueError, OSError, subprocess.SubprocessError) as error:
                         record["outcome"] = "unavailable"
                         log.write_text(str(error) + "\n")
                         continue
                 with log.open("wb") as stream:
-                    env = dict(os.environ)
-                    env.update(check.get("env", {}))
                     env["CODET_EVIDENCE_CONTEXT"] = json.dumps(context)
-                    process = subprocess.Popen(check["argv"], cwd=record["cwd"], stdout=stream,
+                    process = subprocess.Popen(argv, cwd=record["cwd"], stdout=stream,
                                                stderr=subprocess.STDOUT, start_new_session=True, env=env)
                     try:
                         record["exit"] = process.wait(timeout=check.get("timeout_seconds", 600))
@@ -174,8 +200,11 @@ def capture(manifest_path, folder, *, campaign_id=None):
                         if isinstance(error, KeyboardInterrupt):
                             raise
                 if record["outcome"] == "passed" or (record["outcome"] == "failed" and check.get("policy") == "observation"):
+                    record["outputs"] = output_hashes(root, check.get("outputs", []))
                     for spec in check.get("artifacts", []):
                         path = root / spec["path"]
+                        if not path.is_file():
+                            raise ValueError("Artifact not produced: " + spec["path"])
                         validate_artifact(path, spec, context)
                         record["artifacts"].append(dict(path=spec["path"], sha256=digest(path)))
         except OSError as error:
@@ -193,6 +222,13 @@ def capture(manifest_path, folder, *, campaign_id=None):
                                      for n in record.get("input_before", {})}
             record["source_after"] = production_hashes(root)
             record["validation_after"] = validation_hashes(root)
+            if "build_inputs_before" in record:
+                try:
+                    record["build_inputs_after"] = source_inputs(root, check.get("source_inputs", [{"path": "."}]))
+                    record["external_inputs_after"] = directory_hashes(root, check.get("directory_inputs", []))
+                except (ValueError, OSError, subprocess.SubprocessError) as error:
+                    record["outcome"] = "artifact-error"
+                    record["error"] = str(error)
             record["finished_ns"] = time.time_ns()
             record["log_sha256"] = digest(log)
             results[name] = record
@@ -203,6 +239,7 @@ def capture(manifest_path, folder, *, campaign_id=None):
 def validate_capture(manifest_path, folder):
     manifest = load_manifest(manifest_path)
     root = Path(manifest["root"]).resolve()
+    verify_tools(manifest)
     current, validation = production_hashes(root), validation_hashes(root)
     signature = digest(manifest_path)
     run = json.loads((folder / "run.json").read_text())
@@ -226,9 +263,24 @@ def validate_capture(manifest_path, folder):
             raise ValueError("Command did not complete: " + check["id"] + " (" + record["outcome"] + ")")
         if check.get("policy", "required") == "required" and (record["outcome"] != "passed" or record["exit"] != 0):
             raise ValueError("Required check did not pass: " + check["id"])
-        names = sorted({n for a in check.get("artifacts", []) for n in a.get("inputs", [])})
+        names = file_specs(check)
         if record.get("input_before") != input_hashes(root, names) or record.get("input_after") != record["input_before"]:
             raise ValueError("Artifact producer inputs changed: " + check["id"])
+        if (record.get("build_inputs_before") != source_inputs(root, check.get("source_inputs", [{"path": "."}])) or
+                record.get("build_inputs_after") != record["build_inputs_before"]):
+            raise ValueError("Build source inputs changed: " + check["id"])
+        env = environment(manifest, check)
+        if record.get("effective_environment") != dict(manifest.get("environment", {"PATH": os.defpath}), **check.get("env", {})):
+            raise ValueError("Effective check environment changed: " + check["id"])
+        if record.get("executable") != executable(check["argv"], env):
+            raise ValueError("Check executable changed: " + check["id"])
+        if record.get("executed_argv") != [record["executable"]["path"]] + check["argv"][1:]:
+            raise ValueError("Executed argument vector mismatch: " + check["id"])
+        if record.get("outputs") != output_hashes(root, check.get("outputs", [])):
+            raise ValueError("Produced outputs changed: " + check["id"])
+        if (record.get("external_inputs_before") != directory_hashes(root, check.get("directory_inputs", [])) or
+                record.get("external_inputs_after") != record["external_inputs_before"]):
+            raise ValueError("External build inputs changed: " + check["id"])
         expected = check.get("artifacts", [])
         if len(record["artifacts"]) != len(expected):
             raise ValueError("Missing produced artifacts: " + check["id"])
