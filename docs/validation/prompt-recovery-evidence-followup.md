@@ -54,3 +54,12 @@ configuration arguments in the report (adjusting checkout paths). Run the publis
 `-measure.py` script from the repository root after validation/analyzers finish. It
 checks active process identities and harness hashes before measuring. Published native
 negative-control scripts require the corresponding Debug build and compile database.
+
+## Current compatibility entry points
+
+The measurements and commands above describe the archived run. Current standalone
+producers require an explicit resolved campaign config and `--output`; see the
+[maintained replay examples](../../README.md). Native and Python controls have
+separate entry points. Standalone results are unbound and cannot replace captured
+check evidence. The original historical JSON, CSVs, and exact command manifest
+remain unchanged.

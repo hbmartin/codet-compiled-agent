@@ -1,0 +1,15 @@
+rules:
+  - id: codet-no-command-processor
+    languages: [c, cpp]
+    severity: ERROR
+    message: Use the permission-aware Processes API instead of an implicit command processor.
+    # This AST rule intentionally applies to every production source/header.
+    pattern-either:
+      - pattern: system(...)
+      - pattern: ::system(...)
+      - pattern: std::system(...)
+      - pattern: ::std::system(...)
+      - pattern: popen(...)
+      - pattern: ::popen(...)
+      - pattern: _popen(...)
+      - pattern: ::_popen(...)

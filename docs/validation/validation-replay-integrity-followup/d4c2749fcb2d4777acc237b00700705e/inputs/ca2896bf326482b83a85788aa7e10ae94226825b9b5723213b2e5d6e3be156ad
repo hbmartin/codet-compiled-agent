@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "<stdin>", line 5, in <module>
+  File "/Volumes/Pro2T/codet-compiled-agent/scripts/validation_evidence.py", line 321, in publish_bundle
+    return publish_audit_bundle(manifest_path, folder, destination)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Volumes/Pro2T/codet-compiled-agent/scripts/evidence_bundle.py", line 26, in publish_audit_bundle
+    value = validate_capture(manifest_path, folder)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Volumes/Pro2T/codet-compiled-agent/scripts/validation_evidence.py", line 269, in validate_capture
+    raise ValueError("Build source inputs changed: " + check["id"])
+ValueError: Build source inputs changed: asan-ctest

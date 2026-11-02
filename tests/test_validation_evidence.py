@@ -13,6 +13,14 @@ import validation_evidence as evidence
 
 class ValidationEvidence(unittest.TestCase):
     def setUp(self):
+        import os
+        # A captured CTest run carries its own producer identity. Unit fixtures
+        # create nested captures or explicit standalone runs, never that producer.
+        clean = dict(os.environ)
+        clean.pop("CODET_EVIDENCE_CONTEXT", None)
+        context = patch.dict(os.environ, clean, clear=True)
+        context.start()
+        self.addCleanup(context.stop)
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
@@ -168,7 +176,7 @@ class ProvenanceGuards(unittest.TestCase):
         script.parent.mkdir()
         script.write_text("import sys\nsys.path.insert(0," + repr(str(Path(evidence.__file__).parent)) + ")\n"
                           "from validation_evidence import write_artifact\n"
-                          "from pathlib import Path\nwrite_artifact(Path('artifact.json'),'test',{'value':1},['src/core.cpp'])\n")
+                          "from pathlib import Path\nwrite_artifact(Path('artifact.json'),'test',{'value':1},iter(['src/core.cpp']))\n")
         self.checks[0].update(argv=[sys.executable, str(script)], artifacts=[dict(
             path="artifact.json", kind="test", inputs=["src/core.cpp"])])
 
@@ -243,6 +251,10 @@ class ProvenanceGuards(unittest.TestCase):
         value = evidence.publish_bundle(self.manifest, self.folder, target)
         self.assertEqual(json.loads((target / "report.json").read_text()), value)
         self.assertEqual(evidence.digest(target / "artifacts/test/artifact.json"), evidence.digest(self.root / "artifact.json"))
+        from evidence_bundle import verify_bundle
+        for name in ("manifest.json", "capture/run.json", "capture/test.json", "capture/test.log", "inventory.json", "inputs.json"):
+            self.assertTrue((target / name).is_file(), name)
+        self.assertTrue(verify_bundle(target)["verified"])
         with self.assertRaisesRegex(ValueError, "already exists"):
             evidence.publish_bundle(self.manifest, self.folder, target)
 
@@ -253,7 +265,8 @@ class ProvenanceGuards(unittest.TestCase):
         previous = parent / "previous/report.json"
         previous.parent.mkdir(parents=True)
         previous.write_text("previous")
-        original = evidence.shutil.copyfile
+        import evidence_bundle
+        original = evidence_bundle.shutil.copyfile
         for position in (1, 2, 3):
             calls = []
             def failure(*args, _calls=calls, _position=position, **kwargs):
@@ -261,7 +274,7 @@ class ProvenanceGuards(unittest.TestCase):
                 if len(_calls) == _position:
                     raise OSError("staging failed")
                 return original(*args, **kwargs)
-            with self.subTest(position=position), patch.object(evidence.shutil, "copyfile", side_effect=failure):
+            with self.subTest(position=position), patch.object(evidence_bundle.shutil, "copyfile", side_effect=failure):
                 with self.assertRaisesRegex(OSError, "staging failed"):
                     evidence.publish_bundle(self.manifest, self.folder, parent / "new")
             self.assertFalse((parent / "new").exists())
@@ -272,13 +285,14 @@ class ProvenanceGuards(unittest.TestCase):
 
     def test_source_change_during_staging_rejects_bundle(self):
         self.capture()
-        original = evidence.shutil.copytree
+        import evidence_bundle
+        original = evidence_bundle.shutil.copyfile
         def change(*args, **kwargs):
             result = original(*args, **kwargs)
             (self.root / "src/core.cpp").write_text("changed during staging")
             return result
         target = self.root / "public/run"
-        with patch.object(evidence.shutil, "copytree", side_effect=change), self.assertRaisesRegex(ValueError, "Stale or mismatched"):
+        with patch.object(evidence_bundle.shutil, "copyfile", side_effect=change), self.assertRaisesRegex(ValueError, "Stale or mismatched|Audit input changed"):
             evidence.publish_bundle(self.manifest, self.folder, target)
         self.assertFalse(target.exists())
 
@@ -431,14 +445,18 @@ class ExactProcessArguments(unittest.TestCase):
             self.skipTest("Exact argv inspection requires Darwin or Linux")
         with tempfile.TemporaryDirectory(prefix="argv space ") as d:
             script = Path(d) / "analyze-modern.py"
-            script.write_text("import sys;sys.stdin.read()")
-            process = subprocess.Popen([sys.executable, str(script)], stdin=subprocess.PIPE)
+            script.write_text("import sys;print('ready',flush=True);sys.stdin.read()")
+            process = subprocess.Popen([sys.executable, str(script)], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
             try:
+                import select
+                self.assertTrue(select.select([process.stdout], [], [], 5)[0], "child readiness deadline")
+                self.assertEqual(process.stdout.readline(), b"ready\n")
                 argv = read_argv(process.pid)
                 self.assertEqual(argv[1], str(script))
                 self.assertEqual(len(blocking_processes([dict(executable=sys.executable, argv=argv)])), 1)
             finally:
                 process.stdin.close()
+                process.stdout.close()
                 process.wait(timeout=5)
 
     def test_inspection_timeout_is_not_clean(self):
@@ -460,7 +478,7 @@ class ExactProcessArguments(unittest.TestCase):
 
 class ReplayAndGitGuards(unittest.TestCase):
     def git_fixture(self, root):
-        (root / "src").mkdir()
+        (root / "src").mkdir(exist_ok=True)
         (root / "src/a.cpp").write_text("original")
         (root / "CMakeLists.txt").write_text("project(test)")
         for args in (["init", "-q"], ["add", "."], ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture"]):
@@ -496,7 +514,8 @@ class ReplayAndGitGuards(unittest.TestCase):
             self.git_fixture(root)
             alias = root / "python-venv"
             alias.symlink_to(sys.executable)
-            manifest = json.loads(prepare(root, Path("build/campaign"), "HEAD", str(alias), "python3.9", sys.executable).read_text())
+            manifest = json.loads(prepare(root, Path("build/campaign"), "HEAD", str(alias), "python3.9", sys.executable,
+                                        clang_tidy=sys.executable, cppcheck=sys.executable).read_text())
             config = json.loads((root / "build/campaign/config.json").read_text())
             self.assertEqual(config["check_python"], str(alias))
             self.assertEqual(manifest["root"], str(root.resolve()))
@@ -521,6 +540,335 @@ class ReplayAndGitGuards(unittest.TestCase):
             self.assertNotEqual(process.returncode, 0)
             self.assertIn("Stale or mismatched evidence", process.stderr)
             self.assertEqual(output.read_text(), "previous")
+
+
+class ReplayIntegrity(unittest.TestCase):
+    setUp = ValidationEvidence.setUp
+    setup_manifest = ValidationEvidence.setup_manifest
+    capture = ValidationEvidence.capture
+    publish = ValidationEvidence.publish
+    rejected = ValidationEvidence.rejected
+    producer = ProvenanceGuards.producer
+
+    def test_blocked_check_does_not_inspect_missing_inputs(self):
+        self.checks = [dict(id="build", argv=[sys.executable, "-c", "raise SystemExit(1)"]),
+                       dict(id="test", requires=["build"], argv=[sys.executable, "-c", "raise SystemExit(77)"], file_inputs=["absent"])]
+        result = self.capture()["test"]
+        self.assertEqual(result["outcome"], "blocked")
+        self.assertIsNone(result["exit"])
+
+    def test_missing_input_and_output_are_artifact_errors(self):
+        for field in ("file_inputs", "outputs"):
+            self.checks = [dict(id="test", argv=[sys.executable, "-c", "pass"], **{field: [dict(path="absent")]})]
+            with self.subTest(field=field):
+                record = self.capture()["test"]
+                self.assertEqual(record["outcome"], "artifact-error")
+                self.assertIn("not produced", record["error"])
+
+    def test_input_read_failure_is_not_a_launch_failure(self):
+        with patch.object(evidence, "input_hashes", side_effect=PermissionError("declared input unreadable")), patch.object(evidence.subprocess, "Popen") as launch:
+            record = self.capture()["test"]
+        self.assertEqual(record["outcome"], "artifact-error")
+        self.assertIn("declared input unreadable", record["error"])
+        launch.assert_not_called()
+
+    def test_missing_python_is_unavailable(self):
+        self.checks[0].update(argv=[str(self.root / "missing-python")], python_version=[3, 9])
+        self.assertEqual(self.capture()["test"]["outcome"], "unavailable")
+
+    def test_consumer_rejects_replaced_prerequisite_executable(self):
+        self.checks = [dict(id="build", argv=[sys.executable, "-c", "open('binary','w').write('built')"], outputs=[dict(path="binary", archive=False)]),
+                       dict(id="replace", argv=[sys.executable, "-c", "open('binary','w').write('stale')"], requires=["build"]),
+                       dict(id="test", requires=["build", "replace"], argv=[sys.executable, "-c", "open('launched','w').close()"])]
+        results = self.capture()
+        self.assertEqual(results["test"]["outcome"], "artifact-error")
+        self.assertIn("Prerequisite output changed", results["test"]["error"])
+        self.assertFalse((self.root / "launched").exists())
+
+    def test_baseline_source_and_generated_inputs_are_bound(self):
+        source = self.root / "baseline"
+        (source / "prompts").mkdir(parents=True)
+        (source / "CMakeLists.txt").write_text("baseline")
+        (source / "prompts/manifest.json").write_text("prompt")
+        self.checks[0]["source_inputs"] = [dict(path="baseline")]
+        self.capture()
+        (source / "prompts/manifest.json").write_text("changed generated input")
+        self.rejected("Build source inputs changed")
+
+    def test_effective_path_is_not_ambient_and_uses_check_override(self):
+        import os
+        for name in ("first", "second"):
+            directory = self.root / name
+            directory.mkdir()
+            path = directory / "probe"
+            path.write_text("#!/bin/sh\necho " + name + "\n")
+            path.chmod(0o755)
+        self.checks[0].update(argv=["probe"], env=dict(PATH=str(self.root / "first")))
+        with patch.dict(os.environ, dict(PATH=str(self.root / "second"), CXX="unrecorded")):
+            record = self.capture()["test"]
+        self.assertEqual(record["resolved_executable"], str(self.root / "first/probe"))
+        self.assertEqual((self.folder / "test.log").read_text(), "first\n")
+        self.assertNotIn("CXX", record["effective_environment"])
+
+    def test_executable_changes_invalidate_publication(self):
+        tool = self.root / "probe"
+        tool.write_text("#!/bin/sh\nexit 0\n")
+        tool.chmod(0o755)
+        self.checks[0]["argv"] = [str(tool)]
+        self.capture()
+        tool.write_text("#!/bin/sh\nexit 7\n")
+        self.rejected("Check executable changed")
+
+    def test_archive_excludes_stale_records_and_survives_relocation(self):
+        import shutil
+
+        from evidence_bundle import verify_bundle
+        self.producer()
+        self.capture()
+        (self.folder / "old.log").write_text("old run")
+        target = self.root / "bundle"
+        evidence.publish_bundle(self.manifest, self.folder, target)
+        self.assertFalse((target / "capture/old.log").exists())
+        index = json.loads((target / "inputs.json").read_text())
+        self.assertTrue(any(i["role"] == "input" and i["path"] == "src/core.cpp" and i["storage"] for i in index))
+        with tempfile.TemporaryDirectory() as d:
+            relocated = Path(d) / "audit"
+            shutil.copytree(target, relocated)
+            shutil.rmtree(self.root / "src")
+            self.assertTrue(verify_bundle(relocated)["verified"])
+            item = next(i for i in index if i["storage"])
+            (relocated / item["storage"]).write_text("damaged")
+            with self.assertRaisesRegex(ValueError, "inventory mismatch"):
+                verify_bundle(relocated)
+
+    def test_measurement_artifacts_have_distinct_complete_sidecars(self):
+        from evidence_bundle import verify_bundle
+        rows, summary = ComparisonGuards.samples(self)
+        config = self.root / "config.json"
+        evidence.atomic_json(config, dict(cases=dict(test=["case"]), sets=2, measured=5))
+        script = self.root / "producer.py"
+        script.write_text("import sys\nfrom pathlib import Path\nsys.path.insert(0," + repr(str(Path(evidence.__file__).parent)) + ")\nfrom validation_evidence import write_artifact\nimport json\npayload=json.loads(" + repr(json.dumps(dict(rows=rows, summary=summary))) + ")\nfor name in sys.argv[1:]:\n write_artifact(Path(name),'measure',payload,['config.json'])\n")
+        self.checks = [dict(id=n, argv=[sys.executable, str(script), n + ".json"], artifacts=[dict(path=n + ".json", kind="measure", inputs=["config.json"])]) for n in ("first", "second")]
+        self.checks.append(dict(id="same-stem", argv=[sys.executable, str(script), "left.json", "left.jsonl"], artifacts=[dict(path=n, kind="measure", inputs=["config.json"]) for n in ("left.json", "left.jsonl")]))
+        self.capture()
+        target = self.root / "bundle"
+        evidence.publish_bundle(self.manifest, self.folder, target)
+        self.assertTrue(verify_bundle(target)["verified"])
+        self.assertEqual(len(list((target / "measurements").rglob("samples.csv"))), 4)
+        self.assertEqual(len(json.loads((target / "measurements.json").read_text())), 4)
+
+    def test_all_required_sidecars_are_verified(self):
+        import shutil
+
+        from evidence_bundle import verify_bundle
+        self.capture()
+        target = self.root / "bundle"
+        evidence.publish_bundle(self.manifest, self.folder, target)
+        for name in ("manifest.json", "capture/run.json", "capture/test.json", "capture/test.log", "inputs.json", "report.json", "measurements.json"):
+            path = target / name
+            data = path.read_bytes()
+            path.unlink()
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "inventory mismatch"):
+                verify_bundle(target)
+            path.write_bytes(data)
+        shutil.rmtree(target / "inputs")
+        with self.assertRaisesRegex(ValueError, "inventory mismatch"):
+            verify_bundle(target)
+
+    def test_every_atomic_staging_boundary_preserves_previous_publication(self):
+        self.capture()
+        previous = self.root / "previous/report.json"
+        previous.parent.mkdir()
+        previous.write_text("previous")
+        original = evidence.atomic_json
+        for position in (1, 2, 3, 4):
+            calls = []
+            def fail(path, value, _position=position, _calls=calls):
+                _calls.append(path)
+                if len(_calls) == _position:
+                    raise OSError("intentional staging failure")
+                return original(path, value)
+            target = self.root / ("bundle-" + str(position))
+            with self.subTest(position=position), patch.object(evidence, "atomic_json", side_effect=fail), self.assertRaisesRegex(OSError, "intentional staging failure"):
+                evidence.publish_bundle(self.manifest, self.folder, target)
+            self.assertFalse(target.exists())
+            self.assertEqual(previous.read_text(), "previous")
+
+    def test_standalone_relative_config_produces_unbound_result(self):
+        import evidence_campaign as campaign
+        config = self.root / "config.json"
+        evidence.atomic_json(config, dict(root=str(self.root), folder=str(self.root)))
+        for variant in ("baseline", "changed"):
+            cache = self.root / (variant + "-release/CMakeCache.txt")
+            cache.parent.mkdir()
+            cache.write_text("cache")
+        result = self.root / "standalone.json"
+        relative = Path(__import__('os').path.relpath(config))
+        with patch.object(campaign, "measure", return_value={"completed": True}):
+            campaign.produce(relative, "measure", output=result)
+        value = json.loads(result.read_text())
+        self.assertEqual(value["binding"], "standalone-unbound")
+        self.assertNotIn("capture_run_id", value)
+        with patch.object(campaign, "measure") as work, self.assertRaisesRegex(ValueError, "explicit --output"):
+            campaign.produce(relative, "measure")
+        work.assert_not_called()
+
+    def test_process_gate_matches_versioned_and_truncated_names(self):
+        from evidence_processes import blocking_processes
+        for name in ("clang-tidy-18", "clang-tidy-23.1", "codet_publicatio", "analyze-modern."):
+            with self.subTest(name=name):
+                self.assertEqual(len(blocking_processes([dict(executable=name, argv=[name])])), 1)
+        self.assertEqual(blocking_processes([dict(executable="sh", argv=["sh", "-c", "echo clang-tidy-18"])]), [])
+
+    def test_process_snapshot_inspects_native_candidate_argv(self):
+        import evidence_processes as processes
+        with patch.object(processes.subprocess, "check_output", return_value="123 clang-tidy-18\n"), patch.object(processes, "read_argv", return_value=["/bin/clang-tidy-18"]) as argv, patch.object(processes.os, "readlink", return_value="/bin/clang-tidy-18"):
+            values = processes.process_snapshot()
+        argv.assert_called_once_with("123")
+        self.assertEqual(values[0]["argv"], ["/bin/clang-tidy-18"])
+
+
+    def test_external_installation_identity_changes_are_detected(self):
+        dependency = self.root / "dependency"
+        dependency.mkdir()
+        (dependency / "header.h").write_text("pinned installation")
+        self.checks[0]["directory_inputs"] = ["dependency"]
+        self.capture()
+        (dependency / "header.h").write_text("changed installation")
+        self.rejected("External build inputs changed")
+
+    def test_source_commit_binding_rejects_wrong_baseline(self):
+        import shutil
+
+        from evidence_inputs import source_inputs
+        ReplayAndGitGuards.git_fixture(self, self.root)
+        baseline = self.root / "baseline"
+        baseline.mkdir()
+        shutil.copyfile(self.root / "CMakeLists.txt", baseline / "CMakeLists.txt")
+        shutil.copytree(self.root / "src", baseline / "src")
+        self.assertEqual(set(source_inputs(self.root, [dict(path="baseline", git_ref="HEAD")])), {"baseline"})
+        self.checks[0]["source_inputs"] = [dict(path="baseline", git_ref="HEAD")]
+        self.capture()
+        from evidence_bundle import verify_bundle
+        target = self.root / "git-bound-bundle"
+        evidence.publish_bundle(self.manifest, self.folder, target)
+        self.assertTrue(verify_bundle(target)["verified"])
+        (baseline / "src/core.cpp").write_text("wrong baseline")
+        with self.assertRaisesRegex(ValueError, "does not match Git commit"):
+            source_inputs(self.root, [dict(path="baseline", git_ref="HEAD")])
+
+    def test_build_info_uses_each_cache_compiler_and_declares_caches(self):
+        import evidence_campaign as campaign
+        builds = {"debug": str(self.root / "debug"), "cross": str(self.root / "cross")}
+        caches = []
+        for directory in list(builds.values()) + [str(self.root / (v + "-release")) for v in ("baseline", "changed")]:
+            path = Path(directory) / "CMakeCache.txt"
+            path.parent.mkdir()
+            path.write_text("CMAKE_CXX_COMPILER:FILEPATH=" + sys.executable + "\n")
+            caches.append(path)
+        config = self.root / "config.json"
+        evidence.atomic_json(config, dict(root=str(self.root), folder=str(self.root), builds=builds))
+        output = self.root / "build-info.json"
+        campaign.produce(config, "build-info", output=output)
+        value = json.loads(output.read_text())
+        self.assertEqual(set(value["input_hashes"]), {"config.json"} | {str(p.relative_to(self.root)) for p in caches})
+        self.assertEqual({v["compiler_path"] for v in value["payload"]}, {sys.executable})
+
+    def test_unbound_payload_cannot_satisfy_capture(self):
+        self.producer()
+        self.capture()
+        path = self.root / "artifact.json"
+        value = json.loads(path.read_text())
+        value.pop("capture_run_id")
+        value["binding"] = "standalone-unbound"
+        evidence.atomic_json(path, value)
+        record_path = self.folder / "test.json"
+        record = json.loads(record_path.read_text())
+        record["artifacts"][0]["sha256"] = evidence.digest(path)
+        evidence.atomic_json(record_path, record)
+        self.rejected("Stale artifact.*capture_run_id")
+
+    def test_every_compatibility_producer_has_explicit_output_and_correct_action(self):
+        import runpy
+
+        import evidence_campaign
+        root = Path(__file__).resolve().parents[1]
+        for suffix, action in (("measure", "measure"), ("compare-static", "analysis"),
+                               ("negative-controls", "native-negative-controls"), ("python-negative-controls", "negative-controls")):
+            path = root / ("docs/validation/prompt-recovery-evidence-followup-" + suffix + ".py")
+            with self.subTest(suffix=suffix), patch.object(sys, "argv", [str(path), "relative config.json", "--output", "explicit output.json"]), patch.object(evidence_campaign, "produce", return_value=None) as producer:
+                with self.assertRaises(SystemExit) as ended:
+                    runpy.run_path(str(path), run_name="__main__")
+                self.assertIsNone(ended.exception.code)
+                producer.assert_called_once_with(Path("relative config.json"), action, output=Path("explicit output.json"))
+
+    def test_template_defaults_and_cli_overrides_are_effective(self):
+        import evidence_campaign as campaign
+        ReplayAndGitGuards.git_fixture(self, self.root)
+        template = self.root / "template.json"
+        evidence.atomic_json(template, dict(baseline="HEAD", python39="unavailable-python39", builds=dict(debug="custom-debug", asan="custom-asan", tsan="custom-tsan", cross="custom-cross"), benchmark=dict(sets=3, measured_per_set=4)))
+        manifest = campaign.prepare(self.root, Path("build/fresh"), check_python=sys.executable, analysis_python=sys.executable,
+                                    template_path=template, clang_tidy=sys.executable, cppcheck=sys.executable)
+        checks = json.loads(manifest.read_text())["checks"]
+        self.assertIn("custom-debug", next(c for c in checks if c["id"] == "debug-configure")["argv"][4])
+        config = json.loads((self.root / "build/fresh/config.json").read_text())
+        self.assertEqual((config["sets"], config["measured"], config["python39"]), (3, 4, "unavailable-python39"))
+        other = campaign.prepare(self.root, Path("build/other"), "HEAD", sys.executable, sys.executable, sys.executable,
+                                 template_path=template, clang_tidy=sys.executable, cppcheck=sys.executable)
+        self.assertEqual(json.loads((other.parent / "config.json").read_text())["python39"], sys.executable)
+
+
+    def test_every_compatibility_wrapper_preserves_captured_output(self):
+        import os
+        import runpy
+
+        import evidence_campaign as campaign
+        import evidence_native_controls
+        import evidence_negative_controls
+        root = Path(__file__).resolve().parents[1]
+        config = self.root / "config.json"
+        debug = self.root / "debug"
+        debug.mkdir()
+        for name in ("compile_commands.json", "build.ninja"):
+            (debug / name).write_text("fixture")
+        for variant in ("baseline", "changed"):
+            cache = self.root / (variant + "-release/CMakeCache.txt")
+            cache.parent.mkdir()
+            cache.write_text("fixture")
+            evidence.atomic_json(self.root / ("analysis-" + variant + ".json"), dict(payload=dict(manifests={t: {} for t in campaign.TOOLS})))
+        evidence.atomic_json(config, dict(root=str(self.root), folder=str(self.root), builds=dict(debug=str(debug)), tools=dict(ninja=dict(path="ninja"))))
+        for suffix, action, extras in (
+            ("measure", "measure", ["baseline-release/CMakeCache.txt", "changed-release/CMakeCache.txt"]),
+            ("compare-static", "analysis", ["analysis-baseline.json", "analysis-changed.json"]),
+            ("negative-controls", "native-negative-controls", ["debug/compile_commands.json", "debug/build.ninja"]),
+            ("python-negative-controls", "negative-controls", []),
+        ):
+            wrapper = root / ("docs/validation/prompt-recovery-evidence-followup-" + suffix + ".py")
+            for explicit in (False, True):
+                output = self.root / (("explicit-" + suffix) if explicit else action)
+                output = output.with_suffix(".json")
+                spec = dict(path=str(output.relative_to(self.root)), kind=action, inputs=["config.json"] + extras)
+                context = evidence._context(self.root, dict(id="run", campaign_id="campaign"), "captured-wrapper", evidence.production_hashes(self.root), evidence.validation_hashes(self.root))
+                context["declared_artifacts"] = [spec]
+                argv = [str(wrapper), str(config)] + (["--output", str(output)] if explicit else [])
+                with self.subTest(suffix=suffix, explicit=explicit), patch.dict(os.environ, dict(CODET_EVIDENCE_CONTEXT=json.dumps(context))), patch.object(sys, "argv", argv), patch.object(campaign, "measure", return_value={"computed": True}), patch.object(campaign, "compare_analysis", return_value={"equal": True}), patch.object(evidence_native_controls, "run_controls", return_value=[]), patch.object(evidence_negative_controls, "run_controls", return_value=[]):
+                    with self.assertRaises(SystemExit) as ended:
+                        runpy.run_path(str(wrapper), run_name="__main__")
+                    self.assertIsNone(ended.exception.code)
+                    self.assertEqual(json.loads(output.read_text()).get("capture_run_id"), "run")
+                    value = evidence.validate_artifact(output, spec, context)
+                    self.assertEqual(value["capture_run_id"], "run")
+                    self.assertNotIn("binding", value)
+
+    def test_undeclared_captured_wrapper_output_fails_before_work(self):
+        import os
+
+        import evidence_campaign as campaign
+        config = self.root / "config.json"
+        evidence.atomic_json(config, dict(root=str(self.root), folder=str(self.root)))
+        with patch.dict(os.environ, dict(CODET_EVIDENCE_CONTEXT=json.dumps(dict(declared_artifacts=[])))), patch.object(campaign, "measure") as work, self.assertRaisesRegex(ValueError, "not declared"):
+            campaign.produce(config, "measure", output=self.root / "wrong.json")
+        work.assert_not_called()
 
 
 if __name__ == "__main__":

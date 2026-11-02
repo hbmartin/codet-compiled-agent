@@ -1,0 +1,5 @@
+{
+  "clang-tidy": true,
+  "cppcheck": true,
+  "clang-analyzer": true
+}

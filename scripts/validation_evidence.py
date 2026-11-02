@@ -1,11 +1,9 @@
 """Capture actual command outcomes and publish versioned, source-bound evidence."""
 
 import argparse
-import csv
 import hashlib
 import json
 import os
-import shutil
 import signal
 import subprocess
 import tempfile
@@ -13,9 +11,19 @@ import time
 import uuid
 from pathlib import Path
 
+from evidence_inputs import (
+    directory_hashes,
+    environment,
+    executable,
+    file_hashes,
+    file_specs,
+    output_hashes,
+    source_inputs,
+    verify_tools,
+)
 from evidence_processes import blocking_processes, require_quiet_processes  # noqa: F401
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def digest(path):
@@ -79,13 +87,18 @@ def load_manifest(path):
 
 
 def input_hashes(root, names):
-    return {name: digest(root / name) for name in names}
+    return file_hashes(root, names)
 
 
 def write_artifact(path, kind, payload, inputs=()):
     """Producer entry point: the capture supplies its identity, never the producer."""
+    inputs = tuple(inputs)
     context = json.loads(os.environ["CODET_EVIDENCE_CONTEXT"])
     root = Path(context.pop("root"))
+    declared = context.pop("declared_artifacts", None)
+    if declared is not None and not any((root / a["path"]).resolve() == path.resolve() and a["kind"] == kind and
+                                        set(a.get("inputs", [])) == set(inputs) for a in declared):
+        raise ValueError("Captured artifact is not declared by its manifest: " + str(path))
     atomic_json(path, dict(**context, kind=kind, input_hashes=input_hashes(root, inputs), payload=payload))
 
 
@@ -109,10 +122,10 @@ def _context(root, run, name, production, validation):
                 production_hashes=production, validation_hashes=validation)
 
 
-def _python_identity(argv, required):
+def _python_identity(argv, required, env=None):
     value = json.loads(subprocess.check_output(
         [argv[0], "-c", "import json,sys;print(json.dumps(dict(executable=sys.executable,version=list(sys.version_info[:3]))))"],
-        text=True, timeout=5))
+        text=True, timeout=5, env=env))
     if value["version"][:2] != required:
         raise ValueError("Required Python " + ".".join(map(str, required)) + "; found " + repr(value))
     return value
@@ -121,6 +134,7 @@ def _python_identity(argv, required):
 def capture(manifest_path, folder, *, campaign_id=None):
     manifest = load_manifest(manifest_path)
     root = Path(manifest["root"]).resolve()
+    verify_tools(manifest)
     folder.mkdir(parents=True, exist_ok=True)
     signature = digest(manifest_path)
     run = dict(schema_version=SCHEMA_VERSION, id=uuid.uuid4().hex,
@@ -133,34 +147,53 @@ def capture(manifest_path, folder, *, campaign_id=None):
         log = folder / (name + ".log")
         before, validation = production_hashes(root), validation_hashes(root)
         context = _context(root, run, name, before, validation)
+        context["declared_artifacts"] = check.get("artifacts", [])
         record = dict(schema_version=SCHEMA_VERSION, id=name, run_id=run["id"], campaign_id=run["campaign_id"],
                       argv=check["argv"], env=check.get("env", {}), cwd=str(Path(check.get("cwd", root)).resolve()),
                       manifest_sha256=signature, source_before=before, validation_before=validation,
-                      started_ns=time.time_ns(), exit=None, outcome="not-run", log=log.name, artifacts=[])
+                      started_ns=time.time_ns(), exit=None, outcome="not-run", log=log.name, artifacts=[], outputs=[])
         log.write_text("")
+        phase = "artifact"
         try:
-            names = sorted({n for a in check.get("artifacts", []) for n in a.get("inputs", [])})
-            record["input_before"] = input_hashes(root, names)
             if any(results[parent]["outcome"] != "passed" and not (policies[parent] == "observation" and
                    results[parent]["outcome"] == "failed" and type(results[parent]["exit"]) is int)
                    for parent in check.get("requires", [])):
                 record["outcome"] = "blocked"
                 log.write_text("Prerequisite did not pass; command was not launched.\n")
             else:
-                record["resolved_executable"] = shutil.which(check["argv"][0])
+                for parent in check.get("requires", []):
+                    for output in results[parent]["outputs"]:
+                        if not (root / output["path"]).is_file() or digest(root / output["path"]) != output["sha256"]:
+                            raise ValueError("Prerequisite output changed: " + parent + ": " + output["path"])
+                record["input_before"] = input_hashes(root, file_specs(check))
+                record["build_inputs_before"] = source_inputs(root, check.get("source_inputs", [{"path": "."}]))
+                record["external_inputs_before"] = directory_hashes(root, check.get("directory_inputs", []))
+                env = environment(manifest, check)
+                record["effective_environment"] = dict(manifest.get("environment", {"PATH": os.defpath}), **check.get("env", {}))
+                phase = "launch"
+                try:
+                    record["executable"] = executable(check["argv"], env)
+                except FileNotFoundError as error:
+                    if "python_version" not in check:
+                        raise
+                    record["outcome"] = "unavailable"
+                    log.write_text(str(error) + "\n")
+                    continue
+                record["resolved_executable"] = record["executable"]["path"]
+                argv = [record["resolved_executable"]] + check["argv"][1:]
+                record["executed_argv"] = argv
                 if "python_version" in check:
                     try:
-                        record["interpreter"] = _python_identity(check["argv"], check["python_version"])
+                        record["interpreter"] = _python_identity(argv, check["python_version"], env)
                     except (ValueError, OSError, subprocess.SubprocessError) as error:
                         record["outcome"] = "unavailable"
                         log.write_text(str(error) + "\n")
                         continue
                 with log.open("wb") as stream:
-                    env = dict(os.environ)
-                    env.update(check.get("env", {}))
                     env["CODET_EVIDENCE_CONTEXT"] = json.dumps(context)
-                    process = subprocess.Popen(check["argv"], cwd=record["cwd"], stdout=stream,
+                    process = subprocess.Popen(argv, cwd=record["cwd"], stdout=stream,
                                                stderr=subprocess.STDOUT, start_new_session=True, env=env)
+                    phase = "execution"
                     try:
                         record["exit"] = process.wait(timeout=check.get("timeout_seconds", 600))
                         record["outcome"] = "passed" if record["exit"] == 0 else "failed"
@@ -173,13 +206,17 @@ def capture(manifest_path, folder, *, campaign_id=None):
                         record["outcome"] = "timeout" if isinstance(error, subprocess.TimeoutExpired) else "interrupted"
                         if isinstance(error, KeyboardInterrupt):
                             raise
+                phase = "artifact"
                 if record["outcome"] == "passed" or (record["outcome"] == "failed" and check.get("policy") == "observation"):
+                    record["outputs"] = output_hashes(root, check.get("outputs", []))
                     for spec in check.get("artifacts", []):
                         path = root / spec["path"]
+                        if not path.is_file():
+                            raise ValueError("Artifact not produced: " + spec["path"])
                         validate_artifact(path, spec, context)
                         record["artifacts"].append(dict(path=spec["path"], sha256=digest(path)))
         except OSError as error:
-            record["outcome"] = "launch-error"
+            record["outcome"] = "launch-error" if phase == "launch" else ("execution-error" if phase == "execution" else "artifact-error")
             record["error"] = str(error)
             with log.open("a") as stream:
                 stream.write(str(error) + "\n")
@@ -193,6 +230,13 @@ def capture(manifest_path, folder, *, campaign_id=None):
                                      for n in record.get("input_before", {})}
             record["source_after"] = production_hashes(root)
             record["validation_after"] = validation_hashes(root)
+            if "build_inputs_before" in record:
+                try:
+                    record["build_inputs_after"] = source_inputs(root, check.get("source_inputs", [{"path": "."}]))
+                    record["external_inputs_after"] = directory_hashes(root, check.get("directory_inputs", []))
+                except (ValueError, OSError, subprocess.SubprocessError) as error:
+                    record["outcome"] = "artifact-error"
+                    record["error"] = str(error)
             record["finished_ns"] = time.time_ns()
             record["log_sha256"] = digest(log)
             results[name] = record
@@ -203,6 +247,7 @@ def capture(manifest_path, folder, *, campaign_id=None):
 def validate_capture(manifest_path, folder):
     manifest = load_manifest(manifest_path)
     root = Path(manifest["root"]).resolve()
+    verify_tools(manifest)
     current, validation = production_hashes(root), validation_hashes(root)
     signature = digest(manifest_path)
     run = json.loads((folder / "run.json").read_text())
@@ -226,9 +271,24 @@ def validate_capture(manifest_path, folder):
             raise ValueError("Command did not complete: " + check["id"] + " (" + record["outcome"] + ")")
         if check.get("policy", "required") == "required" and (record["outcome"] != "passed" or record["exit"] != 0):
             raise ValueError("Required check did not pass: " + check["id"])
-        names = sorted({n for a in check.get("artifacts", []) for n in a.get("inputs", [])})
+        names = file_specs(check)
         if record.get("input_before") != input_hashes(root, names) or record.get("input_after") != record["input_before"]:
             raise ValueError("Artifact producer inputs changed: " + check["id"])
+        if (record.get("build_inputs_before") != source_inputs(root, check.get("source_inputs", [{"path": "."}])) or
+                record.get("build_inputs_after") != record["build_inputs_before"]):
+            raise ValueError("Build source inputs changed: " + check["id"])
+        env = environment(manifest, check)
+        if record.get("effective_environment") != dict(manifest.get("environment", {"PATH": os.defpath}), **check.get("env", {})):
+            raise ValueError("Effective check environment changed: " + check["id"])
+        if record.get("executable") != executable(check["argv"], env):
+            raise ValueError("Check executable changed: " + check["id"])
+        if record.get("executed_argv") != [record["executable"]["path"]] + check["argv"][1:]:
+            raise ValueError("Executed argument vector mismatch: " + check["id"])
+        if record.get("outputs") != output_hashes(root, check.get("outputs", [])):
+            raise ValueError("Produced outputs changed: " + check["id"])
+        if (record.get("external_inputs_before") != directory_hashes(root, check.get("directory_inputs", [])) or
+                record.get("external_inputs_after") != record["external_inputs_before"]):
+            raise ValueError("External build inputs changed: " + check["id"])
         expected = check.get("artifacts", [])
         if len(record["artifacts"]) != len(expected):
             raise ValueError("Missing produced artifacts: " + check["id"])
@@ -267,56 +327,24 @@ def publish(manifest_path, folder, output, benchmark=None):
 
 def publish_bundle(manifest_path, folder, destination):
     """Stage immutable sidecars and report, then expose the complete directory."""
-    if destination.exists():
-        raise ValueError("Bundle destination already exists")
-    value = validate_capture(manifest_path, folder)
-    root = Path(load_manifest(manifest_path)["root"]).resolve()
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".evidence-", dir=destination.parent) as temporary:
-        stage = Path(temporary) / "bundle"
-        stage.mkdir()
-        shutil.copyfile(manifest_path, stage / "manifest.json")
-        shutil.copytree(folder, stage / "capture")
-        for record in value["validation"]:
-            for artifact in record["artifacts"]:
-                target = stage / "artifacts" / record["id"] / Path(artifact["path"]).name
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(root / artifact["path"], target)
-        for artifact in value["derived_artifacts"]:
-            if artifact["kind"] == "measure":
-                for key, name in (("rows", "samples.csv"), ("summary", "medians.csv")):
-                    rows = artifact["payload"][key]
-                    with (stage / name).open("w", newline="") as stream:
-                        writer = csv.DictWriter(stream, fieldnames=sorted(set().union(*(r.keys() for r in rows))), lineterminator="\n")
-                        writer.writeheader()
-                        writer.writerows(rows)
-        atomic_json(stage / "report.json", value)
-        if validate_capture(stage / "manifest.json", stage / "capture") != value:
-            raise ValueError("Staged capture mismatch")
-        for record in value["validation"]:
-            for artifact in record["artifacts"]:
-                copied = stage / "artifacts" / record["id"] / Path(artifact["path"]).name
-                if digest(copied) != artifact["sha256"]:
-                    raise ValueError("Staged artifact digest mismatch")
-        # Revalidate after copying: stale inputs or sidecars never become published evidence.
-        if validate_capture(manifest_path, folder) != value:
-            raise ValueError("Evidence changed during staging")
-        if destination.exists():
-            raise ValueError("Bundle destination already exists")
-        atomic_json(stage / "inventory.json", {str(p.relative_to(stage)): digest(p)
-                    for p in sorted(stage.rglob("*")) if p.is_file()})
-        os.rename(stage, destination)
-    return value
+    from evidence_bundle import publish_audit_bundle
+    return publish_audit_bundle(manifest_path, folder, destination)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("capture", "publish", "bundle"))
+    parser.add_argument("operation", choices=("capture", "publish", "bundle", "verify-bundle"))
     parser.add_argument("manifest", type=Path)
-    parser.add_argument("folder", type=Path)
+    parser.add_argument("folder", type=Path, nargs="?")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--benchmark", type=Path)
     args = parser.parse_args()
+    if args.operation == "verify-bundle":
+        from evidence_bundle import verify_bundle
+        print(json.dumps(verify_bundle(args.manifest), indent=2))
+        return 0
+    if args.folder is None:
+        parser.error("capture/publish/bundle requires a folder")
     if args.operation == "capture":
         results = capture(args.manifest, args.folder)
         policies = {c["id"]: c.get("policy", "required") for c in load_manifest(args.manifest)["checks"]}

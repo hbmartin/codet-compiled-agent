@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "/Volumes/Pro2T/codet-compiled-agent/scripts/validation_evidence.py", line 363, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/Volumes/Pro2T/codet-compiled-agent/scripts/validation_evidence.py", line 348, in main
+    results = capture(args.manifest, args.folder)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Volumes/Pro2T/codet-compiled-agent/scripts/validation_evidence.py", line 197, in capture
+    record["exit"] = process.wait(timeout=check.get("timeout_seconds", 600))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.12/3.12.15/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py", line 1264, in wait
+    return self._wait(timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.12/3.12.15/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py", line 2047, in _wait
+    time.sleep(delay)
+KeyboardInterrupt

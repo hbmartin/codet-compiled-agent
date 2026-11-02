@@ -1,0 +1,10 @@
+[
+  {
+    "artifact": "artifacts/benchmarks/measure.json",
+    "config": "build/validation-replay-verified/config.json",
+    "paths": [
+      "measurements/benchmarks/measure.json/samples.csv",
+      "measurements/benchmarks/measure.json/medians.csv"
+    ]
+  }
+]

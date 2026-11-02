@@ -1,0 +1,5 @@
+Checks: '-*,bugprone-*,performance-*,-bugprone-easily-swappable-parameters,-clang-analyzer-*'
+# The modern runner enforces diagnostics. Keep legacy report-only invocations unchanged.
+WarningsAsErrors: ''
+SystemHeaders: false
+FormatStyle: none
