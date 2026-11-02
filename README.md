@@ -199,20 +199,20 @@ known analyzer findings remain nonzero observations. Log tails never replace sta
 ```sh
 python3 scripts/evidence_campaign.py prepare --root . --baseline origin/main \
   --check-python build/lint-venv/bin/python --analysis-python build/lint-venv/bin/python \
-  --python39 /usr/bin/python3 --folder build/validation-provenance-followup
+  --python39 python3.9 --folder build/validation-replay-integrity-followup
 python3 scripts/validation_evidence.py capture \
-  build/validation-provenance-followup/manifest.json build/validation-provenance-followup/capture
+  build/validation-replay-integrity-followup/manifest.json build/validation-replay-integrity-followup/capture
 python3 scripts/validation_evidence.py bundle \
-  build/validation-provenance-followup/manifest.json build/validation-provenance-followup/capture \
-  --output docs/validation/validation-provenance-followup/NEW_RUN_ID
+  build/validation-replay-integrity-followup/manifest.json build/validation-replay-integrity-followup/capture \
+  --output docs/validation/validation-replay-integrity-followup/NEW_RUN_ID
 ```
 
 Provision pinned dependencies and tools first. The Python 3.9 checks verify the selected
 interpreter's major/minor version; select a real 3.9 interpreter for that option.
 Use `--clang-tidy` and `--cppcheck` when the selected analyzers are not on PATH;
 the resolved manifest records those environment overrides.
-The cross-selection checks require the existing host cross-mode configuration and
-are not native Tiger verification. Add `--ci-run RUN_ID` to include a fresh matching
+Every build uses a fresh campaign-local directory. Cross-selection regenerates
+its documented host-only link placeholder and is not native Tiger verification. Add `--ci-run RUN_ID` to include a fresh matching
 GitHub Actions run. Existing report bundles are immutable and historical captures
 without the current provenance fields cannot stand in for fresh validation.
 The checked-in replay template is independent of archived exact-command manifests.
@@ -221,3 +221,39 @@ For a standalone captured check manifest, use `capture MANIFEST FOLDER`, followe
 `publish MANIFEST FOLDER --output NEW_REPORT` on `scripts/validation_evidence.py`.
 Benchmark source equivalence remains production-only; test/tool changes invalidate
 validation evidence without redefining that equivalence.
+
+Version 3 also binds actual build source trees, generated build inputs, external
+installation identities, configured compilers, and produced executable digests.
+Preparation resolves tools and constructs the recorded search PATH; captures do not
+inherit the shell's PATH or undeclared compiler overrides. CLI overrides take
+precedence over template defaults. Use a new campaign folder for every preparation.
+
+The immutable audit bundle archives declared source/configuration inputs by digest,
+with required-check records, logs, producer envelopes, and namespaced measurement
+CSVs. It records external tools, binaries, dependencies, and SDK identities rather
+than copying their installations. Audit a relocated bundle without the checkout:
+
+```sh
+python3 scripts/validation_evidence.py verify-bundle PATH_TO_BUNDLE
+```
+
+This verifies recorded evidence and its archived inputs; it does not rebuild or
+rerun the recorded executables. Older bundles remain historical evidence.
+
+Standalone producers require explicit config and output paths. They write labelled
+unbound results, which cannot satisfy capture publication. For example:
+
+```sh
+python3 docs/validation/prompt-recovery-evidence-followup-measure.py \
+  build/validation-replay-integrity-followup/config.json --output build/standalone-measure.json
+python3 docs/validation/prompt-recovery-evidence-followup-negative-controls.py \
+  build/validation-replay-integrity-followup/config.json --output build/standalone-native-controls.json
+python3 docs/validation/prompt-recovery-evidence-followup-python-negative-controls.py \
+  build/validation-replay-integrity-followup/config.json --output build/standalone-python-controls.json
+```
+
+The native controls exercise deferred cleanup, separator delivery, and fixture
+printer restoration. The Python controls exercise evidence guards. Both require
+passing baselines and intended assertion failures; compilation or launch failures
+are not successful negative controls. The static-comparison compatibility producer
+uses the same explicit config/`--output` convention.
