@@ -817,5 +817,58 @@ class ReplayIntegrity(unittest.TestCase):
         self.assertEqual(json.loads((other.parent / "config.json").read_text())["python39"], sys.executable)
 
 
+    def test_every_compatibility_wrapper_preserves_captured_output(self):
+        import os
+        import runpy
+
+        import evidence_campaign as campaign
+        import evidence_native_controls
+        import evidence_negative_controls
+        root = Path(__file__).resolve().parents[1]
+        config = self.root / "config.json"
+        debug = self.root / "debug"
+        debug.mkdir()
+        for name in ("compile_commands.json", "build.ninja"):
+            (debug / name).write_text("fixture")
+        for variant in ("baseline", "changed"):
+            cache = self.root / (variant + "-release/CMakeCache.txt")
+            cache.parent.mkdir()
+            cache.write_text("fixture")
+            evidence.atomic_json(self.root / ("analysis-" + variant + ".json"), dict(payload=dict(manifests={t: {} for t in campaign.TOOLS})))
+        evidence.atomic_json(config, dict(root=str(self.root), folder=str(self.root), builds=dict(debug=str(debug)), tools=dict(ninja=dict(path="ninja"))))
+        for suffix, action, extras in (
+            ("measure", "measure", ["baseline-release/CMakeCache.txt", "changed-release/CMakeCache.txt"]),
+            ("compare-static", "analysis", ["analysis-baseline.json", "analysis-changed.json"]),
+            ("negative-controls", "native-negative-controls", ["debug/compile_commands.json", "debug/build.ninja"]),
+            ("python-negative-controls", "negative-controls", []),
+        ):
+            wrapper = root / ("docs/validation/prompt-recovery-evidence-followup-" + suffix + ".py")
+            for explicit in (False, True):
+                output = self.root / (("explicit-" + suffix) if explicit else action)
+                output = output.with_suffix(".json")
+                spec = dict(path=str(output.relative_to(self.root)), kind=action, inputs=["config.json"] + extras)
+                context = evidence._context(self.root, dict(id="run", campaign_id="campaign"), "captured-wrapper", evidence.production_hashes(self.root), evidence.validation_hashes(self.root))
+                context["declared_artifacts"] = [spec]
+                argv = [str(wrapper), str(config)] + (["--output", str(output)] if explicit else [])
+                with self.subTest(suffix=suffix, explicit=explicit), patch.dict(os.environ, dict(CODET_EVIDENCE_CONTEXT=json.dumps(context))), patch.object(sys, "argv", argv), patch.object(campaign, "measure", return_value={"computed": True}), patch.object(campaign, "compare_analysis", return_value={"equal": True}), patch.object(evidence_native_controls, "run_controls", return_value=[]), patch.object(evidence_negative_controls, "run_controls", return_value=[]):
+                    with self.assertRaises(SystemExit) as ended:
+                        runpy.run_path(str(wrapper), run_name="__main__")
+                    self.assertIsNone(ended.exception.code)
+                    self.assertEqual(json.loads(output.read_text()).get("capture_run_id"), "run")
+                    value = evidence.validate_artifact(output, spec, context)
+                    self.assertEqual(value["capture_run_id"], "run")
+                    self.assertNotIn("binding", value)
+
+    def test_undeclared_captured_wrapper_output_fails_before_work(self):
+        import os
+
+        import evidence_campaign as campaign
+        config = self.root / "config.json"
+        evidence.atomic_json(config, dict(root=str(self.root), folder=str(self.root)))
+        with patch.dict(os.environ, dict(CODET_EVIDENCE_CONTEXT=json.dumps(dict(declared_artifacts=[])))), patch.object(campaign, "measure") as work, self.assertRaisesRegex(ValueError, "not declared"):
+            campaign.produce(config, "measure", output=self.root / "wrong.json")
+        work.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

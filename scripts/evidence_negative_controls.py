@@ -55,6 +55,8 @@ def run_controls(root, folder):
          'for name in names:\n                end = data.index(b"\\n", offset)\n                size = int(data[offset:end].split()[-1])\n                expected[name]', "ReplayIntegrity.test_source_commit_binding_rejects_wrong_baseline"),
         ("io-classification", "validation_evidence", '"launch-error" if phase == "launch" else ("execution-error" if phase == "execution" else "artifact-error")',
          '"launch-error"', "ReplayIntegrity.test_input_read_failure_is_not_a_launch_failure"),
+        ("captured-identity", "validation_evidence", 'declared = context.pop("declared_artifacts", None)',
+         'declared = context.pop("declared_artifacts", None)\n    context.pop("capture_run_id", None)', "ReplayIntegrity.test_every_compatibility_wrapper_preserves_captured_output"),
     ]
     results = []
     for name, module, before, after, target in cases:

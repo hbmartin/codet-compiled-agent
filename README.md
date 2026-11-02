@@ -257,3 +257,7 @@ printer restoration. The Python controls exercise evidence guards. Both require
 passing baselines and intended assertion failures; compilation or launch failures
 are not successful negative controls. The static-comparison compatibility producer
 uses the same explicit config/`--output` convention.
+
+Captured compatibility entry points may omit `--output` to use the configured
+default, or provide a path declared by the capture manifest. They retain the
+capture identity and strict input checks; they never emit an unbound result.

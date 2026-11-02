@@ -94,6 +94,10 @@ def write_artifact(path, kind, payload, inputs=()):
     """Producer entry point: the capture supplies its identity, never the producer."""
     context = json.loads(os.environ["CODET_EVIDENCE_CONTEXT"])
     root = Path(context.pop("root"))
+    declared = context.pop("declared_artifacts", None)
+    if declared is not None and not any((root / a["path"]).resolve() == path.resolve() and a["kind"] == kind and
+                                        set(a.get("inputs", [])) == set(inputs) for a in declared):
+        raise ValueError("Captured artifact is not declared by its manifest: " + str(path))
     atomic_json(path, dict(**context, kind=kind, input_hashes=input_hashes(root, inputs), payload=payload))
 
 
@@ -142,6 +146,7 @@ def capture(manifest_path, folder, *, campaign_id=None):
         log = folder / (name + ".log")
         before, validation = production_hashes(root), validation_hashes(root)
         context = _context(root, run, name, before, validation)
+        context["declared_artifacts"] = check.get("artifacts", [])
         record = dict(schema_version=SCHEMA_VERSION, id=name, run_id=run["id"], campaign_id=run["campaign_id"],
                       argv=check["argv"], env=check.get("env", {}), cwd=str(Path(check.get("cwd", root)).resolve()),
                       manifest_sha256=signature, source_before=before, validation_before=validation,

@@ -63,6 +63,8 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     python39 = tool("python39", python39 or template["python39"], optional=True)
     native = {n: tool(n, n, version=None if n == "ar" and sys.platform == "darwin" else "--version")
               for n in ("git", "cmake", "ctest", "ninja", "make", "tar", "ar", "cc", "c++")}
+    if ci_run:
+        tool("gh", "gh")
     analyzer_env = dict(CLANG_TIDY=tool("clang-tidy", clang_tidy or shutil.which("clang-tidy-18") or shutil.which("clang-tidy") or "clang-tidy-18"),
                         CPPCHECK=tool("cppcheck", cppcheck or root / "build/analysis-tools/cppcheck/bin/cppcheck"))
     baseline = command([native["git"], "-C", root, "rev-parse", (baseline or template["baseline"]) + "^{commit}"])
@@ -245,12 +247,14 @@ def produce(config_path, action, *, output=None):
         raise ValueError("Standalone production requires explicit --output")
     config = json.loads(config_path.read_text())
     root, folder = Path(config["root"]).resolve(), Path(config["folder"]).resolve()
+    if "CODET_EVIDENCE_CONTEXT" in os.environ and output is not None:
+        declarations = json.loads(os.environ["CODET_EVIDENCE_CONTEXT"]).get("declared_artifacts", [])
+        if not any((root / a["path"]).resolve() == output.resolve() and a["kind"] == action for a in declarations):
+            raise ValueError("Captured output is not declared by its manifest")
     inputs = [str(config_path.relative_to(root))]
     def save(kind, payload):
         if "CODET_EVIDENCE_CONTEXT" in os.environ:
-            if output is not None:
-                raise ValueError("Captured producer output is selected by its manifest")
-            write_artifact(folder / (kind + ".json"), kind, payload, inputs)
+            write_artifact(output.resolve() if output is not None else folder / (kind + ".json"), kind, payload, inputs)
         else:
             from validation_evidence import (
                 SCHEMA_VERSION,
@@ -264,7 +268,7 @@ def produce(config_path, action, *, output=None):
     if action == "history":
         paths = sorted(p for p in (folder / "preliminary-capture").rglob("*") if p.is_file())
         inputs.extend(str(p.relative_to(root)) for p in paths)
-        payload = dict(label="Interrupted preliminary capture; historical only, never a required-check substitute",
+        payload = dict(label="Prior campaign attempts; historical only, never a required-check substitute",
                        files=[dict(path=str(p.relative_to(root)), sha256=digest(p)) for p in paths])
     elif action == "archive":
         source = folder / "baseline-src"
