@@ -176,7 +176,7 @@ class ProvenanceGuards(unittest.TestCase):
         script.parent.mkdir()
         script.write_text("import sys\nsys.path.insert(0," + repr(str(Path(evidence.__file__).parent)) + ")\n"
                           "from validation_evidence import write_artifact\n"
-                          "from pathlib import Path\nwrite_artifact(Path('artifact.json'),'test',{'value':1},['src/core.cpp'])\n")
+                          "from pathlib import Path\nwrite_artifact(Path('artifact.json'),'test',{'value':1},iter(['src/core.cpp']))\n")
         self.checks[0].update(argv=[sys.executable, str(script)], artifacts=[dict(
             path="artifact.json", kind="test", inputs=["src/core.cpp"])])
 
@@ -647,14 +647,15 @@ class ReplayIntegrity(unittest.TestCase):
         config = self.root / "config.json"
         evidence.atomic_json(config, dict(cases=dict(test=["case"]), sets=2, measured=5))
         script = self.root / "producer.py"
-        script.write_text("import sys\nfrom pathlib import Path\nsys.path.insert(0," + repr(str(Path(evidence.__file__).parent)) + ")\nfrom validation_evidence import write_artifact\nimport json\npayload=json.loads(" + repr(json.dumps(dict(rows=rows, summary=summary))) + ")\nwrite_artifact(Path(sys.argv[1]),'measure',payload,['config.json'])\n")
+        script.write_text("import sys\nfrom pathlib import Path\nsys.path.insert(0," + repr(str(Path(evidence.__file__).parent)) + ")\nfrom validation_evidence import write_artifact\nimport json\npayload=json.loads(" + repr(json.dumps(dict(rows=rows, summary=summary))) + ")\nfor name in sys.argv[1:]:\n write_artifact(Path(name),'measure',payload,['config.json'])\n")
         self.checks = [dict(id=n, argv=[sys.executable, str(script), n + ".json"], artifacts=[dict(path=n + ".json", kind="measure", inputs=["config.json"])]) for n in ("first", "second")]
+        self.checks.append(dict(id="same-stem", argv=[sys.executable, str(script), "left.json", "left.jsonl"], artifacts=[dict(path=n, kind="measure", inputs=["config.json"]) for n in ("left.json", "left.jsonl")]))
         self.capture()
         target = self.root / "bundle"
         evidence.publish_bundle(self.manifest, self.folder, target)
         self.assertTrue(verify_bundle(target)["verified"])
-        self.assertEqual(len(list((target / "measurements").rglob("samples.csv"))), 2)
-        self.assertEqual(len(json.loads((target / "measurements.json").read_text())), 2)
+        self.assertEqual(len(list((target / "measurements").rglob("samples.csv"))), 4)
+        self.assertEqual(len(json.loads((target / "measurements.json").read_text())), 4)
 
     def test_all_required_sidecars_are_verified(self):
         import shutil

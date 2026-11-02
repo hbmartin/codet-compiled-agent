@@ -92,6 +92,7 @@ def input_hashes(root, names):
 
 def write_artifact(path, kind, payload, inputs=()):
     """Producer entry point: the capture supplies its identity, never the producer."""
+    inputs = tuple(inputs)
     context = json.loads(os.environ["CODET_EVIDENCE_CONTEXT"])
     root = Path(context.pop("root"))
     declared = context.pop("declared_artifacts", None)

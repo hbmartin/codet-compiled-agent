@@ -57,6 +57,8 @@ def run_controls(root, folder):
          '"launch-error"', "ReplayIntegrity.test_input_read_failure_is_not_a_launch_failure"),
         ("captured-identity", "validation_evidence", 'declared = context.pop("declared_artifacts", None)',
          'declared = context.pop("declared_artifacts", None)\n    context.pop("capture_run_id", None)', "ReplayIntegrity.test_every_compatibility_wrapper_preserves_captured_output"),
+        ("sidecar-identity", "evidence_bundle", 'relative = "measurements/" + name + "/" + Path(artifact["path"]).name + "/" + filename',
+         'relative = "measurements/" + name + "/" + Path(artifact["path"]).stem + "/" + filename', "ReplayIntegrity.test_measurement_artifacts_have_distinct_complete_sidecars"),
     ]
     results = []
     for name, module, before, after, target in cases:

@@ -63,7 +63,7 @@ def publish_audit_bundle(manifest_path, folder, destination):
                 if envelope["kind"] == "measure":
                     paths = []
                     for key, filename in (("rows", "samples.csv"), ("summary", "medians.csv")):
-                        relative = "measurements/" + name + "/" + Path(artifact["path"]).stem + "/" + filename
+                        relative = "measurements/" + name + "/" + Path(artifact["path"]).name + "/" + filename
                         _csv(stage / relative, envelope["payload"][key])
                         paths.append(relative)
                     sidecars.append(dict(artifact=target, config=spec.get("inputs", [None])[0], paths=paths))
