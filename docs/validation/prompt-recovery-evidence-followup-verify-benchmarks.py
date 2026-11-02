@@ -1,13 +1,19 @@
-import csv,json
+"""Inspect a source-bound measurement artifact; medians are recomputed from raw rows."""
+import argparse
+import json
+import sys
 from pathlib import Path
-f=Path('build/prompt-recovery-evidence-followup');rows=list(csv.DictReader((f/'performance-samples.csv').open()));summary=json.loads((f/'performance.json').read_text())
-assert len(rows)==528
-comparisons=[]
-for number in [1,2]:
- for case in sorted({r['workload'] for r in summary}):
-  a=next(r for r in summary if r['set']==number and r['workload']==case and r['variant']=='baseline');b=next(r for r in summary if r['set']==number and r['workload']==case and r['variant']=='changed')
-  different={k:[a[k],b[k]]for k in a if k not in ['variant','milliseconds']and a[k]!=b[k]}
-  assert a['allocations']==b['allocations'] and a['allocated_bytes']==b['allocated_bytes'],(case,different)
-  comparisons.append(dict(set=number,workload=case,baseline_ms=a['milliseconds'],changed_ms=b['milliseconds'],percent=100*(b['milliseconds']/a['milliseconds']-1),work_differences=different))
-(f/'benchmark-comparison.json').write_text(json.dumps(comparisons,indent=2)+'\n')
-print('528 samples; unchanged allocation counts/bytes; all work differences:',[(r['workload'],r['work_differences'])for r in comparisons if r['work_differences']])
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+from evidence_benchmarks import verify_samples
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("artifact", type=Path)
+    parser.add_argument("config", type=Path)
+    args = parser.parse_args()
+    value = json.loads(args.artifact.read_text())["payload"]
+    config = json.loads(args.config.read_text())
+    print(json.dumps(verify_samples(value["rows"], value["summary"], config["cases"], sets=config["sets"], measured=config["measured"]), indent=2))

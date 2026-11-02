@@ -192,13 +192,32 @@ The reconstructed C application remains available with `make legacy` / `make app
 
 [GPL v3](LICENSE.md). Dependency versions, source locations, hashes and patch provenance are recorded in the lock files; release bundles include notices for statically linked C++ dependencies.
 
-Validation evidence can be captured with `python3 scripts/validation_evidence.py capture
-MANIFEST FOLDER` and published with its `publish` subcommand. The manifest declares
-argument vectors, working directories, prerequisites, timeouts, and required checks
-or analyzer observations. Each capture records actual command outcomes and source
-hashes; a failed prerequisite prevents dependent commands from running. Publication
-requires complete, successful required results from the same capture and current
-production sources. Analyzer observations retain their actual nonzero statuses.
-Log text never substitutes for a command's exit status. Benchmark source equivalence
-is computed from hashes; measurements for different sources remain explicitly separate.
-Historical reports and samples are retained rather than reconstructed from old logs.
+Validation evidence records exact commands, outcomes, production fingerprints, and a
+separate fingerprint for tests and tooling. Required failures block publication;
+known analyzer findings remain nonzero observations. Log tails never replace statuses.
+
+```sh
+python3 scripts/evidence_campaign.py prepare --root . --baseline origin/main \
+  --check-python build/lint-venv/bin/python --analysis-python build/lint-venv/bin/python \
+  --python39 /usr/bin/python3 --folder build/validation-provenance-followup
+python3 scripts/validation_evidence.py capture \
+  build/validation-provenance-followup/manifest.json build/validation-provenance-followup/capture
+python3 scripts/validation_evidence.py bundle \
+  build/validation-provenance-followup/manifest.json build/validation-provenance-followup/capture \
+  --output docs/validation/validation-provenance-followup/NEW_RUN_ID
+```
+
+Provision pinned dependencies and tools first. The Python 3.9 checks verify the selected
+interpreter's major/minor version; select a real 3.9 interpreter for that option.
+Use `--clang-tidy` and `--cppcheck` when the selected analyzers are not on PATH;
+the resolved manifest records those environment overrides.
+The cross-selection checks require the existing host cross-mode configuration and
+are not native Tiger verification. Add `--ci-run RUN_ID` to include a fresh matching
+GitHub Actions run. Existing report bundles are immutable and historical captures
+without the current provenance fields cannot stand in for fresh validation.
+The checked-in replay template is independent of archived exact-command manifests.
+
+For a standalone captured check manifest, use `capture MANIFEST FOLDER`, followed by
+`publish MANIFEST FOLDER --output NEW_REPORT` on `scripts/validation_evidence.py`.
+Benchmark source equivalence remains production-only; test/tool changes invalidate
+validation evidence without redefining that equivalence.

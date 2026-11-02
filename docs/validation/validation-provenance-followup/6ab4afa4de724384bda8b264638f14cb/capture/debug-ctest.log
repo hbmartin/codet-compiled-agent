@@ -1,0 +1,25 @@
+Test project /Volumes/Pro2T/codet-compiled-agent/build/host
+      Start  2: codet.unit
+      Start  4: codet.integration
+ 1/10 Test  #4: codet.integration ................   Passed   67.69 sec
+      Start  9: codet.validation-evidence
+ 2/10 Test  #9: codet.validation-evidence ........   Passed    2.16 sec
+      Start  1: codet.publication-faults
+ 3/10 Test  #1: codet.publication-faults .........   Passed    3.01 sec
+      Start  8: codet.lint-runner
+ 4/10 Test  #8: codet.lint-runner ................   Passed    1.93 sec
+      Start  7: codet.semgrep-report
+ 5/10 Test  #7: codet.semgrep-report .............   Passed    0.61 sec
+      Start  5: codet.prompts
+ 6/10 Test  #5: codet.prompts ....................   Passed    0.37 sec
+      Start 10: codet.hermetic
+ 7/10 Test #10: codet.hermetic ...................   Passed    0.21 sec
+      Start  6: codet.build-integrity
+ 8/10 Test  #6: codet.build-integrity ............   Passed    0.23 sec
+      Start  3: codet.cli
+ 9/10 Test  #3: codet.cli ........................   Passed    0.13 sec
+10/10 Test  #2: codet.unit .......................   Passed   85.49 sec
+
+100% tests passed out of 10
+
+Total Test time (real) =  85.49 sec

@@ -1,0 +1,753 @@
+{
+  "root": "/Volumes/Pro2T/codet-compiled-agent",
+  "baseline": "1842b76c783895253b1f1ade83c81e318c9e0339",
+  "checks": [
+    {
+      "id": "debug-configure",
+      "argv": [
+        "cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/host",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": []
+    },
+    {
+      "id": "debug-build",
+      "argv": [
+        "cmake",
+        "--build",
+        "build/host",
+        "-j4"
+      ],
+      "requires": [
+        "debug-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": []
+    },
+    {
+      "id": "debug-ctest",
+      "argv": [
+        "ctest",
+        "--test-dir",
+        "build/host",
+        "--output-on-failure",
+        "-j2"
+      ],
+      "requires": [
+        "debug-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 900,
+      "artifacts": []
+    },
+    {
+      "id": "asan-configure",
+      "argv": [
+        "cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/sanitize",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+        "-DCODET_SANITIZERS=ON"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": []
+    },
+    {
+      "id": "asan-build",
+      "argv": [
+        "cmake",
+        "--build",
+        "build/sanitize",
+        "-j4"
+      ],
+      "requires": [
+        "asan-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": []
+    },
+    {
+      "id": "asan-ctest",
+      "argv": [
+        "ctest",
+        "--test-dir",
+        "build/sanitize",
+        "--output-on-failure",
+        "-j2"
+      ],
+      "requires": [
+        "asan-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 900,
+      "artifacts": []
+    },
+    {
+      "id": "focused-20",
+      "argv": [
+        "build/host/codet_tests",
+        "--gtest_filter=NativeRecordLifecycle.*:DiagnosticFixture.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.*",
+        "--gtest_repeat=20"
+      ],
+      "requires": [
+        "debug-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": []
+    },
+    {
+      "id": "tsan-configure",
+      "argv": [
+        "cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-boundary-ownership-followup/tsan",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+        "-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer -Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+        "-DCMAKE_C_FLAGS=-fsanitize=thread",
+        "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": []
+    },
+    {
+      "id": "tsan-build",
+      "argv": [
+        "cmake",
+        "--build",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-boundary-ownership-followup/tsan",
+        "--target",
+        "codet_tests",
+        "-j4"
+      ],
+      "requires": [
+        "tsan-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": []
+    },
+    {
+      "id": "tsan-20",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-boundary-ownership-followup/tsan/codet_tests",
+        "--gtest_filter=NativeRecordLifecycle.*:DiagnosticFixture.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.*",
+        "--gtest_repeat=20"
+      ],
+      "requires": [
+        "tsan-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": []
+    },
+    {
+      "id": "python39",
+      "argv": [
+        "/usr/bin/python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_validation_evidence.py",
+        "-v"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "python_version": [
+        3,
+        9
+      ]
+    },
+    {
+      "id": "python39-integration",
+      "argv": [
+        "/usr/bin/python3",
+        "tests/hermetic.py",
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "build/host/codet"
+      ],
+      "requires": [
+        "debug-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "python_version": [
+        3,
+        9
+      ]
+    },
+    {
+      "id": "lint",
+      "argv": [
+        "make",
+        "check-lint",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": []
+    },
+    {
+      "id": "semgrep",
+      "argv": [
+        "make",
+        "check-semgrep",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "SEMGREP=/Volumes/Pro2T/codet-compiled-agent/build/semgrep-venv/bin/pysemgrep"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": []
+    },
+    {
+      "id": "runner-tests",
+      "argv": [
+        "make",
+        "test-lint-runners",
+        "test-modern-analysis-runner",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "ANALYSIS_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": []
+    },
+    {
+      "id": "cross-build",
+      "argv": [
+        "cmake",
+        "--build",
+        "/Volumes/Pro2T/codet-compiled-agent/build/basic-input-boundary-followup/cross-mode",
+        "--target",
+        "codet_tests",
+        "-j4"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": []
+    },
+    {
+      "id": "cross-tests",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/basic-input-boundary-followup/cross-mode/codet_tests",
+        "--gtest_filter=LinePrompt.*:InteractionWarnings.*:CursesInput.*"
+      ],
+      "requires": [
+        "cross-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": []
+    },
+    {
+      "id": "historical-attempt",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-provenance-final/config.json",
+        "history"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [
+        {
+          "path": "build/validation-provenance-final/history.json",
+          "kind": "history",
+          "inputs": [
+            "build/validation-provenance-final/config.json",
+            "build/validation-provenance-final/preliminary-capture/asan-build.json",
+            "build/validation-provenance-final/preliminary-capture/asan-build.log",
+            "build/validation-provenance-final/preliminary-capture/asan-configure.json",
+            "build/validation-provenance-final/preliminary-capture/asan-configure.log",
+            "build/validation-provenance-final/preliminary-capture/debug-build.json",
+            "build/validation-provenance-final/preliminary-capture/debug-build.log",
+            "build/validation-provenance-final/preliminary-capture/debug-configure.json",
+            "build/validation-provenance-final/preliminary-capture/debug-configure.log",
+            "build/validation-provenance-final/preliminary-capture/debug-ctest.json",
+            "build/validation-provenance-final/preliminary-capture/debug-ctest.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/asan-build.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/asan-build.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/asan-configure.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/asan-configure.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/asan-ctest.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/asan-ctest.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/baseline-analysis.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/baseline-analysis.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/baseline-build.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/baseline-build.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/baseline-configure.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/baseline-configure.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/baseline-selftest.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/baseline-selftest.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/baseline-source.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/baseline-source.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/cross-build.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/cross-build.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/cross-tests.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/cross-tests.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/debug-build.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/debug-build.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/debug-configure.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/debug-configure.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/debug-ctest.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/debug-ctest.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/focused-20.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/focused-20.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/historical-attempt.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/historical-attempt.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/lint.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/lint.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/python39-integration.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/python39-integration.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/python39.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/python39.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/run.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/runner-tests.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/runner-tests.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/semgrep.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/semgrep.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/tsan-20.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/tsan-20.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/tsan-build.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/tsan-build.log",
+            "build/validation-provenance-final/preliminary-capture/fourth/tsan-configure.json",
+            "build/validation-provenance-final/preliminary-capture/fourth/tsan-configure.log",
+            "build/validation-provenance-final/preliminary-capture/fourth-driver.log",
+            "build/validation-provenance-final/preliminary-capture/run.json",
+            "build/validation-provenance-final/preliminary-capture/second/asan-build.json",
+            "build/validation-provenance-final/preliminary-capture/second/asan-build.log",
+            "build/validation-provenance-final/preliminary-capture/second/asan-configure.json",
+            "build/validation-provenance-final/preliminary-capture/second/asan-configure.log",
+            "build/validation-provenance-final/preliminary-capture/second/debug-build.json",
+            "build/validation-provenance-final/preliminary-capture/second/debug-build.log",
+            "build/validation-provenance-final/preliminary-capture/second/debug-configure.json",
+            "build/validation-provenance-final/preliminary-capture/second/debug-configure.log",
+            "build/validation-provenance-final/preliminary-capture/second/debug-ctest.json",
+            "build/validation-provenance-final/preliminary-capture/second/debug-ctest.log",
+            "build/validation-provenance-final/preliminary-capture/second/run.json",
+            "build/validation-provenance-final/preliminary-capture/second-driver.log",
+            "build/validation-provenance-final/preliminary-capture/semgrep-provision.log",
+            "build/validation-provenance-final/preliminary-capture/third/asan-build.json",
+            "build/validation-provenance-final/preliminary-capture/third/asan-build.log",
+            "build/validation-provenance-final/preliminary-capture/third/asan-configure.json",
+            "build/validation-provenance-final/preliminary-capture/third/asan-configure.log",
+            "build/validation-provenance-final/preliminary-capture/third/asan-ctest.json",
+            "build/validation-provenance-final/preliminary-capture/third/asan-ctest.log",
+            "build/validation-provenance-final/preliminary-capture/third/debug-build.json",
+            "build/validation-provenance-final/preliminary-capture/third/debug-build.log",
+            "build/validation-provenance-final/preliminary-capture/third/debug-configure.json",
+            "build/validation-provenance-final/preliminary-capture/third/debug-configure.log",
+            "build/validation-provenance-final/preliminary-capture/third/debug-ctest.json",
+            "build/validation-provenance-final/preliminary-capture/third/debug-ctest.log",
+            "build/validation-provenance-final/preliminary-capture/third/focused-20.json",
+            "build/validation-provenance-final/preliminary-capture/third/focused-20.log",
+            "build/validation-provenance-final/preliminary-capture/third/python39-integration.json",
+            "build/validation-provenance-final/preliminary-capture/third/python39-integration.log",
+            "build/validation-provenance-final/preliminary-capture/third/python39.json",
+            "build/validation-provenance-final/preliminary-capture/third/python39.log",
+            "build/validation-provenance-final/preliminary-capture/third/run.json",
+            "build/validation-provenance-final/preliminary-capture/third/tsan-20.json",
+            "build/validation-provenance-final/preliminary-capture/third/tsan-20.log",
+            "build/validation-provenance-final/preliminary-capture/third/tsan-build.json",
+            "build/validation-provenance-final/preliminary-capture/third/tsan-build.log",
+            "build/validation-provenance-final/preliminary-capture/third/tsan-configure.json",
+            "build/validation-provenance-final/preliminary-capture/third/tsan-configure.log",
+            "build/validation-provenance-final/preliminary-capture/third-driver.log"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "baseline-source",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-provenance-final/config.json",
+        "archive"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [
+        {
+          "path": "build/validation-provenance-final/archive.json",
+          "kind": "archive",
+          "inputs": [
+            "build/validation-provenance-final/config.json"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "baseline-configure",
+      "argv": [
+        "cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-provenance-final/baseline-src",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-provenance-final/baseline-release",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+      ],
+      "requires": [
+        "baseline-source"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": []
+    },
+    {
+      "id": "baseline-build",
+      "argv": [
+        "cmake",
+        "--build",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-provenance-final/baseline-release",
+        "--target",
+        "codet_line_input_bench",
+        "codet_output_bench",
+        "codet_export_bench",
+        "-j4"
+      ],
+      "requires": [
+        "baseline-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": []
+    },
+    {
+      "id": "baseline-selftest",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-provenance-final/baseline-src/scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-provenance-final/baseline-release",
+        "--selftest",
+        "--jobs",
+        "4"
+      ],
+      "requires": [
+        "baseline-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "env": {
+        "CLANG_TIDY": "/opt/homebrew/opt/llvm/bin/clang-tidy",
+        "CPPCHECK": "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck"
+      }
+    },
+    {
+      "id": "baseline-analysis",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-provenance-final/config.json",
+        "analysis-baseline"
+      ],
+      "requires": [
+        "baseline-selftest"
+      ],
+      "policy": "observation",
+      "timeout_seconds": 1800,
+      "artifacts": [
+        {
+          "path": "build/validation-provenance-final/analysis-baseline.json",
+          "kind": "analysis-baseline",
+          "inputs": [
+            "build/validation-provenance-final/config.json",
+            "build/validation-provenance-final/baseline-release/analysis/selftest/selftest.json"
+          ]
+        }
+      ],
+      "env": {
+        "CLANG_TIDY": "/opt/homebrew/opt/llvm/bin/clang-tidy",
+        "CPPCHECK": "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck"
+      }
+    },
+    {
+      "id": "changed-configure",
+      "argv": [
+        "cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-provenance-final/changed-release",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": []
+    },
+    {
+      "id": "changed-build",
+      "argv": [
+        "cmake",
+        "--build",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-provenance-final/changed-release",
+        "--target",
+        "codet_line_input_bench",
+        "codet_output_bench",
+        "codet_export_bench",
+        "-j4"
+      ],
+      "requires": [
+        "changed-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": []
+    },
+    {
+      "id": "changed-selftest",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "/Volumes/Pro2T/codet-compiled-agent/scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-provenance-final/changed-release",
+        "--selftest",
+        "--jobs",
+        "4"
+      ],
+      "requires": [
+        "changed-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "env": {
+        "CLANG_TIDY": "/opt/homebrew/opt/llvm/bin/clang-tidy",
+        "CPPCHECK": "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck"
+      }
+    },
+    {
+      "id": "changed-analysis",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-provenance-final/config.json",
+        "analysis-changed"
+      ],
+      "requires": [
+        "changed-selftest"
+      ],
+      "policy": "observation",
+      "timeout_seconds": 1800,
+      "artifacts": [
+        {
+          "path": "build/validation-provenance-final/analysis-changed.json",
+          "kind": "analysis-changed",
+          "inputs": [
+            "build/validation-provenance-final/config.json",
+            "build/validation-provenance-final/changed-release/analysis/selftest/selftest.json"
+          ]
+        }
+      ],
+      "env": {
+        "CLANG_TIDY": "/opt/homebrew/opt/llvm/bin/clang-tidy",
+        "CPPCHECK": "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck"
+      }
+    },
+    {
+      "id": "static-comparison",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-provenance-final/config.json",
+        "analysis"
+      ],
+      "requires": [
+        "baseline-analysis",
+        "changed-analysis"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [
+        {
+          "path": "build/validation-provenance-final/analysis.json",
+          "kind": "analysis",
+          "inputs": [
+            "build/validation-provenance-final/config.json",
+            "build/validation-provenance-final/analysis-baseline.json",
+            "build/validation-provenance-final/analysis-changed.json"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "negative-controls",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-provenance-final/config.json",
+        "negative-controls"
+      ],
+      "requires": [
+        "runner-tests"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [
+        {
+          "path": "build/validation-provenance-final/negative-controls.json",
+          "kind": "negative-controls",
+          "inputs": [
+            "build/validation-provenance-final/config.json"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "benchmarks",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-provenance-final/config.json",
+        "measure"
+      ],
+      "requires": [
+        "baseline-build",
+        "changed-build",
+        "static-comparison",
+        "negative-controls"
+      ],
+      "policy": "required",
+      "timeout_seconds": 1800,
+      "artifacts": [
+        {
+          "path": "build/validation-provenance-final/measure.json",
+          "kind": "measure",
+          "inputs": [
+            "build/validation-provenance-final/config.json"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "build-metadata",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-provenance-final/config.json",
+        "build-info"
+      ],
+      "requires": [
+        "debug-build",
+        "asan-build",
+        "cross-build",
+        "baseline-build",
+        "changed-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [
+        {
+          "path": "build/validation-provenance-final/build-info.json",
+          "kind": "build-info",
+          "inputs": [
+            "build/validation-provenance-final/config.json"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ubuntu",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-provenance-final/config.json",
+        "ci"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 1800,
+      "artifacts": [
+        {
+          "path": "build/validation-provenance-final/ci.json",
+          "kind": "ci",
+          "inputs": [
+            "build/validation-provenance-final/config.json"
+          ]
+        }
+      ]
+    }
+  ]
+}
