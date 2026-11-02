@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "/Volumes/Pro2T/codet-compiled-agent/scripts/validation_evidence.py", line 358, in <module>
+    json.loads(args.benchmark.read_text()) if args.benchmark else None)
+         ^^^^^^
+  File "/Volumes/Pro2T/codet-compiled-agent/scripts/validation_evidence.py", line 343, in main
+    print(json.dumps(verify_bundle(args.manifest), indent=2))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Volumes/Pro2T/codet-compiled-agent/scripts/validation_evidence.py", line 192, in capture
+    env["CODET_EVIDENCE_CONTEXT"] = json.dumps(context)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.12/3.12.15/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py", line 1264, in wait
+    return self._wait(timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.12/3.12.15/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py", line 2047, in _wait
+    time.sleep(delay)
+KeyboardInterrupt

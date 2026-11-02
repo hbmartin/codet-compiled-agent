@@ -1,0 +1,1319 @@
+{
+  "root": "/Volumes/Pro2T/codet-compiled-agent",
+  "baseline": "7b8620f09dc4b42813f63e3048188984dfb033ca",
+  "environment": {
+    "PATH": "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin:/usr/bin:/opt/homebrew/bin:/opt/homebrew/opt/llvm/bin:/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin:/bin",
+    "LANG": "C.UTF-8"
+  },
+  "tools": {
+    "check-python": {
+      "path": "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+      "realpath": "/opt/homebrew/Cellar/python@3.12/3.12.15/Frameworks/Python.framework/Versions/3.12/bin/python3.12",
+      "sha256": "af2e87fe5d9aef8abf9002d215320c7eb127a2b90b7686ec365405991d571ef4",
+      "version": "Python 3.12.15"
+    },
+    "analysis-python": {
+      "path": "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+      "realpath": "/opt/homebrew/Cellar/python@3.12/3.12.15/Frameworks/Python.framework/Versions/3.12/bin/python3.12",
+      "sha256": "af2e87fe5d9aef8abf9002d215320c7eb127a2b90b7686ec365405991d571ef4",
+      "version": "Python 3.12.15"
+    },
+    "python39": {
+      "path": "/usr/bin/python3",
+      "realpath": "/usr/bin/python3",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "Python 3.9.6"
+    },
+    "git": {
+      "path": "/usr/bin/git",
+      "realpath": "/usr/bin/git",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "git version 2.54.0 (Apple Git-157)"
+    },
+    "cmake": {
+      "path": "/opt/homebrew/bin/cmake",
+      "realpath": "/opt/homebrew/Cellar/cmake/4.4.4/bin/cmake",
+      "sha256": "64c16ba19481b4e8fa5fc51afa37a7609128d5e5c10236eb1492d16d22d029c4",
+      "version": "cmake version 4.4.4\n\nCMake suite maintained and supported by Kitware (kitware.com/cmake)."
+    },
+    "ctest": {
+      "path": "/opt/homebrew/bin/ctest",
+      "realpath": "/opt/homebrew/Cellar/cmake/4.4.4/bin/ctest",
+      "sha256": "0bc8e30644872bff0b1b9d45eee996f5e9aad5b74b46869f5f6dd683361d478f",
+      "version": "ctest version 4.4.4\n\nCMake suite maintained and supported by Kitware (kitware.com/cmake)."
+    },
+    "ninja": {
+      "path": "/opt/homebrew/bin/ninja",
+      "realpath": "/opt/homebrew/bin/ninja",
+      "sha256": "a9f1537984cf168d119fda94c6c9ee349d2720aa23242bdb50375df5c5ecebd8",
+      "version": "1.11.1.git.kitware.jobserver-1"
+    },
+    "make": {
+      "path": "/usr/bin/make",
+      "realpath": "/usr/bin/make",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "GNU Make 3.81\nCopyright (C) 2006  Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.\nThere is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A\nPARTICULAR PURPOSE.\n\nThis program built for i386-apple-darwin11.3.0"
+    },
+    "tar": {
+      "path": "/usr/bin/tar",
+      "realpath": "/usr/bin/bsdtar",
+      "sha256": "ad4e73ac2e00b3d69969b2e8da466f08c7968a51f424380ecb4d9ff6779b28b9",
+      "version": "bsdtar 3.5.3 - libarchive 3.7.4 zlib/1.2.12 liblzma/5.4.3 bz2lib/1.0.8"
+    },
+    "ar": {
+      "path": "/usr/bin/ar",
+      "realpath": "/usr/bin/ar",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "No supported version probe; executable digest recorded"
+    },
+    "cc": {
+      "path": "/usr/bin/cc",
+      "realpath": "/usr/bin/cc",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "Apple clang version 21.0.0 (clang-2100.4.1.1)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+    },
+    "c++": {
+      "path": "/usr/bin/c++",
+      "realpath": "/usr/bin/c++",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "Apple clang version 21.0.0 (clang-2100.4.1.1)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+    },
+    "clang-tidy": {
+      "path": "/opt/homebrew/opt/llvm/bin/clang-tidy",
+      "realpath": "/opt/homebrew/Cellar/llvm/23.1.3_1/bin/clang-tidy",
+      "sha256": "ebbdf65f2d9f3daf67d77890869135c38d33ab6b4c9fd3705a759cbff6c28659",
+      "version": "Homebrew LLVM version 23.1.3\n  Optimized build."
+    },
+    "cppcheck": {
+      "path": "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck",
+      "realpath": "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck",
+      "sha256": "191e62b01aad1d25e4412fe9ab8819d56ed4aa84e9249dcbcc890f8332ad6e24",
+      "version": "Cppcheck 2.22.0"
+    },
+    "gh": {
+      "path": "/opt/homebrew/bin/gh",
+      "realpath": "/opt/homebrew/Cellar/gh/2.102.0/bin/gh",
+      "sha256": "81904d0aaa9fb3d9e35e13e7b1fe917451df0430eaee63144c69426d5d2832f1",
+      "version": "gh version 2.102.0 (2026-09-30)\nhttps://github.com/cli/cli/releases/tag/v2.102.0"
+    }
+  },
+  "checks": [
+    {
+      "id": "debug-configure",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/debug",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DPython3_EXECUTABLE=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/validation-replay-accepted/debug/CMakeCache.txt"
+        },
+        {
+          "path": "build/validation-replay-accepted/debug/compile_commands.json"
+        },
+        {
+          "path": "build/validation-replay-accepted/debug/build.ninja"
+        },
+        {
+          "path": "build/validation-replay-accepted/debug/generated/prompts.hpp"
+        },
+        {
+          "path": "build/validation-replay-accepted/debug/generated/core_contract.hpp"
+        }
+      ]
+    },
+    {
+      "id": "debug-build",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "--build",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/debug",
+        "-j4"
+      ],
+      "requires": [
+        "debug-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/validation-replay-accepted/debug/codet",
+          "archive": false
+        },
+        {
+          "path": "build/validation-replay-accepted/debug/codet_tests",
+          "archive": false
+        },
+        {
+          "path": "build/validation-replay-accepted/debug/codet_publication_fault_tests",
+          "archive": false
+        }
+      ]
+    },
+    {
+      "id": "debug-ctest",
+      "argv": [
+        "/opt/homebrew/bin/ctest",
+        "--test-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/debug",
+        "--output-on-failure",
+        "-j2"
+      ],
+      "requires": [
+        "debug-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 900,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ]
+    },
+    {
+      "id": "asan-configure",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/asan",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DPython3_EXECUTABLE=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+        "-DCODET_SANITIZERS=ON"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/validation-replay-accepted/asan/CMakeCache.txt"
+        },
+        {
+          "path": "build/validation-replay-accepted/asan/compile_commands.json"
+        },
+        {
+          "path": "build/validation-replay-accepted/asan/build.ninja"
+        },
+        {
+          "path": "build/validation-replay-accepted/asan/generated/prompts.hpp"
+        },
+        {
+          "path": "build/validation-replay-accepted/asan/generated/core_contract.hpp"
+        }
+      ]
+    },
+    {
+      "id": "asan-build",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "--build",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/asan",
+        "-j4"
+      ],
+      "requires": [
+        "asan-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/validation-replay-accepted/asan/codet",
+          "archive": false
+        },
+        {
+          "path": "build/validation-replay-accepted/asan/codet_tests",
+          "archive": false
+        },
+        {
+          "path": "build/validation-replay-accepted/asan/codet_publication_fault_tests",
+          "archive": false
+        }
+      ]
+    },
+    {
+      "id": "asan-ctest",
+      "argv": [
+        "/opt/homebrew/bin/ctest",
+        "--test-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/asan",
+        "--output-on-failure",
+        "-j2"
+      ],
+      "requires": [
+        "asan-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 900,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ]
+    },
+    {
+      "id": "tsan-configure",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/tsan",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DPython3_EXECUTABLE=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+        "-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer -Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+        "-DCMAKE_C_FLAGS=-fsanitize=thread",
+        "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/validation-replay-accepted/tsan/CMakeCache.txt"
+        },
+        {
+          "path": "build/validation-replay-accepted/tsan/compile_commands.json"
+        },
+        {
+          "path": "build/validation-replay-accepted/tsan/build.ninja"
+        },
+        {
+          "path": "build/validation-replay-accepted/tsan/generated/prompts.hpp"
+        },
+        {
+          "path": "build/validation-replay-accepted/tsan/generated/core_contract.hpp"
+        }
+      ]
+    },
+    {
+      "id": "tsan-build",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "--build",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/tsan",
+        "-j4"
+      ],
+      "requires": [
+        "tsan-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/validation-replay-accepted/tsan/codet",
+          "archive": false
+        },
+        {
+          "path": "build/validation-replay-accepted/tsan/codet_tests",
+          "archive": false
+        },
+        {
+          "path": "build/validation-replay-accepted/tsan/codet_publication_fault_tests",
+          "archive": false
+        }
+      ]
+    },
+    {
+      "id": "tsan-20",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/tsan/codet_tests",
+        "--gtest_filter=NativeRecordLifecycle.*:DiagnosticFixture.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.*",
+        "--gtest_repeat=20"
+      ],
+      "requires": [
+        "tsan-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ]
+    },
+    {
+      "id": "focused-20",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/debug/codet_tests",
+        "--gtest_filter=NativeRecordLifecycle.*:DiagnosticFixture.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.*",
+        "--gtest_repeat=20"
+      ],
+      "requires": [
+        "debug-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ]
+    },
+    {
+      "id": "python39",
+      "argv": [
+        "/usr/bin/python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_validation_evidence.py",
+        "-v"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "python_version": [
+        3,
+        9
+      ]
+    },
+    {
+      "id": "python39-integration",
+      "argv": [
+        "/usr/bin/python3",
+        "tests/hermetic.py",
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/debug/codet"
+      ],
+      "requires": [
+        "debug-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "python_version": [
+        3,
+        9
+      ]
+    },
+    {
+      "id": "lint",
+      "argv": [
+        "/usr/bin/make",
+        "check-lint",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ]
+    },
+    {
+      "id": "semgrep",
+      "argv": [
+        "/usr/bin/make",
+        "check-semgrep",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "SEMGREP=/Volumes/Pro2T/codet-compiled-agent/build/semgrep-venv/bin/pysemgrep"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ]
+    },
+    {
+      "id": "runner-tests",
+      "argv": [
+        "/usr/bin/make",
+        "test-lint-runners",
+        "test-modern-analysis-runner",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "ANALYSIS_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ]
+    },
+    {
+      "id": "cross-placeholder",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/config.json",
+        "cross-placeholder"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [
+        {
+          "path": "build/validation-replay-accepted/cross-placeholder.json",
+          "kind": "cross-placeholder",
+          "inputs": [
+            "build/validation-replay-accepted/config.json"
+          ]
+        }
+      ],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/validation-replay-accepted/host-prefix/lib/libMacportsLegacySupport.a"
+        },
+        {
+          "path": "build/validation-replay-accepted/host-placeholder.c"
+        }
+      ]
+    },
+    {
+      "id": "cross-configure",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/cross-selection",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DPython3_EXECUTABLE=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+        "-DCMAKE_SYSTEM_NAME=Darwin",
+        "-D_prefix=/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/host-prefix"
+      ],
+      "requires": [
+        "cross-placeholder"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/validation-replay-accepted/cross-selection/CMakeCache.txt"
+        },
+        {
+          "path": "build/validation-replay-accepted/cross-selection/compile_commands.json"
+        },
+        {
+          "path": "build/validation-replay-accepted/cross-selection/build.ninja"
+        },
+        {
+          "path": "build/validation-replay-accepted/cross-selection/generated/prompts.hpp"
+        },
+        {
+          "path": "build/validation-replay-accepted/cross-selection/generated/core_contract.hpp"
+        }
+      ]
+    },
+    {
+      "id": "cross-build",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "--build",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/cross-selection",
+        "--target",
+        "codet_tests",
+        "-j4"
+      ],
+      "requires": [
+        "cross-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/validation-replay-accepted/cross-selection/codet_tests",
+          "archive": false
+        }
+      ]
+    },
+    {
+      "id": "cross-tests",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/cross-selection/codet_tests",
+        "--gtest_filter=LinePrompt.*:InteractionWarnings.*:CursesInput.*"
+      ],
+      "requires": [
+        "cross-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ]
+    },
+    {
+      "id": "historical-attempt",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/config.json",
+        "history"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [
+        {
+          "path": "build/validation-replay-accepted/history.json",
+          "kind": "history",
+          "inputs": [
+            "build/validation-replay-accepted/config.json",
+            "build/validation-replay-accepted/preliminary-capture/attempt-1/capture/asan-build.json",
+            "build/validation-replay-accepted/preliminary-capture/attempt-1/capture/asan-build.log",
+            "build/validation-replay-accepted/preliminary-capture/attempt-1/capture/asan-configure.json",
+            "build/validation-replay-accepted/preliminary-capture/attempt-1/capture/asan-configure.log",
+            "build/validation-replay-accepted/preliminary-capture/attempt-1/capture/asan-ctest.json",
+            "build/validation-replay-accepted/preliminary-capture/attempt-1/capture/asan-ctest.log",
+            "build/validation-replay-accepted/preliminary-capture/attempt-1/capture/debug-build.json",
+            "build/validation-replay-accepted/preliminary-capture/attempt-1/capture/debug-build.log",
+            "build/validation-replay-accepted/preliminary-capture/attempt-1/capture/debug-configure.json",
+            "build/validation-replay-accepted/preliminary-capture/attempt-1/capture/debug-configure.log",
+            "build/validation-replay-accepted/preliminary-capture/attempt-1/capture/debug-ctest.json",
+            "build/validation-replay-accepted/preliminary-capture/attempt-1/capture/debug-ctest.log",
+            "build/validation-replay-accepted/preliminary-capture/attempt-1/capture/run.json",
+            "build/validation-replay-accepted/preliminary-capture/attempt-1/capture-console.log",
+            "build/validation-replay-accepted/preliminary-capture/attempt-1/config.json",
+            "build/validation-replay-accepted/preliminary-capture/attempt-1/focused-preflight.log",
+            "build/validation-replay-accepted/preliminary-capture/attempt-1/manifest.json"
+          ]
+        }
+      ],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ]
+    },
+    {
+      "id": "baseline-source",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/config.json",
+        "archive"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [
+        {
+          "path": "build/validation-replay-accepted/archive.json",
+          "kind": "archive",
+          "inputs": [
+            "build/validation-replay-accepted/config.json"
+          ]
+        }
+      ],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ]
+    },
+    {
+      "id": "baseline-configure",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/baseline-src",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/baseline-release",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DPython3_EXECUTABLE=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+      ],
+      "requires": [
+        "baseline-source"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/validation-replay-accepted/baseline-release/CMakeCache.txt"
+        },
+        {
+          "path": "build/validation-replay-accepted/baseline-release/compile_commands.json"
+        },
+        {
+          "path": "build/validation-replay-accepted/baseline-release/build.ninja"
+        },
+        {
+          "path": "build/validation-replay-accepted/baseline-release/generated/prompts.hpp"
+        },
+        {
+          "path": "build/validation-replay-accepted/baseline-release/generated/core_contract.hpp"
+        }
+      ],
+      "source_inputs": [
+        {
+          "path": "build/validation-replay-accepted/baseline-src",
+          "git_ref": "7b8620f09dc4b42813f63e3048188984dfb033ca",
+          "git": "/usr/bin/git"
+        }
+      ]
+    },
+    {
+      "id": "baseline-build",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "--build",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/baseline-release",
+        "--target",
+        "codet_line_input_bench",
+        "codet_output_bench",
+        "codet_export_bench",
+        "-j4"
+      ],
+      "requires": [
+        "baseline-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "source_inputs": [
+        {
+          "path": "build/validation-replay-accepted/baseline-src",
+          "git_ref": "7b8620f09dc4b42813f63e3048188984dfb033ca",
+          "git": "/usr/bin/git"
+        }
+      ],
+      "outputs": [
+        {
+          "path": "build/validation-replay-accepted/baseline-release/codet_line_input_bench",
+          "archive": false
+        },
+        {
+          "path": "build/validation-replay-accepted/baseline-release/codet_output_bench",
+          "archive": false
+        },
+        {
+          "path": "build/validation-replay-accepted/baseline-release/codet_export_bench",
+          "archive": false
+        }
+      ]
+    },
+    {
+      "id": "baseline-selftest",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/baseline-src/scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/baseline-release",
+        "--selftest",
+        "--jobs",
+        "4"
+      ],
+      "requires": [
+        "baseline-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "env": {
+        "CLANG_TIDY": "/opt/homebrew/opt/llvm/bin/clang-tidy",
+        "CPPCHECK": "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck"
+      },
+      "source_inputs": [
+        {
+          "path": "build/validation-replay-accepted/baseline-src",
+          "git_ref": "7b8620f09dc4b42813f63e3048188984dfb033ca",
+          "git": "/usr/bin/git"
+        }
+      ],
+      "outputs": [
+        {
+          "path": "build/validation-replay-accepted/baseline-release/analysis/selftest/selftest.json"
+        }
+      ]
+    },
+    {
+      "id": "baseline-analysis",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/config.json",
+        "analysis-baseline"
+      ],
+      "requires": [
+        "baseline-selftest"
+      ],
+      "policy": "observation",
+      "timeout_seconds": 1800,
+      "artifacts": [
+        {
+          "path": "build/validation-replay-accepted/analysis-baseline.json",
+          "kind": "analysis-baseline",
+          "inputs": [
+            "build/validation-replay-accepted/config.json",
+            "build/validation-replay-accepted/baseline-release/analysis/selftest/selftest.json"
+          ]
+        }
+      ],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "env": {
+        "CLANG_TIDY": "/opt/homebrew/opt/llvm/bin/clang-tidy",
+        "CPPCHECK": "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck"
+      },
+      "source_inputs": [
+        {
+          "path": "build/validation-replay-accepted/baseline-src",
+          "git_ref": "7b8620f09dc4b42813f63e3048188984dfb033ca",
+          "git": "/usr/bin/git"
+        }
+      ]
+    },
+    {
+      "id": "changed-configure",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/changed-release",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DPython3_EXECUTABLE=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/validation-replay-accepted/changed-release/CMakeCache.txt"
+        },
+        {
+          "path": "build/validation-replay-accepted/changed-release/compile_commands.json"
+        },
+        {
+          "path": "build/validation-replay-accepted/changed-release/build.ninja"
+        },
+        {
+          "path": "build/validation-replay-accepted/changed-release/generated/prompts.hpp"
+        },
+        {
+          "path": "build/validation-replay-accepted/changed-release/generated/core_contract.hpp"
+        }
+      ],
+      "source_inputs": [
+        {
+          "path": "."
+        }
+      ]
+    },
+    {
+      "id": "changed-build",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "--build",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/changed-release",
+        "--target",
+        "codet_line_input_bench",
+        "codet_output_bench",
+        "codet_export_bench",
+        "-j4"
+      ],
+      "requires": [
+        "changed-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "source_inputs": [
+        {
+          "path": "."
+        }
+      ],
+      "outputs": [
+        {
+          "path": "build/validation-replay-accepted/changed-release/codet_line_input_bench",
+          "archive": false
+        },
+        {
+          "path": "build/validation-replay-accepted/changed-release/codet_output_bench",
+          "archive": false
+        },
+        {
+          "path": "build/validation-replay-accepted/changed-release/codet_export_bench",
+          "archive": false
+        }
+      ]
+    },
+    {
+      "id": "changed-selftest",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "/Volumes/Pro2T/codet-compiled-agent/scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/changed-release",
+        "--selftest",
+        "--jobs",
+        "4"
+      ],
+      "requires": [
+        "changed-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "env": {
+        "CLANG_TIDY": "/opt/homebrew/opt/llvm/bin/clang-tidy",
+        "CPPCHECK": "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck"
+      },
+      "source_inputs": [
+        {
+          "path": "."
+        }
+      ],
+      "outputs": [
+        {
+          "path": "build/validation-replay-accepted/changed-release/analysis/selftest/selftest.json"
+        }
+      ]
+    },
+    {
+      "id": "changed-analysis",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/config.json",
+        "analysis-changed"
+      ],
+      "requires": [
+        "changed-selftest"
+      ],
+      "policy": "observation",
+      "timeout_seconds": 1800,
+      "artifacts": [
+        {
+          "path": "build/validation-replay-accepted/analysis-changed.json",
+          "kind": "analysis-changed",
+          "inputs": [
+            "build/validation-replay-accepted/config.json",
+            "build/validation-replay-accepted/changed-release/analysis/selftest/selftest.json"
+          ]
+        }
+      ],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "env": {
+        "CLANG_TIDY": "/opt/homebrew/opt/llvm/bin/clang-tidy",
+        "CPPCHECK": "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck"
+      },
+      "source_inputs": [
+        {
+          "path": "."
+        }
+      ]
+    },
+    {
+      "id": "static-comparison",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/config.json",
+        "analysis"
+      ],
+      "requires": [
+        "baseline-analysis",
+        "changed-analysis"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [
+        {
+          "path": "build/validation-replay-accepted/analysis.json",
+          "kind": "analysis",
+          "inputs": [
+            "build/validation-replay-accepted/config.json",
+            "build/validation-replay-accepted/analysis-baseline.json",
+            "build/validation-replay-accepted/analysis-changed.json"
+          ]
+        }
+      ],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ]
+    },
+    {
+      "id": "python-negative-controls",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/config.json",
+        "negative-controls"
+      ],
+      "requires": [
+        "runner-tests"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [
+        {
+          "path": "build/validation-replay-accepted/negative-controls.json",
+          "kind": "negative-controls",
+          "inputs": [
+            "build/validation-replay-accepted/config.json"
+          ]
+        }
+      ],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ]
+    },
+    {
+      "id": "native-negative-controls",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/config.json",
+        "native-negative-controls"
+      ],
+      "requires": [
+        "debug-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 2100,
+      "artifacts": [
+        {
+          "path": "build/validation-replay-accepted/native-negative-controls.json",
+          "kind": "native-negative-controls",
+          "inputs": [
+            "build/validation-replay-accepted/config.json",
+            "build/validation-replay-accepted/debug/compile_commands.json",
+            "build/validation-replay-accepted/debug/build.ninja"
+          ]
+        }
+      ],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ]
+    },
+    {
+      "id": "benchmarks",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/config.json",
+        "measure"
+      ],
+      "requires": [
+        "baseline-build",
+        "changed-build",
+        "static-comparison",
+        "python-negative-controls",
+        "native-negative-controls"
+      ],
+      "policy": "required",
+      "timeout_seconds": 1800,
+      "artifacts": [
+        {
+          "path": "build/validation-replay-accepted/measure.json",
+          "kind": "measure",
+          "inputs": [
+            "build/validation-replay-accepted/config.json",
+            "build/validation-replay-accepted/baseline-release/CMakeCache.txt",
+            "build/validation-replay-accepted/changed-release/CMakeCache.txt"
+          ]
+        }
+      ],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ]
+    },
+    {
+      "id": "build-metadata",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/config.json",
+        "build-info"
+      ],
+      "requires": [
+        "debug-build",
+        "asan-build",
+        "tsan-build",
+        "cross-build",
+        "baseline-build",
+        "changed-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [
+        {
+          "path": "build/validation-replay-accepted/build-info.json",
+          "kind": "build-info",
+          "inputs": [
+            "build/validation-replay-accepted/config.json",
+            "build/validation-replay-accepted/debug/CMakeCache.txt",
+            "build/validation-replay-accepted/asan/CMakeCache.txt",
+            "build/validation-replay-accepted/tsan/CMakeCache.txt",
+            "build/validation-replay-accepted/cross-selection/CMakeCache.txt",
+            "build/validation-replay-accepted/baseline-release/CMakeCache.txt",
+            "build/validation-replay-accepted/changed-release/CMakeCache.txt"
+          ]
+        }
+      ],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ]
+    },
+    {
+      "id": "ubuntu",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/validation-replay-accepted/config.json",
+        "ci"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 1800,
+      "artifacts": [
+        {
+          "path": "build/validation-replay-accepted/ci.json",
+          "kind": "ci",
+          "inputs": [
+            "build/validation-replay-accepted/config.json"
+          ]
+        }
+      ],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ]
+    }
+  ]
+}

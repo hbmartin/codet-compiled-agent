@@ -1,0 +1,12 @@
+{
+  "schema_version": 2,
+  "baseline": "origin/main",
+  "builds": {
+    "debug": "build/host",
+    "asan": "build/sanitize",
+    "tsan": "build/prompt-boundary-ownership-followup/tsan",
+    "cross": "build/basic-input-boundary-followup/cross-mode"
+  },
+  "python39": "python3.9",
+  "benchmark": {"sets": 2, "measured_per_set": 5}
+}

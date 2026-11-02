@@ -1,0 +1,24 @@
+rules:
+  - id: codet-response-publication-rollback
+    languages: [cpp]
+    severity: ERROR
+    message: Guard transcript and provider snapshot publication with ResponseAppend until persistence succeeds.
+    paths:
+      include: ["**/agent.cpp"]
+    patterns:
+      - pattern-either:
+          - pattern: $STORE.append_messages($SESSION, $FIRST, true, ...)
+          - pattern: $SESSION.provider_state = $PROVIDER.conversation_state()
+      - pattern-not-inside: |
+          {
+            ResponseAppend $GUARD($SESSION);
+            ...
+            $GUARD.commit();
+          }
+  - id: codet-runtime-aware-agent-budget
+    languages: [cpp]
+    severity: ERROR
+    message: Use request_budget so ordinary, summary, retry and batch paths reserve runtime observations.
+    paths:
+      include: ["**/agent.cpp"]
+    pattern: prompt_budget(...)

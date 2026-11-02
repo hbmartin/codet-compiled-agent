@@ -1,0 +1,25 @@
+Test project /Volumes/Pro2T/codet-compiled-agent/build/validation-replay-delivery/asan
+      Start  1: codet.publication-faults
+      Start  2: codet.unit
+ 1/10 Test  #1: codet.publication-faults .........   Passed    5.14 sec
+      Start  3: codet.cli
+ 2/10 Test  #3: codet.cli ........................   Passed    0.21 sec
+      Start  4: codet.integration
+ 3/10 Test  #4: codet.integration ................   Passed   69.07 sec
+      Start  5: codet.prompts
+ 4/10 Test  #5: codet.prompts ....................   Passed    0.48 sec
+      Start  6: codet.build-integrity
+ 5/10 Test  #6: codet.build-integrity ............   Passed    0.14 sec
+      Start  7: codet.semgrep-report
+ 6/10 Test  #7: codet.semgrep-report .............   Passed    0.62 sec
+      Start  8: codet.lint-runner
+ 7/10 Test  #8: codet.lint-runner ................   Passed    1.59 sec
+      Start  9: codet.validation-evidence
+ 8/10 Test  #9: codet.validation-evidence ........   Passed    3.62 sec
+      Start 10: codet.hermetic
+ 9/10 Test #10: codet.hermetic ...................   Passed    0.17 sec
+10/10 Test  #2: codet.unit .......................   Passed  105.67 sec
+
+100% tests passed out of 10
+
+Total Test time (real) = 105.67 sec
