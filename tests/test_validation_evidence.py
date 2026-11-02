@@ -565,6 +565,13 @@ class ReplayIntegrity(unittest.TestCase):
                 self.assertEqual(record["outcome"], "artifact-error")
                 self.assertIn("not produced", record["error"])
 
+    def test_input_read_failure_is_not_a_launch_failure(self):
+        with patch.object(evidence, "input_hashes", side_effect=PermissionError("declared input unreadable")), patch.object(evidence.subprocess, "Popen") as launch:
+            record = self.capture()["test"]
+        self.assertEqual(record["outcome"], "artifact-error")
+        self.assertIn("declared input unreadable", record["error"])
+        launch.assert_not_called()
+
     def test_missing_python_is_unavailable(self):
         self.checks[0].update(argv=[str(self.root / "missing-python")], python_version=[3, 9])
         self.assertEqual(self.capture()["test"]["outcome"], "unavailable")
@@ -738,7 +745,13 @@ class ReplayIntegrity(unittest.TestCase):
         baseline.mkdir()
         shutil.copyfile(self.root / "CMakeLists.txt", baseline / "CMakeLists.txt")
         shutil.copytree(self.root / "src", baseline / "src")
-        self.assertTrue(source_inputs(self.root, [dict(path="baseline", git_ref="HEAD")]))
+        self.assertEqual(set(source_inputs(self.root, [dict(path="baseline", git_ref="HEAD")])), {"baseline"})
+        self.checks[0]["source_inputs"] = [dict(path="baseline", git_ref="HEAD")]
+        self.capture()
+        from evidence_bundle import verify_bundle
+        target = self.root / "git-bound-bundle"
+        evidence.publish_bundle(self.manifest, self.folder, target)
+        self.assertTrue(verify_bundle(target)["verified"])
         (baseline / "src/core.cpp").write_text("wrong baseline")
         with self.assertRaisesRegex(ValueError, "does not match Git commit"):
             source_inputs(self.root, [dict(path="baseline", git_ref="HEAD")])

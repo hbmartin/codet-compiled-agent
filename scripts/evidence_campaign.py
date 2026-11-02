@@ -108,7 +108,8 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
         if mode == "asan":
             args += ["-DCODET_SANITIZERS=ON"]
         if mode == "tsan":
-            args += ["-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer -Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+            warnings = " -Wno-error=implicit-int-float-conversion -Wno-error=unused-result" if sys.platform == "darwin" else ""
+            args += ["-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer" + warnings,
                      "-DCMAKE_C_FLAGS=-fsanitize=thread", "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread"]
         add(mode + "-configure", args, outputs=configured_outputs(build))
         add(mode + "-build", [native["cmake"], "--build", build, "-j4"], [mode + "-configure"],
@@ -264,7 +265,7 @@ def produce(config_path, action, *, output=None):
         paths = sorted(p for p in (folder / "preliminary-capture").rglob("*") if p.is_file())
         inputs.extend(str(p.relative_to(root)) for p in paths)
         payload = dict(label="Interrupted preliminary capture; historical only, never a required-check substitute",
-                       files=[dict(path=str(p.relative_to(root)), sha256=digest(p), content=json.loads(p.read_text()) if p.suffix == ".json" else p.read_text(errors="replace")) for p in paths])
+                       files=[dict(path=str(p.relative_to(root)), sha256=digest(p)) for p in paths])
     elif action == "archive":
         source = folder / "baseline-src"
         if source.exists():

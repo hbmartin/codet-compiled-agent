@@ -59,10 +59,10 @@ def source_inputs(root, specs):
                                            input="".join(ref + ":" + n + "\n" for n in names).encode(), timeout=30)
             expected = {}
             offset = 0
-            for name in names:
+            for filename in names:
                 end = data.index(b"\n", offset)
                 size = int(data[offset:end].split()[-1])
-                expected[name] = hashlib.sha256(data[end + 1:end + 1 + size]).hexdigest()
+                expected[filename] = hashlib.sha256(data[end + 1:end + 1 + size]).hexdigest()
                 offset = end + 2 + size
             if actual != expected:
                 raise ValueError("Source input does not match Git commit: " + name)

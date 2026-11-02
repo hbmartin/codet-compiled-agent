@@ -147,6 +147,7 @@ def capture(manifest_path, folder, *, campaign_id=None):
                       manifest_sha256=signature, source_before=before, validation_before=validation,
                       started_ns=time.time_ns(), exit=None, outcome="not-run", log=log.name, artifacts=[], outputs=[])
         log.write_text("")
+        phase = "artifact"
         try:
             if any(results[parent]["outcome"] != "passed" and not (policies[parent] == "observation" and
                    results[parent]["outcome"] == "failed" and type(results[parent]["exit"]) is int)
@@ -163,6 +164,7 @@ def capture(manifest_path, folder, *, campaign_id=None):
                 record["external_inputs_before"] = directory_hashes(root, check.get("directory_inputs", []))
                 env = environment(manifest, check)
                 record["effective_environment"] = dict(manifest.get("environment", {"PATH": os.defpath}), **check.get("env", {}))
+                phase = "launch"
                 try:
                     record["executable"] = executable(check["argv"], env)
                 except FileNotFoundError as error:
@@ -185,6 +187,7 @@ def capture(manifest_path, folder, *, campaign_id=None):
                     env["CODET_EVIDENCE_CONTEXT"] = json.dumps(context)
                     process = subprocess.Popen(argv, cwd=record["cwd"], stdout=stream,
                                                stderr=subprocess.STDOUT, start_new_session=True, env=env)
+                    phase = "execution"
                     try:
                         record["exit"] = process.wait(timeout=check.get("timeout_seconds", 600))
                         record["outcome"] = "passed" if record["exit"] == 0 else "failed"
@@ -197,6 +200,7 @@ def capture(manifest_path, folder, *, campaign_id=None):
                         record["outcome"] = "timeout" if isinstance(error, subprocess.TimeoutExpired) else "interrupted"
                         if isinstance(error, KeyboardInterrupt):
                             raise
+                phase = "artifact"
                 if record["outcome"] == "passed" or (record["outcome"] == "failed" and check.get("policy") == "observation"):
                     record["outputs"] = output_hashes(root, check.get("outputs", []))
                     for spec in check.get("artifacts", []):
@@ -206,7 +210,7 @@ def capture(manifest_path, folder, *, campaign_id=None):
                         validate_artifact(path, spec, context)
                         record["artifacts"].append(dict(path=spec["path"], sha256=digest(path)))
         except OSError as error:
-            record["outcome"] = "launch-error"
+            record["outcome"] = "launch-error" if phase == "launch" else ("execution-error" if phase == "execution" else "artifact-error")
             record["error"] = str(error)
             with log.open("a") as stream:
                 stream.write(str(error) + "\n")

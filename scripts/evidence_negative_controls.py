@@ -51,6 +51,10 @@ def run_controls(root, folder):
          'shutil.copytree(folder, stage / "capture", dirs_exist_ok=True)', "ReplayIntegrity.test_archive_excludes_stale_records_and_survives_relocation"),
         ("versioned-process", "evidence_processes", 'name in NATIVE_BLOCKERS or re.sub(r"-\\d+(?:\\.\\d+)*$", "", name) in NATIVE_BLOCKERS or',
          'name in NATIVE_BLOCKERS or False or', "ReplayIntegrity.test_process_gate_matches_versioned_and_truncated_names"),
+        ("git-source-key", "evidence_inputs", 'for filename in names:\n                end = data.index(b"\\n", offset)\n                size = int(data[offset:end].split()[-1])\n                expected[filename]',
+         'for name in names:\n                end = data.index(b"\\n", offset)\n                size = int(data[offset:end].split()[-1])\n                expected[name]', "ReplayIntegrity.test_source_commit_binding_rejects_wrong_baseline"),
+        ("io-classification", "validation_evidence", '"launch-error" if phase == "launch" else ("execution-error" if phase == "execution" else "artifact-error")',
+         '"launch-error"', "ReplayIntegrity.test_input_read_failure_is_not_a_launch_failure"),
     ]
     results = []
     for name, module, before, after, target in cases:
