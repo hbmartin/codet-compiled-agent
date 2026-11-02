@@ -1,8 +1,6 @@
 """Capture actual command outcomes and publish versioned, source-bound evidence."""
 
 import argparse
-import csv
-import shutil
 import hashlib
 import json
 import os
@@ -319,56 +317,24 @@ def publish(manifest_path, folder, output, benchmark=None):
 
 def publish_bundle(manifest_path, folder, destination):
     """Stage immutable sidecars and report, then expose the complete directory."""
-    if destination.exists():
-        raise ValueError("Bundle destination already exists")
-    value = validate_capture(manifest_path, folder)
-    root = Path(load_manifest(manifest_path)["root"]).resolve()
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".evidence-", dir=destination.parent) as temporary:
-        stage = Path(temporary) / "bundle"
-        stage.mkdir()
-        shutil.copyfile(manifest_path, stage / "manifest.json")
-        shutil.copytree(folder, stage / "capture")
-        for record in value["validation"]:
-            for artifact in record["artifacts"]:
-                target = stage / "artifacts" / record["id"] / Path(artifact["path"]).name
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(root / artifact["path"], target)
-        for artifact in value["derived_artifacts"]:
-            if artifact["kind"] == "measure":
-                for key, name in (("rows", "samples.csv"), ("summary", "medians.csv")):
-                    rows = artifact["payload"][key]
-                    with (stage / name).open("w", newline="") as stream:
-                        writer = csv.DictWriter(stream, fieldnames=sorted(set().union(*(r.keys() for r in rows))), lineterminator="\n")
-                        writer.writeheader()
-                        writer.writerows(rows)
-        atomic_json(stage / "report.json", value)
-        if validate_capture(stage / "manifest.json", stage / "capture") != value:
-            raise ValueError("Staged capture mismatch")
-        for record in value["validation"]:
-            for artifact in record["artifacts"]:
-                copied = stage / "artifacts" / record["id"] / Path(artifact["path"]).name
-                if digest(copied) != artifact["sha256"]:
-                    raise ValueError("Staged artifact digest mismatch")
-        # Revalidate after copying: stale inputs or sidecars never become published evidence.
-        if validate_capture(manifest_path, folder) != value:
-            raise ValueError("Evidence changed during staging")
-        if destination.exists():
-            raise ValueError("Bundle destination already exists")
-        atomic_json(stage / "inventory.json", {str(p.relative_to(stage)): digest(p)
-                    for p in sorted(stage.rglob("*")) if p.is_file()})
-        os.rename(stage, destination)
-    return value
+    from evidence_bundle import publish_audit_bundle
+    return publish_audit_bundle(manifest_path, folder, destination)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("capture", "publish", "bundle"))
+    parser.add_argument("operation", choices=("capture", "publish", "bundle", "verify-bundle"))
     parser.add_argument("manifest", type=Path)
-    parser.add_argument("folder", type=Path)
+    parser.add_argument("folder", type=Path, nargs="?")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--benchmark", type=Path)
     args = parser.parse_args()
+    if args.operation == "verify-bundle":
+        from evidence_bundle import verify_bundle
+        print(json.dumps(verify_bundle(args.manifest), indent=2))
+        return 0
+    if args.folder is None:
+        parser.error("capture/publish/bundle requires a folder")
     if args.operation == "capture":
         results = capture(args.manifest, args.folder)
         policies = {c["id"]: c.get("policy", "required") for c in load_manifest(args.manifest)["checks"]}
