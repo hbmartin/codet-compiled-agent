@@ -38,6 +38,14 @@ def command(argv, *, cwd=None, timeout=30, env=None):
     return subprocess.check_output([str(s) for s in argv], cwd=cwd, text=True, timeout=timeout, env=env).strip()
 
 
+def input_name(root, path):
+    path = Path(path)
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path.absolute())
+
+
 def prepare(root, folder, baseline=None, check_python=None, python39=None, analysis_python=None,
             ci_run=None, clang_tidy=None, cppcheck=None, template_path=None):
     from evidence_inputs import executable
@@ -49,6 +57,13 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     template = json.loads(template_path.read_text())
     if template.get("schema_version") != 4:
         raise ValueError("Unsupported replay template version")
+    if set(template) != {"schema_version", "baseline", "builds", "python39", "benchmark"}:
+        raise ValueError("Unknown or missing replay template setting")
+    if (set(template["builds"]) != {"debug", "asan", "tsan", "cross"} or
+            any(not isinstance(v, str) or not v for v in template["builds"].values()) or
+            set(template["benchmark"]) != {"sets", "measured_per_set"} or
+            any(type(v) is not int or v < 1 for v in template["benchmark"].values())):
+        raise ValueError("Invalid replay build or benchmark declaration")
     tools = {}
     def tool(name, candidate, version="--version", optional=False):
         path = shutil.which(str(candidate))
@@ -109,7 +124,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
         config["sdk"] = dict(path=command(["/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-path"], timeout=5),
                              version=command(["/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-version"], timeout=5))
     atomic_json(config_path, config)
-    rel = lambda p: str(Path(p).relative_to(root))
+    rel = lambda p: input_name(root, p)
     checks = []
     def add(name, argv, requires=(), policy="required", timeout=600, artifacts=(), **extra):
         checks.append(dict(id=name, argv=[str(a) for a in argv], requires=list(requires), policy=policy,
@@ -290,7 +305,7 @@ def produce(config_path, action, *, output=None):
         declarations = json.loads(os.environ["CODET_EVIDENCE_CONTEXT"]).get("declared_artifacts", [])
         if not any((root / a["path"]).resolve() == output.resolve() and a["kind"] == action for a in declarations):
             raise ValueError("Captured output is not declared by its manifest")
-    inputs = [str(config_path.relative_to(root))]
+    inputs = [input_name(root, config_path)]
     def save(kind, payload):
         if "CODET_EVIDENCE_CONTEXT" in os.environ:
             write_artifact(output.resolve() if output is not None else folder / (kind + ".json"), kind, payload, inputs)
@@ -306,9 +321,9 @@ def produce(config_path, action, *, output=None):
                         input_hashes=input_hashes(root, inputs), payload=payload))
     if action == "history":
         paths = sorted(p for p in (folder / "preliminary-capture").rglob("*") if p.is_file())
-        inputs.extend(str(p.relative_to(root)) for p in paths)
+        inputs.extend(input_name(root, p) for p in paths)
         payload = dict(label="Prior campaign attempts; historical only, never a required-check substitute",
-                       files=[dict(path=str(p.relative_to(root)), sha256=digest(p)) for p in paths])
+                       files=[dict(path=input_name(root, p), sha256=digest(p)) for p in paths])
     elif action == "archive":
         source = folder / "baseline-src"
         if source.exists():
@@ -324,7 +339,7 @@ def produce(config_path, action, *, output=None):
         source = folder / "baseline-src" if variant == "baseline" else root
         build = folder / (variant + "-release")
         probe = build / "analysis/selftest/selftest.json"
-        inputs.append(str(probe.relative_to(root)))
+        inputs.append(input_name(root, probe))
         if json.loads(probe.read_text()) != {t: True for t in TOOLS}:
             raise ValueError("Analyzer self-check did not pass")
         for tool in TOOLS:
@@ -365,10 +380,10 @@ def produce(config_path, action, *, output=None):
     elif action == "analysis":
         expected = [str(p.relative_to(root)) for p in application_sources(root)]
         paths = [folder / ("analysis-" + v + ".json") for v in ("baseline", "changed")]
-        inputs.extend(str(p.relative_to(root)) for p in paths)
+        inputs.extend(input_name(root, p) for p in paths)
         values = [json.loads(p.read_text())["payload"] for p in paths]
         registry_path = root / "checks/analyzer-relocations.json"
-        inputs.append(str(registry_path.relative_to(root)))
+        inputs.append(input_name(root, registry_path))
         registry = json.loads(registry_path.read_text())
         from validation_evidence import production_hashes
         if registry.get("entries") and (registry.get("baseline") != production_hashes(folder / "baseline-src") or registry.get("changed") != production_hashes(root)):
@@ -396,11 +411,11 @@ def produce(config_path, action, *, output=None):
     elif action == "harness":
         from evidence_harness import build_harnesses
         inputs.extend(HARNESS_FILES)
-        inputs.extend(str((folder / (v + "-release") / n).relative_to(root)) for v in ("baseline", "changed") for n in ("compile_commands.json", "build.ninja", "libcodet_core.a"))
+        inputs.extend(input_name(root, folder / (v + "-release") / n) for v in ("baseline", "changed") for n in ("compile_commands.json", "build.ninja", "libcodet_core.a"))
         payload = build_harnesses(root, folder, HARNESS_FILES, config["tools"]["ninja"]["path"])
     elif action == "measure":
-        inputs.append(str((folder / "harness.json").relative_to(root)))
-        inputs.extend(str((folder / (v + "-release/CMakeCache.txt")).relative_to(root)) for v in ("baseline", "changed"))
+        inputs.append(input_name(root, folder / "harness.json"))
+        inputs.extend(input_name(root, folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed"))
         payload = measure(config)
     elif action == "negative-controls":
         from evidence_negative_controls import run_controls
@@ -408,7 +423,7 @@ def produce(config_path, action, *, output=None):
     elif action == "native-negative-controls":
         from evidence_native_controls import run_controls
         build = Path(config["builds"]["debug"]).resolve()
-        inputs.extend(str((build / p).relative_to(root)) for p in ("compile_commands.json", "build.ninja"))
+        inputs.extend(input_name(root, build / p) for p in ("compile_commands.json", "build.ninja"))
         payload = run_controls(root, folder, build, config["tools"]["ninja"]["path"])
     elif action == "cross-placeholder":
         source = folder / "host-placeholder.c"
@@ -423,7 +438,7 @@ def produce(config_path, action, *, output=None):
         payload = []
         for name, build in [(n, Path(b).resolve()) for n, b in config["builds"].items()] + [(v, folder / (v + "-release")) for v in ("baseline", "changed")]:
             cache = build / "CMakeCache.txt"
-            inputs.append(str(cache.relative_to(root)))
+            inputs.append(input_name(root, cache))
             compiler = next(line.split("=", 1)[1] for line in cache.read_text().splitlines() if line.startswith("CMAKE_CXX_COMPILER:"))
             payload.append(dict(name=name, cache=cache.read_text(), cache_sha256=digest(cache),
                                 compiler_path=compiler, compiler_sha256=digest(Path(compiler)), compiler=command([compiler, "--version"])))

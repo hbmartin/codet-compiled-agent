@@ -322,7 +322,8 @@ def validate_capture(manifest_path, folder):
 def _protect_archives(path):
     if path.name in ("diagnostic-record-lifecycle-followup.json", "prompt-recovery-evidence-followup.json"):
         raise ValueError("Historical evidence must remain unchanged; select a new output")
-    if path.exists() and any(p.name == "validation" and p.parent.name == "docs" for p in path.resolve().parents):
+    if (path.exists() or path.is_symlink()) and any(p.name == "validation" and p.parent.name == "docs"
+            for p in (*path.absolute().parents, *path.resolve().parents)):
         raise ValueError("Historical evidence must remain unchanged; select a new output")
 
 
