@@ -67,7 +67,7 @@ public:
     return success_;
   }
   bool finish() {
-    success_ = (ops_.refresh_screen(ops_.context) != ERR) && success_;
+    success_ = success_ && (ops_.refresh_screen(ops_.context) != ERR);
     dirty_ = !success_;
     return success_;
   }

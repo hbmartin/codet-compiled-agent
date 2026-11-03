@@ -43,10 +43,10 @@ inline int line_viewport_helper(int release, int notify, int replacement) {
   if (::write(notify, "d", 1) != 1 || !read_token(release, command))
     return 7;
   line.erase_character();
-  line.submitted();
+  const auto submitted = line.take();
   auto expected = raw;
   expected.pop_back();
-  return input.take().text == expected ? 0 : 8;
+  return submitted.text == expected ? 0 : 8;
 }
 inline int line_prompt_helper(const std::string &mode, int release, int notify) {
   if (mode != "approval" && mode != "question")
@@ -98,7 +98,7 @@ inline int line_prompt_helper(const std::string &mode, int release, int notify) 
   line.flush();
   if (::write(notify, "d", 1) != 1 || !read_token(release, token))
     return 7;
-  line.submitted();
-  return input.take().discarded ? 0 : 8;
+  const auto submitted = line.take();
+  return submitted.discarded ? 0 : 8;
 }
 } // namespace codet::test

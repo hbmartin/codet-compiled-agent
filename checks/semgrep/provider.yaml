@@ -45,3 +45,24 @@ rules:
             ...
             throw ProviderError(...);
           }
+  - id: codet-public-reasoning-helper-provider-only
+    languages: [cpp]
+    severity: ERROR
+    message: The public reasoning capability helper must retain model/effort gating.
+    paths:
+      include: ["**/provider.cpp"]
+    pattern: |
+      bool public_responses_reasoning(const Config &$CONFIG) {
+        return $CONFIG.provider == "openai";
+      }
+  - id: codet-unguarded-epoch-replay
+    languages: [cpp]
+    severity: ERROR
+    message: Guard the actual assistant replay append against empty replay.
+    paths:
+      include: ["**/provider.cpp"]
+    patterns:
+      - pattern: $WIRE.push_back({{"role", "assistant"}, {"content", $RESULT.message.replay}});
+      - pattern-not-inside: |
+          if (!$RESULT.message.replay.empty())
+            $WIRE.push_back(...);

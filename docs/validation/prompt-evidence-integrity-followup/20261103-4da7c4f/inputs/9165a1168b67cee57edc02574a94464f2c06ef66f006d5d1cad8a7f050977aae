@@ -1,0 +1,28 @@
+Measured 1 line allocation-positive
+Measured 1 line geometry-positive
+Measured 1 line busy
+Measured 1 line native-busy
+Measured 1 line editing
+Measured 1 line editing-basic
+Measured 1 line native-editing
+Measured 1 line deletion
+Measured 1 line unchanged
+Measured 1 line deferred-tail
+Measured 1 line native-boundary
+Measured 1 line native-flush-boundary
+Measured 1 line native-unchanged
+Measured 1 line pending-submission
+Measured 1 tooling hashing
+Traceback (most recent call last):
+  File "/Volumes/Pro2T/codet-compiled-agent/scripts/evidence_campaign.py", line 507, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/Volumes/Pro2T/codet-compiled-agent/scripts/evidence_campaign.py", line 503, in main
+    return produce(args.config, args.kind, output=args.output)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Volumes/Pro2T/codet-compiled-agent/scripts/evidence_campaign.py", line 434, in produce
+    payload = measure(config)
+              ^^^^^^^^^^^^^^^
+  File "/Volumes/Pro2T/codet-compiled-agent/scripts/evidence_campaign.py", line 285, in measure
+    raise ValueError("Benchmark failed: " + repr((argv, run.returncode, run.stderr)))
+ValueError: Benchmark failed: (['/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python', '/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/harness-src/scripts/evidence_tool_bench.py', '/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/baseline-src', 'bb9fa28de29cb2bcd19fa0ef36c053915b91b000', 'git-inspection', '/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/measurement.json'], 1, 'Traceback (most recent call last):\n  File "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/harness-src/scripts/evidence_tool_bench.py", line 52, in <module>\n    Path(output).write_text(json.dumps(measure(Path(root), ref, workload)) + "\\n")\n                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/harness-src/scripts/evidence_tool_bench.py", line 33, in measure\n    hashes = verify_git_source(root, root, ref)["production_hashes"]\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/baseline-src/scripts/evidence_benchmarks.py", line 23, in verify_git_source\n    raise ValueError("Baseline source does not match recorded Git commit")\nValueError: Baseline source does not match recorded Git commit\n')

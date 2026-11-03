@@ -248,6 +248,7 @@ TEST_F(History, DefaultBudgetProjectsLargeBatchesWithoutRerunningOrLosingDurable
   Tools t(config, files, processes, http, clock);
   Scripted provider;
   size_t calls = 0;
+  std::vector<fs::path> archived_results;
   provider.script = [&](const Config &, const std::string &, const auto &messages,
                         const Json &schemas) {
     EXPECT_FALSE(schemas.empty()); // No compaction for a single ordinary output.
@@ -291,7 +292,7 @@ TEST_F(History, DefaultBudgetProjectsLargeBatchesWithoutRerunningOrLosingDurable
               artifact_directory(config) / result["metadata"]["result_path"].get<std::string>();
           const codet::Message full = Json::parse(files.native.read(path)).get<codet::Message>();
           EXPECT_GE(full.text.size(), 45000u);
-          EXPECT_FALSE(read(t, path, {{"byte_limit", 80}}).error);
+          archived_results.push_back(path);
         }
       }
     EXPECT_GT(references, 0u);
@@ -300,6 +301,15 @@ TEST_F(History, DefaultBudgetProjectsLargeBatchesWithoutRerunningOrLosingDurable
   Agent agent(config, provider, t, state, {});
   EXPECT_EQ(agent.run(session, "read the source once per requested call", cancel).text, "done");
   EXPECT_EQ(calls, 2u);
+  // Inspection is a new operation, not another call sharing the previous batch's residual budget.
+  Tools inspector(config, files, processes, http, clock);
+  inspector.use_session(session.id);
+  inspector.reference_results(state.load_id(session.id).messages);
+  ASSERT_FALSE(archived_results.empty());
+  for (const auto &path : archived_results) {
+    const auto page = read(inspector, path, {{"byte_limit", 80}});
+    EXPECT_FALSE(page.error) << page.content;
+  }
   const auto saved = state.load_id(session.id);
   for (const auto &m : saved.messages)
     if (m.role == "tool") {
@@ -1909,4 +1919,26 @@ TEST_F(History, CheckpointArchivesOverflowStateAndPreservesUnseenToolImagesWitho
   relocated.use_session(child.id);
   relocated.restore_references(state.references(child.id));
   EXPECT_EQ(relocated.execution_state(child.messages).size(), 100u);
+}
+TEST(InspectionRead, OpeningSizeBoundsReadsSeeksAndRejectsTruncation) {
+  TempDirectory temp;
+  const auto path = temp.root / "inspection";
+  std::ofstream(path) << "abc";
+  NativeFileSystem files;
+  auto handle = files.open_read(path);
+  std::ofstream(path, std::ios::app) << "def";
+  char bytes[16]{};
+  ASSERT_EQ(handle->read(bytes, sizeof(bytes)), 3u);
+  EXPECT_EQ(std::string(bytes, 3), "abc");
+  EXPECT_EQ(handle->read(bytes, sizeof(bytes)), 0u);
+  EXPECT_NO_THROW(handle->seek(4));
+  EXPECT_EQ(handle->read(bytes, sizeof(bytes)), 0u);
+  handle->seek(1);
+  EXPECT_EQ(handle->read(bytes, sizeof(bytes)), 2u);
+  EXPECT_EQ(std::string(bytes, 2), "bc");
+  auto newer = files.open_read(path);
+  EXPECT_EQ(newer->size(), 6u);
+  std::ofstream(path) << "a";
+  EXPECT_EQ(newer->read(bytes, sizeof(bytes)), 1u);
+  EXPECT_THROW(newer->read(bytes, sizeof(bytes)), Error);
 }

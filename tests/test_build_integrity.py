@@ -87,6 +87,33 @@ class BuildIntegrity(unittest.TestCase):
         self.assertFalse((cache / 'library/old.c').exists())
         self.assertEqual((cache / 'library/code.c').read_text(), 'verified new version')
 
+    def test_patch_cache_corruption_refetch_and_failed_downloads(self):
+        import hashlib
+        import json
+        fetch_spec = importlib.util.spec_from_file_location('fetch_patches', SCRIPTS / 'fetch-deps.py')
+        fetch = importlib.util.module_from_spec(fetch_spec)
+        fetch_spec.loader.exec_module(fetch)
+        good = b'verified patch'
+        (self.root / 'dependencies.lock.json').write_text(json.dumps(dict(dependencies=[], patches=[
+            dict(name='library', path='fix.patch', url='fixture://patch', sha256=hashlib.sha256(good).hexdigest())])))
+        cached = self.root / '.deps/tiger-patches/library/fix.patch'
+        cached.parent.mkdir(parents=True)
+        cached.write_bytes(b'corrupt')
+        with patch.object(fetch, 'ROOT', self.root), patch.object(sys, 'argv', ['fetch-deps.py']):
+            with patch.object(fetch.urllib.request, 'urlopen', side_effect=OSError('download failed')):
+                with self.assertRaisesRegex(OSError, 'download failed'):
+                    fetch.main()
+            self.assertEqual(cached.read_bytes(), b'corrupt')
+            with patch.object(fetch.urllib.request, 'urlopen', return_value=io.BytesIO(b'wrong')):
+                with self.assertRaisesRegex(SystemExit, 'Checksum mismatch'):
+                    fetch.main()
+            self.assertEqual(cached.read_bytes(), b'corrupt')
+            with patch.object(fetch.urllib.request, 'urlopen', return_value=io.BytesIO(good)) as network:
+                fetch.main()
+                network.assert_called_once()
+            self.assertEqual(cached.read_bytes(), good)
+            self.assertEqual(list(cached.parent.iterdir()), [cached])
+
     def runtime(self):
         for name in ['lib/libcurl.dylib', 'lib/libsqlite3.dylib', 'lib/libz.dylib',
                      'lib/libncurses.dylib', 'lib/libedit.dylib',

@@ -2359,3 +2359,43 @@ int main(int argc, char **argv) {
   testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }
+TEST(LineSubmissionFault, AllocationFailureCannotConsumeAnUnownedLine) {
+  for (int skipped = 0; skipped != 5; ++skipped) {
+    struct Discard : std::streambuf {
+      std::streamsize xsputn(const char *, std::streamsize n) override {
+        return n;
+      }
+      int_type overflow(int_type c) override {
+        return traits_type::not_eof(c);
+      }
+    } buffer;
+    std::ostream stream(&buffer);
+    detail::CliOutput output(stream);
+    Cancellation cancel;
+    detail::IoContext io(cancel);
+    detail::RequestInputController input;
+    const std::string raw(128, 'x'), prompt = "codet> ";
+    for (char byte : raw)
+      input.append(byte);
+    struct stat tty {};
+    detail::LinePrompt line(input, output, io, prompt, tty, 80);
+    line.acquire();
+    line.flush();
+    std::optional<detail::InputLine> submitted;
+    bool failed = false;
+    fault::countdown = skipped;
+    try {
+      submitted = line.try_take();
+    } catch (const std::bad_alloc &) {
+      failed = true;
+    }
+    fault::disable();
+    if (failed) {
+      EXPECT_EQ(input.input().raw(), raw) << "Allocation consumed a line without pending ownership";
+      EXPECT_FALSE(line.submission_pending());
+      submitted = line.try_take();
+    }
+    ASSERT_TRUE(submitted);
+    EXPECT_EQ(submitted->text, raw);
+  }
+}

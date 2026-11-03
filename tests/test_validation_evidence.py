@@ -279,7 +279,7 @@ class ProvenanceGuards(unittest.TestCase):
                     evidence.publish_bundle(self.manifest, self.folder, parent / "new")
             self.assertFalse((parent / "new").exists())
             self.assertEqual(previous.read_text(), "previous")
-        with patch.object(evidence.os, "rename", side_effect=OSError("rename failed")), self.assertRaisesRegex(OSError, "rename failed"):
+        with patch.object(evidence_bundle, "rename_exclusive", side_effect=OSError("rename failed")), self.assertRaisesRegex(OSError, "rename failed"):
             evidence.publish_bundle(self.manifest, self.folder, parent / "new")
         self.assertFalse((parent / "new").exists())
 
@@ -323,7 +323,7 @@ class ProvenanceGuards(unittest.TestCase):
 
 class ComparisonGuards(unittest.TestCase):
     def analysis(self, root, tool="cppcheck"):
-        return dict(tool=tool, versions=[], expected_sources=[str(root / "src/a.cpp")],
+        return dict(tool=tool, versions=[dict(stdout="tool 1.0", stderr="", exit_code=0)], expected_sources=[str(root / "src/a.cpp")],
                     completed_sources=[str(root / "src/a.cpp")], passed=True, findings=0,
                     canaries=[dict(passed=True)], results=[dict(source=str(root / "src/a.cpp"),
                     completed_sources=[str(root / "src/a.cpp")], status="passed", failure=None, findings=[])])
@@ -468,10 +468,10 @@ class ExactProcessArguments(unittest.TestCase):
         import errno
 
         import evidence_processes as processes
-        with patch.object(processes.subprocess, "check_output", return_value="123 /usr/bin/python3\n"), patch.object(processes, "read_argv", side_effect=OSError(errno.ESRCH, "gone")):
+        with patch.object(processes.subprocess, "check_output", return_value="123 S /usr/bin/python3\n"), patch.object(processes, "read_argv", side_effect=OSError(errno.ESRCH, "gone")):
             with self.assertRaisesRegex(ValueError, "no usable records"):
                 processes.process_snapshot()
-        with patch.object(processes.subprocess, "check_output", return_value="123 /usr/bin/python3\n"), patch.object(processes, "read_argv", side_effect=PermissionError(errno.EPERM, "denied")):
+        with patch.object(processes.subprocess, "check_output", return_value="123 S /usr/bin/python3\n"), patch.object(processes, "read_argv", side_effect=PermissionError(errno.EPERM, "denied")):
             with self.assertRaises(PermissionError):
                 processes.process_snapshot()
 
@@ -652,7 +652,12 @@ class ReplayIntegrity(unittest.TestCase):
         self.checks.append(dict(id="same-stem", argv=[sys.executable, str(script), "left.json", "left.jsonl"], artifacts=[dict(path=n, kind="measure", inputs=["config.json"]) for n in ("left.json", "left.jsonl")]))
         self.capture()
         target = self.root / "bundle"
-        evidence.publish_bundle(self.manifest, self.folder, target)
+        try:
+            evidence.publish_bundle(self.manifest, self.folder, target)
+        except ValueError as error:
+            if "Measurement sidecar namespace mismatch" not in str(error):
+                raise
+            self.fail("Artifact-specific sidecar identity was not preserved: " + str(error))
         self.assertTrue(verify_bundle(target)["verified"])
         self.assertEqual(len(list((target / "measurements").rglob("samples.csv"))), 4)
         self.assertEqual(len(json.loads((target / "measurements.json").read_text())), 4)
@@ -702,6 +707,7 @@ class ReplayIntegrity(unittest.TestCase):
             cache = self.root / (variant + "-release/CMakeCache.txt")
             cache.parent.mkdir()
             cache.write_text("cache")
+        (self.root / "harness.json").write_text("harness")
         result = self.root / "standalone.json"
         relative = Path(__import__('os').path.relpath(config))
         with patch.object(campaign, "measure", return_value={"completed": True}):
@@ -722,7 +728,7 @@ class ReplayIntegrity(unittest.TestCase):
 
     def test_process_snapshot_inspects_native_candidate_argv(self):
         import evidence_processes as processes
-        with patch.object(processes.subprocess, "check_output", return_value="123 clang-tidy-18\n"), patch.object(processes, "read_argv", return_value=["/bin/clang-tidy-18"]) as argv, patch.object(processes.os, "readlink", return_value="/bin/clang-tidy-18"):
+        with patch.object(processes.subprocess, "check_output", return_value="123 S clang-tidy-18\n"), patch.object(processes, "read_argv", return_value=["/bin/clang-tidy-18"]) as argv, patch.object(processes.os, "readlink", return_value="/bin/clang-tidy-18"):
             values = processes.process_snapshot()
         argv.assert_called_once_with("123")
         self.assertEqual(values[0]["argv"], ["/bin/clang-tidy-18"])
@@ -806,7 +812,7 @@ class ReplayIntegrity(unittest.TestCase):
         import evidence_campaign as campaign
         ReplayAndGitGuards.git_fixture(self, self.root)
         template = self.root / "template.json"
-        evidence.atomic_json(template, dict(baseline="HEAD", python39="unavailable-python39", builds=dict(debug="custom-debug", asan="custom-asan", tsan="custom-tsan", cross="custom-cross"), benchmark=dict(sets=3, measured_per_set=4)))
+        evidence.atomic_json(template, dict(schema_version=4, baseline="HEAD", python39="unavailable-python39", builds=dict(debug="custom-debug", asan="custom-asan", tsan="custom-tsan", cross="custom-cross"), benchmark=dict(sets=3, measured_per_set=4)))
         manifest = campaign.prepare(self.root, Path("build/fresh"), check_python=sys.executable, analysis_python=sys.executable,
                                     template_path=template, clang_tidy=sys.executable, cppcheck=sys.executable)
         checks = json.loads(manifest.read_text())["checks"]
@@ -836,10 +842,13 @@ class ReplayIntegrity(unittest.TestCase):
             cache.parent.mkdir()
             cache.write_text("fixture")
             evidence.atomic_json(self.root / ("analysis-" + variant + ".json"), dict(payload=dict(manifests={t: {} for t in campaign.TOOLS})))
+        (self.root / "harness.json").write_text("harness")
+        (self.root / "checks").mkdir()
+        (self.root / "checks/analyzer-relocations.json").write_text('{"entries":[]}')
         evidence.atomic_json(config, dict(root=str(self.root), folder=str(self.root), builds=dict(debug=str(debug)), tools=dict(ninja=dict(path="ninja"))))
         for suffix, action, extras in (
-            ("measure", "measure", ["baseline-release/CMakeCache.txt", "changed-release/CMakeCache.txt"]),
-            ("compare-static", "analysis", ["analysis-baseline.json", "analysis-changed.json"]),
+            ("measure", "measure", ["harness.json", "baseline-release/CMakeCache.txt", "changed-release/CMakeCache.txt"]),
+            ("compare-static", "analysis", ["analysis-baseline.json", "analysis-changed.json", "checks/analyzer-relocations.json"]),
             ("negative-controls", "native-negative-controls", ["debug/compile_commands.json", "debug/build.ninja"]),
             ("python-negative-controls", "negative-controls", []),
         ):
@@ -873,3 +882,160 @@ class ReplayIntegrity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class EvidenceV4(ValidationEvidence):
+    def test_string_vector_is_rejected_at_load(self):
+        self.checks[0]['argv'] = 'python3'
+        self.setup_manifest()
+        with self.assertRaisesRegex(ValueError, 'argument vector'):
+            evidence.load_manifest(self.manifest)
+
+    def test_cwd_and_relative_executable_are_manifest_root_relative(self):
+        work = self.root / 'space work'
+        work.mkdir()
+        program = work / 'run.sh'
+        program.write_text('#!/bin/sh\npwd\n')
+        program.chmod(0o700)
+        self.checks[0].update(cwd='space work', argv=['./run.sh'])
+        result = self.capture()['test']
+        self.assertEqual(result['exit'], 0)
+        self.assertEqual(result['cwd'], str(work.resolve()))
+        self.assertEqual(result['executable']['path'], str(work.resolve() / program.name))
+        self.publish()
+
+    def test_environment_is_exact_and_does_not_inherit_shell(self):
+        import os
+        with patch.dict(os.environ, {'CPATH': '/undeclared', 'LD_PRELOAD': '/undeclared', 'ASAN_OPTIONS': 'bad'}):
+            record = self.capture()['test']
+        self.assertEqual(set(record['effective_environment']), {'PATH', 'CODET_EVIDENCE_CONTEXT'})
+        self.publish()
+
+    def test_ruff_is_validation_input_and_finder_metadata_is_ignored(self):
+        (self.root / 'ruff.toml').write_text('line-length = 100')
+        self.capture()
+        (self.root / 'src/.DS_Store').write_text('finder')
+        self.publish()
+        (self.root / 'ruff.toml').write_text('line-length = 80')
+        self.rejected('Stale or mismatched')
+
+    def test_preflight_timeout_is_artifact_error_and_independent_check_runs(self):
+        self.checks += [dict(id='dependent', argv=[sys.executable, '-c', 'pass'], requires=['test']),
+                        dict(id='independent', argv=[sys.executable, '-c', 'pass'])]
+        original = evidence.source_inputs
+        calls = 0
+        def once(*args):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise subprocess.TimeoutExpired(['git', 'ls-tree'], 30)
+            return original(*args)
+        with patch.object(evidence, 'source_inputs', side_effect=once):
+            results = self.capture()
+        self.assertEqual(results['test']['outcome'], 'artifact-error')
+        self.assertEqual(results['dependent']['outcome'], 'blocked')
+        self.assertEqual(results['independent']['outcome'], 'passed')
+
+    def test_audit_lookup_validation_precedes_reads(self):
+        from evidence_bundle import safe_member, valid_digest
+        for name in ('../outside', '/outside', 'capture/../outside', 'capture\\outside'):
+            with self.assertRaisesRegex(ValueError, 'lookup path'):
+                safe_member(self.root, name)
+        (self.root / 'alias').symlink_to(self.root / 'src', target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'symlink'):
+            safe_member(self.root, 'alias/core.cpp')
+        with self.assertRaisesRegex(ValueError, 'digest'):
+            valid_digest('../not-a-digest')
+
+    def test_python_switch_operands_do_not_hide_analyzers(self):
+        from evidence_processes import blocking_processes
+        for flags in (['-X', 'utf8'], ['-Xutf8'], ['-OO'], ['-W', 'ignore'], ['-uB'], ['--']):
+            self.assertTrue(blocking_processes([dict(executable='python3', argv=['python3'] + flags + ['/path with spaces/analyze-modern.py'])]))
+        self.assertFalse(blocking_processes([dict(executable='python3', argv=['python3', '-c', 'analyze-modern.py'])]))
+
+    def test_analyzers_require_versions_and_their_own_source_sets(self):
+        from evidence_analysis import compare_analysis
+        helper = ComparisonGuards()
+        baseline = helper.analysis(Path('/baseline'))
+        changed = helper.analysis(Path('/changed'))
+        changed['expected_sources'] = changed['completed_sources'] = ['/changed/src/new.cpp']
+        changed['results'][0]['source'] = '/changed/src/new.cpp'
+        changed['results'][0]['completed_sources'] = ['/changed/src/new.cpp']
+        self.assertTrue(compare_analysis(baseline, changed, Path('/baseline'), Path('/changed'), ['src/a.cpp'], ['src/new.cpp'])['equal'])
+        baseline['versions'] = []
+        changed['versions'] = []
+        with self.assertRaisesRegex(ValueError, 'version'):
+            compare_analysis(baseline, changed, Path('/baseline'), Path('/changed'), ['src/a.cpp'], ['src/new.cpp'])
+
+    def test_relocations_require_full_identity_and_real_unchanged_source_context(self):
+        from evidence_analysis import compare_analysis, finding_key
+        old = self.root / 'old'
+        new = self.root / 'new'
+        for path, text in ((old, 'original\n'), (new, '// heading\noriginal\n')):
+            (path / 'src').mkdir(parents=True)
+            (path / 'src/a.cpp').write_text(text)
+        helper = ComparisonGuards()
+        a, b = helper.analysis(old, 'clang-tidy'), helper.analysis(new, 'clang-tidy')
+        for manifest, root, offset in ((a, old, 0), (b, new, 11)):
+            f = dict(DiagnosticName='known', DiagnosticMessage=dict(FilePath=str(root / 'src/a.cpp'), FileOffset=offset, Message='known diagnostic'))
+            manifest.update(passed=False, findings=1)
+            manifest['results'][0].update(status='findings', findings=[f])
+        entry = dict(old=finding_key('clang-tidy', a['results'][0]['findings'][0], old),
+                     new=finding_key('clang-tidy', b['results'][0]['findings'][0], new),
+                     context='original', rationale='Unchanged diagnostic statement shifted by an inserted comment.')
+        self.assertFalse(compare_analysis(a, b, old, new, ['src/a.cpp'])['equal'])
+        self.assertTrue(compare_analysis(a, b, old, new, ['src/a.cpp'], relocations=[entry])['equal'])
+        for entries in ([dict(entry, context='invented')], [entry, entry]):
+            with self.assertRaisesRegex(ValueError, 'relocation'):
+                compare_analysis(a, b, old, new, ['src/a.cpp'], relocations=entries)
+
+    def test_managed_campaign_cannot_reuse_a_directory_without_config(self):
+        import evidence_campaign as campaign
+        folder = self.root / 'previous'
+        folder.mkdir()
+        (folder / 'CMakeCache.txt').write_text('leftover')
+        with self.assertRaisesRegex(ValueError, 'directory already exists'):
+            campaign.prepare(self.root, folder)
+
+    def test_atomic_bundle_install_refuses_existing_empty_directory(self):
+        from evidence_bundle import rename_exclusive
+        source, target = self.root / 'source', self.root / 'target'
+        source.mkdir()
+        target.mkdir()
+        (source / 'report').write_text('new')
+        with self.assertRaises(OSError):
+            rename_exclusive(source, target)
+        self.assertTrue(source.is_dir())
+        self.assertEqual(list(target.iterdir()), [])
+
+    def test_multiple_prior_attempts_keep_their_original_capture_files(self):
+        from evidence_campaign import history_files
+        folders = [self.root / 'attempt-one', self.root / 'attempt-two']
+        for folder in folders:
+            (folder / 'capture').mkdir(parents=True)
+            for name in ('config.json', 'manifest.json', 'capture-driver.log', 'capture/run.json'):
+                (folder / name).write_text('original ' + folder.name + ' ' + name)
+        paths = history_files(folders)
+        self.assertEqual(len(paths), 8)
+        self.assertEqual({p.parent for p in paths if p.name == 'run.json'}, {f / 'capture' for f in folders})
+        self.assertTrue(all(p.read_text().startswith('original ') for p in paths))
+        (folders[1] / 'capture/run.json').unlink()
+        with self.assertRaisesRegex(ValueError, 'Prior attempt metadata'):
+            history_files(folders)
+
+    def test_tooling_benchmark_uses_repository_identity_for_nested_archives(self):
+        import shutil
+        subprocess.run(['git', 'init', '-q', str(self.root)], check=True, timeout=30)
+        subprocess.run(['git', '-C', str(self.root), 'add', 'src', 'CMakeLists.txt'], check=True, timeout=30)
+        subprocess.run(['git', '-C', str(self.root), '-c', 'user.name=Evidence Test',
+                        '-c', 'user.email=evidence@example.invalid', 'commit', '-qm', 'fixture'], check=True, timeout=30)
+        ref = subprocess.check_output(['git', '-C', str(self.root), 'rev-parse', 'HEAD'], text=True, timeout=30).strip()
+        archive = self.root / 'build/baseline-src'
+        shutil.copytree(self.root / 'src', archive / 'src')
+        shutil.copyfile(self.root / 'CMakeLists.txt', archive / 'CMakeLists.txt')
+        output = self.root / 'measurement.json'
+        harness = Path(__file__).resolve().parents[1] / 'scripts/evidence_tool_bench.py'
+        subprocess.run([sys.executable, str(harness), str(archive), ref, 'git-inspection', str(output), str(self.root)],
+                       check=True, timeout=30)
+        result = json.loads(output.read_text())
+        self.assertEqual(result['files'], 2)
+        self.assertEqual(result['git_commands'], 3)

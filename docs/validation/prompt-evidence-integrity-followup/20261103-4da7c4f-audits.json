@@ -1,0 +1,50 @@
+{
+  "binding": "post-publication-audit-observation",
+  "campaign_id": "075e1a1e676b45fe8a93a1021e05c671",
+  "capture_run_id": "0b8ae9d30ab24b11a1de090905a1961f",
+  "bundle": "20261103-4da7c4f",
+  "inventory_sha256": "e4715960d0eb290b75c4846a7409339c8f709442d5018ccdba72f7f53988a7e7",
+  "verifier_sources": {
+    "scripts/validation_evidence.py": "48cb0dae750802860377338bb8a90ee276d35d9e266b2a01c3286b472c207668",
+    "scripts/evidence_bundle.py": "d260945175da54ecabbda644e6eb661869e49a800199c75d4df6cfd7746784b2",
+    "scripts/evidence_benchmarks.py": "f73478aa261510f785c8e255a85d8ad7d11123dd90a42863baf252f34c08db60",
+    "scripts/evidence_inputs.py": "09ff0b4d479b2db615ebe913787f0902742248db7dd50432ddafdb20ec3f2190",
+    "scripts/evidence_processes.py": "526ac72601ee055fb8e413595b1b3239cab1d26006186062992c06bd346af1a2",
+    "scripts/verified_sources.py": "640226f914f4539319c01703887b7532e40fca89b6f921e57210735343472f02"
+  },
+  "original": {
+    "exit": 0,
+    "result": {
+      "verified": true,
+      "eligible_current": true,
+      "schema_version": 4,
+      "campaign_id": "075e1a1e676b45fe8a93a1021e05c671",
+      "checks": 38,
+      "audit_inputs": 11089,
+      "reran_binaries": false
+    }
+  },
+  "relocated": {
+    "argv": [
+      "/usr/bin/python3",
+      "/private/tmp/codet-offline-audit-rh5_vngn/archived verifier/validation_evidence.py",
+      "verify-bundle",
+      "/private/tmp/codet-offline-audit-rh5_vngn/relocated audit bundle"
+    ],
+    "cwd": "/private/tmp/codet-offline-audit-rh5_vngn",
+    "exit": 0,
+    "stdout": "{\n  \"verified\": true,\n  \"eligible_current\": true,\n  \"schema_version\": 4,\n  \"campaign_id\": \"075e1a1e676b45fe8a93a1021e05c671\",\n  \"checks\": 38,\n  \"audit_inputs\": 11089,\n  \"reran_binaries\": false\n}\n",
+    "stderr": "python3: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead\n",
+    "result": {
+      "verified": true,
+      "eligible_current": true,
+      "schema_version": 4,
+      "campaign_id": "075e1a1e676b45fe8a93a1021e05c671",
+      "checks": 38,
+      "audit_inputs": 11089,
+      "reran_binaries": false
+    },
+    "interpreter": "Python 3.9.6",
+    "note": "Only the relocated bundle and verifier modules recovered from archived inputs were supplied; no working-tree modules were imported."
+  }
+}

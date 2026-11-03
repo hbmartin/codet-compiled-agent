@@ -15,6 +15,12 @@ class LinePrompt final : public LineOutputObserver {
   bool owned_ = false, dirty_ = false, visible_ = false, due_ = true;
   bool internal_ = false, explained_ = false;
   bool echo_update_ = false;
+  struct PendingSubmission {
+    InputLine line;
+    std::string tail, view;
+    bool tail_attempted = false, redraw = false;
+  };
+  std::optional<PendingSubmission> pending_;
   StreamDestination binding_;
   bool binding_initialized_ = false;
   BoundaryAccess boundaries_;
@@ -90,13 +96,13 @@ class LinePrompt final : public LineOutputObserver {
   DiagnosticResult separate() {
     if (dirty_) {
       Internal guard(internal_);
-      const bool written = output_.present({"\n"}, false, true);
-      if (output_.presentation_deferred())
+      const auto result = output_.present_result({"\n"}, false, true);
+      if (result == DiagnosticResult::deferred)
         return DiagnosticResult::deferred;
-      if (written)
+      if (result == DiagnosticResult::success)
         (void)boundaries().separate(terminal_);
       dirty_ = false;
-      if (!written) {
+      if (result == DiagnosticResult::failure) {
         visible_ = append_valid_ = false;
         painted_ = previous_bytes_ = 0;
         return DiagnosticResult::failure;
@@ -133,7 +139,7 @@ class LinePrompt final : public LineOutputObserver {
       due_ = true;
     }
   }
-  bool geometry() {
+  DiagnosticResult geometry() {
     size_t columns = test_columns_;
     const int descriptor = binding_.descriptor;
     if (descriptor >= 0) {
@@ -155,12 +161,15 @@ class LinePrompt final : public LineOutputObserver {
     columns = columns >= 10 ? std::min(columns - 1, size_t{256}) : 0;
     if (columns_ != columns) {
       // Never erase using geometry established before a resize.
-      if (!separate_for_flush())
-        return false;
+      const auto result = separate();
+      if (result != DiagnosticResult::success) {
+        due_ = result == DiagnosticResult::deferred;
+        return result;
+      }
       columns_ = columns;
       due_ = true;
     }
-    return true;
+    return DiagnosticResult::success;
   }
   std::string_view prefix(size_t width) const noexcept {
     if (input_.stale())
@@ -173,10 +182,10 @@ class LinePrompt final : public LineOutputObserver {
            : input_.kind() == RequestKind::approval ? "a> "
                                                     : "q> ";
   }
-  void paint() {
+  DiagnosticResult paint() {
     const bool keyboard = echo_update_ && (visible_ || dirty_);
     const auto present = [&](std::initializer_list<std::string_view> parts, bool newline) {
-      return output_.present(parts, newline, keyboard);
+      return output_.present_result(parts, newline, keyboard);
     };
     const bool compatible = append_valid_ && input_.appended_since(painted_revision_);
     if (!columns_ && compatible && visible_ && !input_.stale() &&
@@ -187,14 +196,17 @@ class LinePrompt final : public LineOutputObserver {
         if (!text.empty()) {
           dirty_ = true;
           boundaries().open(terminal_);
-          visible_ = present({text}, false);
+          const auto result = present({text}, false);
+          if (result == DiagnosticResult::deferred)
+            return result;
+          visible_ = result == DiagnosticResult::success;
         }
         if (visible_) {
           committed_ = end;
           painted_revision_ = input_.revision();
         } else
           append_valid_ = false;
-        return;
+        return visible_ ? DiagnosticResult::success : DiagnosticResult::failure;
       }
     }
     const size_t width = columns_ ? columns_ : 80;
@@ -226,15 +238,18 @@ class LinePrompt final : public LineOutputObserver {
                           std::memcmp(row_.data(), previous_row_.data(), previous_bytes_) == 0;
       if (append && bytes == previous_bytes_) {
         painted_revision_ = input_.revision();
-        return;
+        return DiagnosticResult::success;
       }
-      visible_ =
+      const auto result =
           append
               ? present({std::string_view(row_.data() + previous_bytes_, bytes - previous_bytes_)},
                         false)
               : present({was_dirty ? "\r" : "", std::string_view(spaces_.data(), painted_),
                          painted_ ? "\r" : "", std::string_view(row_.data(), bytes)},
                         false);
+      if (result == DiagnosticResult::deferred)
+        return result;
+      visible_ = result == DiagnosticResult::success;
       if (visible_) {
         painted_ = used;
         previous_bytes_ = bytes;
@@ -244,11 +259,17 @@ class LinePrompt final : public LineOutputObserver {
         painted_ = std::max(painted_, used);
       }
     } else {
-      if (was_dirty && !separate_for_flush())
-        return;
+      if (was_dirty) {
+        const auto result = separate();
+        if (result != DiagnosticResult::success)
+          return result;
+      }
       dirty_ = true;
       boundaries().open(terminal_);
-      visible_ = present({std::string_view(row_.data(), bytes)}, false);
+      const auto result = present({std::string_view(row_.data(), bytes)}, false);
+      if (result == DiagnosticResult::deferred)
+        return result;
+      visible_ = result == DiagnosticResult::success;
       if (visible_)
         committed_ = input_.input().committed_end();
       painted_ = 0;
@@ -256,6 +277,7 @@ class LinePrompt final : public LineOutputObserver {
     append_valid_ = visible_;
     if (visible_)
       painted_revision_ = input_.revision();
+    return visible_ ? DiagnosticResult::success : DiagnosticResult::failure;
   }
 
 public:
@@ -274,11 +296,14 @@ public:
   }
   LinePrompt(const LinePrompt &) = delete;
   LinePrompt &operator=(const LinePrompt &) = delete;
+  bool pending_presentation() const noexcept {
+    return due_ || dirty_;
+  }
   bool presenting() const noexcept override {
     return internal_;
   }
   bool before_output(int descriptor, const struct stat &value) override {
-    if (internal_)
+    if (internal_ || !output_.has_terminal_association())
       return false;
     if (binding_.descriptor < 0) {
       if (descriptor == STDOUT_FILENO)
@@ -309,6 +334,8 @@ public:
     owned_ = false;
   }
   void flush() {
+    if (pending_)
+      return;
     resolve_presentation();
     if (revision_ != input_.revision()) {
       revision_ = input_.revision();
@@ -331,7 +358,7 @@ public:
       return;
     inspection_due_ = false;
     output_.begin_presentation();
-    if (!geometry() || !due_)
+    if (geometry() != DiagnosticResult::success || !due_)
       return;
     Internal guard(internal_);
     if (!eligible()) {
@@ -341,12 +368,12 @@ public:
       } else if (owned_ && dirty_) {
         const auto parts = {std::string_view("\r"), std::string_view(spaces_.data(), painted_),
                             std::string_view("\r")};
-        const bool written = output_.present(parts, false, echo_update_);
-        if (output_.presentation_deferred())
+        const auto result = output_.present_result(parts, false, echo_update_);
+        if (result == DiagnosticResult::deferred)
           return;
         dirty_ = visible_ = false;
         painted_ = previous_bytes_ = 0;
-        if (written)
+        if (result == DiagnosticResult::success)
           (void)boundaries().separate(terminal_);
       }
       due_ = false;
@@ -357,9 +384,10 @@ public:
         return;
       dirty_ = true;
       boundaries().open(terminal_);
-      explained_ = output_.present({RequestInput::discard_instruction}, true);
-      if (output_.presentation_deferred())
+      const auto result = output_.present_result({RequestInput::discard_instruction}, true);
+      if (result == DiagnosticResult::deferred)
         return;
+      explained_ = result == DiagnosticResult::success;
       if (explained_) {
         dirty_ = false;
         (void)boundaries().separate(terminal_);
@@ -371,16 +399,16 @@ public:
         return;
       dirty_ = true;
       boundaries().open(terminal_);
-      guidance_due_ = !output_.present({input_.guidance()}, true);
-      if (output_.presentation_deferred())
+      const auto result = output_.present_result({input_.guidance()}, true);
+      if (result == DiagnosticResult::deferred)
         return;
+      guidance_due_ = result != DiagnosticResult::success;
       if (!guidance_due_) {
         dirty_ = false;
         (void)boundaries().separate(terminal_);
       }
     }
-    paint();
-    due_ = output_.presentation_deferred(); // Deferral is not a failed delivery attempt.
+    due_ = paint() == DiagnosticResult::deferred; // Deferral is not a failed delivery attempt.
     if (binding_.descriptor >= 0) {
       const auto state = boundaries().snapshot(STDOUT_FILENO, terminal_);
       if (!state.available || state.generation != boundary_generation_)
@@ -388,41 +416,94 @@ public:
     }
   }
   void append(char byte) {
-    if (!input_.append(byte))
+    if (pending_ || !input_.append(byte))
       return;
     Internal echo(echo_update_);
     due_ = true;
     flush();
   }
   void erase_character() {
-    if (input_.input().empty())
+    if (pending_ || input_.input().empty())
       return;
     input_.erase_character();
     Internal echo(echo_update_);
     due_ = true;
     flush();
   }
-  void submitted() {
+  DiagnosticResult submitted() {
     Internal guard(internal_);
-    if (owned_ && !columns_ && !input_.stale() &&
-        input_.input().committed_end() < input_.input().prepared().size()) {
-      // Typing holds valid prefixes; submission must expose the unresolved bytes.
-      flush();
-      if (output_.presentation_deferred())
-        return;
-      if (!columns_ && visible_ && committed_ <= input_.input().prepared().size())
-        (void)output_.present({input_.input().prepared().substr(committed_)}, false, true);
+    resolve_presentation();
+    observe_boundary();
+    if (boundary_busy_)
+      return DiagnosticResult::deferred;
+    const auto geometry_result = geometry();
+    if (geometry_result == DiagnosticResult::deferred)
+      return geometry_result;
+    if (geometry_result == DiagnosticResult::failure) {
+      if (pending_)
+        pending_->tail_attempted = true;
+      explained_ = visible_ = append_valid_ = false;
+      guidance_due_ = true;
+      return geometry_result;
     }
-    if (separate() == DiagnosticResult::deferred)
-      return;
+    if (!pending_) {
+      if (owned_ && !columns_ && !input_.stale() && visible_ &&
+          committed_ < input_.input().prepared().size()) {
+        const auto result =
+            output_.present_result({input_.input().prepared().substr(committed_)}, false, true);
+        if (result == DiagnosticResult::deferred)
+          return result;
+      }
+    } else if (!pending_->tail_attempted) {
+      const auto &text = visible_ && !pending_->redraw ? pending_->tail : pending_->view;
+      if (!pending_->tail.empty() || pending_->redraw) {
+        const auto result = output_.present_result({text}, false, true);
+        if (result == DiagnosticResult::deferred)
+          return result;
+        dirty_ = true;
+        boundaries().open(terminal_);
+      }
+      pending_->tail_attempted = true;
+    }
+    const auto result = separate();
+    if (result == DiagnosticResult::deferred)
+      return result;
     dirty_ = visible_ = explained_ = false;
     append_valid_ = false;
-    painted_ = 0;
-    due_ = true;
+    painted_ = previous_bytes_ = 0;
+    guidance_due_ = due_ = true;
+    return result;
+  }
+  bool submission_pending() const noexcept {
+    return pending_.has_value();
+  }
+  std::optional<InputLine> try_take() {
+    if (!pending_) {
+      std::string tail;
+      bool redraw = false;
+      if (owned_ && !columns_ && !input_.stale() && committed_ < input_.input().prepared().size()) {
+        const auto remaining = input_.input().prepared().size() - committed_;
+        redraw = remaining > 12; // At most three held UTF-8 bytes; otherwise use the bounded view.
+        if (!redraw)
+          tail = input_.input().prepared().substr(committed_);
+      }
+      auto view = input_.view(prefix(columns_ ? columns_ : 80), columns_ ? columns_ : 80);
+      pending_.emplace(
+          PendingSubmission{input_.take(), std::move(tail), std::move(view), false, redraw});
+    }
+    if (submitted() == DiagnosticResult::deferred)
+      return {};
+    if (!pending_)
+      throw Error("Pending input submission lost its owner");
+    auto line = std::move(pending_->line);
+    pending_.reset();
+    return line;
   }
   InputLine take() {
-    submitted();
-    return input_.take();
+    auto line = try_take();
+    if (!line)
+      throw Error("Input presentation is pending");
+    return std::move(*line);
   }
 };
 } // namespace codet::detail

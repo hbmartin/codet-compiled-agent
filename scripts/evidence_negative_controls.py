@@ -59,9 +59,18 @@ def run_controls(root, folder):
          'declared = context.pop("declared_artifacts", None)\n    context.pop("capture_run_id", None)', "ReplayIntegrity.test_every_compatibility_wrapper_preserves_captured_output"),
         ("sidecar-identity", "evidence_bundle", 'relative = "measurements/" + name + "/" + Path(artifact["path"]).name + "/" + filename',
          'relative = "measurements/" + name + "/" + Path(artifact["path"]).stem + "/" + filename', "ReplayIntegrity.test_measurement_artifacts_have_distinct_complete_sidecars"),
+        ("explicit-environment", "evidence_inputs", 'env = dict(manifest.get("environment", {"PATH": os.defpath}))',
+         'env = dict(os.environ); env.update(manifest.get("environment", {"PATH": os.defpath}))', "EvidenceV4.test_environment_is_exact_and_does_not_inherit_shell"),
+        ("argv-container", "validation_evidence", 'not isinstance(check["argv"], list) or ',
+         '', "EvidenceV4.test_string_vector_is_rejected_at_load"),
+        ("empty-analyzer-version", "evidence_analysis", 'not manifest["versions"] or ',
+         '', "EvidenceV4.test_analyzers_require_versions_and_their_own_source_sets"),
+        ("relocation-context", "evidence_analysis", 'diagnostic_context(tool, before, baseline_root, entry["context"]) != entry["context"] or\n                diagnostic_context(tool, after, changed_root, entry["context"]) != entry["context"] or',
+         'False or', "EvidenceV4.test_relocations_require_full_identity_and_real_unchanged_source_context"),
     ]
     results = []
     for name, module, before, after, target in cases:
+        print("Python control:", name, flush=True)
         directory = folder / ("control-" + name)
         directory.mkdir(exist_ok=True)
         source = root / "scripts" / (module + ".py")
@@ -79,6 +88,9 @@ def run_controls(root, folder):
                 raise ValueError("Control exit metadata mismatch")
             value.update(argv=argv, log=process.stdout + process.stderr)
             runs.append(value)
-        verify_unittest_result(*runs)
+        try:
+            verify_unittest_result(*runs)
+        except ValueError as error:
+            raise ValueError("Control " + name + ": " + repr(runs)) from error
         results.append(dict(name=name, test=target, baseline=runs[0], mutant=runs[1]))
     return results

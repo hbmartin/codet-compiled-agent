@@ -35,27 +35,37 @@ inline bool read_token(int fd, char &token) {
       fd, POLLIN, 0
     };
     const auto ready = ::poll(&descriptor, 1, 100);
-    if (ready > 0)
-      return ::read(fd, &token, 1) == 1;
+    if (ready > 0) {
+      const auto count = ::read(fd, &token, 1);
+      if (count < 0 && errno == EINTR)
+        continue;
+      return count == 1;
+    }
     if (ready < 0 && errno != EINTR)
       return false;
   }
   return false;
 }
-inline bool wait_helper(pid_t child, int &status) {
+struct HelperProcessOps {
+  pid_t (*wait)(pid_t, int *, int) = &::waitpid;
+  int (*signal)(pid_t, int) = &::kill;
+};
+inline bool wait_helper(pid_t child, int &status, const HelperProcessOps &ops = {}) {
+  if (child <= 0)
+    return false;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
   while (std::chrono::steady_clock::now() < deadline) {
-    const auto collected = ::waitpid(child, &status, WNOHANG);
+    const auto collected = ops.wait(child, &status, WNOHANG);
     if (collected == child)
       return true;
     if (collected < 0 && errno != EINTR)
       return false;
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
-  ::kill(child, SIGKILL);
+  ops.signal(child, SIGKILL);
   const auto cleanup = std::chrono::steady_clock::now() + std::chrono::seconds(1);
   while (std::chrono::steady_clock::now() < cleanup) {
-    if (::waitpid(child, &status, WNOHANG) != 0)
+    if (ops.wait(child, &status, WNOHANG) != 0)
       break;
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }

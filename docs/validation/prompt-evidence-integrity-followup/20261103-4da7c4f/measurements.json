@@ -1,0 +1,10 @@
+[
+  {
+    "artifact": "artifacts/benchmarks/measure.json",
+    "config": "build/prompt-evidence-integrity-20261103-run4/config.json",
+    "paths": [
+      "measurements/benchmarks/measure.json/samples.csv",
+      "measurements/benchmarks/measure.json/medians.csv"
+    ]
+  }
+]

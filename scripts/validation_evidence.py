@@ -1,7 +1,6 @@
 """Capture actual command outcomes and publish versioned, source-bound evidence."""
 
 import argparse
-import hashlib
 import json
 import os
 import signal
@@ -18,34 +17,27 @@ from evidence_inputs import (
     file_hashes,
     file_specs,
     output_hashes,
+    role_hashes,
+    sha256,
     source_inputs,
     verify_tools,
+    working_directory,
 )
 from evidence_processes import blocking_processes, require_quiet_processes  # noqa: F401
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return sha256(path)
 
 
 def production_hashes(root):
-    paths = [root / "CMakeLists.txt"]
-    for directory in ("include", "src", "cmake"):
-        paths.extend(p for p in (root / directory).rglob("*") if p.is_file())
-    return {str(p.relative_to(root)): digest(p) for p in sorted(paths) if p.exists()}
+    return role_hashes(root, "production")
 
 
 def validation_hashes(root):
-    """Validation inputs, deliberately separate from production equivalence."""
-    paths = [root / n for n in ("Makefile", ".clang-format", ".clang-tidy", ".go-version")]
-    paths.extend(root.glob("*lock.json"))
-    for directory in ("tests", "scripts", "checks", "requirements", ".github/workflows"):
-        paths.extend(p for p in (root / directory).rglob("*")
-                     if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc")
-    paths.extend((root / "docs/validation").glob("*.py"))
-    return {str(p.relative_to(root)): digest(p) for p in sorted(set(paths)) if p.exists()}
+    return role_hashes(root, "validation")
 
 
 def atomic_json(path, value):
@@ -67,6 +59,11 @@ def load_manifest(path):
     checks = value["checks"]
     if not checks:
         raise ValueError("At least one expected check is required")
+    if not isinstance(value.get("root"), str) or not value["root"]:
+        raise ValueError("Manifest root must be a path")
+    for env in [value.get("environment", {})] + [c.get("env", {}) for c in checks]:
+        if not isinstance(env, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in env.items()):
+            raise ValueError("Environment must contain explicit string settings")
     ids = set()
     for check in checks:
         name = check["id"]
@@ -79,8 +76,19 @@ def load_manifest(path):
         if len(set(artifact_names)) != len(artifact_names):
             raise ValueError("Duplicate artifact basename: " + name)
         ids.add(name)
-        if not check["argv"] or not all(isinstance(s, str) for s in check["argv"]):
+        if not isinstance(check["argv"], list) or not check["argv"] or not all(isinstance(s, str) for s in check["argv"]):
             raise ValueError("Command must be a nonempty argument vector")
+        if not check["argv"][0] or not isinstance(check.get("cwd", "."), str):
+            raise ValueError("Invalid command executable or working directory")
+        for field in ("source_inputs", "outputs", "artifacts"):
+            specs = check.get(field, [])
+            if not isinstance(specs, list) or any(not isinstance(s, dict) or not isinstance(s.get("path"), str) or not s["path"] for s in specs):
+                raise ValueError("Invalid " + field + " declaration: " + name)
+            if len({s["path"] for s in specs}) != len(specs):
+                raise ValueError("Duplicate " + field + " declaration: " + name)
+        for spec in check.get("artifacts", []):
+            if not isinstance(spec.get("kind"), str) or not spec["kind"] or not isinstance(spec.get("inputs", []), list) or any(not isinstance(v, str) or not v for v in spec.get("inputs", [])):
+                raise ValueError("Invalid artifact kind or input declaration: " + name)
         if check.get("policy", "required") not in ("required", "observation"):
             raise ValueError("Unknown outcome policy")
     return value
@@ -135,10 +143,12 @@ def capture(manifest_path, folder, *, campaign_id=None):
     manifest = load_manifest(manifest_path)
     root = Path(manifest["root"]).resolve()
     verify_tools(manifest)
+    if manifest.get("single_attempt") and (folder / "run.json").exists():
+        raise ValueError("Managed campaign capture already attempted; use a fresh campaign")
     folder.mkdir(parents=True, exist_ok=True)
     signature = digest(manifest_path)
     run = dict(schema_version=SCHEMA_VERSION, id=uuid.uuid4().hex,
-               campaign_id=campaign_id or uuid.uuid4().hex, manifest_sha256=signature)
+               campaign_id=campaign_id or uuid.uuid4().hex, manifest_sha256=signature, canonical_root=str(root))
     atomic_json(folder / "run.json", run)
     results = {}
     policies = {c["id"]: c.get("policy", "required") for c in manifest["checks"]}
@@ -149,9 +159,11 @@ def capture(manifest_path, folder, *, campaign_id=None):
         context = _context(root, run, name, before, validation)
         context["declared_artifacts"] = check.get("artifacts", [])
         record = dict(schema_version=SCHEMA_VERSION, id=name, run_id=run["id"], campaign_id=run["campaign_id"],
-                      argv=check["argv"], env=check.get("env", {}), cwd=str(Path(check.get("cwd", root)).resolve()),
+                      argv=check["argv"], env=check.get("env", {}), cwd=working_directory(manifest, check),
                       manifest_sha256=signature, source_before=before, validation_before=validation,
                       started_ns=time.time_ns(), exit=None, outcome="not-run", log=log.name, artifacts=[], outputs=[])
+        record["canonical_cwd"] = record["cwd"]
+        record["cwd_spec"] = check.get("cwd", ".")
         log.write_text("")
         phase = "artifact"
         try:
@@ -169,10 +181,11 @@ def capture(manifest_path, folder, *, campaign_id=None):
                 record["build_inputs_before"] = source_inputs(root, check.get("source_inputs", [{"path": "."}]))
                 record["external_inputs_before"] = directory_hashes(root, check.get("directory_inputs", []))
                 env = environment(manifest, check)
-                record["effective_environment"] = dict(manifest.get("environment", {"PATH": os.defpath}), **check.get("env", {}))
+                env["CODET_EVIDENCE_CONTEXT"] = json.dumps(context)
+                record["effective_environment"] = dict(env)
                 phase = "launch"
                 try:
-                    record["executable"] = executable(check["argv"], env)
+                    record["executable"] = executable(check["argv"], env, record["cwd"])
                 except FileNotFoundError as error:
                     if "python_version" not in check:
                         raise
@@ -220,7 +233,7 @@ def capture(manifest_path, folder, *, campaign_id=None):
             record["error"] = str(error)
             with log.open("a") as stream:
                 stream.write(str(error) + "\n")
-        except (ValueError, KeyError) as error:
+        except (ValueError, KeyError, subprocess.SubprocessError) as error:
             record["outcome"] = "artifact-error"
             record["error"] = str(error)
             with log.open("a") as stream:
@@ -261,7 +274,7 @@ def validate_capture(manifest_path, folder):
         if (record.get("schema_version") != SCHEMA_VERSION or record["id"] != check["id"] or
                 record["run_id"] != run["id"] or record["campaign_id"] != run["campaign_id"] or
                 record["argv"] != check["argv"] or record.get("env") != check.get("env", {}) or
-                record["cwd"] != str(Path(check.get("cwd", root)).resolve()) or
+                record["cwd"] != working_directory(manifest, check) or
                 record["manifest_sha256"] != signature or
                 record["source_before"] != current or record["source_after"] != current or
                 record.get("validation_before") != validation or record.get("validation_after") != validation or
@@ -278,9 +291,12 @@ def validate_capture(manifest_path, folder):
                 record.get("build_inputs_after") != record["build_inputs_before"]):
             raise ValueError("Build source inputs changed: " + check["id"])
         env = environment(manifest, check)
-        if record.get("effective_environment") != dict(manifest.get("environment", {"PATH": os.defpath}), **check.get("env", {})):
+        context = _context(root, run, check["id"], current, validation)
+        context["declared_artifacts"] = check.get("artifacts", [])
+        env["CODET_EVIDENCE_CONTEXT"] = json.dumps(context)
+        if record.get("effective_environment") != env:
             raise ValueError("Effective check environment changed: " + check["id"])
-        if record.get("executable") != executable(check["argv"], env):
+        if record.get("executable") != executable(check["argv"], env, record["cwd"]):
             raise ValueError("Check executable changed: " + check["id"])
         if record.get("executed_argv") != [record["executable"]["path"]] + check["argv"][1:]:
             raise ValueError("Executed argument vector mismatch: " + check["id"])
@@ -308,6 +324,9 @@ def validate_capture(manifest_path, folder):
 
 def _protect_archives(path):
     if path.name in ("diagnostic-record-lifecycle-followup.json", "prompt-recovery-evidence-followup.json"):
+        raise ValueError("Historical evidence must remain unchanged; select a new output")
+    if (path.exists() or path.is_symlink()) and any(p.name == "validation" and p.parent.name == "docs"
+            for p in (*path.absolute().parents, *path.resolve().parents)):
         raise ValueError("Historical evidence must remain unchanged; select a new output")
 
 
@@ -341,8 +360,9 @@ def main():
     args = parser.parse_args()
     if args.operation == "verify-bundle":
         from evidence_bundle import verify_bundle
-        print(json.dumps(verify_bundle(args.manifest), indent=2))
-        return 0
+        result = verify_bundle(args.manifest)
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("verified") and result.get("eligible_current") else 1
     if args.folder is None:
         parser.error("capture/publish/bundle requires a folder")
     if args.operation == "capture":
@@ -355,8 +375,14 @@ def main():
     if args.operation == "bundle":
         publish_bundle(args.manifest, args.folder, args.output)
     else:
-        publish(args.manifest, args.folder, args.output,
-                json.loads(args.benchmark.read_text()) if args.benchmark else None)
+        # A hard link installs the completed temporary report without a clobber race.
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=args.output.parent) as temporary:
+            staged = Path(temporary) / "report.json"
+            _protect_archives(args.output)
+            publish(args.manifest, args.folder, staged,
+                    json.loads(args.benchmark.read_text()) if args.benchmark else None)
+            os.link(staged, args.output)
     return 0
 
 

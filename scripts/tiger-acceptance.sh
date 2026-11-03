@@ -3,8 +3,12 @@
 set -eu
 umask 077
 bundle_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-report_dir=${CODET_ACCEPTANCE_REPORT:-"$PWD/codet-acceptance-$(date +%Y%m%d-%H%M%S)"}
-mkdir -p "$report_dir"
+if [ -n "${CODET_ACCEPTANCE_REPORT:-}" ]; then
+  report_dir=$CODET_ACCEPTANCE_REPORT
+  mkdir "$report_dir"
+else
+  report_dir=$(mktemp -d "$PWD/codet-acceptance.XXXXXX")
+fi
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/codet-acceptance.XXXXXX")
 trap 'rm -rf -- "$test_root"' EXIT HUP INT TERM
 export CODET_HOME="$test_root/state"

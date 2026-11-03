@@ -37,12 +37,21 @@ def main():
         print(dep['name'], dep['version'], dep['sha256'])
       for patch in lock.get('patches',[]):
         path=dest/'tiger-patches'/patch['name']/patch['path']
-        if not path.exists():
-          if args.offline and not patch.get('local_file'): raise SystemExit('Missing patch: '+str(path))
+        if not path.exists() or hashlib.sha256(path.read_bytes()).hexdigest()!=patch['sha256']:
+          if args.offline and not patch.get('local_file'): raise SystemExit('Missing or corrupt patch: '+str(path))
+          data=(ROOT/patch['local_file']).read_bytes() if patch.get('local_file') else urllib.request.urlopen(patch['url'],timeout=60).read()
+          if hashlib.sha256(data).hexdigest()!=patch['sha256']:
+            raise SystemExit('Checksum mismatch: '+str(path))
           path.parent.mkdir(parents=True,exist_ok=True)
-          path.write_bytes((ROOT/patch['local_file']).read_bytes() if patch.get('local_file') else urllib.request.urlopen(patch['url'],timeout=60).read())
-        if hashlib.sha256(path.read_bytes()).hexdigest()!=patch['sha256']:
-          raise SystemExit('Checksum mismatch: '+str(path))
+          import os
+          import tempfile
+          with tempfile.NamedTemporaryFile(dir=path.parent,delete=False) as stream:
+            temporary=pathlib.Path(stream.name)
+            stream.write(data)
+          try:
+            os.replace(temporary,path)
+          finally:
+            temporary.unlink(missing_ok=True)
 
 if __name__ == '__main__':
     main()

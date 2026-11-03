@@ -69,16 +69,18 @@ extern "C" int fcntl(int descriptor, int command, ...) {
   case F_GETLK:
   case F_SETLK:
   case F_SETLKW:
-#ifdef F_GETPATH
-  case F_GETPATH:
-#endif
 #ifdef F_OFD_GETLK
   case F_OFD_GETLK:
   case F_OFD_SETLK:
   case F_OFD_SETLKW:
 #endif
-    result = native(descriptor, command, va_arg(arguments, void *));
+    result = native(descriptor, command, va_arg(arguments, struct flock *));
     break;
+#ifdef F_GETPATH
+  case F_GETPATH:
+    result = native(descriptor, command, va_arg(arguments, char *));
+    break;
+#endif
   default:
     // Never guess a variadic argument type for an unobserved platform command.
     va_end(arguments);

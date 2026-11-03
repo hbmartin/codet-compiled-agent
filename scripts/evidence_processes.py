@@ -25,7 +25,32 @@ def script_identity(name):
 
 
 def needs_arguments(name):
-    return Path(name).name.lower().startswith("python") or matches_native(name) or script_identity(name)
+    base = Path(name).name
+    return (base.lower().startswith("python") or matches_native(name) or script_identity(name) or
+            (len(base) in (15, 16) and any(base.startswith(n + "-") for n in NATIVE_BLOCKERS)))
+
+
+def python_program(arguments):
+    values = list(arguments)
+    while values:
+        flag = values.pop(0)
+        if flag == "--":
+            return values
+        if flag.startswith("-c"):
+            return []
+        if flag.startswith("-m"):
+            return ["-m"] + ([flag[2:]] if len(flag) > 2 else []) + values
+        if not flag.startswith("-") or flag == "-":
+            return [flag] + values
+        if flag in ("-X", "-W", "--check-hash-based-pycs"):
+            if not values:
+                raise ValueError("Missing Python switch operand")
+            values.pop(0)
+        elif flag.startswith(("-X", "-W", "--check-hash-based-pycs=")):
+            continue
+        elif not all(c in "bBdEhiIOPqRsSuvVx" for c in flag[1:]):
+            raise ValueError("Ambiguous Python switch: " + flag)
+    return []
 
 
 def blocking_processes(processes):
@@ -35,9 +60,7 @@ def blocking_processes(processes):
         if matches_native(executable) or (argv and matches_native(argv[0])) or script_identity(executable):
             found.append(process)
         elif executable.lower().startswith("python") or (argv and Path(argv[0]).name.lower().startswith("python")):
-            arguments = list(argv[1:])
-            while arguments and arguments[0] in ("-u", "-B", "-E", "-I"):
-                arguments.pop(0)
+            arguments = python_program(argv[1:])
             if arguments and (Path(arguments[0]).name in SCRIPT_BLOCKERS or
                               arguments[:2] in (["-m", "unittest"], ["-m", "pytest"])):
                 found.append(process)
@@ -92,13 +115,15 @@ def read_argv(pid, platform=None):
 def process_snapshot():
     if sys.platform != "darwin" and not sys.platform.startswith("linux"):
         raise ValueError("Process inspection unsupported on " + sys.platform)
-    identities = subprocess.check_output(["ps", "-axo", "pid=,comm="], text=True, timeout=5)
+    identities = subprocess.check_output(["ps", "-axo", "pid=,stat=,comm="], text=True, timeout=5)
     processes = []
     for line in identities.splitlines():
-        fields = line.strip().split(None, 1)
-        if len(fields) != 2 or not fields[0].isdigit():
+        fields = line.strip().split(None, 2)
+        if len(fields) != 3 or not fields[0].isdigit():
             raise ValueError("Malformed process identity: " + line)
-        pid, executable = fields
+        pid, state, executable = fields
+        if state.startswith("Z"):
+            continue
         arguments = [executable]
         if needs_arguments(executable):
             try:

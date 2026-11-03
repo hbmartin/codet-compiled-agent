@@ -1,0 +1,83 @@
+[1/60] Building C object CMakeFiles/codet_text.dir/src/text_compat.c.o
+[2/60] Linking C static library libcodet_text.a
+[3/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/failure.cpp.o
+[4/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/capture_catalog.cpp.o
+[5/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/support.cpp.o
+[6/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/reliability.cpp.o
+[7/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/platform.cpp.o
+[8/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/output.cpp.o
+[9/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/config.cpp.o
+[10/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/provider.cpp.o
+[11/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/patch.cpp.o
+[12/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/hooks.cpp.o
+[13/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/state.cpp.o
+[14/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/interaction.cpp.o
+[15/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/tool_registry.cpp.o
+[16/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/images.cpp.o
+/Volumes/Pro2T/codet-compiled-agent/src/modern/images.cpp:81:76: warning: implicit conversion from 'const unsigned long' to 'double' may lose precision [-Wimplicit-int-float-conversion]
+   81 |   const double scale = detail == "original" ? 1.0 : std::min(1.0, 1280.0 / std::max(width, height));
+      |                                                                          ~ ^~~~~~~~~~~~~~~~~~~~~~~
+/Volumes/Pro2T/codet-compiled-agent/src/modern/images.cpp:82:60: warning: implicit conversion from 'size_t' (aka 'unsigned long') to 'double' may lose precision [-Wimplicit-int-float-conversion]
+   82 |   const size_t w = std::max(size_t{1}, static_cast<size_t>(width * scale)),
+      |                                                            ^~~~~ ~
+/Volumes/Pro2T/codet-compiled-agent/src/modern/images.cpp:83:60: warning: implicit conversion from 'size_t' (aka 'unsigned long') to 'double' may lose precision [-Wimplicit-int-float-conversion]
+   83 |                h = std::max(size_t{1}, static_cast<size_t>(height * scale));
+      |                                                            ^~~~~~ ~
+3 warnings generated.
+[17/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/tools.cpp.o
+[18/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/computer.cpp.o
+[19/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/instructions.cpp.o
+[20/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/artifacts.cpp.o
+[21/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/inspection.cpp.o
+[22/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/context.cpp.o
+[23/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/prompts.cpp.o
+[24/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/agent.cpp.o
+[25/60] Building CXX object CMakeFiles/codet_tests.dir/tests/terminal_resources_test.cpp.o
+[26/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/cli.cpp.o
+[27/60] Building CXX object CMakeFiles/codet_tests.dir/tests/cli_diagnostics_test.cpp.o
+[28/60] Building CXX object CMakeFiles/codet_tests.dir/tests/pr17_test.cpp.o
+[29/60] Building CXX object CMakeFiles/codet_tests.dir/tests/test_main.cpp.o
+[30/60] Building CXX object CMakeFiles/codet_tests.dir/tests/catalog_recovery_test.cpp.o
+[31/60] Building CXX object CMakeFiles/codet_tests.dir/tests/pr18_test.cpp.o
+[32/60] Building CXX object CMakeFiles/codet_tests.dir/tests/modernization_test.cpp.o
+[33/60] Building CXX object CMakeFiles/codet_tests.dir/tests/checkpoint_test.cpp.o
+[34/60] Building CXX object CMakeFiles/codet_tests.dir/tests/small_core_test.cpp.o
+[35/60] Building CXX object CMakeFiles/codet_tests.dir/tests/foundation_test.cpp.o
+[36/60] Building CXX object CMakeFiles/codet_tests.dir/tests/runtime_test.cpp.o
+/Volumes/Pro2T/codet-compiled-agent/tests/runtime_test.cpp:524:16: warning: ignoring return value of function declared with 'nodiscard' attribute [-Wunused-result]
+  524 |   EXPECT_THROW(work.get(), Error);
+      |                ^~~~~~~~
+/Volumes/Pro2T/codet-compiled-agent/.deps/googletest/googletest/include/gtest/gtest.h:1792:21: note: expanded from macro 'EXPECT_THROW'
+ 1792 |   GTEST_TEST_THROW_(statement, expected_exception, GTEST_NONFATAL_FAILURE_)
+      |                     ^~~~~~~~~
+/Volumes/Pro2T/codet-compiled-agent/.deps/googletest/googletest/include/gtest/internal/gtest-internal.h:1369:54: note: expanded from macro 'GTEST_TEST_THROW_'
+ 1369 |       GTEST_SUPPRESS_UNREACHABLE_CODE_WARNING_BELOW_(statement);            \
+      |                                                      ^~~~~~~~~
+/Volumes/Pro2T/codet-compiled-agent/.deps/googletest/googletest/include/gtest/internal/gtest-internal.h:1311:5: note: expanded from macro 'GTEST_SUPPRESS_UNREACHABLE_CODE_WARNING_BELOW_'
+ 1311 |     statement;                                                    \
+      |     ^~~~~~~~~
+1 warning generated.
+[37/60] Building CXX object CMakeFiles/codet_tests.dir/tests/review_test.cpp.o
+[38/60] Building CXX object CMakeFiles/codet_tests.dir/tests/core_test.cpp.o
+[39/60] Building CXX object CMakeFiles/codet_tests.dir/tests/remaining_test.cpp.o
+[40/60] Building CXX object CMakeFiles/codet_tests.dir/tests/tool_contract_test.cpp.o
+[41/60] Building CXX object CMakeFiles/codet_tests.dir/tests/followup_test.cpp.o
+[42/60] Building CXX object CMakeFiles/codet_tests.dir/tests/output_test.cpp.o
+[43/60] Building CXX object CMakeFiles/codet_tests.dir/tests/final_review_test.cpp.o
+[44/60] Building CXX object CMakeFiles/codet_tests.dir/tests/process_policy_test.cpp.o
+[45/60] Building CXX object deps/schema/CMakeFiles/nlohmann_json_schema_validator.dir/src/smtp-address-validator.cpp.o
+[46/60] Building CXX object CMakeFiles/codet_tests.dir/tests/diagnostic_header_test.cpp.o
+[47/60] Building CXX object CMakeFiles/codet_tests.dir/tests/prompt_test.cpp.o
+[48/60] Building CXX object deps/schema/CMakeFiles/nlohmann_json_schema_validator.dir/src/json-schema-draft7.json.cpp.o
+[49/60] Building CXX object deps/schema/CMakeFiles/nlohmann_json_schema_validator.dir/src/json-uri.cpp.o
+[50/60] Building CXX object deps/schema/CMakeFiles/nlohmann_json_schema_validator.dir/src/json-patch.cpp.o
+[51/60] Building CXX object deps/schema/CMakeFiles/nlohmann_json_schema_validator.dir/src/string-format-check.cpp.o
+[52/60] Building CXX object deps/gtest/googlemock/CMakeFiles/gmock.dir/src/gmock-all.cc.o
+[53/60] Building CXX object CMakeFiles/codet_tests.dir/tests/context_history_test.cpp.o
+[54/60] Building CXX object deps/schema/CMakeFiles/nlohmann_json_schema_validator.dir/src/json-validator.cpp.o
+[55/60] Linking CXX static library deps/schema/libnlohmann_json_schema_validator.a
+[56/60] Linking CXX static library libcodet_core.a
+[57/60] Building CXX object deps/gtest/googletest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+[58/60] Linking CXX static library lib/libgtest.a
+[59/60] Linking CXX static library lib/libgmock.a
+[60/60] Linking CXX executable codet_tests
