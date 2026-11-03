@@ -24,6 +24,7 @@ class CliOutput {
   bool failed_ = false;
   bool cancelled_ = false;
   bool deferred_ = false;
+  int associated_terminal_ = -1;
 
 public:
   CliOutput() noexcept : writer_(std::cout), native_required_(true) {}
@@ -39,6 +40,13 @@ public:
   }
   StreamDestination presentation_destination() const noexcept {
     return writer_.destination();
+  }
+  // Forwarding streams may declare physical routing without changing their I/O backend.
+  void associate_terminal(int descriptor) noexcept {
+    associated_terminal_ = descriptor;
+  }
+  bool has_terminal_association() const noexcept {
+    return associated_terminal_ >= 0 || writer_.destination().descriptor >= 0;
   }
   int status(int prior) const noexcept {
     return prior ? prior : cancelled_ ? 130 : failed_ ? 1 : 0;
@@ -62,19 +70,23 @@ public:
   bool presentation_deferred() const noexcept {
     return deferred_;
   }
-  bool present(std::initializer_list<std::string_view> parts, bool newline = false,
-               bool keyboard = false) {
+  DiagnosticResult present_result(std::initializer_list<std::string_view> parts,
+                                  bool newline = false, bool keyboard = false) {
     try {
       const auto result = writer_.write_result(parts, newline, true);
       deferred_ |= result == DiagnosticResult::deferred;
       if (!keyboard)
         failed_ |= result == DiagnosticResult::failure;
-      return result == DiagnosticResult::success;
+      return result;
     } catch (const std::ios_base::failure &) {
       if (!keyboard)
         failed_ = true;
-      return false;
+      return DiagnosticResult::failure;
     }
+  }
+  bool present(std::initializer_list<std::string_view> parts, bool newline = false,
+               bool keyboard = false) {
+    return present_result(parts, newline, keyboard) == DiagnosticResult::success;
   }
   void required(std::initializer_list<std::string_view> parts, bool newline = true,
                 bool reporting = false) {

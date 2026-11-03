@@ -199,6 +199,7 @@ TEST_F(NativeRecordLifecycle, InjectedStdoutSharesSeparatorWithNativeStderr) {
       std::cout.rdbuf(old);
     }
   } restore{std::cout.rdbuf(&forward)};
+  output.associate_terminal(STDOUT_FILENO);
   capture([&] { line.emplace(input, output, io, prompt, identity, 80); });
   line->acquire();
   draft();
@@ -641,3 +642,61 @@ TEST(DiagnosticReservations, AliasesResetAndOldFailuresRetainTheirOwnership) {
   EXPECT_EQ(destinations.active(1), 0u);
 }
 } // namespace
+TEST_F(NativeRecordLifecycle, DeferredSubmissionRetainsRawBytesAndOriginalRequest) {
+  struct winsize size {};
+  size.ws_row = 24;
+  ASSERT_EQ(::ioctl(slave, TIOCSWINSZ, &size), 0);
+  input.open({"session", "first", 1}, detail::RequestKind::approval);
+  capture([&] {
+    line->append('a');
+    line->append(static_cast<char>(0xe9));
+  });
+  (void)read();
+  DeliveryGate gate;
+  bool deferred = false, delivered = false;
+  std::optional<detail::InputLine> submitted;
+  capture([&] {
+    std::thread worker([&] {
+      if (!gate.wait_for_start())
+        return;
+      test::native_io_metrics.interrupt_fd = STDERR_FILENO;
+      test::native_io_metrics.before_output = DeliveryGate::output;
+      test::native_io_metrics.output_context = &gate;
+      delivered = detail::immediate_stderr({"held diagnostic"});
+      test::native_io_metrics = {};
+    });
+    JoinDelivery join{gate, worker};
+    gate.begin();
+    submitted = line->try_take();
+    deferred = !submitted && line->submission_pending();
+    input.close();
+    input.open({"session", "replacement", 1}, detail::RequestKind::approval);
+    line->append('y'); // Pending submission owns editing until its display attempt completes.
+    gate.release();
+    worker.join();
+    submitted = line->try_take();
+    line->flush();
+  });
+  ASSERT_TRUE(submitted);
+  ASSERT_TRUE(submitted->request);
+  EXPECT_TRUE(deferred);
+  EXPECT_TRUE(delivered);
+  EXPECT_FALSE(gate.timed_out);
+  EXPECT_EQ(submitted->text, std::string("a\xe9"));
+  EXPECT_EQ(submitted->request->request, "first");
+  EXPECT_EQ(submitted->action(), detail::InputAction::discard);
+  EXPECT_THAT(read(), HasSubstr("\\xE9"));
+  EXPECT_FALSE(output.failed());
+  EXPECT_TRUE(input.input().empty());
+}
+TEST_F(NativeRecordLifecycle, MemoryOutputDoesNotClaimAnUnfinishedNativeRow) {
+  line.reset();
+  std::ostringstream memory;
+  detail::CliOutput injected(memory);
+  line.emplace(input, injected, io, prompt, identity, 80);
+  line->acquire();
+  line->append('a');
+  EXPECT_EQ(memory.str(), "codet> a");
+  EXPECT_TRUE(capture([&] { return detail::immediate_stderr({"warning"}); }));
+  EXPECT_EQ(read(), "warning\r\n");
+}

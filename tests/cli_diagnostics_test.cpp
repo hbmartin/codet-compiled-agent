@@ -528,6 +528,7 @@ struct LineFixture {
   struct stat tty {};
   std::optional<detail::LinePrompt> line;
   explicit LineFixture(size_t columns = 80) {
+    output.associate_terminal(STDOUT_FILENO);
     tty.st_mode = S_IFCHR;
     tty.st_dev = 1;
     tty.st_rdev = 2;
@@ -797,11 +798,14 @@ TEST(LinePrompt, FailedRowsAndGuidanceUseTheSharedRecoveryNewline) {
     buffer.keep = keep;
     std::ostream stream(&buffer);
     detail::CliOutput output(stream);
+    output.associate_terminal(STDOUT_FILENO);
+    output.associate_terminal(STDOUT_FILENO);
     Cancellation cancel;
     detail::IoContext io(cancel);
     detail::RequestInputController input;
     input.open({"s", "q", 1}, detail::RequestKind::question);
     struct stat tty {};
+    output.associate_terminal(STDOUT_FILENO);
     tty.st_mode = S_IFCHR;
     const std::string prompt = "codet> ";
     detail::LinePrompt line(input, output, io, prompt, tty, 20);
@@ -816,10 +820,13 @@ TEST(LinePrompt, FailedRowsAndGuidanceUseTheSharedRecoveryNewline) {
       Partial buffer;
       std::ostream stream(&buffer);
       detail::CliOutput output(stream);
+      output.associate_terminal(STDOUT_FILENO);
+      output.associate_terminal(STDOUT_FILENO);
       Cancellation cancel;
       detail::IoContext io(cancel);
       detail::RequestInputController input;
       struct stat tty {};
+      output.associate_terminal(STDOUT_FILENO);
       tty.st_mode = S_IFCHR;
       const std::string prompt = "codet> ";
       detail::LinePrompt line(input, output, io, prompt, tty, 80);
@@ -904,12 +911,15 @@ TEST(LinePrompt, InstructionDeliveryIsIndependentOfPromptDelivery) {
     buffer.fail = failure;
     std::ostream stream(&buffer);
     detail::CliOutput output(stream);
+    output.associate_terminal(STDOUT_FILENO);
+    output.associate_terminal(STDOUT_FILENO);
     Cancellation cancel;
     detail::IoContext io(cancel);
     detail::RequestInputController input;
     input.append('x');
     input.open({"s", "r", 1}, detail::RequestKind::approval);
     struct stat tty {};
+    output.associate_terminal(STDOUT_FILENO);
     tty.st_mode = S_IFCHR;
     const std::string prompt = "codet> ";
     detail::LinePrompt line(input, output, io, prompt, tty, 80);
@@ -935,6 +945,7 @@ TEST(LinePrompt, KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure) {
   } buffer;
   std::ostream stream(&buffer);
   detail::CliOutput output(stream);
+  output.associate_terminal(STDOUT_FILENO);
   Cancellation cancel;
   detail::IoContext io(cancel);
   detail::RequestInputController input;
@@ -2100,3 +2111,17 @@ TEST_F(CliDiagnosticsTest, PersistentStreamFailureStillFinishesNoticeAndPreserve
             "Session repair backup candidate (publication unconfirmed): persistent\n");
 }
 } // namespace
+TEST(ProcessHelperSafety, InvalidPidsNeverReachWaitOrSignal) {
+  test::HelperProcessOps ops;
+  ops.wait = +[](pid_t, int *, int) -> pid_t {
+    ADD_FAILURE() << "unexpected wait";
+    return -1;
+  };
+  ops.signal = +[](pid_t, int) {
+    ADD_FAILURE() << "unexpected signal";
+    return -1;
+  };
+  int status = 0;
+  EXPECT_FALSE(test::wait_helper(0, status, ops));
+  EXPECT_FALSE(test::wait_helper(-1, status, ops));
+}
