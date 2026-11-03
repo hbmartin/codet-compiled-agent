@@ -140,7 +140,7 @@ TEST_F(NativeRecordLifecycle, DeferredEraseRetainsWorkUntilDiagnosticCompletion)
     capture([&] { line->append('a'); });
     EXPECT_THAT(read(), EndsWith("codet> a"));
     DeliveryGate gate;
-    bool delivered = false, deferred = false;
+    bool delivered = false, deferred = false, cleanup_retained = false;
     unsigned inspected = 0;
     capture([&] {
       std::thread worker([&] {
@@ -160,6 +160,7 @@ TEST_F(NativeRecordLifecycle, DeferredEraseRetainsWorkUntilDiagnosticCompletion)
       metrics.stat_context = &gate;
       line->erase_character();
       deferred = output.presentation_deferred();
+      cleanup_retained = line->pending_presentation();
       metrics = {};
       gate.release();
       worker.join();
@@ -169,6 +170,7 @@ TEST_F(NativeRecordLifecycle, DeferredEraseRetainsWorkUntilDiagnosticCompletion)
       metrics = {};
     });
     EXPECT_TRUE(deferred);
+    EXPECT_TRUE(cleanup_retained);
     EXPECT_TRUE(delivered);
     EXPECT_FALSE(gate.timed_out);
     EXPECT_GT(inspected, 0u);

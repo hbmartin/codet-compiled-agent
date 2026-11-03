@@ -47,7 +47,7 @@ public:
   explicit NativeRead(const fs::path &path) {
     int flags = O_RDONLY | O_NOFOLLOW | O_NONBLOCK;
 #ifdef O_CLOEXEC
-    flags |= O_CLOEXEC;
+    flags = static_cast<int>(static_cast<unsigned>(flags) | static_cast<unsigned>(O_CLOEXEC));
 #endif
     fd_ = ::open(path.c_str(), flags);
     try {

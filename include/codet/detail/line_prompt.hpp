@@ -139,7 +139,7 @@ class LinePrompt final : public LineOutputObserver {
       due_ = true;
     }
   }
-  bool geometry() {
+  DiagnosticResult geometry() {
     size_t columns = test_columns_;
     const int descriptor = binding_.descriptor;
     if (descriptor >= 0) {
@@ -161,12 +161,15 @@ class LinePrompt final : public LineOutputObserver {
     columns = columns >= 10 ? std::min(columns - 1, size_t{256}) : 0;
     if (columns_ != columns) {
       // Never erase using geometry established before a resize.
-      if (!separate_for_flush())
-        return false;
+      const auto result = separate();
+      if (result != DiagnosticResult::success) {
+        due_ = result == DiagnosticResult::deferred;
+        return result;
+      }
       columns_ = columns;
       due_ = true;
     }
-    return true;
+    return DiagnosticResult::success;
   }
   std::string_view prefix(size_t width) const noexcept {
     if (input_.stale())
@@ -293,6 +296,9 @@ public:
   }
   LinePrompt(const LinePrompt &) = delete;
   LinePrompt &operator=(const LinePrompt &) = delete;
+  bool pending_presentation() const noexcept {
+    return due_ || dirty_;
+  }
   bool presenting() const noexcept override {
     return internal_;
   }
@@ -352,7 +358,7 @@ public:
       return;
     inspection_due_ = false;
     output_.begin_presentation();
-    if (!geometry() || !due_)
+    if (geometry() != DiagnosticResult::success || !due_)
       return;
     Internal guard(internal_);
     if (!eligible()) {
@@ -430,6 +436,16 @@ public:
     observe_boundary();
     if (boundary_busy_)
       return DiagnosticResult::deferred;
+    const auto geometry_result = geometry();
+    if (geometry_result == DiagnosticResult::deferred)
+      return geometry_result;
+    if (geometry_result == DiagnosticResult::failure) {
+      if (pending_)
+        pending_->tail_attempted = true;
+      explained_ = visible_ = append_valid_ = false;
+      guidance_due_ = true;
+      return geometry_result;
+    }
     if (!pending_) {
       if (owned_ && !columns_ && !input_.stale() && visible_ &&
           committed_ < input_.input().prepared().size()) {
@@ -472,6 +488,8 @@ public:
     }
     if (submitted() == DiagnosticResult::deferred)
       return {};
+    if (!pending_)
+      throw Error("Pending input submission lost its owner");
     auto line = std::move(pending_->line);
     pending_.reset();
     return line;
