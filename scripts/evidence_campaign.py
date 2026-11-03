@@ -1,7 +1,6 @@
 """Resolve portable replay settings and produce verifiable follow-up evidence."""
 
 import argparse
-import csv
 import json
 import os
 import platform
@@ -24,18 +23,19 @@ from validation_evidence import atomic_json, digest, require_quiet_processes, wr
 
 CASES = {
     "line": ["allocation-positive", "geometry-positive", "busy", "native-busy", "editing", "editing-basic",
-             "native-editing", "deletion", "unchanged", "deferred-tail", "native-boundary", "native-flush-boundary", "native-unchanged"],
+             "native-editing", "deletion", "unchanged", "deferred-tail", "native-boundary", "native-flush-boundary", "native-unchanged", "pending-submission"],
+    "tooling": ["hashing", "git-inspection"],
     "output": ["write-positive", "stat-positive", "flags-positive", "bounds-positive", "diagnostics-amplified",
                "diagnostics-standalone-amplified", "diagnostics-pipe-amplified"],
     "export": ["small", "large"],
 }
 HARNESS_FILES = ["tests/line_input_bench.cpp", "tests/output_bench.cpp", "tests/export_bench.cpp",
-                 "tests/descriptor_bench_metrics.hpp", "tests/native_stat_interposer.hpp", "tests/native_symbol.hpp", "tests/temp.hpp"]
+                 "tests/descriptor_bench_metrics.hpp", "tests/native_stat_interposer.hpp", "tests/native_symbol.hpp", "tests/temp.hpp", "scripts/evidence_tool_bench.py"]
 TOOLS = ("clang-tidy", "cppcheck", "clang-analyzer")
 
 
-def command(argv, *, cwd=None, timeout=30):
-    return subprocess.check_output([str(s) for s in argv], cwd=cwd, text=True, timeout=timeout).strip()
+def command(argv, *, cwd=None, timeout=30, env=None):
+    return subprocess.check_output([str(s) for s in argv], cwd=cwd, text=True, timeout=timeout, env=env).strip()
 
 
 def prepare(root, folder, baseline=None, check_python=None, python39=None, analysis_python=None,
@@ -43,10 +43,12 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     from evidence_inputs import executable
     root = root.resolve()
     folder = (root / folder).resolve()
-    if (folder / "config.json").exists():
-        raise ValueError("Campaign configuration already exists; choose a fresh folder")
+    if folder.exists():
+        raise ValueError("Campaign directory already exists; choose a fresh folder")
     template_path = template_path or Path(__file__).resolve().parents[1] / "checks/validation-replay.json"
     template = json.loads(template_path.read_text())
+    if template.get("schema_version") != 4:
+        raise ValueError("Unsupported replay template version")
     tools = {}
     def tool(name, candidate, version="--version", optional=False):
         path = shutil.which(str(candidate))
@@ -55,7 +57,9 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
                 return str(candidate)
             raise ValueError("Required tool unavailable: " + name + ": " + str(candidate))
         identity = executable([path], {"PATH": os.defpath})
-        banner = command([identity["path"], version], timeout=5) if version else "No supported version probe; executable digest recorded"
+        probe_env = dict(PATH=str(Path(identity["path"]).parent) + os.pathsep + os.defpath,
+                         SEMGREP_ENABLE_VERSION_CHECK="0", SEMGREP_SEND_METRICS="off", SEMGREP_LOG_FILE=str(root / "build/evidence-semgrep-probe.log"))
+        banner = command([identity["path"], version], timeout=5, env=probe_env) if version else "No supported version probe; executable digest recorded"
         tools[name] = dict(identity, version=banner)
         return identity["path"]
     python = tool("check-python", check_python or sys.executable)
@@ -63,17 +67,40 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     python39 = tool("python39", python39 or template["python39"], optional=True)
     native = {n: tool(n, n, version=None if n == "ar" and sys.platform == "darwin" else "--version")
               for n in ("git", "cmake", "ctest", "ninja", "make", "tar", "ar", "cc", "c++")}
+    for name in ("pkg-config", "ranlib", "ld", "strip"):
+        if shutil.which(name):
+            tool(name, name, version=None if sys.platform == "darwin" and name != "pkg-config" else "--version")
     if ci_run:
         tool("gh", "gh")
     analyzer_env = dict(CLANG_TIDY=tool("clang-tidy", clang_tidy or shutil.which("clang-tidy-18") or shutil.which("clang-tidy") or "clang-tidy-18"),
                         CPPCHECK=tool("cppcheck", cppcheck or root / "build/analysis-tools/cppcheck/bin/cppcheck"))
+    # Record transitive tool invocations, not just the top-level Python/Make binary.
+    if (root / "build/lint-venv/bin").exists():
+        for name, option in (("clang-format", "--version"), ("ruff", "--version"), ("zizmor", "--version")):
+            tool(name, root / "build/lint-venv/bin" / name, option)
+        for name, option in (("shfmt", "--version"), ("actionlint", "-version")):
+            tool(name, root / "build/lint-tools/bin" / name, option)
+        tool("shellcheck", "shellcheck")
+        tool("semgrep", root / "build/semgrep-venv/bin/pysemgrep")
+        tool("shell", "/bin/sh", version=None)
+        go = root / "build/go/bin/go"
+        if go.exists() or shutil.which("go"):
+            tool("go", go if go.exists() else "go", "version")
     baseline = command([native["git"], "-C", root, "rev-parse", (baseline or template["baseline"]) + "^{commit}"])
     folder.mkdir(parents=True, exist_ok=True)
     builds = {name: str(folder / relative) for name, relative in template["builds"].items()}
+    if any(Path(value).exists() for value in builds.values()):
+        raise ValueError("Managed build directory already exists")
     environment = dict(PATH=os.pathsep.join(dict.fromkeys([str(Path(t["path"]).parent) for t in tools.values()] + os.defpath.split(os.pathsep))),
-                       LANG=os.environ.get("LANG", "en_US.UTF-8" if sys.platform == "darwin" else "C.UTF-8"))
+                       LANG="en_US.UTF-8" if sys.platform == "darwin" else "C.UTF-8",
+                       HOME=str(folder / "home"), TMPDIR=str(folder / "tmp"))
+    environment.update(SEMGREP_ENABLE_VERSION_CHECK="0", SEMGREP_SEND_METRICS="off", SEMGREP_LOG_FILE=str(folder / "semgrep.log"))
+    if sys.platform == "darwin":
+        environment["SSL_CERT_FILE"] = "/opt/homebrew/etc/ca-certificates/cert.pem"
+    for name in ("home", "tmp"):
+        (folder / name).mkdir()
     config_path = folder / "config.json"
-    config = dict(root=str(root), folder=str(folder), baseline=baseline, tools=tools, environment=environment,
+    config = dict(schema_version=4, root=str(root), folder=str(folder), baseline=baseline, tools=tools, environment=environment,
                   builds=builds, validated_ref=command([native["git"], "-C", root, "rev-parse", "HEAD"]),
                   ci_run=ci_run, analyzer_env=analyzer_env, check_python=python, python39=python39,
                   analysis_python=analysis_python, cases=CASES, sets=template["benchmark"]["sets"],
@@ -87,14 +114,15 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     def add(name, argv, requires=(), policy="required", timeout=600, artifacts=(), **extra):
         checks.append(dict(id=name, argv=[str(a) for a in argv], requires=list(requires), policy=policy,
                            timeout_seconds=timeout, artifacts=list(artifacts),
-                           directory_inputs=[".deps/" + n for n in ("googletest", "json", "tomlplusplus", "json-schema-validator")], **extra))
+                           directory_inputs=([".deps/" + n for n in ("googletest", "json", "tomlplusplus", "json-schema-validator")]
+                                             if name.endswith(("-configure", "-build")) else []), **extra))
     def producer(name, action, requires=(), inputs=(), timeout=600, **extra):
         names = [rel(config_path)] + list(inputs)
         add(name, [python, "scripts/evidence_campaign.py", "produce", config_path, action], requires,
             timeout=timeout, artifacts=[dict(path=rel(folder / (action + ".json")), kind=action, inputs=names)], **extra)
     def configure(source, build, kind):
         argv = [native["cmake"], "-S", source, "-B", build, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=" + kind,
-                "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", "-DCODET_DEPENDENCY_ROOT=" + str(root / ".deps"),
+                "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", "-DCMAKE_MAKE_PROGRAM=" + native["ninja"], "-DCODET_DEPENDENCY_ROOT=" + str(root / ".deps"),
                 "-DCMAKE_C_COMPILER=" + native["cc"], "-DCMAKE_CXX_COMPILER=" + native["c++"],
                 "-DPython3_EXECUTABLE=" + python]
         if sys.platform == "darwin":
@@ -146,23 +174,29 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
             outputs=configured_outputs(build), source_inputs=specs)
         add(variant + "-build", [native["cmake"], "--build", build, "--target", "codet_line_input_bench", "codet_output_bench", "codet_export_bench", "-j4"],
             [variant + "-configure"], source_inputs=specs,
-            outputs=[dict(path=rel(build / n), archive=False) for n in ("codet_line_input_bench", "codet_output_bench", "codet_export_bench")])
+            outputs=[dict(path=rel(build / n), archive=False) for n in ("codet_line_input_bench", "codet_output_bench", "codet_export_bench", "libcodet_core.a")])
         probe = rel(build / "analysis/selftest/selftest.json")
         add(variant + "-selftest", [analysis_python, source / "scripts/analyze-modern.py", "--build-dir", build, "--selftest", "--jobs", "4"],
             [variant + "-configure"], env=analyzer_env, source_inputs=specs, outputs=[dict(path=probe)])
         add(variant + "-analysis", [python, "scripts/evidence_campaign.py", "produce", config_path, "analysis-" + variant],
             [variant + "-selftest"], policy="observation", timeout=1800, env=analyzer_env, source_inputs=specs,
             artifacts=[dict(path=rel(folder / ("analysis-" + variant + ".json")), kind="analysis-" + variant, inputs=[rel(config_path), probe])])
-    producer("static-comparison", "analysis", ["baseline-analysis", "changed-analysis"], [rel(folder / ("analysis-" + v + ".json")) for v in ("baseline", "changed")])
+    producer("static-comparison", "analysis", ["baseline-analysis", "changed-analysis"], [rel(folder / ("analysis-" + v + ".json")) for v in ("baseline", "changed")] + ["checks/analyzer-relocations.json"])
+    producer("semgrep-controls", "semgrep-controls", ["semgrep"], timeout=300)
     producer("python-negative-controls", "negative-controls", ["runner-tests"])
     producer("native-negative-controls", "native-negative-controls", ["debug-build"], [rel(debug / "compile_commands.json"), rel(debug / "build.ninja")], timeout=2100)
-    producer("benchmarks", "measure", ["baseline-build", "changed-build", "static-comparison", "python-negative-controls", "native-negative-controls"],
-             [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")], timeout=1800)
+    harness_inputs = list(HARNESS_FILES) + [rel(folder / (v + "-release" ) / n) for v in ("baseline", "changed") for n in ("compile_commands.json", "build.ninja", "libcodet_core.a")]
+    harness_outputs = [dict(path=rel(folder / (v + "-harness") / n), archive=False) for v in ("baseline", "changed") for n in ("codet_line_input_bench", "codet_output_bench", "codet_export_bench")]
+    producer("benchmark-harness", "harness", ["baseline-build", "changed-build"], harness_inputs, timeout=1800, outputs=harness_outputs,
+             file_inputs=[dict(path=rel(folder / (v + "-release/libcodet_core.a")), archive=False) for v in ("baseline", "changed")])
+    producer("benchmarks", "measure", ["benchmark-harness", "static-comparison", "python-negative-controls", "native-negative-controls", "semgrep-controls"],
+             [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")] + [rel(folder / "harness.json")], timeout=1800)
     metadata_inputs = [rel(Path(b) / "CMakeCache.txt") for b in builds.values()] + [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")]
+    producer("platform-availability", "platforms")
     producer("build-metadata", "build-info", ["debug-build", "asan-build", "tsan-build", "cross-build", "baseline-build", "changed-build"], metadata_inputs)
     if ci_run:
         producer("ubuntu", "ci", timeout=1800)
-    atomic_json(folder / "manifest.json", dict(root=str(root), baseline=baseline, environment=environment, tools=tools, checks=checks))
+    atomic_json(folder / "manifest.json", dict(schema_version=4, root=str(root), baseline=baseline, single_attempt=True, environment=environment, tools=tools, checks=checks))
     return folder / "manifest.json"
 
 
@@ -184,13 +218,13 @@ def measure(config):
     root, folder = Path(config["root"]).resolve(), Path(config["folder"]).resolve()
     require_quiet_processes()
     baseline = verify_git_source(root, folder / "baseline-src", config["baseline"])
-    harnesses = {v: {n: digest((folder / "baseline-src" if v == "baseline" else root) / n) for n in HARNESS_FILES}
-                 for v in ("baseline", "changed")}
-    if harnesses["baseline"] != harnesses["changed"]:
-        raise ValueError("Benchmark harness sources differ")
-    binaries = {v: {h: executable_provenance(folder / (v + "-release") / executable)
-                   for h, executable in dict(line="codet_line_input_bench", output="codet_output_bench", export="codet_export_bench").items()}
-                for v in ("baseline", "changed")}
+    harness_build = json.loads((folder / "harness.json").read_text())["payload"]
+    harnesses = {v: harness_build["harness_hashes"] for v in ("baseline", "changed")}
+    for name, value in harness_build["harness_hashes"].items():
+        if digest(folder / "harness-src" / name) != value:
+            raise ValueError("Declared benchmark harness changed")
+    binaries = {v: {h: executable_provenance(Path(record["executable"]))
+                   for h, record in programs.items()} for v, programs in harness_build["variants"].items()}
     configurations = {}
     for variant in ("baseline", "changed"):
         cache = folder / (variant + "-release") / "CMakeCache.txt"
@@ -212,7 +246,12 @@ def measure(config):
                     for variant in variants:
                         result = folder / "measurement.json"
                         result.unlink(missing_ok=True)
-                        argv = [binaries[variant][harness]["path"], case, str(result)] + (["file"] if harness == "export" else [])
+                        if harness == "tooling":
+                            source = folder / "baseline-src" if variant == "baseline" else root
+                            ref = config["baseline"] if variant == "baseline" else config["validated_ref"]
+                            argv = [config["check_python"], str(folder / "harness-src/scripts/evidence_tool_bench.py"), str(source), ref, case, str(result)]
+                        else:
+                            argv = [binaries[variant][harness]["path"], case, str(result)] + (["file"] if harness == "export" else [])
                         run = subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=180)
                         if run.returncode:
                             raise ValueError("Benchmark failed: " + repr((argv, run.returncode, run.stderr)))
@@ -238,7 +277,7 @@ def measure(config):
             if executable_provenance(Path(executable["path"])) != executable:
                 raise ValueError("Benchmark executable changed during measurement")
     return dict(**verified, rows=rows, summary=summary, invocations=invocations, baseline=baseline,
-                harness_hashes=harnesses, executables=binaries, configurations=configurations, host=dict(platform=platform.platform(), machine=platform.machine()))
+                harness_hashes=harnesses, executables=binaries, configurations=configurations, harness_build=harness_build, host=dict(platform=platform.platform(), machine=platform.machine()))
 
 
 def produce(config_path, action, *, output=None):
@@ -299,6 +338,21 @@ def produce(config_path, action, *, output=None):
             verify_git_validation(root, source, config["baseline"])
         expected = [str(p.relative_to(source)) for p in application_sources(source)]
         manifests = {t: json.loads((build / "analysis" / t / "manifest.json").read_text()) for t in TOOLS}
+        # Older analyzer runners keep plist file indices; resolve using their exact report.
+        import plistlib
+        for result in manifests["clang-analyzer"]["results"]:
+            if not result["findings"]:
+                continue
+            argv = result["command"]
+            report = Path(argv[argv.index("-o") + 1])
+            files = plistlib.loads(report.read_bytes()).get("files", [])
+            def resolved(value, files=files):
+                if isinstance(value, dict):
+                    return {key: files[item] if key == "file" and isinstance(item, int) else resolved(item) for key, item in value.items()}
+                if isinstance(value, list):
+                    return [resolved(item) for item in value]
+                return value
+            result["findings"] = resolved(result["findings"])
         for manifest in manifests.values():
             verify_analysis(manifest, source, expected)
         if run.returncode not in (0, 1):
@@ -313,13 +367,39 @@ def produce(config_path, action, *, output=None):
         paths = [folder / ("analysis-" + v + ".json") for v in ("baseline", "changed")]
         inputs.extend(str(p.relative_to(root)) for p in paths)
         values = [json.loads(p.read_text())["payload"] for p in paths]
+        registry_path = root / "checks/analyzer-relocations.json"
+        inputs.append(str(registry_path.relative_to(root)))
+        registry = json.loads(registry_path.read_text())
+        from validation_evidence import production_hashes
+        if registry.get("entries") and (registry.get("baseline") != production_hashes(folder / "baseline-src") or registry.get("changed") != production_hashes(root)):
+            raise ValueError("Analyzer relocation registry source mismatch")
         payload = []
         for tool in TOOLS:
-            value = compare_analysis(values[0]["manifests"][tool], values[1]["manifests"][tool], folder / "baseline-src", root, expected)
+            value = compare_analysis(values[0]["manifests"][tool], values[1]["manifests"][tool], folder / "baseline-src", root,
+                                     [str(p.relative_to(folder / "baseline-src")) for p in application_sources(folder / "baseline-src")], expected,
+                                     [entry for entry in registry.get("entries", []) if entry["tool"] == tool])
             if not value["equal"]:
                 raise ValueError("Analyzer findings differ: " + repr(value))
             payload.append(value)
+    elif action == "semgrep-controls":
+        from evidence_semgrep_controls import run_controls
+        payload = run_controls(root, folder, config["tools"]["semgrep"]["path"])
+    elif action == "platforms":
+        payload = dict(host=sys.platform, native_tiger=False, ubuntu_runtime="not available locally", tools=[])
+        for name in ("docker", "podman", "powerpc-apple-darwin8-g++"):
+            path = shutil.which(name)
+            result = dict(tool=name, path=path, outcome="unavailable")
+            if path:
+                run = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=5)
+                result.update(outcome="available", exit=run.returncode, stdout=run.stdout, stderr=run.stderr)
+            payload["tools"].append(result)
+    elif action == "harness":
+        from evidence_harness import build_harnesses
+        inputs.extend(HARNESS_FILES)
+        inputs.extend(str((folder / (v + "-release") / n).relative_to(root)) for v in ("baseline", "changed") for n in ("compile_commands.json", "build.ninja", "libcodet_core.a"))
+        payload = build_harnesses(root, folder, HARNESS_FILES, config["tools"]["ninja"]["path"])
     elif action == "measure":
+        inputs.append(str((folder / "harness.json").relative_to(root)))
         inputs.extend(str((folder / (v + "-release/CMakeCache.txt")).relative_to(root)) for v in ("baseline", "changed"))
         payload = measure(config)
     elif action == "negative-controls":
@@ -367,19 +447,12 @@ def produce(config_path, action, *, output=None):
     save(action, payload)
 
 
-def write_csv(path, rows):
-    with path.open("w", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=sorted(set().union(*(r.keys() for r in rows))), lineterminator="\n")
-        writer.writeheader()
-        writer.writerows(rows)
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
     replay = sub.add_parser("prepare")
     replay.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
-    replay.add_argument("--folder", type=Path, default=Path("build/validation-provenance-followup"))
+    replay.add_argument("--folder", type=Path, default=Path("build/prompt-evidence-integrity-followup"))
     replay.add_argument("--baseline")
     replay.add_argument("--check-python", default=sys.executable)
     replay.add_argument("--python39")
@@ -390,7 +463,7 @@ def main():
     replay.add_argument("--cppcheck")
     producer = sub.add_parser("produce")
     producer.add_argument("config", type=Path)
-    producer.add_argument("kind", choices=("archive", "analysis", "analysis-baseline", "analysis-changed", "measure", "negative-controls", "native-negative-controls", "cross-placeholder", "build-info", "ci", "history"))
+    producer.add_argument("kind", choices=("archive", "harness", "platforms", "semgrep-controls", "analysis", "analysis-baseline", "analysis-changed", "measure", "negative-controls", "native-negative-controls", "cross-placeholder", "build-info", "ci", "history"))
     producer.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.action == "prepare":

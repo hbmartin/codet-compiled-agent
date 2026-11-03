@@ -139,7 +139,7 @@ int main(int argc, char **argv) {
                       mode == "native-rebind" || mode == "native-unchanged";
   const bool warnings =
       mode == "warning-empty" || mode == "warning-new" || mode == "warning-failed-idle";
-  const bool deferred = mode == "deferred-tail";
+  const bool deferred = mode == "deferred-tail" || mode == "pending-submission";
   const bool editing = mode == "editing" || mode == "editing-basic" ||
                        mode == "editing-patterned" || mode == "native-editing";
   int child = -1;

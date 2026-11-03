@@ -1,6 +1,5 @@
 """Verify raw benchmark samples, source identity, and negative controls."""
 
-import hashlib
 import math
 import statistics
 import subprocess
@@ -12,30 +11,16 @@ from validation_evidence import digest, production_hashes, validation_hashes
 def verify_git_source(repository, source, ref):
     resolved = subprocess.check_output(["git", "-C", str(repository), "rev-parse", ref + "^{commit}"],
                                        text=True, timeout=30).strip()
-    names = subprocess.check_output(["git", "-C", str(repository), "ls-tree", "-r", "--name-only", resolved],
-                                    text=True, timeout=30).splitlines()
-    expected = {}
-    for name in names:
-        if name == "CMakeLists.txt" or name.startswith(("include/", "src/", "cmake/")):
-            data = subprocess.check_output(["git", "-C", str(repository), "show", resolved + ":" + name], timeout=30)
-            expected[name] = hashlib.sha256(data).hexdigest()
+    from evidence_inputs import git_hashes
+    expected = git_hashes(repository, resolved, "production")
     if not expected or expected != production_hashes(source):
         raise ValueError("Baseline source does not match recorded Git commit")
     return dict(ref=resolved, production_hashes=expected)
 
 
 def verify_git_validation(repository, root, ref):
-    names = subprocess.check_output(["git", "-C", str(repository), "ls-tree", "-r", "--name-only", ref], text=True, timeout=30).splitlines()
-    pins = {"Makefile", ".clang-format", ".clang-tidy", ".go-version"}
-    expected = {}
-    for name in names:
-        parts = Path(name).parts
-        selected = (name in pins or (len(parts) == 1 and name.endswith("lock.json")) or
-                    name.startswith(("tests/", "scripts/", "checks/", "requirements/", ".github/workflows/")) or
-                    (len(parts) == 3 and name.startswith("docs/validation/") and name.endswith(".py")))
-        if selected and "__pycache__" not in parts and not name.endswith(".pyc"):
-            data = subprocess.check_output(["git", "-C", str(repository), "show", ref + ":" + name], timeout=30)
-            expected[name] = hashlib.sha256(data).hexdigest()
+    from evidence_inputs import git_hashes
+    expected = git_hashes(repository, ref, "validation")
     if not expected or expected != validation_hashes(root):
         raise ValueError("Validation inputs do not match recorded Git commit")
     return expected
