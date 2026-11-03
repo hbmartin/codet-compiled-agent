@@ -1,22 +1,58 @@
 """Immutable audit bundles, independently verifiable without a checkout."""
 
 import csv
+import ctypes
 import json
 import os
+import re
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
 from evidence_benchmarks import verify_samples
-from evidence_inputs import file_specs
+from evidence_inputs import file_specs, role_selected, write_csv
 
 
-def _csv(path, rows):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=sorted(set().union(*(r.keys() for r in rows))), lineterminator="\n")
-        writer.writeheader()
-        writer.writerows(rows)
+def safe_member(folder, name):
+    if not isinstance(name, str) or not name or "\\" in name:
+        raise ValueError("Invalid audit lookup path: " + repr(name))
+    path = Path(name)
+    if path.is_absolute() or any(part in (".", "..") for part in name.split("/")):
+        raise ValueError("Invalid audit lookup path: " + name)
+    current = folder
+    for part in path.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("Audit lookup contains symlink: " + name)
+    return current
+
+
+def valid_digest(value):
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise ValueError("Invalid audit digest")
+    return value
+
+
+_csv = write_csv
+
+
+def rename_exclusive(source, destination):
+    library = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == "darwin":
+        rename = library.renamex_np
+        rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        args = [os.fsencode(source), os.fsencode(destination), 4]  # SDK RENAME_EXCL
+    elif sys.platform.startswith("linux"):
+        rename = library.renameat2
+        rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        args = [-100, os.fsencode(source), -100, os.fsencode(destination), 1]  # AT_FDCWD, RENAME_NOREPLACE
+    else:
+        raise ValueError("Atomic immutable publication unsupported on " + sys.platform)
+    rename.restype = ctypes.c_int
+    if rename(*args):
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code), str(destination))
 
 
 def publish_audit_bundle(manifest_path, folder, destination):
@@ -66,7 +102,7 @@ def publish_audit_bundle(manifest_path, folder, destination):
                         relative = "measurements/" + name + "/" + Path(artifact["path"]).name + "/" + filename
                         _csv(stage / relative, envelope["payload"][key])
                         paths.append(relative)
-                    sidecars.append(dict(artifact=target, config=spec.get("inputs", [None])[0], paths=paths))
+                    sidecars.append(dict(artifact=target, config=next(iter(spec.get("inputs", [])), None), paths=paths))
         atomic_json(stage / "inputs.json", index)
         atomic_json(stage / "measurements.json", sidecars)
         atomic_json(stage / "report.json", value)
@@ -77,19 +113,26 @@ def publish_audit_bundle(manifest_path, folder, destination):
         verify_bundle(stage)
         if destination.exists():
             raise ValueError("Bundle destination already exists")
-        os.rename(stage, destination)
+        rename_exclusive(stage, destination)
     return value
 
 
 def verify_bundle(folder):
     """Audit recorded identities and archived material; does not rerun binaries."""
-    from validation_evidence import SCHEMA_VERSION, digest
-    inventory = json.loads((folder / "inventory.json").read_text())
+    from validation_evidence import SCHEMA_VERSION, digest, load_manifest
+    inventory = json.loads(safe_member(folder, "inventory.json").read_text())
+    if not isinstance(inventory, dict):
+        raise ValueError("Invalid audit inventory")
+    for name, value in inventory.items():
+        valid_digest(value)
+        safe_member(folder, name)
+    if any(p.is_symlink() for p in folder.rglob("*")):
+        raise ValueError("Audit bundle contains symlink")
     actual = {str(p.relative_to(folder)): digest(p) for p in sorted(folder.rglob("*"))
               if p.is_file() and p != folder / "inventory.json"}
     if actual != inventory:
         raise ValueError("Audit inventory mismatch")
-    manifest = json.loads((folder / "manifest.json").read_text())
+    manifest = load_manifest(folder / "manifest.json")
     run = json.loads((folder / "capture/run.json").read_text())
     report = json.loads((folder / "report.json").read_text())
     if run.get("schema_version") != SCHEMA_VERSION or run["manifest_sha256"] != digest(folder / "manifest.json"):
@@ -99,11 +142,14 @@ def verify_bundle(folder):
     index = json.loads((folder / "inputs.json").read_text())
     entries = {}
     for item in index:
+        valid_digest(item["sha256"])
+        if item["check_id"] not in {c["id"] for c in manifest["checks"]}:
+            raise ValueError("Unknown audit input producer")
         key = (item["check_id"], item["role"], item["path"])
         if key in entries:
             raise ValueError("Duplicate audit input")
         if item["storage"] is not None:
-            if item["storage"] != "inputs/" + item["sha256"] or digest(folder / item["storage"]) != item["sha256"]:
+            if item["storage"] != "inputs/" + item["sha256"] or digest(safe_member(folder, item["storage"])) != item["sha256"]:
                 raise ValueError("Audit input digest mismatch")
         entries[key] = item
     required = {}
@@ -118,12 +164,12 @@ def verify_bundle(folder):
         record = json.loads((folder / "capture" / (name + ".json")).read_text())
         if (record["id"] != name or record["run_id"] != run["id"] or record["campaign_id"] != run["campaign_id"] or
                 record["manifest_sha256"] != run["manifest_sha256"] or record["argv"] != check["argv"] or
-                record["env"] != check.get("env", {}) or record["cwd"] != str(Path(check.get("cwd", manifest["root"])).resolve()) or
+                record["env"] != check.get("env", {}) or record["cwd"] != record.get("canonical_cwd") or
                 record["source_before"] != report["production_hashes"] or record["source_after"] != record["source_before"] or
                 record["validation_before"] != report["validation_hashes"] or record["validation_after"] != record["validation_before"] or
                 record["build_inputs_before"] != record["build_inputs_after"] or record["input_before"] != record["input_after"] or
                 record["external_inputs_before"] != record["external_inputs_after"] or
-                record["log_sha256"] != digest(folder / "capture" / record["log"])):
+                record["log_sha256"] != digest(safe_member(folder, "capture/" + record["log"]))):
             raise ValueError("Audit check provenance mismatch: " + name)
         if any(record[k] != published[k] for k in record):
             raise ValueError("Audit report/check mismatch: " + name)
@@ -137,6 +183,13 @@ def verify_bundle(folder):
         records[name] = record
         if set(record["build_inputs_before"]) != {s["path"] for s in check.get("source_inputs", [{"path": "."}])}:
             raise ValueError("Audit source coverage mismatch")
+        if set(record["input_before"]) != set(file_specs(check)):
+            raise ValueError("Audit declared input coverage mismatch: " + name)
+        current_sources = record["build_inputs_before"].get(".")
+        if current_sources is not None:
+            for label, hashes in (("production", report["production_hashes"]), ("validation", report["validation_hashes"])):
+                if {path: value for path, value in current_sources.items() if role_selected(path, label)} != hashes:
+                    raise ValueError("Audit archived " + label + " fingerprint mismatch: " + name)
         if set(record["external_inputs_before"]) != set(check.get("directory_inputs", [])):
             raise ValueError("Audit external input coverage mismatch")
         if [o["path"] for o in record["outputs"]] != [o["path"] for o in check.get("outputs", [])]:
@@ -152,7 +205,7 @@ def verify_bundle(folder):
             raise ValueError("Audit artifact coverage mismatch")
         for position, spec in enumerate(check.get("artifacts", [])):
             saved = record["artifacts"][position]
-            path = folder / "artifacts" / name / Path(spec["path"]).name
+            path = safe_member(folder, "artifacts/" + name + "/" + Path(spec["path"]).name)
             if saved["path"] != spec["path"] or digest(path) != saved["sha256"]:
                 raise ValueError("Audit artifact digest mismatch")
             envelope = json.loads(path.read_text())
@@ -176,16 +229,29 @@ def verify_bundle(folder):
     if len(measurements) != len(expected_measurements) or {m["artifact"] for m in measurements} != expected_measurements:
         raise ValueError("Audit measurement coverage mismatch")
     for measurement in measurements:
-        envelope = json.loads((folder / measurement["artifact"]).read_text())
-        config = entries[(envelope["check_id"], "input", measurement["config"])]
-        settings = json.loads((folder / config["storage"]).read_text())
+        artifact_path = safe_member(folder, measurement["artifact"])
+        if measurement["artifact"] not in expected_measurements:
+            raise ValueError("Unknown measurement artifact")
+        envelope = json.loads(artifact_path.read_text())
+        config = entries.get((envelope["check_id"], "input", measurement.get("config")))
+        if not config or not config.get("storage"):
+            raise ValueError("Measurement configuration missing or unarchived: " + measurement["artifact"])
+        try:
+            settings = json.loads(safe_member(folder, config["storage"]).read_text())
+            if not all(k in settings for k in ("cases", "sets", "measured")):
+                raise ValueError("Missing measurement settings")
+        except (ValueError, TypeError) as error:
+            raise ValueError("Malformed measurement configuration: " + measurement["artifact"]) from error
         payload = envelope["payload"]
         verify_samples(payload["rows"], payload["summary"], settings["cases"], sets=settings["sets"], measured=settings["measured"])
         if len(measurement["paths"]) != 2:
             raise ValueError("Audit measurement sidecar coverage mismatch")
         for position, key in enumerate(("rows", "summary")):
             path = measurement["paths"][position]
-            with (folder / path).open(newline="") as stream:
+            expected_path = "measurements/" + envelope["check_id"] + "/" + artifact_path.name + "/" + ("samples.csv" if position == 0 else "medians.csv")
+            if path != expected_path:
+                raise ValueError("Measurement sidecar namespace mismatch")
+            with safe_member(folder, path).open(newline="") as stream:
                 actual_rows = list(csv.DictReader(stream))
             fields = set().union(*(r.keys() for r in payload[key]))
             if actual_rows != [{k: str(row.get(k, "")) for k in fields} for row in payload[key]]:
