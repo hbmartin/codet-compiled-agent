@@ -46,6 +46,17 @@ def input_name(root, path):
         return str(path.absolute())
 
 
+def history_files(folders):
+    files = []
+    for prior in folders:
+        prior = Path(prior)
+        files.extend(prior / name for name in ("config.json", "manifest.json", "capture-driver.log", "capture/run.json"))
+        files.extend(sorted((prior / "capture").glob("*")))
+    if any(not path.is_file() for path in files):
+        raise ValueError("Prior attempt metadata is missing")
+    return list(dict.fromkeys(files))
+
+
 def prepare(root, folder, baseline=None, check_python=None, python39=None, analysis_python=None,
             ci_run=None, clang_tidy=None, cppcheck=None, template_path=None, prior_attempt=None):
     from evidence_inputs import executable
@@ -118,7 +129,8 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     config = dict(schema_version=4, root=str(root), folder=str(folder), baseline=baseline, tools=tools, environment=environment,
                   builds=builds, validated_ref=command([native["git"], "-C", root, "rev-parse", "HEAD"]),
                   ci_run=ci_run, analyzer_env=analyzer_env, check_python=python, python39=python39,
-                  analysis_python=analysis_python, prior_attempt=str((root / prior_attempt).resolve()) if prior_attempt else None,
+                  analysis_python=analysis_python, prior_attempts=[str((root / path).resolve()) for path in
+                      ([prior_attempt] if isinstance(prior_attempt, (str, Path)) else prior_attempt or [])],
                   cases=CASES, sets=template["benchmark"]["sets"],
                   measured=template["benchmark"]["measured_per_set"])
     if sys.platform == "darwin":
@@ -179,13 +191,8 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     add("cross-build", [native["cmake"], "--build", cross, "--target", "codet_tests", "-j4"], ["cross-configure"],
         outputs=[dict(path=rel(cross / "codet_tests"), archive=False)])
     add("cross-tests", [cross / "codet_tests", "--gtest_filter=LinePrompt.*:InteractionWarnings.*:CursesInput.*"], ["cross-build"])
-    if prior_attempt:
-        prior = Path(config["prior_attempt"])
-        history_files = [prior / n for n in ("config.json", "manifest.json", "capture-driver.log")]
-        history_files.extend(sorted((prior / "capture").glob("*")))
-        if any(not p.is_file() for p in history_files):
-            raise ValueError("Prior attempt metadata is missing")
-        producer("historical-attempt", "history", inputs=[rel(p) for p in history_files])
+    if config["prior_attempts"]:
+        producer("historical-attempt", "history", inputs=[rel(p) for p in history_files(config["prior_attempts"])])
     producer("baseline-source", "archive")
     for variant in ("baseline", "changed"):
         source = folder / "baseline-src" if variant == "baseline" else root
@@ -328,11 +335,9 @@ def produce(config_path, action, *, output=None):
                         production_hashes=production_hashes(root), validation_hashes=validation_hashes(root),
                         input_hashes=input_hashes(root, inputs), payload=payload))
     if action == "history":
-        prior = Path(config["prior_attempt"])
-        paths = [prior / n for n in ("config.json", "manifest.json", "capture-driver.log")]
-        paths.extend(sorted((prior / "capture").glob("*")))
+        paths = history_files(config["prior_attempts"])
         inputs.extend(input_name(root, p) for p in paths)
-        payload = dict(label="Prior campaign attempt; original failed/interrupted outcomes, historical only, never a required-check substitute",
+        payload = dict(label="Prior campaign attempts; original failed/interrupted outcomes, historical only, never a required-check substitute",
                        files=[dict(path=input_name(root, p), sha256=digest(p)) for p in paths])
     elif action == "archive":
         source = folder / "baseline-src"
@@ -484,7 +489,7 @@ def main():
     replay.add_argument("--template", type=Path)
     replay.add_argument("--analysis-python", default=sys.executable)
     replay.add_argument("--ci-run")
-    replay.add_argument("--prior-attempt", type=Path)
+    replay.add_argument("--prior-attempt", type=Path, action="append")
     replay.add_argument("--clang-tidy")
     replay.add_argument("--cppcheck")
     producer = sub.add_parser("produce")

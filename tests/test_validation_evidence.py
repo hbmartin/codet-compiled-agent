@@ -1006,3 +1006,18 @@ class EvidenceV4(ValidationEvidence):
             rename_exclusive(source, target)
         self.assertTrue(source.is_dir())
         self.assertEqual(list(target.iterdir()), [])
+
+    def test_multiple_prior_attempts_keep_their_original_capture_files(self):
+        from evidence_campaign import history_files
+        folders = [self.root / 'attempt-one', self.root / 'attempt-two']
+        for folder in folders:
+            (folder / 'capture').mkdir(parents=True)
+            for name in ('config.json', 'manifest.json', 'capture-driver.log', 'capture/run.json'):
+                (folder / name).write_text('original ' + folder.name + ' ' + name)
+        paths = history_files(folders)
+        self.assertEqual(len(paths), 8)
+        self.assertEqual({p.parent for p in paths if p.name == 'run.json'}, {f / 'capture' for f in folders})
+        self.assertTrue(all(p.read_text().startswith('original ') for p in paths))
+        (folders[1] / 'capture/run.json').unlink()
+        with self.assertRaisesRegex(ValueError, 'Prior attempt metadata'):
+            history_files(folders)
