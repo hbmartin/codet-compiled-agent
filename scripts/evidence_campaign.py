@@ -277,7 +277,7 @@ def measure(config):
                         if harness == "tooling":
                             source = folder / "baseline-src" if variant == "baseline" else root
                             ref = config["baseline"] if variant == "baseline" else config["validated_ref"]
-                            argv = [config["check_python"], str(folder / "harness-src/scripts/evidence_tool_bench.py"), str(source), ref, case, str(result)]
+                            argv = [config["check_python"], str(folder / "harness-src/scripts/evidence_tool_bench.py"), str(source), ref, case, str(result), str(root)]
                         else:
                             argv = [binaries[variant][harness]["path"], case, str(result)] + (["file"] if harness == "export" else [])
                         run = subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=180)

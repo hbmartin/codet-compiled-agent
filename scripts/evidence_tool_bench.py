@@ -13,7 +13,7 @@ from evidence_benchmarks import verify_git_source
 from validation_evidence import production_hashes
 
 
-def measure(root, ref, workload):
+def measure(root, ref, workload, repository=None):
     calls = 0
     native = subprocess.check_output
     def counted(*args, **kwargs):
@@ -30,7 +30,7 @@ def measure(root, ref, workload):
     start = time.perf_counter()
     try:
         if workload == "git-inspection":
-            hashes = verify_git_source(root, root, ref)["production_hashes"]
+            hashes = verify_git_source(repository or root, root, ref)["production_hashes"]
         elif workload == "hashing":
             hashes = production_hashes(root)
         else:
@@ -48,5 +48,6 @@ def measure(root, ref, workload):
 
 
 if __name__ == "__main__":
-    root, ref, workload, output = sys.argv[1:]
-    Path(output).write_text(json.dumps(measure(Path(root), ref, workload)) + "\n")
+    root, ref, workload, output = sys.argv[1:5]
+    repository = Path(sys.argv[5]) if len(sys.argv) == 6 else None
+    Path(output).write_text(json.dumps(measure(Path(root), ref, workload, repository)) + "\n")

@@ -1021,3 +1021,21 @@ class EvidenceV4(ValidationEvidence):
         (folders[1] / 'capture/run.json').unlink()
         with self.assertRaisesRegex(ValueError, 'Prior attempt metadata'):
             history_files(folders)
+
+    def test_tooling_benchmark_uses_repository_identity_for_nested_archives(self):
+        import shutil
+        subprocess.run(['git', 'init', '-q', str(self.root)], check=True, timeout=30)
+        subprocess.run(['git', '-C', str(self.root), 'add', 'src', 'CMakeLists.txt'], check=True, timeout=30)
+        subprocess.run(['git', '-C', str(self.root), '-c', 'user.name=Evidence Test',
+                        '-c', 'user.email=evidence@example.invalid', 'commit', '-qm', 'fixture'], check=True, timeout=30)
+        ref = subprocess.check_output(['git', '-C', str(self.root), 'rev-parse', 'HEAD'], text=True, timeout=30).strip()
+        archive = self.root / 'build/baseline-src'
+        shutil.copytree(self.root / 'src', archive / 'src')
+        shutil.copyfile(self.root / 'CMakeLists.txt', archive / 'CMakeLists.txt')
+        output = self.root / 'measurement.json'
+        harness = Path(__file__).resolve().parents[1] / 'scripts/evidence_tool_bench.py'
+        subprocess.run([sys.executable, str(harness), str(archive), ref, 'git-inspection', str(output), str(self.root)],
+                       check=True, timeout=30)
+        result = json.loads(output.read_text())
+        self.assertEqual(result['files'], 2)
+        self.assertEqual(result['git_commands'], 3)
