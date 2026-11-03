@@ -1,7 +1,9 @@
 # Prompt and evidence integrity follow-up
 
 This follow-up starts at fetched main `bb9fa28de29cb2bcd19fa0ef36c053915b91b000`.
-All changes and evidence stay local. No push, pull request, merge, or thread update is part of this work.
+Implementation and validation were completed locally. At the user's later request, this branch is delivered as a ready follow-up PR; it is not merged and review threads are unchanged.
+
+See the [final captured results, measurements, and limitations](20261103-4da7c4f-results.md) and the [immutable v4 audit bundle](20261103-4da7c4f/).
 
 ## Capture and replay
 

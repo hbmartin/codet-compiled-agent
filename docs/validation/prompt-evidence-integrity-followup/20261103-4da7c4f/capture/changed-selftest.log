@@ -1,0 +1,4 @@
+clang-tidy: FAIL; 1 findings
+cppcheck: FAIL; 1 findings
+clang-analyzer: FAIL; 1 findings
+Analyzer self-checks: {'clang-tidy': True, 'cppcheck': True, 'clang-analyzer': True}

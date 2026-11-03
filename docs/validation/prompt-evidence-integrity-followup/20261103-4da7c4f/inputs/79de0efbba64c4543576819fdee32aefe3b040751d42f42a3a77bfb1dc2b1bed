@@ -1,0 +1,1445 @@
+{
+  "schema_version": 4,
+  "root": "/Volumes/Pro2T/codet-compiled-agent",
+  "baseline": "bb9fa28de29cb2bcd19fa0ef36c053915b91b000",
+  "single_attempt": true,
+  "environment": {
+    "PATH": "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin:/usr/bin:/opt/homebrew/bin:/opt/homebrew/opt/llvm/bin:/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin:/Volumes/Pro2T/codet-compiled-agent/build/lint-tools/bin:/Volumes/Pro2T/codet-compiled-agent/build/semgrep-venv/bin:/bin",
+    "LANG": "en_US.UTF-8",
+    "HOME": "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/home",
+    "TMPDIR": "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/tmp",
+    "SEMGREP_ENABLE_VERSION_CHECK": "0",
+    "SEMGREP_SEND_METRICS": "off",
+    "SEMGREP_LOG_FILE": "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/semgrep.log",
+    "SSL_CERT_FILE": "/opt/homebrew/etc/ca-certificates/cert.pem"
+  },
+  "tools": {
+    "check-python": {
+      "path": "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+      "realpath": "/opt/homebrew/Cellar/python@3.12/3.12.15/Frameworks/Python.framework/Versions/3.12/bin/python3.12",
+      "sha256": "af2e87fe5d9aef8abf9002d215320c7eb127a2b90b7686ec365405991d571ef4",
+      "version": "Python 3.12.15"
+    },
+    "analysis-python": {
+      "path": "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+      "realpath": "/opt/homebrew/Cellar/python@3.12/3.12.15/Frameworks/Python.framework/Versions/3.12/bin/python3.12",
+      "sha256": "af2e87fe5d9aef8abf9002d215320c7eb127a2b90b7686ec365405991d571ef4",
+      "version": "Python 3.12.15"
+    },
+    "python39": {
+      "path": "/usr/bin/python3",
+      "realpath": "/usr/bin/python3",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "Python 3.9.6"
+    },
+    "git": {
+      "path": "/usr/bin/git",
+      "realpath": "/usr/bin/git",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "git version 2.54.0 (Apple Git-157)"
+    },
+    "cmake": {
+      "path": "/opt/homebrew/bin/cmake",
+      "realpath": "/opt/homebrew/Cellar/cmake/4.4.4/bin/cmake",
+      "sha256": "64c16ba19481b4e8fa5fc51afa37a7609128d5e5c10236eb1492d16d22d029c4",
+      "version": "cmake version 4.4.4\n\nCMake suite maintained and supported by Kitware (kitware.com/cmake)."
+    },
+    "ctest": {
+      "path": "/opt/homebrew/bin/ctest",
+      "realpath": "/opt/homebrew/Cellar/cmake/4.4.4/bin/ctest",
+      "sha256": "0bc8e30644872bff0b1b9d45eee996f5e9aad5b74b46869f5f6dd683361d478f",
+      "version": "ctest version 4.4.4\n\nCMake suite maintained and supported by Kitware (kitware.com/cmake)."
+    },
+    "ninja": {
+      "path": "/opt/homebrew/bin/ninja",
+      "realpath": "/opt/homebrew/bin/ninja",
+      "sha256": "a9f1537984cf168d119fda94c6c9ee349d2720aa23242bdb50375df5c5ecebd8",
+      "version": "1.11.1.git.kitware.jobserver-1"
+    },
+    "make": {
+      "path": "/usr/bin/make",
+      "realpath": "/usr/bin/make",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "GNU Make 3.81\nCopyright (C) 2006  Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.\nThere is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A\nPARTICULAR PURPOSE.\n\nThis program built for i386-apple-darwin11.3.0"
+    },
+    "tar": {
+      "path": "/usr/bin/tar",
+      "realpath": "/usr/bin/bsdtar",
+      "sha256": "ad4e73ac2e00b3d69969b2e8da466f08c7968a51f424380ecb4d9ff6779b28b9",
+      "version": "bsdtar 3.5.3 - libarchive 3.7.4 zlib/1.2.12 liblzma/5.4.3 bz2lib/1.0.8"
+    },
+    "ar": {
+      "path": "/usr/bin/ar",
+      "realpath": "/usr/bin/ar",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "No supported version probe; executable digest recorded"
+    },
+    "cc": {
+      "path": "/usr/bin/cc",
+      "realpath": "/usr/bin/cc",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "Apple clang version 21.0.0 (clang-2100.4.1.1)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+    },
+    "c++": {
+      "path": "/usr/bin/c++",
+      "realpath": "/usr/bin/c++",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "Apple clang version 21.0.0 (clang-2100.4.1.1)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+    },
+    "pkg-config": {
+      "path": "/opt/homebrew/bin/pkg-config",
+      "realpath": "/opt/homebrew/Cellar/pkgconf/3.0.10/bin/pkgconf",
+      "sha256": "9ab5b4565b097dc4c58515dbdf131adb67386ece44c48488c94670ca478b5ede",
+      "version": "3.0.10"
+    },
+    "ranlib": {
+      "path": "/usr/bin/ranlib",
+      "realpath": "/usr/bin/ranlib",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "No supported version probe; executable digest recorded"
+    },
+    "ld": {
+      "path": "/usr/bin/ld",
+      "realpath": "/usr/bin/ld",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "No supported version probe; executable digest recorded"
+    },
+    "strip": {
+      "path": "/usr/bin/strip",
+      "realpath": "/usr/bin/strip",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "No supported version probe; executable digest recorded"
+    },
+    "clang-tidy": {
+      "path": "/opt/homebrew/opt/llvm/bin/clang-tidy",
+      "realpath": "/opt/homebrew/Cellar/llvm/23.1.3_1/bin/clang-tidy",
+      "sha256": "ebbdf65f2d9f3daf67d77890869135c38d33ab6b4c9fd3705a759cbff6c28659",
+      "version": "Homebrew LLVM version 23.1.3\n  Optimized build."
+    },
+    "cppcheck": {
+      "path": "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck",
+      "realpath": "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck",
+      "sha256": "191e62b01aad1d25e4412fe9ab8819d56ed4aa84e9249dcbcc890f8332ad6e24",
+      "version": "Cppcheck 2.22.0"
+    },
+    "clang-format": {
+      "path": "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/clang-format",
+      "realpath": "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/clang-format",
+      "sha256": "b7389fc2d2773171c6f5505609b4ca1496f300c485a421f6df20f7250bec66ef",
+      "version": "clang-format version 18.1.8"
+    },
+    "ruff": {
+      "path": "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/ruff",
+      "realpath": "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/ruff",
+      "sha256": "1cd36902264ba39d8eada510c026a44236ddb55f67937694d8a22b2708fdc0e0",
+      "version": "ruff 0.17.1"
+    },
+    "zizmor": {
+      "path": "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/zizmor",
+      "realpath": "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/zizmor",
+      "sha256": "0717f7c8878caf12f3c8bdb99841bd5dff97e26f0481bba98f59169d414edc34",
+      "version": "zizmor 1.30.1"
+    },
+    "shfmt": {
+      "path": "/Volumes/Pro2T/codet-compiled-agent/build/lint-tools/bin/shfmt",
+      "realpath": "/Volumes/Pro2T/codet-compiled-agent/build/lint-tools/bin/shfmt",
+      "sha256": "79b9dffab2c47d3a2529cda09254af468565d2f3e6270b908cbc2644a9628713",
+      "version": "v3.14.1"
+    },
+    "actionlint": {
+      "path": "/Volumes/Pro2T/codet-compiled-agent/build/lint-tools/bin/actionlint",
+      "realpath": "/Volumes/Pro2T/codet-compiled-agent/build/lint-tools/bin/actionlint",
+      "sha256": "7db7b7cf69bac42c28dc5d8256c478bcc5f9c0a3ff4029b09cf6f4d83fb7d60c",
+      "version": "v1.7.12\ninstalled by building from source\nbuilt with go1.27.2 compiler for darwin/arm64"
+    },
+    "shellcheck": {
+      "path": "/opt/homebrew/bin/shellcheck",
+      "realpath": "/opt/homebrew/Cellar/shellcheck/0.11.0/bin/shellcheck",
+      "sha256": "29dca91c54b8bb41ad841bff1c941a9d5dec714242c3ab69ca05594bd69a9020",
+      "version": "ShellCheck - shell script analysis tool\nversion: 0.11.0\nlicense: GNU General Public License, version 3\nwebsite: https://www.shellcheck.net"
+    },
+    "semgrep": {
+      "path": "/Volumes/Pro2T/codet-compiled-agent/build/semgrep-venv/bin/pysemgrep",
+      "realpath": "/Volumes/Pro2T/codet-compiled-agent/build/semgrep-venv/bin/pysemgrep",
+      "sha256": "48940356075b224896dfbebc5b035d09e83530d6973142372e758d8d3dbcba2f",
+      "version": "1.177.0"
+    },
+    "shell": {
+      "path": "/bin/sh",
+      "realpath": "/bin/sh",
+      "sha256": "84ca7f9b83021621e16059a1c7850df72a462d879e8239d566236ca6ddd00953",
+      "version": "No supported version probe; executable digest recorded"
+    },
+    "go": {
+      "path": "/opt/homebrew/bin/go",
+      "realpath": "/opt/homebrew/Cellar/go/1.27.2/libexec/bin/go",
+      "sha256": "fc32e163235c4b98a67a7caae7cbd60c73f706cbd6138ff7bcf6c9d60d5e3312",
+      "version": "go version go1.27.2 darwin/arm64"
+    }
+  },
+  "checks": [
+    {
+      "id": "provision-offline",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/fetch-deps.py",
+        "--offline"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": []
+    },
+    {
+      "id": "debug-configure",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/debug",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCMAKE_MAKE_PROGRAM=/opt/homebrew/bin/ninja",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DPython3_EXECUTABLE=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+      ],
+      "requires": [
+        "provision-offline"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/debug/CMakeCache.txt"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/debug/compile_commands.json"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/debug/build.ninja"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/debug/generated/prompts.hpp"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/debug/generated/core_contract.hpp"
+        }
+      ]
+    },
+    {
+      "id": "debug-build",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "--build",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/debug",
+        "-j4"
+      ],
+      "requires": [
+        "debug-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/debug/codet",
+          "archive": false
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/debug/codet_tests",
+          "archive": false
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/debug/codet_publication_fault_tests",
+          "archive": false
+        }
+      ]
+    },
+    {
+      "id": "debug-ctest",
+      "argv": [
+        "/opt/homebrew/bin/ctest",
+        "--test-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/debug",
+        "--output-on-failure",
+        "-j2"
+      ],
+      "requires": [
+        "debug-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 900,
+      "artifacts": [],
+      "directory_inputs": []
+    },
+    {
+      "id": "asan-configure",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/asan",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCMAKE_MAKE_PROGRAM=/opt/homebrew/bin/ninja",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DPython3_EXECUTABLE=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+        "-DCODET_SANITIZERS=ON"
+      ],
+      "requires": [
+        "provision-offline"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/asan/CMakeCache.txt"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/asan/compile_commands.json"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/asan/build.ninja"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/asan/generated/prompts.hpp"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/asan/generated/core_contract.hpp"
+        }
+      ]
+    },
+    {
+      "id": "asan-build",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "--build",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/asan",
+        "-j4"
+      ],
+      "requires": [
+        "asan-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/asan/codet",
+          "archive": false
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/asan/codet_tests",
+          "archive": false
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/asan/codet_publication_fault_tests",
+          "archive": false
+        }
+      ]
+    },
+    {
+      "id": "asan-ctest",
+      "argv": [
+        "/opt/homebrew/bin/ctest",
+        "--test-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/asan",
+        "--output-on-failure",
+        "-j2"
+      ],
+      "requires": [
+        "asan-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 900,
+      "artifacts": [],
+      "directory_inputs": []
+    },
+    {
+      "id": "tsan-configure",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/tsan",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCMAKE_MAKE_PROGRAM=/opt/homebrew/bin/ninja",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DPython3_EXECUTABLE=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+        "-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer -Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+        "-DCMAKE_C_FLAGS=-fsanitize=thread",
+        "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread"
+      ],
+      "requires": [
+        "provision-offline"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/tsan/CMakeCache.txt"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/tsan/compile_commands.json"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/tsan/build.ninja"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/tsan/generated/prompts.hpp"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/tsan/generated/core_contract.hpp"
+        }
+      ]
+    },
+    {
+      "id": "tsan-build",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "--build",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/tsan",
+        "-j4"
+      ],
+      "requires": [
+        "tsan-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/tsan/codet",
+          "archive": false
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/tsan/codet_tests",
+          "archive": false
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/tsan/codet_publication_fault_tests",
+          "archive": false
+        }
+      ]
+    },
+    {
+      "id": "tsan-20",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/tsan/codet_tests",
+        "--gtest_filter=NativeRecordLifecycle.*:DiagnosticFixture.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.*",
+        "--gtest_repeat=20"
+      ],
+      "requires": [
+        "tsan-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": []
+    },
+    {
+      "id": "focused-20",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/debug/codet_tests",
+        "--gtest_filter=NativeRecordLifecycle.*:DiagnosticFixture.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.*",
+        "--gtest_repeat=20"
+      ],
+      "requires": [
+        "debug-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": []
+    },
+    {
+      "id": "python39",
+      "argv": [
+        "/usr/bin/python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_validation_evidence.py",
+        "-v"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [],
+      "python_version": [
+        3,
+        9
+      ]
+    },
+    {
+      "id": "python39-integration",
+      "argv": [
+        "/usr/bin/python3",
+        "tests/hermetic.py",
+        "/usr/bin/python3",
+        "tests/cli_integration.py",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/debug/codet"
+      ],
+      "requires": [
+        "debug-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [],
+      "python_version": [
+        3,
+        9
+      ]
+    },
+    {
+      "id": "lint",
+      "argv": [
+        "/usr/bin/make",
+        "check-lint",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": []
+    },
+    {
+      "id": "semgrep",
+      "argv": [
+        "/usr/bin/make",
+        "check-semgrep",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "SEMGREP=/Volumes/Pro2T/codet-compiled-agent/build/semgrep-venv/bin/pysemgrep"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": []
+    },
+    {
+      "id": "runner-tests",
+      "argv": [
+        "/usr/bin/make",
+        "test-lint-runners",
+        "test-modern-analysis-runner",
+        "CHECK_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "ANALYSIS_PYTHON=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": []
+    },
+    {
+      "id": "cross-placeholder",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/config.json",
+        "cross-placeholder"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/cross-placeholder.json",
+          "kind": "cross-placeholder",
+          "inputs": [
+            "build/prompt-evidence-integrity-20261103-run3/config.json"
+          ]
+        }
+      ],
+      "directory_inputs": [],
+      "outputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/host-prefix/lib/libMacportsLegacySupport.a"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/host-placeholder.c"
+        }
+      ]
+    },
+    {
+      "id": "cross-configure",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/cross-selection",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCMAKE_MAKE_PROGRAM=/opt/homebrew/bin/ninja",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DPython3_EXECUTABLE=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result",
+        "-DCMAKE_SYSTEM_NAME=Darwin",
+        "-D_prefix=/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/host-prefix"
+      ],
+      "requires": [
+        "cross-placeholder",
+        "provision-offline"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/cross-selection/CMakeCache.txt"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/cross-selection/compile_commands.json"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/cross-selection/build.ninja"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/cross-selection/generated/prompts.hpp"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/cross-selection/generated/core_contract.hpp"
+        }
+      ]
+    },
+    {
+      "id": "cross-build",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "--build",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/cross-selection",
+        "--target",
+        "codet_tests",
+        "-j4"
+      ],
+      "requires": [
+        "cross-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/cross-selection/codet_tests",
+          "archive": false
+        }
+      ]
+    },
+    {
+      "id": "cross-tests",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/cross-selection/codet_tests",
+        "--gtest_filter=LinePrompt.*:InteractionWarnings.*:CursesInput.*"
+      ],
+      "requires": [
+        "cross-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": []
+    },
+    {
+      "id": "historical-attempt",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/config.json",
+        "history"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/history.json",
+          "kind": "history",
+          "inputs": [
+            "build/prompt-evidence-integrity-20261103-run3/config.json",
+            "build/prompt-evidence-integrity-20261103-frozen/config.json",
+            "build/prompt-evidence-integrity-20261103-frozen/manifest.json",
+            "build/prompt-evidence-integrity-20261103-frozen/capture-driver.log",
+            "build/prompt-evidence-integrity-20261103-frozen/capture/run.json",
+            "build/prompt-evidence-integrity-20261103-frozen/capture/asan-build.json",
+            "build/prompt-evidence-integrity-20261103-frozen/capture/asan-build.log",
+            "build/prompt-evidence-integrity-20261103-frozen/capture/asan-configure.json",
+            "build/prompt-evidence-integrity-20261103-frozen/capture/asan-configure.log",
+            "build/prompt-evidence-integrity-20261103-frozen/capture/debug-build.json",
+            "build/prompt-evidence-integrity-20261103-frozen/capture/debug-build.log",
+            "build/prompt-evidence-integrity-20261103-frozen/capture/debug-configure.json",
+            "build/prompt-evidence-integrity-20261103-frozen/capture/debug-configure.log",
+            "build/prompt-evidence-integrity-20261103-frozen/capture/debug-ctest.json",
+            "build/prompt-evidence-integrity-20261103-frozen/capture/debug-ctest.log",
+            "build/prompt-evidence-integrity-20261103-frozen/capture/provision-offline.json",
+            "build/prompt-evidence-integrity-20261103-frozen/capture/provision-offline.log",
+            "build/prompt-evidence-integrity-20261103-run2/config.json",
+            "build/prompt-evidence-integrity-20261103-run2/manifest.json",
+            "build/prompt-evidence-integrity-20261103-run2/capture-driver.log",
+            "build/prompt-evidence-integrity-20261103-run2/capture/run.json",
+            "build/prompt-evidence-integrity-20261103-run2/capture/asan-build.json",
+            "build/prompt-evidence-integrity-20261103-run2/capture/asan-build.log",
+            "build/prompt-evidence-integrity-20261103-run2/capture/asan-configure.json",
+            "build/prompt-evidence-integrity-20261103-run2/capture/asan-configure.log",
+            "build/prompt-evidence-integrity-20261103-run2/capture/asan-ctest.json",
+            "build/prompt-evidence-integrity-20261103-run2/capture/asan-ctest.log",
+            "build/prompt-evidence-integrity-20261103-run2/capture/debug-build.json",
+            "build/prompt-evidence-integrity-20261103-run2/capture/debug-build.log",
+            "build/prompt-evidence-integrity-20261103-run2/capture/debug-configure.json",
+            "build/prompt-evidence-integrity-20261103-run2/capture/debug-configure.log",
+            "build/prompt-evidence-integrity-20261103-run2/capture/debug-ctest.json",
+            "build/prompt-evidence-integrity-20261103-run2/capture/debug-ctest.log",
+            "build/prompt-evidence-integrity-20261103-run2/capture/provision-offline.json",
+            "build/prompt-evidence-integrity-20261103-run2/capture/provision-offline.log",
+            "build/prompt-evidence-integrity-20261103-run2/capture/tsan-build.json",
+            "build/prompt-evidence-integrity-20261103-run2/capture/tsan-build.log",
+            "build/prompt-evidence-integrity-20261103-run2/capture/tsan-configure.json",
+            "build/prompt-evidence-integrity-20261103-run2/capture/tsan-configure.log"
+          ]
+        }
+      ],
+      "directory_inputs": []
+    },
+    {
+      "id": "baseline-source",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/config.json",
+        "archive"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/archive.json",
+          "kind": "archive",
+          "inputs": [
+            "build/prompt-evidence-integrity-20261103-run3/config.json"
+          ]
+        }
+      ],
+      "directory_inputs": []
+    },
+    {
+      "id": "baseline-configure",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/baseline-src",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/baseline-release",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCMAKE_MAKE_PROGRAM=/opt/homebrew/bin/ninja",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DPython3_EXECUTABLE=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+      ],
+      "requires": [
+        "baseline-source",
+        "provision-offline"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/baseline-release/CMakeCache.txt"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/baseline-release/compile_commands.json"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/baseline-release/build.ninja"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/baseline-release/generated/prompts.hpp"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/baseline-release/generated/core_contract.hpp"
+        }
+      ],
+      "source_inputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/baseline-src",
+          "git_ref": "bb9fa28de29cb2bcd19fa0ef36c053915b91b000",
+          "git": "/usr/bin/git"
+        }
+      ]
+    },
+    {
+      "id": "baseline-build",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "--build",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/baseline-release",
+        "--target",
+        "codet_line_input_bench",
+        "codet_output_bench",
+        "codet_export_bench",
+        "-j4"
+      ],
+      "requires": [
+        "baseline-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "source_inputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/baseline-src",
+          "git_ref": "bb9fa28de29cb2bcd19fa0ef36c053915b91b000",
+          "git": "/usr/bin/git"
+        }
+      ],
+      "outputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/baseline-release/codet_line_input_bench",
+          "archive": false
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/baseline-release/codet_output_bench",
+          "archive": false
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/baseline-release/codet_export_bench",
+          "archive": false
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/baseline-release/libcodet_core.a",
+          "archive": false
+        }
+      ]
+    },
+    {
+      "id": "baseline-selftest",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/baseline-src/scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/baseline-release",
+        "--selftest",
+        "--jobs",
+        "4"
+      ],
+      "requires": [
+        "baseline-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [],
+      "env": {
+        "CLANG_TIDY": "/opt/homebrew/opt/llvm/bin/clang-tidy",
+        "CPPCHECK": "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck"
+      },
+      "source_inputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/baseline-src",
+          "git_ref": "bb9fa28de29cb2bcd19fa0ef36c053915b91b000",
+          "git": "/usr/bin/git"
+        }
+      ],
+      "outputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/baseline-release/analysis/selftest/selftest.json"
+        }
+      ]
+    },
+    {
+      "id": "baseline-analysis",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/config.json",
+        "analysis-baseline"
+      ],
+      "requires": [
+        "baseline-selftest"
+      ],
+      "policy": "observation",
+      "timeout_seconds": 1800,
+      "artifacts": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/analysis-baseline.json",
+          "kind": "analysis-baseline",
+          "inputs": [
+            "build/prompt-evidence-integrity-20261103-run3/config.json",
+            "build/prompt-evidence-integrity-20261103-run3/baseline-release/analysis/selftest/selftest.json"
+          ]
+        }
+      ],
+      "directory_inputs": [],
+      "env": {
+        "CLANG_TIDY": "/opt/homebrew/opt/llvm/bin/clang-tidy",
+        "CPPCHECK": "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck"
+      },
+      "source_inputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/baseline-src",
+          "git_ref": "bb9fa28de29cb2bcd19fa0ef36c053915b91b000",
+          "git": "/usr/bin/git"
+        }
+      ]
+    },
+    {
+      "id": "changed-configure",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "-S",
+        "/Volumes/Pro2T/codet-compiled-agent",
+        "-B",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/changed-release",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCMAKE_MAKE_PROGRAM=/opt/homebrew/bin/ninja",
+        "-DCODET_DEPENDENCY_ROOT=/Volumes/Pro2T/codet-compiled-agent/.deps",
+        "-DCMAKE_C_COMPILER=/usr/bin/cc",
+        "-DCMAKE_CXX_COMPILER=/usr/bin/c++",
+        "-DPython3_EXECUTABLE=/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"
+      ],
+      "requires": [
+        "provision-offline"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "outputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/changed-release/CMakeCache.txt"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/changed-release/compile_commands.json"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/changed-release/build.ninja"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/changed-release/generated/prompts.hpp"
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/changed-release/generated/core_contract.hpp"
+        }
+      ],
+      "source_inputs": [
+        {
+          "path": "."
+        }
+      ]
+    },
+    {
+      "id": "changed-build",
+      "argv": [
+        "/opt/homebrew/bin/cmake",
+        "--build",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/changed-release",
+        "--target",
+        "codet_line_input_bench",
+        "codet_output_bench",
+        "codet_export_bench",
+        "-j4"
+      ],
+      "requires": [
+        "changed-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [
+        ".deps/googletest",
+        ".deps/json",
+        ".deps/tomlplusplus",
+        ".deps/json-schema-validator"
+      ],
+      "source_inputs": [
+        {
+          "path": "."
+        }
+      ],
+      "outputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/changed-release/codet_line_input_bench",
+          "archive": false
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/changed-release/codet_output_bench",
+          "archive": false
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/changed-release/codet_export_bench",
+          "archive": false
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/changed-release/libcodet_core.a",
+          "archive": false
+        }
+      ]
+    },
+    {
+      "id": "changed-selftest",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "/Volumes/Pro2T/codet-compiled-agent/scripts/analyze-modern.py",
+        "--build-dir",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/changed-release",
+        "--selftest",
+        "--jobs",
+        "4"
+      ],
+      "requires": [
+        "changed-configure"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [],
+      "directory_inputs": [],
+      "env": {
+        "CLANG_TIDY": "/opt/homebrew/opt/llvm/bin/clang-tidy",
+        "CPPCHECK": "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck"
+      },
+      "source_inputs": [
+        {
+          "path": "."
+        }
+      ],
+      "outputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/changed-release/analysis/selftest/selftest.json"
+        }
+      ]
+    },
+    {
+      "id": "changed-analysis",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/config.json",
+        "analysis-changed"
+      ],
+      "requires": [
+        "changed-selftest"
+      ],
+      "policy": "observation",
+      "timeout_seconds": 1800,
+      "artifacts": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/analysis-changed.json",
+          "kind": "analysis-changed",
+          "inputs": [
+            "build/prompt-evidence-integrity-20261103-run3/config.json",
+            "build/prompt-evidence-integrity-20261103-run3/changed-release/analysis/selftest/selftest.json"
+          ]
+        }
+      ],
+      "directory_inputs": [],
+      "env": {
+        "CLANG_TIDY": "/opt/homebrew/opt/llvm/bin/clang-tidy",
+        "CPPCHECK": "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck"
+      },
+      "source_inputs": [
+        {
+          "path": "."
+        }
+      ]
+    },
+    {
+      "id": "static-comparison",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/config.json",
+        "analysis"
+      ],
+      "requires": [
+        "baseline-analysis",
+        "changed-analysis"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/analysis.json",
+          "kind": "analysis",
+          "inputs": [
+            "build/prompt-evidence-integrity-20261103-run3/config.json",
+            "build/prompt-evidence-integrity-20261103-run3/analysis-baseline.json",
+            "build/prompt-evidence-integrity-20261103-run3/analysis-changed.json",
+            "checks/analyzer-relocations.json"
+          ]
+        }
+      ],
+      "directory_inputs": []
+    },
+    {
+      "id": "semgrep-controls",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/config.json",
+        "semgrep-controls"
+      ],
+      "requires": [
+        "semgrep"
+      ],
+      "policy": "required",
+      "timeout_seconds": 300,
+      "artifacts": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/semgrep-controls.json",
+          "kind": "semgrep-controls",
+          "inputs": [
+            "build/prompt-evidence-integrity-20261103-run3/config.json"
+          ]
+        }
+      ],
+      "directory_inputs": []
+    },
+    {
+      "id": "python-negative-controls",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/config.json",
+        "negative-controls"
+      ],
+      "requires": [
+        "runner-tests"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/negative-controls.json",
+          "kind": "negative-controls",
+          "inputs": [
+            "build/prompt-evidence-integrity-20261103-run3/config.json"
+          ]
+        }
+      ],
+      "directory_inputs": []
+    },
+    {
+      "id": "native-negative-controls",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/config.json",
+        "native-negative-controls"
+      ],
+      "requires": [
+        "debug-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 2100,
+      "artifacts": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/native-negative-controls.json",
+          "kind": "native-negative-controls",
+          "inputs": [
+            "build/prompt-evidence-integrity-20261103-run3/config.json",
+            "build/prompt-evidence-integrity-20261103-run3/debug/compile_commands.json",
+            "build/prompt-evidence-integrity-20261103-run3/debug/build.ninja"
+          ]
+        }
+      ],
+      "directory_inputs": []
+    },
+    {
+      "id": "benchmark-harness",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/config.json",
+        "harness"
+      ],
+      "requires": [
+        "baseline-build",
+        "changed-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 1800,
+      "artifacts": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/harness.json",
+          "kind": "harness",
+          "inputs": [
+            "build/prompt-evidence-integrity-20261103-run3/config.json",
+            "tests/line_input_bench.cpp",
+            "tests/output_bench.cpp",
+            "tests/export_bench.cpp",
+            "tests/descriptor_bench_metrics.hpp",
+            "tests/native_stat_interposer.hpp",
+            "tests/native_symbol.hpp",
+            "tests/temp.hpp",
+            "scripts/evidence_tool_bench.py",
+            "build/prompt-evidence-integrity-20261103-run3/baseline-release/compile_commands.json",
+            "build/prompt-evidence-integrity-20261103-run3/baseline-release/build.ninja",
+            "build/prompt-evidence-integrity-20261103-run3/baseline-release/libcodet_core.a",
+            "build/prompt-evidence-integrity-20261103-run3/changed-release/compile_commands.json",
+            "build/prompt-evidence-integrity-20261103-run3/changed-release/build.ninja",
+            "build/prompt-evidence-integrity-20261103-run3/changed-release/libcodet_core.a"
+          ]
+        }
+      ],
+      "directory_inputs": [],
+      "outputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/baseline-harness/codet_line_input_bench",
+          "archive": false
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/baseline-harness/codet_output_bench",
+          "archive": false
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/baseline-harness/codet_export_bench",
+          "archive": false
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/changed-harness/codet_line_input_bench",
+          "archive": false
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/changed-harness/codet_output_bench",
+          "archive": false
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/changed-harness/codet_export_bench",
+          "archive": false
+        }
+      ],
+      "file_inputs": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/baseline-release/libcodet_core.a",
+          "archive": false
+        },
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/changed-release/libcodet_core.a",
+          "archive": false
+        }
+      ]
+    },
+    {
+      "id": "benchmarks",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/config.json",
+        "measure"
+      ],
+      "requires": [
+        "benchmark-harness",
+        "static-comparison",
+        "python-negative-controls",
+        "native-negative-controls",
+        "semgrep-controls"
+      ],
+      "policy": "required",
+      "timeout_seconds": 1800,
+      "artifacts": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/measure.json",
+          "kind": "measure",
+          "inputs": [
+            "build/prompt-evidence-integrity-20261103-run3/config.json",
+            "build/prompt-evidence-integrity-20261103-run3/baseline-release/CMakeCache.txt",
+            "build/prompt-evidence-integrity-20261103-run3/changed-release/CMakeCache.txt",
+            "build/prompt-evidence-integrity-20261103-run3/harness.json"
+          ]
+        }
+      ],
+      "directory_inputs": []
+    },
+    {
+      "id": "platform-availability",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/config.json",
+        "platforms"
+      ],
+      "requires": [],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/platforms.json",
+          "kind": "platforms",
+          "inputs": [
+            "build/prompt-evidence-integrity-20261103-run3/config.json"
+          ]
+        }
+      ],
+      "directory_inputs": []
+    },
+    {
+      "id": "build-metadata",
+      "argv": [
+        "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/python",
+        "scripts/evidence_campaign.py",
+        "produce",
+        "/Volumes/Pro2T/codet-compiled-agent/build/prompt-evidence-integrity-20261103-run3/config.json",
+        "build-info"
+      ],
+      "requires": [
+        "debug-build",
+        "asan-build",
+        "tsan-build",
+        "cross-build",
+        "baseline-build",
+        "changed-build"
+      ],
+      "policy": "required",
+      "timeout_seconds": 600,
+      "artifacts": [
+        {
+          "path": "build/prompt-evidence-integrity-20261103-run3/build-info.json",
+          "kind": "build-info",
+          "inputs": [
+            "build/prompt-evidence-integrity-20261103-run3/config.json",
+            "build/prompt-evidence-integrity-20261103-run3/debug/CMakeCache.txt",
+            "build/prompt-evidence-integrity-20261103-run3/asan/CMakeCache.txt",
+            "build/prompt-evidence-integrity-20261103-run3/tsan/CMakeCache.txt",
+            "build/prompt-evidence-integrity-20261103-run3/cross-selection/CMakeCache.txt",
+            "build/prompt-evidence-integrity-20261103-run3/baseline-release/CMakeCache.txt",
+            "build/prompt-evidence-integrity-20261103-run3/changed-release/CMakeCache.txt"
+          ]
+        }
+      ],
+      "directory_inputs": []
+    }
+  ]
+}
