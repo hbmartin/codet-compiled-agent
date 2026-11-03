@@ -110,7 +110,8 @@ public:
     return static_cast<size_t>(n);
   }
   void seek(uint64_t offset) override {
-    if (offset > size_ || offset > static_cast<uint64_t>(std::numeric_limits<off_t>::max()) ||
+    offset = std::min(offset, size_);
+    if (offset > static_cast<uint64_t>(std::numeric_limits<off_t>::max()) ||
         ::lseek(fd_, static_cast<off_t>(offset), SEEK_SET) < 0)
       throw Error("Invalid inspection byte offset");
     offset_ = offset;

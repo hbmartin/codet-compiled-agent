@@ -146,7 +146,7 @@
     "include/codet/detail/curses_text.hpp": "679b9a272baa6f173f65833d782b73c550bff3559568c85ae9015afc061bfe53",
     "include/codet/detail/diagnostic_stream.hpp": "e8f6edb266372de9b56aa1d3d3e26ce0b1e4aa9997addf626c8df10053f8f468",
     "include/codet/detail/history_excerpt.hpp": "ad5264d743ae321ae98c421a6a7bfd1d2a1341a9f4fb5607362285a47fe5ef10",
-    "include/codet/detail/line_prompt.hpp": "b33bb8695c7ee0eaa0d882d291882263b62dd67e2f074d498e619ebba3b57e82",
+    "include/codet/detail/line_prompt.hpp": "72d1edd631fb9bf746971a99b0ca93e0602e4a766b8c0faa4c26967fc5932135",
     "include/codet/detail/native_output.hpp": "01b354b050beed49222734d8d5357b9a54d6e3e39c82d5863fa8cf97f71b9305",
     "include/codet/detail/native_terminal.hpp": "2af5ae2b24491079f35c529bbbb29419d6ba244ea001e27fbc0ec5637c87b72c",
     "include/codet/detail/output_destination.hpp": "05a1f40cf7b6784fcd9c191176cb9bc70d172aa85bc9e8bc7cb4821922d7a4e3",
@@ -182,7 +182,7 @@
     "src/modern/failure.cpp": "aabbc34d0e235141e79fee2c370d4ed7f3450eb89787ed467fb1b1bacf383a2a",
     "src/modern/hooks.cpp": "5dab560355d69762dae5179f174bb4d67487186a6f288af26cbdd3646323c830",
     "src/modern/images.cpp": "16b071f39cec995e25b25e1b266f89bf9b4a771fd24ccc87ae3e6c50d305cfe0",
-    "src/modern/inspection.cpp": "6ee6c0d380321b9294caa9fc3d8b637756eb01f6a8322d53bf3d661309b36126",
+    "src/modern/inspection.cpp": "2a883b4eb802fc6d93b10f2292c6d225bc7661ee08bb7b2de41eba2449942524",
     "src/modern/instructions.cpp": "04e7f17b7ccbdd3e223cacf5e75971a4ea4ec3dfaa240508806aef48739119f6",
     "src/modern/interaction.cpp": "34d6b25dba4abde35db7f9f1a46f7c633d5caa53a3f150a36ee764ca218f4ee1",
     "src/modern/main.cpp": "487894eb1027ee280062729da92b21de628fbfd56189384cf4efd0d5177c2e64",
@@ -249,7 +249,7 @@
       "new": [
         "bugprone-signed-bitwise",
         "include/codet/detail/line_prompt.hpp",
-        4959,
+        4975,
         "use of a signed integer operand with a binary bitwise operator",
         "src/modern/cli.cpp"
       ],
@@ -268,7 +268,7 @@
       "new": [
         "bugprone-signed-bitwise",
         "include/codet/detail/line_prompt.hpp",
-        5005,
+        5021,
         "use of a signed integer operand with a binary bitwise operator",
         "src/modern/cli.cpp"
       ],
@@ -287,7 +287,7 @@
       "new": [
         "bugprone-signed-bitwise",
         "include/codet/detail/line_prompt.hpp",
-        11313,
+        11329,
         "use of a signed integer operand with a binary bitwise operator",
         "src/modern/cli.cpp"
       ],

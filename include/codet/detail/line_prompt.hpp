@@ -18,7 +18,7 @@ class LinePrompt final : public LineOutputObserver {
   struct PendingSubmission {
     InputLine line;
     std::string tail, view;
-    bool tail_attempted = false;
+    bool tail_attempted = false, redraw = false;
   };
   std::optional<PendingSubmission> pending_;
   StreamDestination binding_;
@@ -455,8 +455,8 @@ public:
           return result;
       }
     } else if (!pending_->tail_attempted) {
-      const auto &text = visible_ ? pending_->tail : pending_->view;
-      if (!text.empty()) {
+      const auto &text = visible_ && !pending_->redraw ? pending_->tail : pending_->view;
+      if (!pending_->tail.empty() || pending_->redraw) {
         const auto result = output_.present_result({text}, false, true);
         if (result == DiagnosticResult::deferred)
           return result;
@@ -480,11 +480,16 @@ public:
   std::optional<InputLine> try_take() {
     if (!pending_) {
       std::string tail;
-      if (owned_ && !columns_ && !input_.stale() && visible_ &&
-          committed_ <= input_.input().prepared().size())
-        tail = input_.input().prepared().substr(committed_);
-      const auto view = input_.view(prefix(columns_ ? columns_ : 80), columns_ ? columns_ : 80);
-      pending_.emplace(PendingSubmission{input_.take(), std::move(tail), view, false});
+      bool redraw = false;
+      if (owned_ && !columns_ && !input_.stale() && committed_ < input_.input().prepared().size()) {
+        const auto remaining = input_.input().prepared().size() - committed_;
+        redraw = remaining > 12; // At most three held UTF-8 bytes; otherwise use the bounded view.
+        if (!redraw)
+          tail = input_.input().prepared().substr(committed_);
+      }
+      auto view = input_.view(prefix(columns_ ? columns_ : 80), columns_ ? columns_ : 80);
+      pending_.emplace(
+          PendingSubmission{input_.take(), std::move(tail), std::move(view), false, redraw});
     }
     if (submitted() == DiagnosticResult::deferred)
       return {};

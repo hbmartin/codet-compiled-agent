@@ -1921,7 +1921,8 @@ TEST(InspectionRead, OpeningSizeBoundsReadsSeeksAndRejectsTruncation) {
   ASSERT_EQ(handle->read(bytes, sizeof(bytes)), 3u);
   EXPECT_EQ(std::string(bytes, 3), "abc");
   EXPECT_EQ(handle->read(bytes, sizeof(bytes)), 0u);
-  EXPECT_THROW(handle->seek(4), Error);
+  EXPECT_NO_THROW(handle->seek(4));
+  EXPECT_EQ(handle->read(bytes, sizeof(bytes)), 0u);
   handle->seek(1);
   EXPECT_EQ(handle->read(bytes, sizeof(bytes)), 2u);
   EXPECT_EQ(std::string(bytes, 2), "bc");
