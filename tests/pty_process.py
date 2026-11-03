@@ -105,6 +105,13 @@ def line_cells(data):
             column = max(0, column-1)
         elif ord(point) >= 32:
             width = 0 if unicodedata.combining(point) else 2 if unicodedata.east_asian_width(point) in ('W','F') else 1
+            if width == 0:
+                previous = column - 1
+                while previous >= 0 and row.get(previous) == '':
+                    previous -= 1
+                if previous >= 0:
+                    row[previous] = row.get(previous, '') + point
+                continue
             row[column] = point
             for cell in range(1, width):
                 row[column+cell] = ''

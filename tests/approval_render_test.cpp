@@ -94,8 +94,11 @@ TEST(ApprovalCurses, OrdinaryNativeFailuresKeepStateAndNextFrameRecovers) {
                  ? ERR
                  : ::addnstr(text.data(), static_cast<int>(text.size()));
     };
-    ops.refresh_screen =
-        +[](void *p) { return static_cast<Failure *>(p)->stage == 4 ? ERR : ::refresh(); };
+    ops.refresh_screen = +[](void *p) {
+      auto stage = static_cast<Failure *>(p)->stage;
+      EXPECT_TRUE(stage == 4 || stage == -1) << "Refresh after failed drawing";
+      return stage == 4 ? ERR : ::refresh();
+    };
     bool dirty = false;
     codet::detail::CursesFrame frame(dirty, ops);
     EXPECT_EQ(frame.row(1, "retained progress", 80), failure == 4);

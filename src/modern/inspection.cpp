@@ -41,16 +41,24 @@ public:
 class NativeRead final : public ReadHandle {
   int fd_ = -1;
   fs::path opened_;
-  uint64_t size_ = 0;
+  uint64_t size_ = 0, offset_ = 0;
 
 public:
   explicit NativeRead(const fs::path &path) {
-    fd_ = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    int flags = O_RDONLY | O_NOFOLLOW | O_NONBLOCK;
+#ifdef O_CLOEXEC
+    flags |= O_CLOEXEC;
+#endif
+    fd_ = ::open(path.c_str(), flags);
     try {
       struct stat st {};
       if (fd_ < 0 || ::fstat(fd_, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
-          ::fcntl(fd_, F_SETFD, FD_CLOEXEC) < 0)
+          ::fcntl(fd_, F_GETFD) < 0)
         throw Error("Cannot open regular file for inspection: " + path.string());
+#ifndef O_CLOEXEC
+      if (::fcntl(fd_, F_SETFD, FD_CLOEXEC) < 0)
+        throw Error("Cannot open regular file for inspection: " + path.string());
+#endif
       char target[PATH_MAX + 1]{};
 #ifdef __APPLE__
       if (::fcntl(fd_, F_GETPATH, target) < 0)
@@ -87,18 +95,25 @@ public:
     return size_;
   }
   size_t read(char *out, size_t count) override {
+    count = static_cast<size_t>(std::min<uint64_t>(count, size_ - offset_));
+    if (!count)
+      return 0;
     ssize_t n;
     do {
       n = ::read(fd_, out, count);
     } while (n < 0 && errno == EINTR);
     if (n < 0)
       throw Error("Inspection read failed: " + std::string(std::strerror(errno)));
+    if (n == 0)
+      throw Error("Inspection target truncated while reading");
+    offset_ += static_cast<uint64_t>(n);
     return static_cast<size_t>(n);
   }
   void seek(uint64_t offset) override {
-    if (offset > static_cast<uint64_t>(std::numeric_limits<off_t>::max()) ||
+    if (offset > size_ || offset > static_cast<uint64_t>(std::numeric_limits<off_t>::max()) ||
         ::lseek(fd_, static_cast<off_t>(offset), SEEK_SET) < 0)
       throw Error("Invalid inspection byte offset");
+    offset_ = offset;
   }
 };
 } // namespace

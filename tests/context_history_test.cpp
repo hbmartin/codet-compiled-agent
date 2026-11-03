@@ -1910,3 +1910,24 @@ TEST_F(History, CheckpointArchivesOverflowStateAndPreservesUnseenToolImagesWitho
   relocated.restore_references(state.references(child.id));
   EXPECT_EQ(relocated.execution_state(child.messages).size(), 100u);
 }
+TEST(InspectionRead, OpeningSizeBoundsReadsSeeksAndRejectsTruncation) {
+  TempDirectory temp;
+  const auto path = temp.root / "inspection";
+  std::ofstream(path) << "abc";
+  NativeFileSystem files;
+  auto handle = files.open_read(path);
+  std::ofstream(path, std::ios::app) << "def";
+  char bytes[16]{};
+  EXPECT_EQ(handle->read(bytes, sizeof(bytes)), 3u);
+  EXPECT_EQ(std::string(bytes, 3), "abc");
+  EXPECT_EQ(handle->read(bytes, sizeof(bytes)), 0u);
+  EXPECT_THROW(handle->seek(4), Error);
+  handle->seek(1);
+  EXPECT_EQ(handle->read(bytes, sizeof(bytes)), 2u);
+  EXPECT_EQ(std::string(bytes, 2), "bc");
+  auto newer = files.open_read(path);
+  EXPECT_EQ(newer->size(), 6u);
+  std::ofstream(path) << "a";
+  EXPECT_EQ(newer->read(bytes, sizeof(bytes)), 1u);
+  EXPECT_THROW(newer->read(bytes, sizeof(bytes)), Error);
+}
