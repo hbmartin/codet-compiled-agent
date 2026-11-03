@@ -86,6 +86,9 @@ def load_manifest(path):
                 raise ValueError("Invalid " + field + " declaration: " + name)
             if len({s["path"] for s in specs}) != len(specs):
                 raise ValueError("Duplicate " + field + " declaration: " + name)
+        for spec in check.get("artifacts", []):
+            if not isinstance(spec.get("kind"), str) or not spec["kind"] or not isinstance(spec.get("inputs", []), list) or any(not isinstance(v, str) or not v for v in spec.get("inputs", [])):
+                raise ValueError("Invalid artifact kind or input declaration: " + name)
         if check.get("policy", "required") not in ("required", "observation"):
             raise ValueError("Unknown outcome policy")
     return value

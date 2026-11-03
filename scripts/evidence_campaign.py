@@ -47,7 +47,7 @@ def input_name(root, path):
 
 
 def prepare(root, folder, baseline=None, check_python=None, python39=None, analysis_python=None,
-            ci_run=None, clang_tidy=None, cppcheck=None, template_path=None):
+            ci_run=None, clang_tidy=None, cppcheck=None, template_path=None, prior_attempt=None):
     from evidence_inputs import executable
     root = root.resolve()
     folder = (root / folder).resolve()
@@ -118,7 +118,8 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     config = dict(schema_version=4, root=str(root), folder=str(folder), baseline=baseline, tools=tools, environment=environment,
                   builds=builds, validated_ref=command([native["git"], "-C", root, "rev-parse", "HEAD"]),
                   ci_run=ci_run, analyzer_env=analyzer_env, check_python=python, python39=python39,
-                  analysis_python=analysis_python, cases=CASES, sets=template["benchmark"]["sets"],
+                  analysis_python=analysis_python, prior_attempt=str((root / prior_attempt).resolve()) if prior_attempt else None,
+                  cases=CASES, sets=template["benchmark"]["sets"],
                   measured=template["benchmark"]["measured_per_set"])
     if sys.platform == "darwin":
         config["sdk"] = dict(path=command(["/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-path"], timeout=5),
@@ -178,9 +179,13 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     add("cross-build", [native["cmake"], "--build", cross, "--target", "codet_tests", "-j4"], ["cross-configure"],
         outputs=[dict(path=rel(cross / "codet_tests"), archive=False)])
     add("cross-tests", [cross / "codet_tests", "--gtest_filter=LinePrompt.*:InteractionWarnings.*:CursesInput.*"], ["cross-build"])
-    if (folder / "preliminary-capture").exists():
-        history_inputs = [rel(p) for p in sorted((folder / "preliminary-capture").rglob("*")) if p.is_file()]
-        producer("historical-attempt", "history", inputs=history_inputs)
+    if prior_attempt:
+        prior = Path(config["prior_attempt"])
+        history_files = [prior / n for n in ("config.json", "manifest.json", "capture-driver.log")]
+        history_files.extend(sorted((prior / "capture").glob("*")))
+        if any(not p.is_file() for p in history_files):
+            raise ValueError("Prior attempt metadata is missing")
+        producer("historical-attempt", "history", inputs=[rel(p) for p in history_files])
     producer("baseline-source", "archive")
     for variant in ("baseline", "changed"):
         source = folder / "baseline-src" if variant == "baseline" else root
@@ -323,9 +328,11 @@ def produce(config_path, action, *, output=None):
                         production_hashes=production_hashes(root), validation_hashes=validation_hashes(root),
                         input_hashes=input_hashes(root, inputs), payload=payload))
     if action == "history":
-        paths = sorted(p for p in (folder / "preliminary-capture").rglob("*") if p.is_file())
+        prior = Path(config["prior_attempt"])
+        paths = [prior / n for n in ("config.json", "manifest.json", "capture-driver.log")]
+        paths.extend(sorted((prior / "capture").glob("*")))
         inputs.extend(input_name(root, p) for p in paths)
-        payload = dict(label="Prior campaign attempts; historical only, never a required-check substitute",
+        payload = dict(label="Prior campaign attempt; original failed/interrupted outcomes, historical only, never a required-check substitute",
                        files=[dict(path=input_name(root, p), sha256=digest(p)) for p in paths])
     elif action == "archive":
         source = folder / "baseline-src"
@@ -477,6 +484,7 @@ def main():
     replay.add_argument("--template", type=Path)
     replay.add_argument("--analysis-python", default=sys.executable)
     replay.add_argument("--ci-run")
+    replay.add_argument("--prior-attempt", type=Path)
     replay.add_argument("--clang-tidy")
     replay.add_argument("--cppcheck")
     producer = sub.add_parser("produce")
@@ -485,7 +493,7 @@ def main():
     producer.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.action == "prepare":
-        print(prepare(args.root, args.folder, args.baseline, args.check_python, args.python39, args.analysis_python, args.ci_run, args.clang_tidy, args.cppcheck, args.template))
+        print(prepare(args.root, args.folder, args.baseline, args.check_python, args.python39, args.analysis_python, args.ci_run, args.clang_tidy, args.cppcheck, args.template, args.prior_attempt))
     else:
         return produce(args.config, args.kind, output=args.output)
 

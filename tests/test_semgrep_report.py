@@ -38,7 +38,8 @@ class SemgrepReports(unittest.TestCase):
         self.assertTrue(data["platform"])
 
     def test_external_interpreter_does_not_publish_its_parent_directories(self):
-        with patch.object(sys, "executable", str(self.root / "private/bin/python3")):
+        with patch.object(sys, "executable", str(self.root / "private/bin/python3")), \
+                patch.object(report, "__file__", str(self.root / "checkout/scripts/semgrep-report.py")):
             self.assertEqual(report.interpreter_path(), "<external>/python3")
 
     def test_interpreter_symlink_keeps_its_venv_path(self):

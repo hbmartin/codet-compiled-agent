@@ -29,12 +29,14 @@ def _test(binary, target, directory):
 
 def run_controls(root, folder, build, ninja):
     database = json.loads((build / "compile_commands.json").read_text())
-    commands = subprocess.check_output([ninja, "-C", str(build), "-t", "commands", "codet_tests"], text=True, timeout=30)
-    link = shlex.split(commands.splitlines()[-1])
-    if "&&" in link:
-        link = link[link.index("&&") + 1:]
+    def link_command(target):
+        commands = subprocess.check_output([ninja, "-C", str(build), "-t", "commands", target], text=True, timeout=30)
+        link = shlex.split(commands.splitlines()[-1])
         if "&&" in link:
-            link = link[:link.index("&&")]
+            link = link[link.index("&&") + 1:]
+            if "&&" in link:
+                link = link[:link.index("&&")]
+        return link
     cases = [
         ("deferred", "tests/diagnostic_lifecycle_test.cpp", "include/codet/detail/line_prompt.hpp",
          "if (submitted() == DiagnosticResult::deferred)\n      return {};",
@@ -57,12 +59,18 @@ def run_controls(root, folder, build, ninja):
         ("inspection", "src/modern/inspection.cpp", "src/modern/inspection.cpp",
          "count = static_cast<size_t>(std::min<uint64_t>(count, size_ - offset_));",
          "(void)count;", "InspectionRead.OpeningSizeBoundsReadsSeeksAndRejectsTruncation"),
+        ("submission-allocation", "tests/publication_fault_test.cpp", "include/codet/detail/line_prompt.hpp",
+         "std::move(tail), std::move(view), false, redraw",
+         "std::move(tail), view, false, redraw",
+         "LineSubmissionFault.AllocationFailureCannotConsumeAnUnownedLine"),
     ]
     results = []
     for name, entry_name, source_name, before, after, target in cases:
         directory = folder / ("native-control-" + name)
         directory.mkdir()
-        baseline = _test(build / "codet_tests", target, directory)
+        binary_target = "codet_publication_fault_tests" if target.startswith("LineSubmissionFault.") else "codet_tests"
+        link = link_command(binary_target)
+        baseline = _test(build / binary_target, target, directory)
         if baseline["exit"] or baseline["assertions"]:
             raise ValueError("Native control baseline failed: " + target)
         source = directory / source_name
@@ -93,7 +101,8 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native mutant linking failed: " + repr(linked))
         mutant = _test(binary, target, directory)
         markers = {"deferred": "deferred", "separator": 'read()', "printer": "Expected equality of these values", "pid-guard": "unexpected wait",
-                   "refresh": "Refresh after failed drawing", "inspection": "handle->read"}
+                   "refresh": "Refresh after failed drawing", "inspection": "handle->read",
+                   "submission-allocation": "Allocation consumed a line without pending ownership"}
         if (mutant["exit"] != 1 or not mutant["assertions"] or
                 any("C++ exception" in message or "unknown file" in message for message in mutant["assertions"]) or
                 not any(markers[name] in message for message in mutant["assertions"])):

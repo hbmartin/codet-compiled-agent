@@ -146,6 +146,18 @@ def verify_bundle(folder):
         return dict(verified=False, inventory_verified=True, historical=True, eligible_current=False,
                     schema_version=run.get("schema_version"),
                     limitations=["Historical format does not establish v4 environments, path interpretation, or archived fingerprint coverage; no provenance was backfilled."])
+    for key in ("id", "campaign_id"):
+        if not isinstance(run.get(key), str) or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", run[key]) is None:
+            raise ValueError("Invalid audit run identity: " + key)
+    if report.get("schema_version") != SCHEMA_VERSION:
+        raise ValueError("Audit report format mismatch")
+    for role, hashes in (("production", report["production_hashes"]), ("validation", report["validation_hashes"])):
+        if not isinstance(hashes, dict):
+            raise ValueError("Invalid audit fingerprint map")
+        for name, content in hashes.items():
+            if Path(name).is_absolute() or any(part in ("", ".", "..") for part in name.split("/")) or not role_selected(name, role):
+                raise ValueError("Invalid audit fingerprint path")
+            valid_digest(content)
     if run["manifest_sha256"] != digest(folder / "manifest.json"):
         raise ValueError("Audit capture identity mismatch")
     if (report["capture_run_id"], report["campaign_id"]) != (run["id"], run["campaign_id"]):
@@ -175,7 +187,7 @@ def verify_bundle(folder):
         published = report["validation"][position]
         name = check["id"]
         record = json.loads((folder / "capture" / (name + ".json")).read_text())
-        if (record["id"] != name or record["run_id"] != run["id"] or record["campaign_id"] != run["campaign_id"] or
+        if (record.get("schema_version") != SCHEMA_VERSION or record["id"] != name or record["run_id"] != run["id"] or record["campaign_id"] != run["campaign_id"] or
                 record["manifest_sha256"] != run["manifest_sha256"] or record["argv"] != check["argv"] or
                 record["env"] != check.get("env", {}) or record["cwd"] != record.get("canonical_cwd") or record.get("cwd_spec") != check.get("cwd", ".") or
                 record["source_before"] != report["production_hashes"] or record["source_after"] != record["source_before"] or
