@@ -1918,7 +1918,7 @@ TEST(InspectionRead, OpeningSizeBoundsReadsSeeksAndRejectsTruncation) {
   auto handle = files.open_read(path);
   std::ofstream(path, std::ios::app) << "def";
   char bytes[16]{};
-  EXPECT_EQ(handle->read(bytes, sizeof(bytes)), 3u);
+  ASSERT_EQ(handle->read(bytes, sizeof(bytes)), 3u);
   EXPECT_EQ(std::string(bytes, 3), "abc");
   EXPECT_EQ(handle->read(bytes, sizeof(bytes)), 0u);
   EXPECT_THROW(handle->seek(4), Error);

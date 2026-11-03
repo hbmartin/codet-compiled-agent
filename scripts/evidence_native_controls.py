@@ -6,6 +6,7 @@ import subprocess
 import xml.etree.ElementTree as ET
 
 from evidence_benchmarks import replace_once
+from validation_evidence import digest
 
 
 def _run(argv, cwd, timeout):
@@ -93,7 +94,9 @@ def run_controls(root, folder, build, ninja):
         mutant = _test(binary, target, directory)
         markers = {"deferred": "deferred", "separator": 'read()', "printer": "Expected equality of these values", "pid-guard": "unexpected wait",
                    "refresh": "Refresh after failed drawing", "inspection": "handle->read"}
-        if mutant["exit"] != 1 or not mutant["assertions"] or not any(markers[name] in message for message in mutant["assertions"]):
+        if (mutant["exit"] != 1 or not mutant["assertions"] or
+                any("C++ exception" in message or "unknown file" in message for message in mutant["assertions"]) or
+                not any(markers[name] in message for message in mutant["assertions"])):
             raise ValueError("Native mutant did not fail its intended assertion: " + target + repr(mutant))
-        results.append(dict(name=name, target=target, baseline=baseline, compile=compiled, link=linked, mutant=mutant))
+        results.append(dict(name=name, target=target, mutation=dict(before=before, after=after, original_sha256=digest(root / source_name), mutant_sha256=digest(source)), binary_sha256=digest(binary), baseline=baseline, compile=compiled, link=linked, mutant=mutant))
     return results
