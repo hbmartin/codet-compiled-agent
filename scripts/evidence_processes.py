@@ -25,7 +25,9 @@ def script_identity(name):
 
 
 def needs_arguments(name):
-    return Path(name).name.lower().startswith("python") or matches_native(name) or script_identity(name)
+    base = Path(name).name
+    return (base.lower().startswith("python") or matches_native(name) or script_identity(name) or
+            (len(base) in (15, 16) and any(base.startswith(n + "-") for n in NATIVE_BLOCKERS)))
 
 
 def python_program(arguments):
@@ -34,10 +36,10 @@ def python_program(arguments):
         flag = values.pop(0)
         if flag == "--":
             return values
-        if flag == "-c":
+        if flag.startswith("-c"):
             return []
-        if flag == "-m":
-            return ["-m"] + values
+        if flag.startswith("-m"):
+            return ["-m"] + ([flag[2:]] if len(flag) > 2 else []) + values
         if not flag.startswith("-") or flag == "-":
             return [flag] + values
         if flag in ("-X", "-W", "--check-hash-based-pycs"):

@@ -652,7 +652,12 @@ class ReplayIntegrity(unittest.TestCase):
         self.checks.append(dict(id="same-stem", argv=[sys.executable, str(script), "left.json", "left.jsonl"], artifacts=[dict(path=n, kind="measure", inputs=["config.json"]) for n in ("left.json", "left.jsonl")]))
         self.capture()
         target = self.root / "bundle"
-        evidence.publish_bundle(self.manifest, self.folder, target)
+        try:
+            evidence.publish_bundle(self.manifest, self.folder, target)
+        except ValueError as error:
+            if "Measurement sidecar namespace mismatch" not in str(error):
+                raise
+            self.fail("Artifact-specific sidecar identity was not preserved: " + str(error))
         self.assertTrue(verify_bundle(target)["verified"])
         self.assertEqual(len(list((target / "measurements").rglob("samples.csv"))), 4)
         self.assertEqual(len(json.loads((target / "measurements.json").read_text())), 4)
@@ -946,3 +951,58 @@ class EvidenceV4(ValidationEvidence):
         for flags in (['-X', 'utf8'], ['-Xutf8'], ['-OO'], ['-W', 'ignore'], ['-uB'], ['--']):
             self.assertTrue(blocking_processes([dict(executable='python3', argv=['python3'] + flags + ['/path with spaces/analyze-modern.py'])]))
         self.assertFalse(blocking_processes([dict(executable='python3', argv=['python3', '-c', 'analyze-modern.py'])]))
+
+    def test_analyzers_require_versions_and_their_own_source_sets(self):
+        from evidence_analysis import compare_analysis
+        helper = ComparisonGuards()
+        baseline = helper.analysis(Path('/baseline'))
+        changed = helper.analysis(Path('/changed'))
+        changed['expected_sources'] = changed['completed_sources'] = ['/changed/src/new.cpp']
+        changed['results'][0]['source'] = '/changed/src/new.cpp'
+        changed['results'][0]['completed_sources'] = ['/changed/src/new.cpp']
+        self.assertTrue(compare_analysis(baseline, changed, Path('/baseline'), Path('/changed'), ['src/a.cpp'], ['src/new.cpp'])['equal'])
+        baseline['versions'] = []
+        changed['versions'] = []
+        with self.assertRaisesRegex(ValueError, 'version'):
+            compare_analysis(baseline, changed, Path('/baseline'), Path('/changed'), ['src/a.cpp'], ['src/new.cpp'])
+
+    def test_relocations_require_full_identity_and_real_unchanged_source_context(self):
+        from evidence_analysis import compare_analysis, finding_key
+        old = self.root / 'old'
+        new = self.root / 'new'
+        for path, text in ((old, 'original\n'), (new, '// heading\noriginal\n')):
+            (path / 'src').mkdir(parents=True)
+            (path / 'src/a.cpp').write_text(text)
+        helper = ComparisonGuards()
+        a, b = helper.analysis(old, 'clang-tidy'), helper.analysis(new, 'clang-tidy')
+        for manifest, root, offset in ((a, old, 0), (b, new, 11)):
+            f = dict(DiagnosticName='known', DiagnosticMessage=dict(FilePath=str(root / 'src/a.cpp'), FileOffset=offset, Message='known diagnostic'))
+            manifest.update(passed=False, findings=1)
+            manifest['results'][0].update(status='findings', findings=[f])
+        entry = dict(old=finding_key('clang-tidy', a['results'][0]['findings'][0], old),
+                     new=finding_key('clang-tidy', b['results'][0]['findings'][0], new),
+                     context='original', rationale='Unchanged diagnostic statement shifted by an inserted comment.')
+        self.assertFalse(compare_analysis(a, b, old, new, ['src/a.cpp'])['equal'])
+        self.assertTrue(compare_analysis(a, b, old, new, ['src/a.cpp'], relocations=[entry])['equal'])
+        for entries in ([dict(entry, context='invented')], [entry, entry]):
+            with self.assertRaisesRegex(ValueError, 'relocation'):
+                compare_analysis(a, b, old, new, ['src/a.cpp'], relocations=entries)
+
+    def test_managed_campaign_cannot_reuse_a_directory_without_config(self):
+        import evidence_campaign as campaign
+        folder = self.root / 'previous'
+        folder.mkdir()
+        (folder / 'CMakeCache.txt').write_text('leftover')
+        with self.assertRaisesRegex(ValueError, 'directory already exists'):
+            campaign.prepare(self.root, folder)
+
+    def test_atomic_bundle_install_refuses_existing_empty_directory(self):
+        from evidence_bundle import rename_exclusive
+        source, target = self.root / 'source', self.root / 'target'
+        source.mkdir()
+        target.mkdir()
+        (source / 'report').write_text('new')
+        with self.assertRaises(OSError):
+            rename_exclusive(source, target)
+        self.assertTrue(source.is_dir())
+        self.assertEqual(list(target.iterdir()), [])

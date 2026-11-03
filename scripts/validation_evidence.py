@@ -140,10 +140,12 @@ def capture(manifest_path, folder, *, campaign_id=None):
     manifest = load_manifest(manifest_path)
     root = Path(manifest["root"]).resolve()
     verify_tools(manifest)
+    if manifest.get("single_attempt") and (folder / "run.json").exists():
+        raise ValueError("Managed campaign capture already attempted; use a fresh campaign")
     folder.mkdir(parents=True, exist_ok=True)
     signature = digest(manifest_path)
     run = dict(schema_version=SCHEMA_VERSION, id=uuid.uuid4().hex,
-               campaign_id=campaign_id or uuid.uuid4().hex, manifest_sha256=signature)
+               campaign_id=campaign_id or uuid.uuid4().hex, manifest_sha256=signature, canonical_root=str(root))
     atomic_json(folder / "run.json", run)
     results = {}
     policies = {c["id"]: c.get("policy", "required") for c in manifest["checks"]}
@@ -158,6 +160,7 @@ def capture(manifest_path, folder, *, campaign_id=None):
                       manifest_sha256=signature, source_before=before, validation_before=validation,
                       started_ns=time.time_ns(), exit=None, outcome="not-run", log=log.name, artifacts=[], outputs=[])
         record["canonical_cwd"] = record["cwd"]
+        record["cwd_spec"] = check.get("cwd", ".")
         log.write_text("")
         phase = "artifact"
         try:
@@ -353,8 +356,9 @@ def main():
     args = parser.parse_args()
     if args.operation == "verify-bundle":
         from evidence_bundle import verify_bundle
-        print(json.dumps(verify_bundle(args.manifest), indent=2))
-        return 0
+        result = verify_bundle(args.manifest)
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("verified") and result.get("eligible_current") else 1
     if args.folder is None:
         parser.error("capture/publish/bundle requires a folder")
     if args.operation == "capture":

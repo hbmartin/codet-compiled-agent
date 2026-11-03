@@ -11,14 +11,14 @@ import tempfile
 from pathlib import Path
 
 from evidence_benchmarks import verify_samples
-from evidence_inputs import file_specs, role_selected, write_csv
+from evidence_inputs import environment, file_specs, role_selected, write_csv
 
 
 def safe_member(folder, name):
     if not isinstance(name, str) or not name or "\\" in name:
         raise ValueError("Invalid audit lookup path: " + repr(name))
     path = Path(name)
-    if path.is_absolute() or any(part in (".", "..") for part in name.split("/")):
+    if path.is_absolute() or any(part in ("", ".", "..") for part in name.split("/")):
         raise ValueError("Invalid audit lookup path: " + name)
     current = folder
     for part in path.parts:
@@ -135,7 +135,11 @@ def verify_bundle(folder):
     manifest = load_manifest(folder / "manifest.json")
     run = json.loads((folder / "capture/run.json").read_text())
     report = json.loads((folder / "report.json").read_text())
-    if run.get("schema_version") != SCHEMA_VERSION or run["manifest_sha256"] != digest(folder / "manifest.json"):
+    if run.get("schema_version") != SCHEMA_VERSION:
+        return dict(verified=False, inventory_verified=True, historical=True, eligible_current=False,
+                    schema_version=run.get("schema_version"),
+                    limitations=["Historical format does not establish v4 environments, path interpretation, or archived fingerprint coverage; no provenance was backfilled."])
+    if run["manifest_sha256"] != digest(folder / "manifest.json"):
         raise ValueError("Audit capture identity mismatch")
     if (report["capture_run_id"], report["campaign_id"]) != (run["id"], run["campaign_id"]):
         raise ValueError("Audit report identity mismatch")
@@ -164,7 +168,7 @@ def verify_bundle(folder):
         record = json.loads((folder / "capture" / (name + ".json")).read_text())
         if (record["id"] != name or record["run_id"] != run["id"] or record["campaign_id"] != run["campaign_id"] or
                 record["manifest_sha256"] != run["manifest_sha256"] or record["argv"] != check["argv"] or
-                record["env"] != check.get("env", {}) or record["cwd"] != record.get("canonical_cwd") or
+                record["env"] != check.get("env", {}) or record["cwd"] != record.get("canonical_cwd") or record.get("cwd_spec") != check.get("cwd", ".") or
                 record["source_before"] != report["production_hashes"] or record["source_after"] != record["source_before"] or
                 record["validation_before"] != report["validation_hashes"] or record["validation_after"] != record["validation_before"] or
                 record["build_inputs_before"] != record["build_inputs_after"] or record["input_before"] != record["input_after"] or
@@ -180,6 +184,13 @@ def verify_bundle(folder):
         for parent in check.get("requires", []):
             if parent not in records:
                 raise ValueError("Audit prerequisite missing")
+        expected_env = environment(manifest, check)
+        expected_env["CODET_EVIDENCE_CONTEXT"] = json.dumps(dict(schema_version=SCHEMA_VERSION,
+            campaign_id=run["campaign_id"], capture_run_id=run["id"], check_id=name,
+            root=run["canonical_root"], production_hashes=report["production_hashes"], validation_hashes=report["validation_hashes"],
+            declared_artifacts=check.get("artifacts", [])))
+        if record.get("effective_environment") != expected_env:
+            raise ValueError("Audit effective environment mismatch: " + name)
         records[name] = record
         if set(record["build_inputs_before"]) != {s["path"] for s in check.get("source_inputs", [{"path": "."}])}:
             raise ValueError("Audit source coverage mismatch")
@@ -238,8 +249,12 @@ def verify_bundle(folder):
             raise ValueError("Measurement configuration missing or unarchived: " + measurement["artifact"])
         try:
             settings = json.loads(safe_member(folder, config["storage"]).read_text())
-            if not all(k in settings for k in ("cases", "sets", "measured")):
-                raise ValueError("Missing measurement settings")
+            if (not isinstance(settings, dict) or not isinstance(settings.get("cases"), dict) or
+                    type(settings.get("sets")) is not int or settings["sets"] < 1 or
+                    type(settings.get("measured")) is not int or settings["measured"] < 1 or
+                    not settings["cases"] or any(not isinstance(v, list) or not v or
+                        any(not isinstance(n, str) or not n for n in v) for v in settings["cases"].values())):
+                raise ValueError("Missing or malformed measurement settings")
         except (ValueError, TypeError) as error:
             raise ValueError("Malformed measurement configuration: " + measurement["artifact"]) from error
         payload = envelope["payload"]
@@ -256,5 +271,5 @@ def verify_bundle(folder):
             fields = set().union(*(r.keys() for r in payload[key]))
             if actual_rows != [{k: str(row.get(k, "")) for k in fields} for row in payload[key]]:
                 raise ValueError("Audit measurement sidecar mismatch")
-    return dict(verified=True, schema_version=SCHEMA_VERSION, campaign_id=run["campaign_id"],
+    return dict(verified=True, eligible_current=True, schema_version=SCHEMA_VERSION, campaign_id=run["campaign_id"],
                 checks=len(records), audit_inputs=len(index), reran_binaries=False)
