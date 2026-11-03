@@ -42,6 +42,12 @@ struct Discard : std::streambuf {
     return value;
   }
 };
+template <class Output>
+auto associate(Output &output, int) -> decltype(output.associate_terminal(STDOUT_FILENO), void()) {
+  // This discard stream models a forwarding terminal surface, not an unrelated memory log.
+  output.associate_terminal(STDOUT_FILENO);
+}
+template <class Output> void associate(Output &, long) {}
 template <class Prompt, class... Args>
 auto prompt(int, size_t columns, Args &&...args)
     -> std::enable_if_t<std::is_constructible_v<Prompt, Args..., size_t>, std::unique_ptr<Prompt>> {
@@ -178,6 +184,8 @@ int main(int argc, char **argv) {
   std::ostream stream(&discard);
   detail::CliOutput injected(stream), terminal(io);
   auto &output = native ? terminal : injected;
+  if (!native)
+    associate(output, 0);
   detail::RequestInputController input;
   if (!editing && !deferred && !warnings && mode != "allocation-positive" &&
       mode != "geometry-positive")

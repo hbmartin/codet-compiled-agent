@@ -54,7 +54,16 @@ def role_selected(name, role):
 
 
 def role_hashes(root, role):
-    return {name: value for name, value in build_hashes(root).items() if role_selected(name, role)}
+    directories = (("src", "include", "cmake") if role == "production" else
+                   ("tests", "scripts", "checks", "requirements", ".github/workflows") if role == "validation" else DIRECTORIES)
+    paths = [root / name for name in ROOT_FILES]
+    paths.extend(root.glob("*lock.json"))
+    for directory in directories:
+        paths.extend(p for p in (root / directory).rglob("*") if p.is_file())
+    if role != "production":
+        paths.extend((root / "docs/validation").glob("*.py"))
+    return {str(p.relative_to(root)): sha256(p) for p in sorted(set(paths))
+            if p.is_file() and role_selected(str(p.relative_to(root)), role)}
 
 
 def git_hashes(repository, ref, role):
@@ -72,13 +81,7 @@ def git_hashes(repository, ref, role):
 
 
 def build_hashes(root):
-    paths = [root / name for name in ROOT_FILES]
-    paths.extend(root.glob("*lock.json"))
-    for directory in DIRECTORIES:
-        paths.extend(p for p in (root / directory).rglob("*") if p.is_file())
-    paths.extend((root / "docs/validation").glob("*.py"))
-    return {str(p.relative_to(root)): sha256(p) for p in sorted(set(paths))
-            if p.is_file() and selected(str(p.relative_to(root)))}
+    return role_hashes(root, "build")
 
 
 def source_inputs(root, specs):

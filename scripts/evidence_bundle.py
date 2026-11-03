@@ -40,11 +40,15 @@ _csv = write_csv
 def rename_exclusive(source, destination):
     library = ctypes.CDLL(None, use_errno=True)
     if sys.platform == "darwin":
-        rename = library.renamex_np
+        rename = getattr(library, "renamex_np", None)
+        if rename is None:
+            raise ValueError("Atomic immutable publication unavailable in this libc")
         rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
         args = [os.fsencode(source), os.fsencode(destination), 4]  # SDK RENAME_EXCL
     elif sys.platform.startswith("linux"):
-        rename = library.renameat2
+        rename = getattr(library, "renameat2", None)
+        if rename is None:
+            raise ValueError("Atomic immutable publication unavailable in this libc")
         rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
         args = [-100, os.fsencode(source), -100, os.fsencode(destination), 1]  # AT_FDCWD, RENAME_NOREPLACE
     else:
@@ -77,6 +81,9 @@ def publish_audit_bundle(manifest_path, folder, destination):
                 (stage / storage).parent.mkdir(exist_ok=True)
                 shutil.copyfile(path, stage / storage)
             index.append(dict(check_id=check, role=role, path=name, sha256=expected, storage=storage))
+        for role, hashes in (("production", value["production_hashes"]), ("validation", value["validation_hashes"])):
+            for filename, content in hashes.items():
+                archive("run", "fingerprint:" + role, filename, root / filename, content)
         for position, check in enumerate(manifest["checks"]):
             record = value["validation"][position]
             name = check["id"]
@@ -147,7 +154,7 @@ def verify_bundle(folder):
     entries = {}
     for item in index:
         valid_digest(item["sha256"])
-        if item["check_id"] not in {c["id"] for c in manifest["checks"]}:
+        if item["check_id"] not in {"run", *(c["id"] for c in manifest["checks"])}:
             raise ValueError("Unknown audit input producer")
         key = (item["check_id"], item["role"], item["path"])
         if key in entries:
@@ -156,7 +163,9 @@ def verify_bundle(folder):
             if item["storage"] != "inputs/" + item["sha256"] or digest(safe_member(folder, item["storage"])) != item["sha256"]:
                 raise ValueError("Audit input digest mismatch")
         entries[key] = item
-    required = {}
+    required = {("run", "fingerprint:" + role, path): (content, True)
+                for role, hashes in (("production", report["production_hashes"]), ("validation", report["validation_hashes"]))
+                for path, content in hashes.items()}
     expected_measurements = set()
     derived = []
     records = {}

@@ -146,6 +146,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
         return argv
     def configured_outputs(build):
         return [dict(path=rel(Path(build) / n)) for n in ("CMakeCache.txt", "compile_commands.json", "build.ninja", "generated/prompts.hpp", "generated/core_contract.hpp")]
+    add("provision-offline", [python, "scripts/fetch-deps.py", "--offline"])
     focused = "--gtest_filter=NativeRecordLifecycle.*:DiagnosticFixture.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.*"
     for mode in ("debug", "asan", "tsan"):
         build = Path(builds[mode])
@@ -156,7 +157,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
             warnings = " -Wno-error=implicit-int-float-conversion -Wno-error=unused-result" if sys.platform == "darwin" else ""
             args += ["-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer" + warnings,
                      "-DCMAKE_C_FLAGS=-fsanitize=thread", "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread"]
-        add(mode + "-configure", args, outputs=configured_outputs(build))
+        add(mode + "-configure", args, ["provision-offline"], outputs=configured_outputs(build))
         add(mode + "-build", [native["cmake"], "--build", build, "-j4"], [mode + "-configure"],
             outputs=[dict(path=rel(build / n), archive=False) for n in ("codet", "codet_tests", "codet_publication_fault_tests")])
         if mode != "tsan":
@@ -173,7 +174,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     cross = Path(builds["cross"])
     producer("cross-placeholder", "cross-placeholder", outputs=[dict(path=rel(folder / "host-prefix/lib/libMacportsLegacySupport.a")), dict(path=rel(folder / "host-placeholder.c"))])
     add("cross-configure", configure(root, cross, "Debug") + ["-DCMAKE_SYSTEM_NAME=" + platform.system(), "-D_prefix=" + str(folder / "host-prefix")],
-        ["cross-placeholder"], outputs=configured_outputs(cross))
+        ["cross-placeholder", "provision-offline"], outputs=configured_outputs(cross))
     add("cross-build", [native["cmake"], "--build", cross, "--target", "codet_tests", "-j4"], ["cross-configure"],
         outputs=[dict(path=rel(cross / "codet_tests"), archive=False)])
     add("cross-tests", [cross / "codet_tests", "--gtest_filter=LinePrompt.*:InteractionWarnings.*:CursesInput.*"], ["cross-build"])
@@ -185,7 +186,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
         source = folder / "baseline-src" if variant == "baseline" else root
         build = folder / (variant + "-release")
         specs = [dict(path=rel(source), git_ref=baseline, git=native["git"])] if variant == "baseline" else [dict(path=".")]
-        add(variant + "-configure", configure(source, build, "Release"), ["baseline-source"] if variant == "baseline" else [],
+        add(variant + "-configure", configure(source, build, "Release"), ["baseline-source", "provision-offline"] if variant == "baseline" else ["provision-offline"],
             outputs=configured_outputs(build), source_inputs=specs)
         add(variant + "-build", [native["cmake"], "--build", build, "--target", "codet_line_input_bench", "codet_output_bench", "codet_export_bench", "-j4"],
             [variant + "-configure"], source_inputs=specs,
@@ -271,6 +272,8 @@ def measure(config):
                         if run.returncode:
                             raise ValueError("Benchmark failed: " + repr((argv, run.returncode, run.stderr)))
                         row = json.loads(result.read_text())
+                        if row.get("case") != case:
+                            raise ValueError("Benchmark returned a different workload")
                         positive_controls(row, harness, case)
                         row.update(set=number, sample=sample, variant=variant, harness=harness, workload=case, warmup=sample == 0)
                         rows.append(row)
