@@ -310,8 +310,16 @@ def clang_one(tool, entry, binary, folder, database, timeout, root):
                 elif isinstance(value, list):
                     for item in value:
                         yield from locations(item)
+            def resolve_files(value):
+                if isinstance(value, dict):
+                    return {key: files[item] if key == "file" and isinstance(item, int) else resolve_files(item)
+                            for key, item in value.items()}
+                if isinstance(value, list):
+                    return [resolve_files(item) for item in value]
+                return value
             findings = [d for d in diagnostics if not files or not list(locations(d)) or
                         any(first_party(f, root) for f in locations(d))]
+            findings = [resolve_files(d) for d in findings]
         else:
             # Clang-Tidy does not create an export file when there are no diagnostics.
             import yaml
@@ -319,6 +327,13 @@ def clang_one(tool, entry, binary, folder, database, timeout, root):
             if not isinstance(data, dict) or not isinstance(data.get("Diagnostics"), list):
                 raise ValueError("Missing Diagnostics array")
             diagnostics = data["Diagnostics"]
+            def resolve_files(value):
+                if isinstance(value, dict):
+                    return {key: files[item] if key == "file" and isinstance(item, int) else resolve_files(item)
+                            for key, item in value.items()}
+                if isinstance(value, list):
+                    return [resolve_files(item) for item in value]
+                return value
             findings = [d for d in diagnostics if first_party(d.get("DiagnosticMessage", {}).get("FilePath"), root)
                         or any(first_party(n.get("FilePath"), root) for n in d.get("Notes", []))]
         run["all_diagnostics"] = diagnostics
