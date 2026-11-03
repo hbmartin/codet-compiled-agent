@@ -576,7 +576,8 @@ public:
     transcript_.add(text);
   }
   std::optional<std::string> read(Cancellation &cancel) {
-    if (!curses_ && (input_.stale() || (input_.ordinary_draft() && !input_.input().empty()))) {
+    if (!curses_ && ((line_ && line_->submission_pending()) || input_.stale() ||
+                     (input_.ordinary_draft() && !input_.input().empty()))) {
       begin_active(cancel);
       flush_prompt();
       struct Restore {
@@ -730,8 +731,12 @@ public:
     }
     if (ch == bindings_["submit"] || ch == KEY_ENTER || ch == '\r') {
       auto ready = line_ ? line_->try_take() : std::optional<detail::InputLine>(input_.take());
-      if (!ready)
+      if (!ready) {
+        // Keep servicing the existing UI loop without spinning while a diagnostic owns output.
+        (void)detail::retry_terminal_input(EAGAIN,
+                                           read_cancel_ ? &read_cancel_->requested : nullptr);
         return {};
+      }
       auto submitted = std::move(*ready);
       const auto &text = submitted.text;
       if (!submitted.discarded && approval_ && detail::approves(text) &&
