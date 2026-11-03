@@ -9,7 +9,13 @@ import tempfile
 
 def file_hash(path):
     with pathlib.Path(path).open('rb') as source:
-        return hashlib.file_digest(source, 'sha256').hexdigest()
+        return stream_hash(source)
+
+def stream_hash(source):
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: source.read(1024 * 1024), b''):
+        digest.update(chunk)
+    return digest.hexdigest()
 
 def tree_hashes(root, *, exclude_manifest=False):
     root = pathlib.Path(root)
@@ -46,7 +52,7 @@ def extract_verified(archive, expected, destination):
     staging = pathlib.Path(tempfile.mkdtemp(prefix=destination.name + '-extract-', dir=destination.parent))
     try:
         with pathlib.Path(archive).open('rb') as source:
-            if hashlib.file_digest(source, 'sha256').hexdigest() != expected:
+            if stream_hash(source) != expected:
                 raise ValueError('Archive checksum mismatch: ' + str(archive))
             source.seek(0)
             with tarfile.open(fileobj=source) as package:
