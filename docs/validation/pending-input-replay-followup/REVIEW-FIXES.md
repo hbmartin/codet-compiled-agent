@@ -42,3 +42,7 @@ The [original-location audit](20261104T154408Z-pr54-review-fixes-af3d0d5-audit-o
 The original `20261104T073413Z-ab2fde3` bundle, historical reports and all samples remain unchanged. Its 600 benchmark samples and isolated hashing experiment describe frozen source `ab2fde3`, **not this amended runtime**. No new performance claim is made for these review fixes.
 
 Docker, Podman and the PPC compiler remain unavailable locally. Host cross-selection does not establish native Tiger/PPC runtime coverage. No source-matched Ubuntu CI result is included in this local bundle. The existing Apple Clang warning accommodations remain unchanged; no new analyzer suppression was added. Blocking-TTY delivery, best-effort presentation on actual output failure and intentional discarding of extra ordinary typing during a frozen line retain their existing policies. The two inapplicable Sonar alerts and GitHub review threads were left untouched.
+
+## Delivery after PR #54 merged
+
+PR #54 merged as `56f6be798d363561d7ba27d7ee1394855e8e1c6b` while these corrections were being validated. The three local commits were replayed onto that freshly fetched main for a separate follow-up PR. Production, validation and build-input fingerprints remain identical to the captured source; commit ancestry changed, not the validated inputs. The bundle retains its original capture identities and is not rewritten to imply a second execution.
