@@ -1378,7 +1378,7 @@ class CliTests(unittest.TestCase):
                         resources.close()
 
     @contextlib.contextmanager
-    def pending_sequence(self,reservations=1):
+    def pending_sequence(self,reservations=1,extra=()):
         with PtyProcess() as resources:
             ready,release=threading.Event(),threading.Event()
             self.server.signal_gate=(ready,release);self.server.releases.append(release)
@@ -1387,7 +1387,7 @@ class CliTests(unittest.TestCase):
             helper=str(pathlib.Path(BIN).with_name('codet_tests'))
             process=resources.start([helper,'--codet-pending-sequence-helper',str(arm),str(notify),
                 str(reservations),'-C',str(self.workspace),'--ui','line','--color','never',
-                'fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,
+                *extra,'fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,
                 pass_fds=(arm,notify),env=dict(self.env,TERM='xterm'))
             received=bytearray();collect=partial(collect_pty,self,master,received)
             def token(expected):
@@ -1477,6 +1477,62 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(prompts,['first','second'],'Held follow-ups reversed submission order')
                 collect(lambda received=received:bytes(received).count(b'fixture done')>=3)
                 os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                self.assertEqual(process.returncode,0,received)
+
+    def test_completed_result_is_saved_and_displayed_before_late_close(self):
+        for close in (b'/quit\n',b'/exit\n',b'\x04',b'\0',b'\x05'):
+            with self.subTest(close=close):
+                target=self.workspace/'completed.txt'
+                target.unlink(missing_ok=True)
+                flags=['--output-last-message',str(target)]
+                if close==b'\x05':flags+=['-c','keybindings.quit=5']
+                with self.pending_sequence(extra=flags) as context:
+                    process,master,trigger,received,collect,token,release,before=context
+                    os.write(trigger,b'h');token(b'r');os.write(master,b'abc\n');token(b's')
+                    release.set();token(b'c')
+                    collect(lambda:b'fixture done' in received)
+                    self.assertEqual(target.read_text(),'fixture done\n','Completed result was not saved')
+                    os.write(master,close)
+                    collect(lambda:b'Pending message not sent: abc' in received)
+                    os.write(trigger,b'g');collect(lambda:process.poll() is not None)
+                    self.assertEqual(process.returncode,0,received)
+                    self.assertNotIn(b'Error: Interrupted',received)
+                    self.assertEqual(len(self.server.requests),before+1)
+                    import sqlite3
+                    with sqlite3.connect(self.home/'state.sqlite3') as db:
+                        self.assertEqual(db.execute('SELECT status FROM sessions ORDER BY rowid DESC LIMIT 1').fetchone(),('complete',))
+
+    def test_late_signals_preserve_result_and_return_to_usable_prompt(self):
+        for stop in (signal.SIGINT,signal.SIGTERM):
+            with self.subTest(stop=stop):
+                target=self.workspace/'signal-completed.txt';target.unlink(missing_ok=True)
+                with self.pending_sequence(extra=['-o',str(target)]) as context:
+                    process,master,trigger,received,collect,token,release,before=context
+                    os.write(trigger,b'h');token(b'r');os.write(master,b'abc\n');token(b's')
+                    release.set();token(b'c');collect(lambda:b'fixture done' in received)
+                    process.send_signal(stop)
+                    collect(lambda:b'Pending message not sent: abc' in received)
+                    os.write(trigger,b'g')
+                    self.assertEqual(target.read_text(),'fixture done\n')
+                    self.assertNotIn(b'Error: Interrupted',received)
+                    os.write(master,b'fresh-after-signal\n')
+                    collect(lambda:len(self.server.requests)>=before+2)
+                    self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'fresh-after-signal')
+                    collect(lambda:bytes(received).count(b'fixture done')>=2)
+                    os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+                    self.assertEqual(process.returncode,0,received)
+
+    def test_frozen_commands_keep_submission_time_policy_after_completion(self):
+        for command in ('/model','/model other','/status','/compact','/permissions plan','/new'):
+            with self.subTest(command=command),self.pending_sequence() as context:
+                process,master,trigger,received,collect,token,release,before=context
+                os.write(trigger,b'h');token(b'r');os.write(master,(command+'\n').encode());token(b's')
+                release.set();token(b'c');collect(lambda:b'fixture done' in received)
+                os.write(trigger,b'g')
+                expected=b'Started ' if command=='/new' else b'after the active turn completes.'
+                collect(lambda:expected in received)
+                self.assertEqual(len(self.server.requests),before+1,'Deferred local command reached the provider')
+                os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
                 self.assertEqual(process.returncode,0,received)
 
     def test_frozen_submission_obeys_turn_outcome_and_services_controls(self):

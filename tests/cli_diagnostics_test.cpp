@@ -8,6 +8,7 @@
 #include "codet/detail/request_input.hpp"
 #include "codet/detail/request_input_controller.hpp"
 #include "codet/detail/terminal_input.hpp"
+#include "codet/detail/turn_input.hpp"
 #include "codet/detail/ui_history.hpp"
 #include "codet/interaction.hpp"
 #include "native_io_metrics.hpp"
@@ -2120,3 +2121,47 @@ TEST(ProcessHelperSafety, InvalidPidsNeverReachWaitOrSignal) {
   EXPECT_FALSE(test::wait_helper(0, status, ops));
   EXPECT_FALSE(test::wait_helper(-1, status, ops));
 }
+
+TEST(TurnInput, CompletedInputKeepsActiveCommandPolicyAndRejectsWrongOrigins) {
+  const detail::InputOrigin origin{"session", 7};
+  for (auto phase : {detail::TurnInputPhase::active, detail::TurnInputPhase::completed}) {
+    for (const std::string text :
+         {"/model", "/model next", "/status", "/compact", "/permissions plan"}) {
+      detail::InputLine line{text, {}, false, origin};
+      const auto decision = detail::classify_turn_input(line, nullptr, origin, phase, false);
+      EXPECT_EQ(decision.action, detail::TurnInputAction::restricted);
+      EXPECT_FALSE(decision.guidance.empty());
+    }
+    detail::InputLine fresh{"/new", {}, false, origin};
+    EXPECT_EQ(detail::classify_turn_input(fresh, nullptr, origin, phase, false).action,
+              detail::TurnInputAction::new_session);
+    for (auto wrong :
+         {std::optional<detail::InputOrigin>{}, std::optional<detail::InputOrigin>{{"other", 7}},
+          std::optional<detail::InputOrigin>{{"session", 6}}}) {
+      detail::InputLine line{"/new", {}, false, wrong};
+      EXPECT_EQ(detail::classify_turn_input(line, nullptr, origin, phase, false).action,
+                detail::TurnInputAction::reject_origin);
+    }
+  }
+}
+TEST(TurnInput, ExpiredAnswersNeverBecomeMessagesAndHeldOrderPrecedesSteering) {
+  const detail::InputOrigin origin{"session", 7};
+  detail::InputLine expired{"yes", detail::ApprovalIdentity{"session", "old", 7}, false, origin};
+  const auto rejected = detail::classify_turn_input(expired, nullptr, origin,
+                                                    detail::TurnInputPhase::completed, false);
+  EXPECT_EQ(rejected.action, detail::TurnInputAction::discard);
+  EXPECT_EQ(rejected.rejection, detail::InputDiscard::expired);
+  detail::InputLine next{"second", {}, false, origin};
+  EXPECT_EQ(detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::active, true)
+                .action,
+            detail::TurnInputAction::hold);
+  EXPECT_EQ(
+      detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::active, false)
+          .action,
+      detail::TurnInputAction::steer);
+  EXPECT_EQ(
+      detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::completed, false)
+          .action,
+      detail::TurnInputAction::hold);
+}
+

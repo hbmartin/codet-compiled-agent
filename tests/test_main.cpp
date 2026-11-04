@@ -55,6 +55,8 @@ ssize_t pending_read(int fd, void *data, size_t size) {
   if (pending_sequence_io) {
     if (count == 1 && *static_cast<char *>(data) == 1)
       pending_sequence_barrier = true; // Next poll proves all preceding bytes were processed.
+    if (count == 1 && *static_cast<char *>(data) == 0)
+      return 0; // A deterministic EOF while the output PTY remains observable.
     return count;
   }
   if (count == 1 && (*static_cast<char *>(data) == '\0' || *static_cast<char *>(data) == 4))
