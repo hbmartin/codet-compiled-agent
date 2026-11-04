@@ -492,7 +492,7 @@ public:
   ~NativeDiagnosticRecord() {
     complete(false, false);
   }
-  detail::PresentationToken token() const noexcept {
+  const detail::PresentationToken &token() const noexcept {
     return reservation_.token;
   }
   bool deferred() const noexcept {

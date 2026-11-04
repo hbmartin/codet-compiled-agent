@@ -15,7 +15,7 @@ enum class TurnInputAction : uint8_t {
   steer
 };
 struct TurnInputDisposition {
-  TurnInputAction action;
+  TurnInputAction action = TurnInputAction::ignore;
   std::optional<InputDiscard> rejection;
   std::string_view guidance;
 };

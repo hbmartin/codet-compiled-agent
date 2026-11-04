@@ -1,4 +1,5 @@
 #pragma once
+#include "codet/detail/diagnostic_stream.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -6,13 +7,12 @@
 #include <unistd.h>
 
 namespace codet::detail {
-enum class DiagnosticResult : uint8_t;
 struct PresentationToken {
   uint64_t binding = 0, generation = 0;
   bool valid = false;
 };
 struct PresentationReceipt {
-  DiagnosticResult result;
+  DiagnosticResult result = DiagnosticResult::failure;
   PresentationToken token{};
 };
 inline bool same_destination(const struct stat &a, const struct stat &b) noexcept {

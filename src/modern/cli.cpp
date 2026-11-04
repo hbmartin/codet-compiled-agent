@@ -603,7 +603,7 @@ public:
     try {
       std::string message = "[Pending message not sent: ";
       message.append(text);
-      message += "]";
+      message += ']';
       if (immediate) {
         const auto shown = detail::terminal_text(message);
         (void)detail::immediate_stderr({shown});
