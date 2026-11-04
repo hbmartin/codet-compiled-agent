@@ -12,6 +12,7 @@ from pathlib import Path
 
 from evidence_benchmarks import verify_samples
 from evidence_inputs import environment, file_specs, role_selected, write_csv
+from evidence_paths import verify_working_provenance
 
 
 def safe_member(folder, name):
@@ -145,7 +146,7 @@ def verify_bundle(folder):
     if run.get("schema_version") != SCHEMA_VERSION:
         return dict(verified=False, inventory_verified=True, historical=True, eligible_current=False,
                     schema_version=run.get("schema_version"),
-                    limitations=["Historical format does not establish v4 environments, path interpretation, or archived fingerprint coverage; no provenance was backfilled."])
+                    limitations=["Historical format does not establish v5 resolution chains and consumer provenance; no provenance was backfilled."])
     for key in ("id", "campaign_id"):
         if not isinstance(run.get(key), str) or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", run[key]) is None:
             raise ValueError("Invalid audit run identity: " + key)
@@ -187,6 +188,7 @@ def verify_bundle(folder):
         published = report["validation"][position]
         name = check["id"]
         record = json.loads((folder / "capture" / (name + ".json")).read_text())
+        verify_working_provenance(manifest, run, record)
         if (record.get("schema_version") != SCHEMA_VERSION or record["id"] != name or record["run_id"] != run["id"] or record["campaign_id"] != run["campaign_id"] or
                 record["manifest_sha256"] != run["manifest_sha256"] or record["argv"] != check["argv"] or
                 record["env"] != check.get("env", {}) or record["cwd"] != record.get("canonical_cwd") or record.get("cwd_spec") != check.get("cwd", ".") or

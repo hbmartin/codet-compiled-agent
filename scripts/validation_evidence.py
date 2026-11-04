@@ -3,7 +3,6 @@
 import argparse
 import json
 import os
-import signal
 import subprocess
 import tempfile
 import time
@@ -23,9 +22,11 @@ from evidence_inputs import (
     verify_tools,
     working_directory,
 )
+from evidence_paths import resolution, verify_working_provenance, working_provenance
 from evidence_processes import blocking_processes, require_quiet_processes  # noqa: F401
+from process_supervision import run as supervised_run
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def digest(path):
@@ -148,7 +149,7 @@ def capture(manifest_path, folder, *, campaign_id=None):
     folder.mkdir(parents=True, exist_ok=True)
     signature = digest(manifest_path)
     run = dict(schema_version=SCHEMA_VERSION, id=uuid.uuid4().hex,
-               campaign_id=campaign_id or uuid.uuid4().hex, manifest_sha256=signature, canonical_root=str(root))
+               campaign_id=campaign_id or uuid.uuid4().hex, manifest_sha256=signature, canonical_root=str(root), root_resolution=resolution(manifest["root"]))
     atomic_json(folder / "run.json", run)
     results = {}
     policies = {c["id"]: c.get("policy", "required") for c in manifest["checks"]}
@@ -167,6 +168,7 @@ def capture(manifest_path, folder, *, campaign_id=None):
         log.write_text("")
         phase = "artifact"
         try:
+            record["path_before"] = working_provenance(manifest, check)
             if any(results[parent]["outcome"] != "passed" and not (policies[parent] == "observation" and
                    results[parent]["outcome"] == "failed" and type(results[parent]["exit"]) is int)
                    for parent in check.get("requires", [])):
@@ -204,21 +206,21 @@ def capture(manifest_path, folder, *, campaign_id=None):
                         continue
                 with log.open("wb") as stream:
                     env["CODET_EVIDENCE_CONTEXT"] = json.dumps(context)
-                    process = subprocess.Popen(argv, cwd=record["cwd"], stdout=stream,
-                                               stderr=subprocess.STDOUT, start_new_session=True, env=env)
                     phase = "execution"
                     try:
-                        record["exit"] = process.wait(timeout=check.get("timeout_seconds", 600))
-                        record["outcome"] = "passed" if record["exit"] == 0 else "failed"
-                    except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
-                        try:
-                            os.killpg(process.pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                        record["exit"] = process.wait()
-                        record["outcome"] = "timeout" if isinstance(error, subprocess.TimeoutExpired) else "interrupted"
-                        if isinstance(error, KeyboardInterrupt):
-                            raise
+                        process = supervised_run(argv, cwd=record["cwd"], stdout=stream,
+                                                 stderr=subprocess.STDOUT, env=env,
+                                                 timeout=check.get("timeout_seconds", 600), cleanup_grace=8)
+                        record["exit"] = process.returncode
+                        record["outcome"] = "passed" if process.returncode == 0 else "failed"
+                    except subprocess.TimeoutExpired as error:
+                        record["exit"] = getattr(error, "returncode", None)
+                        if hasattr(error, "cleanup_failure"):
+                            record["cleanup_failure"] = error.cleanup_failure
+                        record["outcome"] = "timeout"
+                    except KeyboardInterrupt:
+                        record["outcome"] = "interrupted"
+                        raise
                 phase = "artifact"
                 if record["outcome"] == "passed" or (record["outcome"] == "failed" and check.get("policy") == "observation"):
                     record["outputs"] = output_hashes(root, check.get("outputs", []))
@@ -250,6 +252,10 @@ def capture(manifest_path, folder, *, campaign_id=None):
                 except (ValueError, OSError, subprocess.SubprocessError) as error:
                     record["outcome"] = "artifact-error"
                     record["error"] = str(error)
+            try:
+                record["path_after"] = working_provenance(manifest, check)
+            except (ValueError, OSError) as error:
+                record["outcome"], record["error"] = "artifact-error", str(error)
             record["finished_ns"] = time.time_ns()
             record["log_sha256"] = digest(log)
             results[name] = record
@@ -284,6 +290,9 @@ def validate_capture(manifest_path, folder):
             raise ValueError("Command did not complete: " + check["id"] + " (" + record["outcome"] + ")")
         if check.get("policy", "required") == "required" and (record["outcome"] != "passed" or record["exit"] != 0):
             raise ValueError("Required check did not pass: " + check["id"])
+        verify_working_provenance(manifest, run, record)
+        if record["path_before"] != working_provenance(manifest, check):
+            raise ValueError("Current working-directory resolution changed: " + check["id"])
         names = file_specs(check)
         if record.get("input_before") != input_hashes(root, names) or record.get("input_after") != record["input_before"]:
             raise ValueError("Artifact producer inputs changed: " + check["id"])
