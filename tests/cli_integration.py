@@ -1480,7 +1480,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(process.returncode,0,received)
 
     def test_completed_result_is_saved_and_displayed_before_late_close(self):
-        for close in (b'/quit\n',b'/exit\n',b'\x04',b'\0',b'\x05'):
+        for close in getattr(self,'completed_closes',(b'/quit\n',b'/exit\n',b'\x04',b'\0',b'\x05')):
             with self.subTest(close=close):
                 target=self.workspace/'completed.txt'
                 target.unlink(missing_ok=True)
@@ -1490,12 +1490,15 @@ class CliTests(unittest.TestCase):
                     process,master,trigger,received,collect,token,release,before=context
                     os.write(trigger,b'h');token(b'r');os.write(master,b'abc\n');token(b's')
                     release.set();token(b'c')
-                    collect(lambda:b'fixture done' in received)
+                    try:collect(lambda received=received:b'fixture done' in received)
+                    except AssertionError:self.fail('Completed result waited behind pending input')
                     self.assertEqual(target.read_text(),'fixture done\n','Completed result was not saved')
                     os.write(master,close)
-                    collect(lambda:b'Pending message not sent: abc' in received)
-                    os.write(trigger,b'g');collect(lambda:process.poll() is not None)
-                    self.assertEqual(process.returncode,0,received)
+                    collect(lambda received=received:b'Pending message not sent: abc' in received)
+                    os.write(trigger,b'g')
+                    try:collect(lambda process=process:process.poll() is not None)
+                    except AssertionError:self.fail('Completed close became interruption: '+repr(received))
+                    self.assertEqual(process.returncode,0,'Completed close became interruption: '+repr(received))
                     self.assertNotIn(b'Error: Interrupted',received)
                     self.assertEqual(len(self.server.requests),before+1)
                     import sqlite3
@@ -1503,23 +1506,24 @@ class CliTests(unittest.TestCase):
                         self.assertEqual(db.execute('SELECT status FROM sessions ORDER BY rowid DESC LIMIT 1').fetchone(),('complete',))
 
     def test_late_signals_preserve_result_and_return_to_usable_prompt(self):
-        for stop in (signal.SIGINT,signal.SIGTERM):
+        for stop in getattr(self,'late_stops',(signal.SIGINT,signal.SIGTERM)):
             with self.subTest(stop=stop):
                 target=self.workspace/'signal-completed.txt';target.unlink(missing_ok=True)
                 with self.pending_sequence(extra=['-o',str(target)]) as context:
                     process,master,trigger,received,collect,token,release,before=context
                     os.write(trigger,b'h');token(b'r');os.write(master,b'abc\n');token(b's')
-                    release.set();token(b'c');collect(lambda:b'fixture done' in received)
+                    release.set();token(b'c');collect(lambda received=received:b'fixture done' in received)
                     process.send_signal(stop)
-                    collect(lambda:b'Pending message not sent: abc' in received)
+                    collect(lambda received=received:b'Pending message not sent: abc' in received)
                     os.write(trigger,b'g')
                     self.assertEqual(target.read_text(),'fixture done\n')
                     self.assertNotIn(b'Error: Interrupted',received)
                     os.write(master,b'fresh-after-signal\n')
-                    collect(lambda:len(self.server.requests)>=before+2)
+                    try:collect(lambda before=before:len(self.server.requests)>=before+2)
+                    except AssertionError:self.fail('Late signal prevented a fresh interactive turn')
                     self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'fresh-after-signal')
-                    collect(lambda:bytes(received).count(b'fixture done')>=2)
-                    os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+                    collect(lambda received=received:bytes(received).count(b'fixture done')>=2)
+                    os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
                     self.assertEqual(process.returncode,0,received)
 
     def test_frozen_commands_keep_submission_time_policy_after_completion(self):
@@ -1527,13 +1531,31 @@ class CliTests(unittest.TestCase):
             with self.subTest(command=command),self.pending_sequence() as context:
                 process,master,trigger,received,collect,token,release,before=context
                 os.write(trigger,b'h');token(b'r');os.write(master,(command+'\n').encode());token(b's')
-                release.set();token(b'c');collect(lambda:b'fixture done' in received)
+                release.set();token(b'c');collect(lambda received=received:b'fixture done' in received)
                 os.write(trigger,b'g')
                 expected=b'Started ' if command=='/new' else b'after the active turn completes.'
-                collect(lambda:expected in received)
+                collect(lambda expected=expected,received=received:expected in received)
                 self.assertEqual(len(self.server.requests),before+1,'Deferred local command reached the provider')
-                os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+                os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
                 self.assertEqual(process.returncode,0,received)
+
+    def test_completed_output_file_error_remains_an_error_without_rewriting_completion(self):
+        with self.pending_sequence(extra=['-o',str(self.workspace)]) as context:
+            process,master,trigger,received,collect,token,release,before=context
+            os.write(trigger,b'h');token(b'r');os.write(master,b'abc\n');token(b's')
+            release.set();token(b'c');os.write(trigger,b'g')
+            collect(lambda received=received:b'Error:' in received)
+            self.assertNotIn(b'Error: Interrupted',received)
+            self.assertIn(b'Pending message not sent: abc',received)
+            import sqlite3
+            with sqlite3.connect(self.home/'state.sqlite3') as database:
+                self.assertEqual(database.execute('SELECT status FROM sessions ORDER BY rowid DESC LIMIT 1').fetchone(),('complete',))
+            os.write(master,b'fresh-after-file-error\n')
+            collect(lambda before=before:len(self.server.requests)>=before+2)
+            self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'fresh-after-file-error')
+            collect(lambda received=received:bytes(received).count(b'Error:')>=2)
+            os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+            self.assertEqual(process.returncode,0,received)
 
     def test_pending_quit_can_be_corrected_after_overflow(self):
         for command in (b'/quit',b'/exit'):
@@ -1542,7 +1564,7 @@ class CliTests(unittest.TestCase):
                 os.write(trigger,b'h');token(b'r');os.write(master,b'abc\n');token(b's')
                 os.write(master,command+b'xx\x7f\x7f\x01');token(b'i')
                 os.write(master,b'\n');release.set();os.write(trigger,b'g')
-                collect(lambda:process.poll() is not None)
+                collect(lambda process=process:process.poll() is not None)
                 self.assertEqual(process.returncode,0,received)
                 self.assertEqual(len(self.server.requests),before+1,'Corrected quit was ignored')
                 self.assertIn(b'Pending message not sent: abc',received)

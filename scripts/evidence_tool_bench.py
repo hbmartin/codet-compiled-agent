@@ -10,6 +10,7 @@ from pathlib import Path
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(sys.argv[1]) / "scripts"))
 from evidence_benchmarks import verify_git_source
+from process_supervision import run as supervised_run
 from validation_evidence import production_hashes
 
 
@@ -33,6 +34,17 @@ def measure(root, ref, workload, repository=None):
             hashes = verify_git_source(repository or root, root, ref)["production_hashes"]
         elif workload == "hashing":
             hashes = production_hashes(root)
+        elif workload == "supervision":
+            hashes = {}
+            for number in range(5):
+                try:
+                    supervised_run([sys.executable, "-c", "import time;time.sleep(2)"], timeout=.02, cleanup_grace=.2)
+                except subprocess.TimeoutExpired as error:
+                    if not error.process_cleanup.get("reaped"):
+                        raise ValueError("Supervision positive control did not reap its leader") from error
+                    hashes[str(number)] = error.process_cleanup["reaped"]
+                else:
+                    raise ValueError("Supervision positive control did not time out")
         else:
             raise ValueError("Unknown tooling workload: " + workload)
         elapsed = (time.perf_counter() - start) * 1000
@@ -44,7 +56,7 @@ def measure(root, ref, workload, repository=None):
     if not hashes or (workload == "git-inspection" and calls < 3):
         raise ValueError("Hash/Git work counter positive control failed")
     return dict(case=workload, milliseconds=elapsed, files=len(hashes), git_commands=calls,
-                retained_allocations=sum(s.count for s in stats), retained_bytes=retained, peak_traced_bytes=peak)
+                metric_version=2, retained_traced_blocks=sum(s.count for s in stats), retained_traced_bytes=retained, peak_traced_bytes=peak)
 
 
 if __name__ == "__main__":

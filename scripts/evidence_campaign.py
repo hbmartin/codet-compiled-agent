@@ -24,8 +24,8 @@ from validation_evidence import atomic_json, digest, require_quiet_processes, wr
 
 CASES = {
     "line": ["allocation-positive", "geometry-positive", "busy", "native-busy", "editing", "editing-basic",
-             "native-editing", "deletion", "unchanged", "deferred-tail", "native-boundary", "native-flush-boundary", "native-unchanged", "pending-submission"],
-    "tooling": ["hashing", "git-inspection"],
+             "native-editing", "deletion", "unchanged", "deferred-tail", "native-boundary", "native-flush-boundary", "native-unchanged", "pending-submission", "native-pending-submission", "native-pending-fragment"],
+    "tooling": ["hashing", "git-inspection", "supervision"],
     "output": ["write-positive", "stat-positive", "flags-positive", "bounds-positive", "diagnostics-amplified",
                "diagnostics-standalone-amplified", "diagnostics-pipe-amplified"],
     "export": ["small", "large"],
