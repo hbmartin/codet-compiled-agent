@@ -36,3 +36,5 @@ Optional `--python39 /absolute/python3.9` takes precedence over discovery. `--ca
 The bundle is an audit archive, not a relocatable executable distribution. Verification checks archived inputs, producer links, outcomes, inventories and measurements without rerunning binaries. Native Tiger coverage, unavailable container runtimes and known analyzer findings must be reported separately from passing checks. Blocking TTY delivery and best-effort emergency-output limitations remain unchanged. Historical reports, archived sources and samples are preserved.
 
 The captured outcomes, measurements and limitations are in [RESULTS.md](RESULTS.md). The immutable run is `20261104T073413Z-ab2fde3`; post-publication audits are adjacent sidecars.
+
+The subsequent PR #54 runtime corrections and their fresh, separately scoped validation are in [REVIEW-FIXES.md](REVIEW-FIXES.md). The original results and measurements above remain historical evidence for their recorded source.

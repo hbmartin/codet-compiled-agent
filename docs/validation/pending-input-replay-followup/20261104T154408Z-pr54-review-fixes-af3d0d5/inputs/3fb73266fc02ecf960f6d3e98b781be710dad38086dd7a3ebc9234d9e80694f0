@@ -1,0 +1,7 @@
+{
+  "cppcheck": {
+    "version": "2.22.0",
+    "url": "https://codeload.github.com/cppcheck-opensource/cppcheck/tar.gz/refs/tags/2.22.0",
+    "sha256": "d74945deb2d50393430e07596b766f8a779512c7f60dac2a30ea64e059ece57b"
+  }
+}

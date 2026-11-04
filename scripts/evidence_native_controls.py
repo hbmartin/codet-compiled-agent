@@ -33,13 +33,13 @@ def _test(binary, target, directory):
 INTEGRATION_RUNNER = r'''
 import importlib.util,json,sys,unittest
 from pathlib import Path
-root,binary,output=sys.argv[1:]
+root,binary,output,target=sys.argv[1:]
 path=Path(root)/'tests/cli_integration.py'
 sys.path.insert(0,str(path.parent));sys.argv=[str(path),binary]
 spec=importlib.util.spec_from_file_location('pending_native_control',path)
 module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
-module.CliTests.pending_outcomes=('quit',)
-suite=unittest.defaultTestLoader.loadTestsFromName('CliTests.test_frozen_submission_obeys_turn_outcome_and_services_controls',module)
+if target=='CliTests.test_frozen_submission_obeys_turn_outcome_and_services_controls':module.CliTests.pending_outcomes=('quit',)
+suite=unittest.defaultTestLoader.loadTestsFromName(target,module)
 if suite.countTestCases()!=1:raise ValueError('Pending-control target was not discovered exactly once')
 result=unittest.TextTestRunner(verbosity=2).run(suite)
 Path(output).write_text(json.dumps(dict(tests=result.testsRun,failures=[trace for _,trace in result.failures],errors=[trace for _,trace in result.errors])))
@@ -47,10 +47,10 @@ raise SystemExit(int(not result.wasSuccessful()))
 '''
 
 
-def _integration(root, binary, directory):
+def _integration(root, binary, directory, target="CliTests.test_frozen_submission_obeys_turn_outcome_and_services_controls"):
     result_path = directory / "integration-result.json"
     result_path.unlink(missing_ok=True)
-    result = _run([sys.executable, "-c", INTEGRATION_RUNNER, str(root), str(binary), str(result_path)], root, 30)
+    result = _run([sys.executable, "-c", INTEGRATION_RUNNER, str(root), str(binary), str(result_path), target], root, 30)
     if not result_path.is_file():
         raise ValueError("Pending-control integration result missing")
     value = json.loads(result_path.read_text())
@@ -166,4 +166,36 @@ def run_controls(root, folder, build, ninja):
     if mutant["exit"] != 1 or len(mutant["assertions"]) != 1 or marker not in mutant["assertions"][0]:
         raise ValueError("Pending keyboard mutant did not fail its intended assertion: " + repr(mutant))
     results.append(dict(name="pending-keyboard", target="CliTests.test_frozen_submission_obeys_turn_outcome_and_services_controls", mutation=dict(before=before, after=after, original_sha256=digest(root / "src/modern/cli.cpp"), mutant_sha256=digest(source)), binary_sha256=digest(binary), baseline=baseline, compile=compiled, link=linked, mutant=mutant))
+    review_controls = [
+        ("pending-control-owner", "CliTests.test_partial_pending_controls_never_stall_or_leak_into_messages",
+         '    if (line_ && (line_->submission_pending() || pending_control_started_)) {',
+         '    if (line_ && line_->submission_pending()) {', "Extra pending input became a user message"),
+        ("held-steering-fifo", "CliTests.test_held_and_pending_followups_keep_submission_order",
+         '(line->presentation_held || !held_followups.empty())',
+         'line->presentation_held', "Held follow-ups reversed submission order"),
+        ("pending-control-progress", "CliTests.test_partial_pending_controls_never_stall_or_leak_into_messages",
+         "      if (read_cancel_ && read_cancel_->requested)\n        return {};",
+         "      if ((read_cancel_ && read_cancel_->requested) || pending_control_size_ || pending_control_overflow_)\n        return {};",
+         "Pending sequence gate failed: b'd'"),
+        ("completed-quit", "CliTests.test_completed_turn_honors_frozen_quit_and_drops_earlier_followups",
+         '          if (submission.action == detail::InputAction::quit) {\n            quit_requested = true;\n            break; // The completed turn stays complete, and no staged follow-up may run.\n          }\n',
+         "", "Frozen quit did not stop after completed turn"),
+        ("held-fifo", "CliTests.test_held_and_pending_followups_keep_submission_order",
+         '              line->origin->turn == input_turn)\n            hold_followup(*line);',
+         '              line->origin->turn == input_turn)\n            followups.push_back(std::move(line->text));',
+         "Held follow-ups reversed submission order"),
+    ]
+    for name, target, before, after, marker in review_controls:
+        directory = folder / ("native-control-" + name)
+        directory.mkdir()
+        baseline = _integration(root, build / "codet", directory, target)
+        if baseline["exit"] or baseline["assertions"]:
+            raise ValueError("Review control baseline failed: " + target)
+        source, binary, compiled, linked = compile_mutant(directory, "codet_tests", "codet_tests", "src/modern/cli.cpp", "src/modern/cli.cpp", before, after)
+        placeholder = directory / "codet"
+        shutil.copy2(build / "codet", placeholder)
+        mutant = _integration(root, placeholder, directory, target)
+        if mutant["exit"] != 1 or not mutant["assertions"] or not all(marker in assertion for assertion in mutant["assertions"]):
+            raise ValueError("Review mutant did not fail its intended assertion: " + target + repr(mutant))
+        results.append(dict(name=name, target=target, mutation=dict(before=before, after=after, original_sha256=digest(root / "src/modern/cli.cpp"), mutant_sha256=digest(source)), binary_sha256=digest(binary), baseline=baseline, compile=compiled, link=linked, mutant=mutant))
     return results

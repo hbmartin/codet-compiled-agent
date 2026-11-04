@@ -1,0 +1,11 @@
+rules:
+  - id: codet-hook-stop-monotonic
+    languages: [cpp]
+    severity: ERROR
+    message: Accumulate earlier hook stops; a later veto cannot clear continue=false.
+    paths:
+      include: ["**/hooks.cpp"]
+    patterns:
+      - pattern: $OUT.stopped = $VALUE;
+      - pattern-not: $OUT.stopped = true;
+      - pattern-not: $OUT.stopped = $OUT.stopped || $STOP;
