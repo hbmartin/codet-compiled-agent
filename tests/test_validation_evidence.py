@@ -1092,6 +1092,63 @@ class ReviewedCppcheckLocations(unittest.TestCase):
                 self.compare(a,changed,entry)
 
 
+class SanitizerIsolation(unittest.TestCase):
+    def payload(self):
+        xml='<testsuites tests="2"><testsuite name="Suite"><testcase name="A"/><testcase name="DISABLED_Probe"/></testsuite></testsuites>'
+        result='<testsuites tests="1"><testsuite name="Suite"><testcase classname="Suite" name="A" status="run"/></testsuite></testsuites>'
+        return dict(inventory_xml=xml,enabled=1,disabled=['Suite.DISABLED_Probe'],skipped=[],failures=0,
+                    results=[dict(test='Suite.A',exit=0,xml=result)])
+
+    def test_executable_binding_is_checked_without_resolving_host_paths(self):
+        from gtest_isolation import verify_payload
+        value=self.payload();value.update(binary='/original/opaque/binary',binary_sha256='a'*64)
+        verify_payload(value,{'/original/opaque/binary':'a'*64})
+        for hashes in ({},{'/original/opaque/binary':'b'*64}):
+            with self.assertRaisesRegex(ValueError,'executable binding mismatch'):verify_payload(value,hashes)
+        value.pop('binary_sha256')
+        with self.assertRaisesRegex(ValueError,'executable binding mismatch'):verify_payload(value,{})
+
+    def test_full_coverage_and_normal_disabled_policy(self):
+        from gtest_isolation import verify_payload
+        self.assertEqual(verify_payload(self.payload()),dict(tests=1,disabled=1,skipped=0,failures=0))
+
+    def test_missing_duplicate_and_substituted_tests_are_rejected(self):
+        import copy
+
+        from gtest_isolation import verify_payload
+        for change in ('missing','duplicate','substitute'):
+            with self.subTest(change=change):
+                value=copy.deepcopy(self.payload())
+                if change=='missing':value['results']=[]
+                elif change=='duplicate':value['results']*=2
+                else:
+                    value['results'][0]['test']='Suite.Other'
+                    value['results'][0]['xml']=value['results'][0]['xml'].replace('name="A"','name="Other"')
+                with self.assertRaisesRegex(ValueError,'coverage mismatch'):
+                    verify_payload(value)
+
+    def test_malformed_xml_and_inventory_counts_are_rejected(self):
+        from gtest_isolation import inventory, verify_payload
+        for raw in ('<invalid', '<testsuites tests="0"/>', '<testsuites tests="not-a-number"/>'):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):inventory(raw)
+        value=self.payload();value['results'][0]['xml']='<invalid'
+        with self.assertRaisesRegex(ValueError,'Malformed GoogleTest XML'):verify_payload(value)
+
+    def test_status_exit_xml_and_skip_accounting_are_checked(self):
+        import copy
+
+        from gtest_isolation import verify_payload
+        for change in ('status','exit','name','skip','inventory'):
+            with self.subTest(change=change):
+                value=copy.deepcopy(self.payload());result=value['results'][0]
+                if change=='status':result['xml']=result['xml'].replace('status="run"','status="notrun"')
+                elif change=='exit':result['exit']=1
+                elif change=='name':result['xml']=result['xml'].replace('name="A"','name="Other"')
+                elif change=='skip':value['skipped']=['Suite.A']
+                else:value['enabled']=2
+                with self.assertRaises(ValueError):verify_payload(value)
+
+
 class HashMetricScope(unittest.TestCase):
     def test_tooling_commands_and_memory_have_distinct_verified_scopes(self):
         from evidence_benchmarks import verify_tooling_metrics

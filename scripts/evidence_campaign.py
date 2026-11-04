@@ -191,17 +191,27 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     for mode in ("debug", "asan", "tsan"):
         build = Path(builds[mode])
         args = configure(root, build, "Debug")
+        isolation = None
         if mode == "asan":
             args += ["-DCODET_SANITIZERS=ON"]
+            if sys.platform == "darwin":
+                isolation_inputs = ["scripts/gtest_isolation.py", rel(build / "codet_tests"),
+                                    rel(build / "CMakeCache.txt"), rel(build / "CTestTestfile.cmake")]
+                isolation = dict(path=rel(build / "unit-isolation.json"), kind="gtest-isolation", inputs=isolation_inputs)
+                args += ["-DCMAKE_TEST_LAUNCHER=" + ";".join([python, str(root / "scripts/gtest_isolation.py"),
+                         "--report", str(build / "unit-isolation.json"), "--inputs", json.dumps(isolation_inputs)])]
         if mode == "tsan":
             warnings = " -Wno-error=implicit-int-float-conversion -Wno-error=unused-result" if sys.platform == "darwin" else ""
             args += ["-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer" + warnings,
                      "-DCMAKE_C_FLAGS=-fsanitize=thread", "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread"]
-        add(mode + "-configure", args, ["provision-offline"], outputs=configured_outputs(build))
+        instructions = [dict(path=rel(build / "CTestTestfile.cmake"))] if isolation else []
+        add(mode + "-configure", args, ["provision-offline"], outputs=configured_outputs(build) + instructions)
         add(mode + "-build", [native["cmake"], "--build", build, "-j4"], [mode + "-configure"],
-            outputs=configured_outputs(build) + [dict(path=rel(build / n), archive=False) for n in ("codet", "codet_tests", "codet_publication_fault_tests", "libcodet_core.a", "libcodet_text.a", "deps/schema/libnlohmann_json_schema_validator.a", "lib/libgtest.a", "lib/libgmock.a")])
+            outputs=configured_outputs(build) + instructions + [dict(path=rel(build / n), archive=False) for n in ("codet", "codet_tests", "codet_publication_fault_tests", "libcodet_core.a", "libcodet_text.a", "deps/schema/libnlohmann_json_schema_validator.a", "lib/libgtest.a", "lib/libgmock.a")])
         if mode != "tsan":
-            add(mode + "-ctest", [native["ctest"], "--test-dir", build, "--output-on-failure", "-j2"], [mode + "-build"], timeout=900)
+            add(mode + "-ctest", [native["ctest"], "--test-dir", build, "--output-on-failure", "-j2"], [mode + "-build"], timeout=900,
+                artifacts=[isolation] if isolation else [],
+                file_inputs=([dict(path=name, archive=not name.endswith("/codet_tests")) for name in isolation_inputs] if isolation else []))
         else:
             add("tsan-20", [build / "codet_tests", focused, "--gtest_repeat=20"], [mode + "-build"])
     debug = Path(builds["debug"])

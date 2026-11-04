@@ -91,6 +91,8 @@ def run_controls(root, folder):
         ("tooling-counts", "evidence_benchmarks",
          "if row['check_output_calls'] != row['git_commands'] + row['process_inspection_commands']:",
          'if False:', "HashMetricScope.test_tooling_commands_and_memory_have_distinct_verified_scopes"),
+        ("isolated-coverage", "gtest_isolation", 'if Counter(actual) != Counter(expected):',
+         'if False:', "SanitizerIsolation.test_missing_duplicate_and_substituted_tests_are_rejected"),
     ]
     results = []
     for name, module, before, after, target in cases:
@@ -120,7 +122,7 @@ def run_controls(root, folder):
                    "cleanup-escalation": "Repeated interruption skipped escalation",
                    "cleanup-inactive": "Leader was reaped before group ownership ended",
                    "cppcheck-order": "Valid reordered Cppcheck relocation was rejected",
-                   "hash-version": "ValueError not raised", "tooling-counts": "ValueError not raised"}
+                   "hash-version": "ValueError not raised", "tooling-counts": "ValueError not raised", "isolated-coverage": "ValueError not raised"}
         if name in markers and not any(markers[name] in text for text in runs[1]["failure_details"]):
             raise ValueError("Control missed its intended assertion: " + name)
         results.append(dict(name=name, test=target, baseline=runs[0], mutant=runs[1]))
