@@ -595,8 +595,12 @@ public:
     auto line = line_->discard_pending();
     pending_control_size_ = 0;
     pending_control_overflow_ = false;
-    if (line)
-      detail::secondary_diagnostic([&] { say("[Pending message not sent: " + line->text + "]"); });
+    try {
+      if (line)
+        say("[Pending message not sent: " + line->text + "]");
+    } catch (...) {
+      // This best-effort cleanup must not replace the operation's original exception.
+    }
   }
   std::optional<std::string> read(Cancellation &cancel) {
     if (!curses_ && ((line_ && line_->submission_pending()) || input_.stale() ||

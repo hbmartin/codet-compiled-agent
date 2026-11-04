@@ -246,7 +246,7 @@ def verify_bundle(folder):
             if envelope["kind"] == "hash-profile":
                 from evidence_hash_experiment import verify_experiment
                 verify_experiment(envelope["payload"])
-                if not envelope["payload"].get("profiles"):
+                if not envelope["payload"].get("profiles") or not envelope["payload"].get("code_hashes"):
                     raise ValueError("Hash experiment profiling evidence missing")
                 for filename, signature in envelope["payload"]["code_hashes"]["baseline"].items():
                     matches = [output for output in record["outputs"] if output["path"].endswith("/hash-correctness/scripts/" + filename)]

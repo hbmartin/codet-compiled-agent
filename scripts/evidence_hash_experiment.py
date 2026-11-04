@@ -48,6 +48,24 @@ def verify_experiment(payload):
         identities = {row['identity'] for row in payload['rows'] if row['workload'] == role}
         if len(identities) != 1:
             raise ValueError('Hashing experiment digests differ')
+    if 'code_hashes' in payload:
+        identities = payload['code_hashes']
+        names = {'evidence_inputs.py', 'verified_sources.py'}
+        if set(identities) != {'baseline', 'changed'} or any(set(value) != names for value in identities.values()):
+            raise ValueError('Hash experiment code identity incomplete')
+    if 'profiles' in payload:
+        samples = {(row['set'], row['sample'], row['variant'], row['workload']): row for row in payload['rows']}
+        seen = set()
+        for profile in payload['profiles']:
+            key = profile['set'], profile['sample'], profile['variant'], profile['role']
+            if key in seen or key not in samples or not profile.get('functions'):
+                raise ValueError('Hash experiment profiling coverage mismatch')
+            seen.add(key)
+            observed = sum(f['calls'] for f in profile['functions'] if 'posix.stat' in f['name'])
+            if observed != samples[key]['metadata_queries'] or observed <= 0:
+                raise ValueError('Hash experiment metadata counter mismatch')
+        if seen != set(samples):
+            raise ValueError('Hash experiment profiling coverage incomplete')
     accepted = all(
         next(row['milliseconds'] for row in payload['summary'] if row['set'] == number and row['workload'] == role and row['variant'] == 'changed') <
         next(row['milliseconds'] for row in payload['summary'] if row['set'] == number and row['workload'] == role and row['variant'] == 'baseline')

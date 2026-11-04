@@ -949,7 +949,7 @@ class EvidenceV4(ValidationEvidence):
 
     def test_python_switch_operands_do_not_hide_analyzers(self):
         from evidence_processes import blocking_processes
-        for flags in (['-X', 'utf8'], ['-Xutf8'], ['-OO'], ['-W', 'ignore'], ['-uB'], ['--']):
+        for flags in (['-X', 'utf8'], ['-Xutf8'], ['-OO'], ['-W', 'ignore'], ['-uB'], ['-OOXutf8'], ['-uWignore'], ['-OX', 'utf8'], ['--']):
             self.assertTrue(blocking_processes([dict(executable='python3', argv=['python3'] + flags + ['/path with spaces/analyze-modern.py'])]))
         self.assertFalse(blocking_processes([dict(executable='python3', argv=['python3', '-c', 'analyze-modern.py'])]))
 
@@ -1121,7 +1121,7 @@ class PortableV5(unittest.TestCase):
                 return run, dict(url=url, status=200)
             page = int(url.rsplit('=', 1)[1])
             jobs = [dict(id=n, run_id=42, head_sha='head', status='completed', conclusion='success')
-                    for n in (range(100) if page == 1 else [100])]
+                    for n in (range(1,101) if page == 1 else [101])]
             return dict(total_count=101, jobs=jobs), dict(url=url, status=200)
         result = read_public_ci('owner/repo', 42, 'head', request=request)
         self.assertEqual(len(result['jobs']), 101)
@@ -1150,7 +1150,7 @@ class PortableV5(unittest.TestCase):
             now[0] += seconds
         def request(url):
             return dict(id=42, repository=dict(full_name='owner/repo'), head_sha='head', run_attempt=1, status='queued'), dict(url=url)
-        with self.assertRaisesRegex(TimeoutError, 'did not complete'):
+        with self.assertRaisesRegex(TimeoutError, 'deadline|did not complete'):
             read_public_ci('owner/repo', 42, 'head', request=request, pause=pause, clock=lambda: now[0])
         self.assertTrue(sleeps)
         self.assertLessEqual(max(sleeps), 60)

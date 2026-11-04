@@ -28,6 +28,8 @@ def read_public_ci(repository, run_id, head, *, request=public_request, pause=ti
     attempt = None
     deadline = clock() + 1700
     def get(url):
+        if clock() >= deadline:
+            raise TimeoutError("Public CI overall deadline expired")
         try:
             value, observation = request(url)
         except (OSError, urllib.error.URLError, TimeoutError) as error:
@@ -72,7 +74,7 @@ def read_public_ci(repository, run_id, head, *, request=public_request, pause=ti
     if (final.get('status') != 'completed' or final.get('conclusion') != 'success' or
             run.get('conclusion') != 'success' or not jobs or len(jobs) != total or
             len({job.get('id') for job in jobs}) != len(jobs) or
-            any(job.get('run_id') != int(run_id) or job.get('head_sha') != head or
+            any(type(job.get('id')) is not int or job['id'] <= 0 or job.get('run_id') != int(run_id) or job.get('head_sha') != head or
                 job.get('status') != 'completed' or job.get('conclusion') != 'success' for job in jobs)):
         raise ValueError('Required public CI did not succeed with complete job coverage')
     return dict(repository=repository, run_id=int(run_id), head_sha=head, attempt=attempt,

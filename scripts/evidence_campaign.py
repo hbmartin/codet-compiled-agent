@@ -230,9 +230,9 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
             outputs=configured_outputs(build) + [dict(path=rel(build / n), archive=False) for n in ("codet_line_input_bench", "codet_output_bench", "codet_export_bench", "libcodet_core.a", "deps/schema/libnlohmann_json_schema_validator.a")])
         probe = rel(build / "analysis/selftest/selftest.json")
         add(variant + "-selftest", [analysis_python, source / "scripts/analyze-modern.py", "--build-dir", build, "--selftest", "--jobs", "4"],
-            [variant + "-configure"], env=analyzer_env, source_inputs=specs, outputs=[dict(path=probe)])
+            [variant + "-configure"], env=analyzer_env, source_inputs=specs, file_inputs=configured_outputs(build), outputs=[dict(path=probe)])
         add(variant + "-analysis", [python, "scripts/evidence_campaign.py", "produce", config_path, "analysis-" + variant],
-            [variant + "-selftest"], policy="observation", timeout=1800, env=analyzer_env, source_inputs=specs,
+            [variant + "-selftest"], policy="observation", timeout=1800, env=analyzer_env, source_inputs=specs, file_inputs=configured_outputs(build),
             artifacts=[dict(path=rel(folder / ("analysis-" + variant + ".json")), kind="analysis-" + variant, inputs=[rel(config_path), probe])])
     producer("static-comparison", "analysis", ["baseline-analysis", "changed-analysis"], [rel(folder / ("analysis-" + v + ".json")) for v in ("baseline", "changed")] + ["checks/analyzer-relocations.json"])
     producer("semgrep-controls", "semgrep-controls", ["semgrep"], timeout=300)

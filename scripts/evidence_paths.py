@@ -78,8 +78,8 @@ def verify_working_provenance(manifest, run, record):
     root = verify_resolution(before['root'], manifest['root'])
     if root != run['canonical_root'] or before['root'] != run.get('root_resolution'):
         raise ValueError('Working-directory root relationship mismatch')
-    spec = check_spec = record.get('cwd_spec')
-    if spec != before.get('cwd_spec') or not isinstance(check_spec, str):
+    spec = record.get('cwd_spec')
+    if spec != before.get('cwd_spec') or not isinstance(spec, str):
         raise ValueError('Working-directory specification mismatch')
     path = spec if spec.startswith('/') else root + '/' + spec
     cwd = verify_resolution(before['cwd'], path)
