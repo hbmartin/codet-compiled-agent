@@ -1,14 +1,15 @@
 """Fresh-process, assertion-classified negative controls for evidence guards."""
 
 import json
-import subprocess
 import sys
 
 from evidence_benchmarks import replace_once, verify_unittest_result
+from process_supervision import run as supervised_run
 
 RUNNER = r'''
 import importlib.util,json,sys,unittest
 from pathlib import Path
+
 root,module_path,module_name,test_name,output=sys.argv[1:]
 sys.path[:0]=[str(Path(root)/'scripts'),str(Path(root)/'tests')]
 spec=importlib.util.spec_from_file_location(module_name,module_path)
@@ -53,11 +54,11 @@ def run_controls(root, folder):
          'name in NATIVE_BLOCKERS or False or', "ReplayIntegrity.test_process_gate_matches_versioned_and_truncated_names"),
         ("git-source-key", "evidence_inputs", 'if actual != expected:',
          'if False:', "ReplayIntegrity.test_source_commit_binding_rejects_wrong_baseline"),
-        ("cwd-relationship", "evidence_paths", 'if record.get("cwd") != cwd or record.get("canonical_cwd") != cwd:',
+        ("cwd-relationship", "evidence_paths", "if record.get('cwd') != cwd or record.get('canonical_cwd') != cwd:",
          'if False:', "EvidenceV4.test_v5_audit_rejects_jointly_changed_cwd_fields"),
         ("relocation-identity", "evidence_analysis", 'relocation_identity(tool, before) != relocation_identity(tool, after) or',
          'False or', "EvidenceV4.test_v5_relocations_cannot_substitute_another_finding"),
-        ("ci-head", "evidence_ci", 'run.get("head_sha") != head or',
+        ("ci-head", "evidence_ci", "run.get('head_sha') != head or",
          'False or', "PortableV5.test_public_ci_pagination_and_identity"),
         ("dependency-consumer", "validation_evidence", 'record.get("external_inputs_after") != record["external_inputs_before"]',
          'False', "EvidenceV4.test_v5_dependency_mutation_is_retained_even_if_restored"),
@@ -90,7 +91,7 @@ def run_controls(root, folder):
             output.unlink(missing_ok=True)
             argv = [sys.executable, "-c", RUNNER, str(root), str(path), module,
                     "test_validation_evidence." + target, str(output)]
-            process = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+            process = supervised_run(argv, capture_output=True, text=True, timeout=30, cleanup_grace=4)
             value = json.loads(output.read_text())
             if value["exit"] != process.returncode:
                 raise ValueError("Control exit metadata mismatch")

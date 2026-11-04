@@ -589,15 +589,21 @@ public:
     if (line_)
       line_->origin(session, turn);
   }
-  void discard_pending() noexcept {
+  void discard_pending(bool immediate = false) noexcept {
     if (!line_)
       return;
     auto line = line_->discard_pending();
     pending_control_size_ = 0;
     pending_control_overflow_ = false;
     try {
-      if (line)
-        say("[Pending message not sent: " + line->text + "]");
+      if (line) {
+        const auto message = "[Pending message not sent: " + line->text + "]";
+        if (immediate) {
+          const auto shown = detail::terminal_text(message);
+          (void)detail::immediate_stderr({shown});
+        } else
+          say(message);
+      }
     } catch (...) {
       // This best-effort cleanup must not replace the operation's original exception.
     }
@@ -625,8 +631,10 @@ public:
         flush_prompt();
         bool closed = false;
         auto line = active_input(closed);
-        if (closed)
+        if (closed) {
+          discard_pending(true);
           return std::nullopt;
+        }
         if (line) {
           if (const auto submission = line->classify(); submission.rejection) {
             discarded_line(*submission.rejection);
@@ -736,7 +744,6 @@ public:
     if (line_ && line_->submission_pending()) {
       // Read controls before attempting handoff, including when output remains reserved.
       if (closed || ch == bindings_["quit"] || ch == 4) {
-        discard_pending();
         closed = true;
         return {};
       }
@@ -750,7 +757,6 @@ public:
           pending_control_overflow_ = false;
           if (quit) {
             pending_quit_ = true;
-            discard_pending();
             closed = true;
             return {};
           }
@@ -1263,7 +1269,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     terminal->input_origin(session.id, ++input_turn);
     std::future<RunResult> work;
     std::optional<Json> pending;
-    std::deque<detail::InputLine> held_followups;
+    std::vector<detail::InputLine> held_followups;
     const auto drain_warnings = [&](bool retry = true) {
       interaction->drain_warnings(
           [&](std::string_view text) {
@@ -1361,7 +1367,13 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
             new_requested = true;
             terminal->say("Starting a new session after pending messages are handled.");
           } else if (line->presentation_held && !text.empty()) {
-            held_followups.push_back(std::move(*line));
+            try {
+              held_followups.push_back(std::move(*line));
+            } catch (...) {
+              detail::secondary_diagnostic(
+                  [&] { terminal->say("[Pending message not sent: " + line->text + "]"); });
+              throw;
+            }
           } else if (!text.empty()) {
             try {
               interaction->submit(text);
@@ -1373,6 +1385,8 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       }
       deliver(false, true);
       auto result = work.get(); // Ownership is resolved against the original operation outcome.
+      if (!held_followups.empty())
+        cancel.check();
       while (terminal->submission_pending()) {
         if (cancel.requested || quit_requested) {
           terminal->discard_pending();
@@ -1414,8 +1428,9 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
           [&] {
             terminal->discard_pending();
             for (const auto &line : held_followups)
-              detail::secondary_diagnostic(
-                  [&] { terminal->say("[Pending message not sent: " + line.text + "]"); });
+              if (!line.text.empty())
+                detail::secondary_diagnostic(
+                    [&] { terminal->say("[Pending message not sent: " + line.text + "]"); });
             pending.reset();
             terminal->end_active();
           },
@@ -1533,8 +1548,13 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   }
   if (!prompt.empty() || !pending_images.empty())
     run(prompt);
-  if (quit_requested)
+  if (quit_requested) {
+    detail::secondary_diagnostic([&] {
+      terminal->discard_pending();
+      pending_input(false);
+    });
     return output.status(0);
+  }
   while (!cancel.requested && !quit_requested) {
     std::optional<std::string> input;
     if (!followups.empty()) {
@@ -1679,6 +1699,11 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     }
     run(*input);
   }
+  if (cancel.requested || quit_requested)
+    detail::secondary_diagnostic([&] {
+      terminal->discard_pending();
+      pending_input(false);
+    });
   return output.status(quit_requested ? 0 : cancel.requested ? 130 : 0);
 }
 } // namespace codet

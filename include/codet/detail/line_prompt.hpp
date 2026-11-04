@@ -17,7 +17,9 @@ class LinePrompt final : public LineOutputObserver {
   bool echo_update_ = false;
   struct PendingSubmission {
     InputLine line;
-    std::string tail, view;
+    std::string tail, view, label;
+    RequestKind kind = RequestKind::message;
+    bool omitted = false;
     bool tail_attempted = false, redraw = false;
     uint64_t boundary = 0;
     size_t columns = 0;
@@ -96,6 +98,12 @@ class LinePrompt final : public LineOutputObserver {
   bool eligible() const noexcept {
     return owned_ &&
            (input_.stale() || input_.kind() != RequestKind::message || !input_.input().empty());
+  }
+  void finish_line() noexcept {
+    dirty_ = visible_ = explained_ = append_valid_ = false;
+    painted_ = previous_bytes_ = committed_ = 0;
+    painted_revision_ = 0;
+    guidance_due_ = due_ = true;
   }
   DiagnosticResult separate() {
     if (dirty_) {
@@ -185,6 +193,35 @@ class LinePrompt final : public LineOutputObserver {
     return input_.kind() == RequestKind::message    ? "in> "
            : input_.kind() == RequestKind::approval ? "a> "
                                                     : "q> ";
+  }
+  std::string_view frozen_view(const PendingSubmission &pending) {
+    const size_t width = columns_ ? columns_ : 80;
+    auto label = std::string_view(pending.label);
+    if (!pending.line.discarded && label.size() + 8 > width)
+      label = pending.kind == RequestKind::message    ? "in> "
+              : pending.kind == RequestKind::approval ? "a> "
+                                                      : "q> ";
+    size_t bytes = 0;
+    const auto append = [&](std::string_view text) {
+      std::memcpy(row_.data() + bytes, text.data(), text.size());
+      bytes += text.size();
+    };
+    append(label);
+    if (!label.empty() && label.back() != ' ')
+      append(" ");
+    size_t available = width - bytes;
+    size_t used = CursesText::width(pending.view), offset = 0;
+    const bool omitted = pending.omitted || used > available;
+    if (omitted && available)
+      --available;
+    while (offset < pending.view.size() && used > available) {
+      used -= CursesText::token_columns(pending.view, offset);
+      offset += rendered_token(pending.view, offset).bytes;
+    }
+    if (omitted)
+      append("<");
+    append(std::string_view(pending.view).substr(offset));
+    return {row_.data(), bytes};
   }
   DiagnosticResult paint() {
     const bool keyboard = echo_update_ && (visible_ || dirty_);
@@ -446,13 +483,12 @@ public:
     if (geometry_result == DiagnosticResult::failure) {
       if (pending_)
         pending_->tail_attempted = true;
-      explained_ = visible_ = append_valid_ = false;
-      committed_ = painted_ = previous_bytes_ = 0;
-      guidance_due_ = true;
+      finish_line();
       return geometry_result;
     }
     if (pending_ && pending_->tail_attempted && !pending_->failed &&
-        (pending_->boundary != boundary_generation_ || pending_->columns != columns_)) {
+        (!visible_ || pending_->boundary != boundary_generation_ ||
+         pending_->columns != columns_)) {
       pending_->tail_attempted = false;
       pending_->redraw = true;
     }
@@ -465,32 +501,58 @@ public:
           return result;
       }
     } else if (!pending_->tail_attempted) {
+      auto &submission = *pending_;
       // The mutable controller is already empty. Only the frozen view can describe this line.
       // A record completion or geometry change invalidates even an otherwise empty tail.
-      const bool append = visible_ && !pending_->redraw &&
-                          pending_->boundary == boundary_generation_ &&
-                          pending_->columns == columns_;
-      const auto &text = append ? pending_->tail : pending_->view;
+      const bool append = visible_ && !submission.redraw &&
+                          submission.boundary == boundary_generation_ &&
+                          submission.columns == columns_;
+      const bool display =
+          !submission.line.text.empty() || submission.line.request || submission.line.discarded;
+      const auto text = !display ? std::string_view{}
+                        : append ? std::string_view(submission.tail)
+                                 : frozen_view(submission);
       if (!text.empty()) {
-        const auto result = output_.present_result({text}, false, true);
+        if (!append && !columns_ && dirty_) {
+          const auto separation = separate();
+          if (separation != DiagnosticResult::success) {
+            if (separation == DiagnosticResult::failure) {
+              submission.failed = submission.tail_attempted = true;
+              finish_line();
+            }
+            return separation;
+          }
+        }
+        const auto result =
+            !append && columns_ && dirty_ && visible_
+                ? output_.present_result({"\r", std::string_view(spaces_.data(), painted_),
+                                          painted_ ? "\r" : "", text},
+                                         false, true)
+                : output_.present_result({text}, false, true);
         if (result == DiagnosticResult::deferred)
           return result;
-        pending_->failed = result == DiagnosticResult::failure;
+        submission.failed = result == DiagnosticResult::failure;
         visible_ = result == DiagnosticResult::success;
         dirty_ = true;
         boundaries().open(terminal_);
       }
-      pending_->boundary = boundary_generation_;
-      pending_->columns = columns_;
-      pending_->tail_attempted = true;
+      submission.boundary = boundary_generation_;
+      submission.columns = columns_;
+      submission.tail_attempted = true;
     }
     const auto result = separate();
     if (result == DiagnosticResult::deferred)
       return result;
-    dirty_ = visible_ = explained_ = false;
-    append_valid_ = false;
-    painted_ = previous_bytes_ = committed_ = 0;
-    guidance_due_ = due_ = true;
+    if (result == DiagnosticResult::success && pending_ && !pending_->failed) {
+      auto &submission = *pending_;
+      observe_boundary();
+      if (boundary_busy_ || submission.boundary != boundary_generation_) {
+        submission.tail_attempted = false;
+        submission.redraw = true;
+        return DiagnosticResult::deferred;
+      }
+    }
+    finish_line();
     return result;
   }
   void origin(std::string session, uint64_t turn) {
@@ -501,9 +563,7 @@ public:
       return {};
     auto line = std::move(pending_->line);
     pending_.reset();
-    dirty_ = visible_ = explained_ = append_valid_ = false;
-    painted_ = previous_bytes_ = committed_ = 0;
-    due_ = guidance_due_ = true;
+    finish_line();
     return line;
   }
   bool submission_pending() const noexcept {
@@ -520,10 +580,15 @@ public:
         if (!redraw)
           tail = input_.input().prepared().substr(committed_);
       }
-      auto view = input_.view(prefix(columns_ ? columns_ : 80), columns_ ? columns_ : 80);
+      const auto suffix = input_.input().tail(256);
+      auto view = input_.stale() ? std::string{} : std::string(suffix.text);
+      auto label = std::string(prefix(256));
+      const auto kind = input_.kind();
+      const bool omitted = !input_.stale() && suffix.omitted;
       auto origin = origin_; // Allocate before consuming the controller.
-      pending_.emplace(PendingSubmission{input_.take(), std::move(tail), std::move(view), false,
-                                         redraw, boundary_generation_, columns_});
+      pending_.emplace(PendingSubmission{input_.take(), std::move(tail), std::move(view),
+                                         std::move(label), kind, omitted, false, redraw,
+                                         boundary_generation_, columns_});
       pending_->line.origin = std::move(origin);
     }
     const auto submission_result = submitted();
@@ -535,6 +600,7 @@ public:
     }
     auto line = std::move(pending_->line);
     pending_.reset();
+    finish_line();
     return line;
   }
   InputLine take() {

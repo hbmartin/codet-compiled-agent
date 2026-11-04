@@ -6,11 +6,12 @@ import subprocess
 import xml.etree.ElementTree as ET
 
 from evidence_benchmarks import replace_once
+from process_supervision import run as supervised_run
 from validation_evidence import digest
 
 
 def _run(argv, cwd, timeout):
-    result = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+    result = supervised_run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout, cleanup_grace=4)
     return dict(argv=argv, cwd=str(cwd), exit=result.returncode, log=result.stdout + result.stderr)
 
 
@@ -40,11 +41,10 @@ def run_controls(root, folder, build, ninja):
     cases = [
         ("deferred", "tests/diagnostic_lifecycle_test.cpp", "include/codet/detail/line_prompt.hpp",
          "if (submission_result == DiagnosticResult::deferred) {",
-         "if (false) {",
+         "if (((void)submission_result, false)) {",
          "NativeRecordLifecycle.DeferredSubmissionRetainsRawBytesAndOriginalRequest"),
         ("pending-visible", "tests/diagnostic_lifecycle_test.cpp", "include/codet/detail/line_prompt.hpp",
-         "const auto &text = append ? pending_->tail : pending_->view;",
-         "const auto &text = pending_->tail; (void)append;",
+         "frozen_view(submission)", "std::string_view(submission.tail)",
          "NativeRecordLifecycle.KnownWidthPendingLineIsVisible"),
         ("pending-interruption", "tests/diagnostic_lifecycle_test.cpp", "include/codet/detail/line_prompt.hpp",
          "pending_->tail_attempted = false;", "(void)pending_->tail_attempted;",
