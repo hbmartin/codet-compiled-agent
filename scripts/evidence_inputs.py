@@ -33,50 +33,74 @@ def write_csv(path, rows):
 
 
 def selected(name):
-    path = Path(name)
-    return (".DS_Store" not in path.parts and "__pycache__" not in path.parts and path.suffix != ".pyc" and
-            (name in ROOT_FILES or (len(path.parts) == 1 and name.endswith("lock.json")) or
+    parts = name.split("/")
+    return (".DS_Store" not in parts and "__pycache__" not in parts and not name.endswith(".pyc") and
+            (name in ROOT_FILES or (len(parts) == 1 and name.endswith("lock.json")) or
              any(name.startswith(d + "/") for d in DIRECTORIES) or
-             (len(path.parts) == 3 and name.startswith("docs/validation/") and name.endswith(".py"))))
+             (len(parts) == 3 and name.startswith("docs/validation/") and name.endswith(".py"))))
 
 
 def role_selected(name, role):
-    if ".DS_Store" in Path(name).parts or "__pycache__" in Path(name).parts or name.endswith(".pyc"):
+    parts = name.split("/")
+    if ".DS_Store" in parts or "__pycache__" in parts or name.endswith(".pyc"):
         return False
     if role == "production":
         return name == "CMakeLists.txt" or name.startswith(("src/", "include/", "cmake/"))
     if role == "validation":
         return (name in {"Makefile", ".clang-format", ".clang-tidy", ".go-version", "ruff.toml"} or
-                (len(Path(name).parts) == 1 and name.endswith("lock.json")) or
+                (len(parts) == 1 and name.endswith("lock.json")) or
                 name.startswith(("tests/", "scripts/", "checks/", "requirements/", ".github/workflows/")) or
-                (len(Path(name).parts) == 3 and name.startswith("docs/validation/") and name.endswith(".py")))
+                (len(parts) == 3 and name.startswith("docs/validation/") and name.endswith(".py")))
     return selected(name)
+
+
+def snapshot_files(directory):
+    if not directory.exists():
+        return
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            if entry.name in (".DS_Store", "__pycache__"):
+                continue
+            if entry.is_dir(follow_symlinks=False):
+                yield from snapshot_files(Path(entry.path))
+            elif entry.is_file():
+                yield Path(entry.path)
 
 
 def role_hashes(root, role):
     directories = (("src", "include", "cmake") if role == "production" else
                    ("tests", "scripts", "checks", "requirements", ".github/workflows") if role == "validation" else DIRECTORIES)
-    paths = [root / name for name in ROOT_FILES]
-    paths.extend(root.glob("*lock.json"))
+    paths = {root / name for name in ROOT_FILES if (root / name).is_file()}
+    paths.update(p for p in root.glob("*lock.json") if p.is_file())
     for directory in directories:
-        paths.extend(p for p in (root / directory).rglob("*") if p.is_file())
+        paths.update(snapshot_files(root / directory))
     if role != "production":
-        paths.extend((root / "docs/validation").glob("*.py"))
-    return {str(p.relative_to(root)): sha256(p) for p in sorted(set(paths))
-            if p.is_file() and role_selected(str(p.relative_to(root)), role)}
+        paths.update(p for p in (root / "docs/validation").glob("*.py") if p.is_file())
+    buffer = bytearray(64 * 1024) # Reused only inside this logical snapshot.
+    return {str(p.relative_to(root)): sha256(p, buffer) for p in sorted(paths)
+            if role_selected(str(p.relative_to(root)), role)}
 
 
-def git_hashes(repository, ref, role):
-    names = subprocess.check_output(["git", "-C", str(repository), "ls-tree", "-rz", "--name-only", ref], timeout=30).split(b"\0")
+def git_hashes(repository, ref, role, git="git"):
+    names = subprocess.check_output([git, "-C", str(repository), "ls-tree", "-rz", "--name-only", ref], timeout=30).split(b"\0")
     names = [os.fsdecode(n) for n in names if n and role_selected(os.fsdecode(n), role)]
-    data = subprocess.check_output(["git", "-C", str(repository), "cat-file", "--batch"],
+    if any("\n" in name for name in names):
+        raise ValueError("Git batch input contains a newline")
+    data = subprocess.check_output([git, "-C", str(repository), "cat-file", "--batch"],
                                    input="".join(ref + ":" + n + "\n" for n in names).encode(), timeout=30)
     result, offset = {}, 0
     for name in names:
         end = data.index(b"\n", offset)
-        size = int(data[offset:end].split()[-1])
+        header = data[offset:end].split()
+        if len(header) != 3 or header[1] != b"blob":
+            raise ValueError("Invalid Git batch object header")
+        size = int(header[2])
+        if size < 0 or end + 1 + size >= len(data) or data[end + 1 + size] != 10:
+            raise ValueError("Truncated Git batch object")
         result[name] = hashlib.sha256(data[end+1:end+1+size]).hexdigest()
         offset = end + 2 + size
+    if offset != len(data):
+        raise ValueError("Unexpected Git batch trailing bytes")
     return result
 
 
@@ -97,17 +121,7 @@ def source_inputs(root, specs):
         if spec.get("git_ref"):
             ref = spec["git_ref"]
             git = spec.get("git") or shutil.which("git", path=os.defpath)
-            names = subprocess.check_output([git, "-C", str(root), "ls-tree", "-rz", "--name-only", ref], timeout=30).split(b"\0")
-            names = [os.fsdecode(n) for n in names if n and selected(os.fsdecode(n))]
-            data = subprocess.check_output([git, "-C", str(root), "cat-file", "--batch"],
-                                           input="".join(ref + ":" + n + "\n" for n in names).encode(), timeout=30)
-            expected = {}
-            offset = 0
-            for filename in names:
-                end = data.index(b"\n", offset)
-                size = int(data[offset:end].split()[-1])
-                expected[filename] = hashlib.sha256(data[end + 1:end + 1 + size]).hexdigest()
-                offset = end + 2 + size
+            expected = git_hashes(root, ref, "build", git)
             if actual != expected:
                 raise ValueError("Source input does not match Git commit: " + name)
         result[name] = actual

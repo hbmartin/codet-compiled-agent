@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "/usr/bin/python3",
+    "/Volumes/Pro2T/codet-compiled-agent/build/pending-input-replay-20261103-run3/offline-verifier/scripts/validation_evidence.py",
+    "verify-bundle",
+    "/Volumes/Pro2T/codet-compiled-agent/build/pending-input-replay-20261103-run3/offline-relocated-bundle"
+  ],
+  "cwd": "/private/tmp",
+  "exit": 0,
+  "result": {
+    "verified": true,
+    "eligible_current": true,
+    "schema_version": 5,
+    "campaign_id": "1bc8d7f37d7244b4a350356f19e6e090",
+    "checks": 39,
+    "audit_inputs": 11598,
+    "reran_binaries": false
+  },
+  "stderr": ""
+}

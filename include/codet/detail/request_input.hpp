@@ -11,10 +11,20 @@ struct InputSubmission {
   InputAction action = InputAction::message;
   std::optional<InputDiscard> rejection;
 };
+struct InputOrigin {
+  std::string session;
+  uint64_t turn = 0;
+};
 struct InputLine {
   std::string text;
   std::optional<ApprovalIdentity> request;
   bool discarded = false;
+  std::optional<InputOrigin> origin;
+  bool presentation_held = false;
+  InputLine(std::string bytes, std::optional<ApprovalIdentity> identity = {}, bool stale = false,
+            std::optional<InputOrigin> source = {})
+      : text(std::move(bytes)), request(std::move(identity)), discarded(stale),
+        origin(std::move(source)) {}
   InputSubmission classify(const Json *pending = nullptr) const {
     if (text == "/quit" || text == "/exit")
       return {InputAction::quit, {}};
@@ -67,7 +77,7 @@ public:
     return started_ && !draft_ && !stale_;
   }
   InputLine take(std::string text) {
-    InputLine result{std::move(text), started_ ? std::move(draft_) : active_, stale_};
+    InputLine result{std::move(text), started_ ? std::move(draft_) : active_, stale_, {}};
     draft_.reset();
     started_ = stale_ = false;
     return result;

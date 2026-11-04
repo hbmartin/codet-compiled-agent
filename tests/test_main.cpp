@@ -23,6 +23,40 @@
 #include <sys/resource.h>
 
 std::string codet::test::executable;
+#ifdef CODET_NATIVE_TERMINAL_METRICS
+namespace {
+codet::Cancellation *pending_cancel = nullptr;
+thread_local int pending_notify = -1;
+thread_local bool pending_enter = false;
+thread_local bool pending_frozen = false;
+int pending_poll(pollfd *fds, nfds_t count, int timeout) {
+  if (pending_enter) {
+    pending_enter = false;
+    pending_frozen = true;
+    (void)::write(pending_notify, "s", 1);
+  }
+  return ::poll(fds, count, timeout);
+}
+ssize_t pending_read(int fd, void *data, size_t size) {
+  const auto count = ::read(fd, data, size);
+  if (count == 1 && (*static_cast<char *>(data) == '\0' || *static_cast<char *>(data) == 4))
+    (void)::write(pending_notify, "k", 1);
+  if (count == 1 && *static_cast<char *>(data) == '\0')
+    return 0; // Deterministic EOF at the raw-input seam, while the PTY remains inspectable.
+  if (count == 1 && (*static_cast<char *>(data) == '\n' || *static_cast<char *>(data) == '\r')) {
+    if (pending_frozen)
+      (void)::write(pending_notify, "k", 1);
+    else
+      pending_enter = true;
+  }
+  return count;
+}
+void pending_interrupt(int) {
+  if (pending_cancel)
+    pending_cancel->requested = true;
+}
+} // namespace
+#endif
 namespace {
 struct InputFailure {
   std::string stage;
@@ -101,6 +135,47 @@ int main(int argc, char **argv) {
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
 #ifdef CODET_NATIVE_TERMINAL_METRICS
+    if (argc > 4 && std::string(argv[1]) == "--codet-pending-input-helper") {
+      const int release = std::stoi(argv[2]), notify = std::stoi(argv[3]);
+      codet::Cancellation cancel;
+      pending_cancel = &cancel;
+      const auto old_int = std::signal(SIGINT, pending_interrupt);
+      const auto old_term = std::signal(SIGTERM, pending_interrupt);
+      struct RestoreSignals {
+        decltype(old_int) interrupt, terminate;
+        ~RestoreSignals() {
+          std::signal(SIGINT, interrupt);
+          std::signal(SIGTERM, terminate);
+          pending_cancel = nullptr;
+        }
+      } signals{old_int, old_term};
+      auto writer = std::async(std::launch::async, [=] {
+        char token;
+        if (!codet::test::read_token(release, token, std::chrono::seconds(30)))
+          return false;
+        struct Gate {
+          int release, notify;
+        } gate{release, notify};
+        auto &metrics = codet::test::native_io_metrics;
+        metrics.interrupt_fd = STDERR_FILENO;
+        metrics.output_context = &gate;
+        metrics.before_output = +[](void *context) {
+          auto &g = *static_cast<Gate *>(context);
+          char byte;
+          (void)::write(g.notify, "r", 1);
+          (void)codet::test::read_token(g.release, byte, std::chrono::seconds(30));
+        };
+        const bool delivered = codet::detail::immediate_stderr({"held diagnostic"});
+        metrics = {};
+        return delivered;
+      });
+      codet::detail::IoContext io(cancel);
+      pending_notify = notify;
+      const codet::detail::TerminalInputOps ops{pending_poll, ::select, pending_read};
+      io.terminal_input = &ops;
+      const std::vector<std::string> arguments(argv + 4, argv + argc);
+      return codet::detail::cli_main(arguments, cancel, io);
+    }
     if (argc == 3 && std::string(argv[1]) == "--codet-line-boundary-helper") {
       codet::Cancellation cancel;
       codet::detail::IoContext io(cancel);

@@ -7,15 +7,25 @@ import tarfile
 import tempfile
 
 
-def file_hash(path):
+def file_hash(path, buffer=None):
     with pathlib.Path(path).open('rb') as source:
-        return stream_hash(source)
+        return stream_hash(source, buffer)
 
-def stream_hash(source):
+def stream_hash(source, buffer=None):
     digest = hashlib.sha256()
-    for chunk in iter(lambda: source.read(1024 * 1024), b''):
-        digest.update(chunk)
+    if hasattr(source, 'readinto'):
+        buffer = buffer if buffer is not None else bytearray(64 * 1024)
+        view = memoryview(buffer)
+        while True:
+            count = source.readinto(buffer)
+            if not count:
+                break
+            digest.update(view[:count])
+    else:
+        for chunk in iter(lambda: source.read(64 * 1024), b''):
+            digest.update(chunk)
     return digest.hexdigest()
+
 
 def tree_hashes(root, *, exclude_manifest=False):
     root = pathlib.Path(root)

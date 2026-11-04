@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from process_supervision import system_ps
+
 NATIVE_BLOCKERS = {"ctest", "codet_tests", "codet_publication_fault_tests", "clang-tidy", "cppcheck", "ninja", "pytest"}
 SCRIPT_BLOCKERS = {"analyze-modern.py", "cli_integration.py", "test_validation_evidence.py"}
 
@@ -36,20 +38,35 @@ def python_program(arguments):
         flag = values.pop(0)
         if flag == "--":
             return values
-        if flag.startswith("-c"):
-            return []
-        if flag.startswith("-m"):
-            return ["-m"] + ([flag[2:]] if len(flag) > 2 else []) + values
         if not flag.startswith("-") or flag == "-":
             return [flag] + values
-        if flag in ("-X", "-W", "--check-hash-based-pycs"):
-            if not values:
-                raise ValueError("Missing Python switch operand")
-            values.pop(0)
-        elif flag.startswith(("-X", "-W", "--check-hash-based-pycs=")):
+        if flag.startswith("--"):
+            if flag == "--check-hash-based-pycs":
+                if not values:
+                    raise ValueError("Missing Python switch operand")
+                values.pop(0)
+            elif flag.startswith("--check-hash-based-pycs="):
+                if not flag.split("=", 1)[1]:
+                    raise ValueError("Missing Python switch operand")
+            elif flag in ("--help", "--version", "--help-env", "--help-xoptions", "--help-all"):
+                return []
+            else:
+                raise ValueError("Ambiguous Python switch: " + flag)
             continue
-        elif not all(c in "bBdEhiIOPqRsSuvVx" for c in flag[1:]):
-            raise ValueError("Ambiguous Python switch: " + flag)
+        cluster = flag[1:]
+        for position, option in enumerate(cluster):
+            rest = cluster[position + 1:]
+            if option == "c":
+                return [] # Command text is deliberately opaque, never a script identity.
+            if option in "mWX":
+                operand = rest or (values.pop(0) if values else "")
+                if not operand:
+                    raise ValueError("Missing Python switch operand")
+                if option == "m":
+                    return ["-m", operand] + values
+                break
+            if option not in "bBdEhiIOPqRsSuvVx":
+                raise ValueError("Ambiguous Python switch: " + flag)
     return []
 
 
@@ -115,7 +132,7 @@ def read_argv(pid, platform=None):
 def process_snapshot():
     if sys.platform != "darwin" and not sys.platform.startswith("linux"):
         raise ValueError("Process inspection unsupported on " + sys.platform)
-    identities = subprocess.check_output(["ps", "-axo", "pid=,stat=,comm="], text=True, timeout=5)
+    identities = subprocess.check_output([system_ps(), "-axo", "pid=,stat=,comm="], text=True, timeout=5)
     processes = []
     for line in identities.splitlines():
         fields = line.strip().split(None, 2)

@@ -702,3 +702,265 @@ TEST_F(NativeRecordLifecycle, MemoryOutputDoesNotClaimAnUnfinishedNativeRow) {
   EXPECT_TRUE(capture([&] { return detail::immediate_stderr({"warning"}); }));
   EXPECT_EQ(read(), "warning\r\n");
 }
+
+#if defined(CODET_NATIVE_TERMINAL_METRICS)
+namespace {
+void pending_echo(NativeRecordLifecycle &fixture, unsigned columns, bool prior_line) {
+  struct winsize size {};
+  size.ws_row = 24;
+  size.ws_col = static_cast<unsigned short>(columns);
+  ASSERT_EQ(::ioctl(fixture.slave, TIOCSWINSZ, &size), 0);
+  if (prior_line) {
+    fixture.capture([&] {
+      for (char byte : std::string("hello world"))
+        fixture.line->append(byte);
+      (void)fixture.line->try_take();
+    });
+    (void)fixture.read();
+  } else if (columns) {
+    fixture.capture([&] {
+      fixture.line->append('a');
+      fixture.line->append('b');
+    });
+    (void)fixture.read();
+  }
+  DeliveryGate gate;
+  bool held = false;
+  std::optional<detail::InputLine> submitted;
+  fixture.capture([&] {
+    std::thread worker([&] {
+      if (!gate.wait_for_start())
+        return;
+      test::native_io_metrics.interrupt_fd = STDERR_FILENO;
+      test::native_io_metrics.before_output = DeliveryGate::output;
+      test::native_io_metrics.output_context = &gate;
+      (void)detail::immediate_stderr({"held diagnostic"});
+      test::native_io_metrics = {};
+    });
+    JoinDelivery join{gate, worker};
+    gate.begin();
+    if (columns)
+      fixture.line->append('c');
+    else
+      for (char byte : std::string("abc"))
+        fixture.line->append(byte);
+    submitted = fixture.line->try_take();
+    held = !submitted && fixture.line->submission_pending();
+    gate.release();
+    worker.join();
+    submitted = fixture.line->try_take();
+  });
+  ASSERT_TRUE(held);
+  ASSERT_TRUE(submitted);
+  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_FALSE(gate.timed_out);
+  EXPECT_THAT(fixture.read(), HasSubstr("codet> abc")) << "Frozen submitted line was not displayed";
+}
+TEST_F(NativeRecordLifecycle, KnownWidthPendingLineIsVisible) {
+  pending_echo(*this, 80, false);
+}
+TEST_F(NativeRecordLifecycle, BasicSecondPendingLineIsVisible) {
+  pending_echo(*this, 0, true);
+}
+TEST_F(NativeRecordLifecycle, BasicFreshPendingLinePositiveControl) {
+  pending_echo(*this, 0, false);
+}
+} // namespace
+#endif
+
+TEST_F(NativeRecordLifecycle, FrozenSubmissionOwnsOriginAndDiscardCompletesExactlyOnce) {
+  line->origin("origin-session", 7);
+  draft();
+  (void)read();
+  DeliveryGate gate;
+  bool held = false;
+  std::optional<detail::InputLine> discarded;
+  capture([&] {
+    std::thread worker([&] {
+      if (!gate.wait_for_start())
+        return;
+      auto &metrics = test::native_io_metrics;
+      metrics.interrupt_fd = STDERR_FILENO;
+      metrics.before_output = DeliveryGate::output;
+      metrics.output_context = &gate;
+      (void)detail::immediate_stderr({"held diagnostic"});
+      metrics = {};
+    });
+    JoinDelivery join{gate, worker};
+    gate.begin();
+    held = !line->try_take();
+    line->origin("replacement-session", 8);
+    input.open({"replacement-session", "replacement", 8}, detail::RequestKind::approval);
+    line->append('y');
+    discarded = line->discard_pending();
+    gate.release();
+  });
+  ASSERT_TRUE(held);
+  ASSERT_TRUE(discarded);
+  EXPECT_EQ(discarded->text, "abc");
+  ASSERT_TRUE(discarded->origin);
+  EXPECT_EQ(discarded->origin->session, "origin-session");
+  EXPECT_EQ(discarded->origin->turn, 7u);
+  EXPECT_FALSE(line->discard_pending());
+  EXPECT_TRUE(input.input().empty());
+}
+
+TEST_F(NativeRecordLifecycle, InterruptedSubmissionRepaintsAfterItsSeparatorWasDeferred) {
+  capture([&] {
+    line->append('a');
+    line->append('b');
+  });
+  (void)read();
+  input.append('c'); // The new byte has not been displayed when Enter freezes the line.
+  DeliveryGate gate;
+  std::optional<detail::InputLine> submitted;
+  bool held = false;
+  capture([&] {
+    std::thread worker([&] {
+      if (!gate.wait_for_start())
+        return;
+      auto &metrics = test::native_io_metrics;
+      metrics.interrupt_fd = STDERR_FILENO;
+      metrics.before_output = DeliveryGate::output;
+      metrics.output_context = &gate;
+      (void)detail::immediate_stderr({"intervening diagnostic"});
+      metrics = {};
+    });
+    JoinDelivery join{gate, worker};
+    auto &metrics = test::native_io_metrics;
+    metrics.interrupt_fd = STDOUT_FILENO;
+    metrics.before_output = DeliveryGate::geometry;
+    metrics.output_context = &gate;
+    submitted = line->try_take();
+    held = !submitted && line->submission_pending();
+    metrics = {};
+    gate.release();
+    worker.join();
+    submitted = line->try_take();
+  });
+  ASSERT_TRUE(held);
+  ASSERT_TRUE(submitted);
+  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_THAT(read(), EndsWith("intervening diagnostic\r\ncodet> abc\r\n"));
+  EXPECT_FALSE(gate.timed_out);
+}
+
+TEST_F(NativeRecordLifecycle, FrozenSubmissionReflowsItsBoundedViewAfterResize) {
+  for (unsigned columns : {0u, 80u}) {
+    struct winsize size {};
+    size.ws_row = 24;
+    size.ws_col = static_cast<unsigned short>(columns);
+    ASSERT_EQ(::ioctl(slave, TIOCSWINSZ, &size), 0);
+    capture([&] {
+      line->append('a');
+      line->append('b');
+    });
+    (void)read();
+    DeliveryGate gate;
+    std::optional<detail::InputLine> submitted;
+    bool held = false;
+    capture([&] {
+      std::thread worker([&] {
+        if (!gate.wait_for_start())
+          return;
+        auto &metrics = test::native_io_metrics;
+        metrics.interrupt_fd = STDERR_FILENO;
+        metrics.before_output = DeliveryGate::output;
+        metrics.output_context = &gate;
+        (void)detail::immediate_stderr({"held diagnostic"});
+        metrics = {};
+      });
+      JoinDelivery join{gate, worker};
+      gate.begin();
+      for (char byte : std::string("cdefghijklmnopqrstuvwxyz"))
+        line->append(byte);
+      submitted = line->try_take();
+      held = !submitted;
+      size.ws_col = 20;
+      (void)::ioctl(slave, TIOCSWINSZ, &size);
+      gate.release();
+      worker.join();
+      submitted = line->try_take();
+    });
+    ASSERT_TRUE(held);
+    ASSERT_TRUE(submitted);
+    EXPECT_EQ(submitted->text, "abcdefghijklmnopqrstuvwxyz");
+    EXPECT_THAT(read(), EndsWith("codet> <pqrstuvwxyz\r\n"));
+    EXPECT_FALSE(gate.timed_out);
+  }
+}
+
+TEST_F(NativeRecordLifecycle, EmptyOrdinarySubmissionDoesNotPaintSteeringPrompt) {
+  auto submitted = capture([&] { return line->try_take(); });
+  ASSERT_TRUE(submitted);
+  EXPECT_TRUE(submitted->text.empty());
+  EXPECT_EQ(submitted->action(), detail::InputAction::message);
+  EXPECT_TRUE(read().empty());
+}
+
+TEST_F(NativeRecordLifecycle, UnseenRevisionReplacesTheSurvivingKnownWidthRow) {
+  capture([&] {
+    line->append('a');
+    line->append('b');
+  });
+  (void)read();
+  input.append('c');
+  auto submitted = capture([&] { return line->try_take(); });
+  ASSERT_TRUE(submitted);
+  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_EQ(read(), "\r         \rcodet> abc\r\n");
+}
+
+TEST_F(NativeRecordLifecycle, CompletedInterveningRecordCannotHideFrozenSubmission) {
+  capture([&] {
+    line->append('a');
+    line->append('b');
+  });
+  (void)read();
+  input.append('c');
+  DeliveryGate gate;
+  struct CompleteBeforeSeparator {
+    DeliveryGate &gate;
+    std::thread &worker;
+    unsigned inspections = 0;
+    static void inspect(void *context) {
+      auto &state = *static_cast<CompleteBeforeSeparator *>(context);
+      if (++state.inspections < 3) {
+        test::native_io_metrics.after_stat = inspect;
+        return;
+      }
+      state.gate.begin();
+      state.gate.release();
+      state.worker.join();
+    }
+  };
+  std::optional<detail::InputLine> submitted;
+  bool held = false;
+  capture([&] {
+    std::thread worker([&] {
+      if (!gate.wait_for_start())
+        return;
+      auto &metrics = test::native_io_metrics;
+      metrics.interrupt_fd = STDERR_FILENO;
+      metrics.before_output = DeliveryGate::output;
+      metrics.output_context = &gate;
+      (void)detail::immediate_stderr({"completed intervening diagnostic"});
+      metrics = {};
+    });
+    JoinDelivery join{gate, worker};
+    CompleteBeforeSeparator state{gate, worker};
+    auto &metrics = test::native_io_metrics;
+    metrics.interrupt_fd = STDOUT_FILENO;
+    metrics.after_stat = CompleteBeforeSeparator::inspect;
+    metrics.stat_context = &state;
+    submitted = line->try_take();
+    held = !submitted;
+    metrics = {};
+    submitted = line->try_take();
+  });
+  ASSERT_TRUE(held);
+  ASSERT_TRUE(submitted);
+  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_THAT(read(), EndsWith("codet> abc\r\n"));
+  EXPECT_FALSE(gate.timed_out);
+}

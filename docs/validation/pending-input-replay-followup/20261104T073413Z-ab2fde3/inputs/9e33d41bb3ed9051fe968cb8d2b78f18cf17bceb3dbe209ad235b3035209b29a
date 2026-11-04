@@ -1,0 +1,10 @@
+{"thread_id":"<thread>","type":"thread.started"}
+{"type":"turn.started"}
+{"item":{"id":"message-0","text":"","type":"agent_message"},"type":"item.started"}
+{"item":{"id":"message-0","text":"","type":"agent_message"},"type":"item.completed"}
+{"item":{"id":"call-0","status":"in_progress","tool":"apply_patch","type":"file_change"},"type":"item.started"}
+{"item":{"id":"call-0","metadata":{"paths":["<workspace>/sample.txt"]},"output":"Applied 1 file change(s)","status":"completed","tool":"apply_patch","type":"file_change"},"type":"item.completed"}
+{"item":{"id":"message-1","text":"","type":"agent_message"},"type":"item.started"}
+{"item":{"id":"message-1","text_delta":"fixture done","type":"agent_message"},"type":"item.updated"}
+{"item":{"id":"message-1","text":"fixture done","type":"agent_message"},"type":"item.completed"}
+{"type":"turn.completed","usage":{"cached_input_tokens":0,"input_tokens":20,"output_tokens":4,"reasoning_output_tokens":0}}

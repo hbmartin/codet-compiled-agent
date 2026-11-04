@@ -1,0 +1,7 @@
+{
+  "schema_version": 4,
+  "baseline": "origin/main",
+  "builds": {"debug": "debug", "asan": "asan", "tsan": "tsan", "cross": "cross-selection"},
+  "python39": "/usr/bin/python3",
+  "benchmark": {"sets": 2, "measured_per_set": 5}
+}

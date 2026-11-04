@@ -70,6 +70,16 @@ def finding_key(tool, finding, root):
             finding.get("issue_hash_content_of_line_in_context"), json.dumps(locations(finding.get("location")), sort_keys=True), finding.get("_translation_unit"))
 
 
+def relocation_identity(tool, key):
+    # Review can move positions, never a diagnostic's identity or source ownership.
+    if tool == "clang-tidy":
+        return key[0], key[1], key[3], key[4]
+    if tool == "cppcheck":
+        return key[0], key[1], tuple((loc[0], loc[3]) for loc in key[2])
+    location = json.loads(key[4])
+    return key[0], key[1], key[2], key[3], location["file"], key[5]
+
+
 def diagnostic_context(tool, key, root, expected=None):
     if tool == "clang-tidy":
         name, offset = key[1], key[2]
@@ -113,7 +123,8 @@ def compare_analysis(baseline, changed, baseline_root, changed_root, expected, c
         def frozen(value):
             return tuple(frozen(x) for x in value) if isinstance(value, (list, tuple)) else value
         before, after = frozen(before), frozen(after)
-        if (not entry.get("rationale") or not entry.get("context") or
+        if (relocation_identity(tool, before) != relocation_identity(tool, after) or
+                not entry.get("rationale") or not entry.get("context") or
                 diagnostic_context(tool, before, baseline_root, entry["context"]) != entry["context"] or
                 diagnostic_context(tool, after, changed_root, entry["context"]) != entry["context"] or
                 before in used_old or after in used_new or old[before] != 1 or new[after] != 1):

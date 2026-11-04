@@ -12,6 +12,7 @@ from pathlib import Path
 
 from evidence_benchmarks import verify_samples
 from evidence_inputs import environment, file_specs, role_selected, write_csv
+from evidence_paths import verify_working_provenance
 
 
 def safe_member(folder, name):
@@ -145,7 +146,7 @@ def verify_bundle(folder):
     if run.get("schema_version") != SCHEMA_VERSION:
         return dict(verified=False, inventory_verified=True, historical=True, eligible_current=False,
                     schema_version=run.get("schema_version"),
-                    limitations=["Historical format does not establish v4 environments, path interpretation, or archived fingerprint coverage; no provenance was backfilled."])
+                    limitations=["Historical format does not establish v5 resolution chains and consumer provenance; no provenance was backfilled."])
     for key in ("id", "campaign_id"):
         if not isinstance(run.get(key), str) or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", run[key]) is None:
             raise ValueError("Invalid audit run identity: " + key)
@@ -187,6 +188,7 @@ def verify_bundle(folder):
         published = report["validation"][position]
         name = check["id"]
         record = json.loads((folder / "capture" / (name + ".json")).read_text())
+        verify_working_provenance(manifest, run, record)
         if (record.get("schema_version") != SCHEMA_VERSION or record["id"] != name or record["run_id"] != run["id"] or record["campaign_id"] != run["campaign_id"] or
                 record["manifest_sha256"] != run["manifest_sha256"] or record["argv"] != check["argv"] or
                 record["env"] != check.get("env", {}) or record["cwd"] != record.get("canonical_cwd") or record.get("cwd_spec") != check.get("cwd", ".") or
@@ -241,6 +243,18 @@ def verify_bundle(folder):
             if saved["path"] != spec["path"] or digest(path) != saved["sha256"]:
                 raise ValueError("Audit artifact digest mismatch")
             envelope = json.loads(path.read_text())
+            if envelope["kind"] == "hash-profile":
+                from evidence_hash_experiment import verify_experiment
+                verify_experiment(envelope["payload"])
+                if not envelope["payload"].get("profiles") or not envelope["payload"].get("code_hashes"):
+                    raise ValueError("Hash experiment profiling evidence missing")
+                for filename, signature in envelope["payload"]["code_hashes"]["baseline"].items():
+                    matches = [output for output in record["outputs"] if output["path"].endswith("/hash-correctness/scripts/" + filename)]
+                    if len(matches) != 1 or not matches[0]["archive"] or matches[0]["sha256"] != signature:
+                        raise ValueError("Hash experiment correctness code mismatch")
+                for filename, signature in envelope["payload"]["code_hashes"]["changed"].items():
+                    if report["validation_hashes"].get("scripts/" + filename) != signature:
+                        raise ValueError("Hash experiment candidate code mismatch")
             derived.append(envelope)
             expected = dict(schema_version=SCHEMA_VERSION, campaign_id=run["campaign_id"], capture_run_id=run["id"],
                             check_id=name, production_hashes=report["production_hashes"], validation_hashes=report["validation_hashes"])

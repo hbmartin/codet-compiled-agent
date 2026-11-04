@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 from evidence_inputs import sha256
+from process_supervision import run as supervised_run
 
 PROGRAMS = dict(line="codet_line_input_bench", output="codet_output_bench", export="codet_export_bench")
 
@@ -44,7 +45,7 @@ def build_harnesses(root, folder, names, ninja):
             link[link.index(old_object)] = str(obj)
             link[link.index("-o") + 1] = str(binary)
             for argv in (compile_argv, link):
-                subprocess.run(argv, cwd=build, check=True, timeout=600)
+                supervised_run(argv, cwd=build, check=True, timeout=600)
             records[name] = dict(compile_argv=compile_argv, link_argv=link, library_sha256=sha256(build / "libcodet_core.a"),
                                  executable_sha256=sha256(binary), executable=str(binary))
         variants[variant] = records

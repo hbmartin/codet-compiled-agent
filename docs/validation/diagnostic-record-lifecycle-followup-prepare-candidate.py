@@ -1,10 +1,10 @@
 transformations = []
 
-def checked_replace(text, before, after):
+def checked_replace(text, before, after, expected=1):
     count = text.count(before)
-    if not count:
-        raise ValueError('Historical transformation did not apply: ' + repr(before))
-    transformations.append(dict(before=before, count=count))
+    if count != expected:
+        raise ValueError('Historical transformation count mismatch: ' + repr(before))
+    transformations.append(dict(before=before, count=count, expected=expected))
     return text.replace(before, after)
 import argparse
 _parser = argparse.ArgumentParser(description=__doc__)
@@ -30,7 +30,7 @@ s = s[:a] + s[b:]
 s = checked_replace(s, 'NativeDiagnosticRecord record(native, inspection, attempt, presentation);', 'NativeDiagnosticRecord record(native, inspection, attempt, presentation, &output_);')
 p.write_text(s)
 p = src / 'include/codet/detail/line_prompt.hpp'
-s = checked_replace(checked_replace(p.read_text(), '  void paint() {', '  void open_row() noexcept {\n    if (binding_.descriptor < 0)\n      boundaries().open(terminal_);\n  }\n  void paint() {'), '    boundaries().open(terminal_);', '    open_row();')
+s = checked_replace(checked_replace(p.read_text(), '  void paint() {', '  void open_row() noexcept {\n    if (binding_.descriptor < 0)\n      boundaries().open(terminal_);\n  }\n  void paint() {'), '    boundaries().open(terminal_);', '    open_row();', expected=6)
 s = checked_replace(s, 'if (binding_.descriptor < 0)\n      open_row();', 'if (binding_.descriptor < 0)\n      boundaries().open(terminal_);')
 a = s.index('    if (binding_.descriptor >= 0) {\n      const auto state', s.index('    paint();'))
 b = s.index('\n  }\n  void append', a)
@@ -52,4 +52,4 @@ if not (src / 'src/modern/platform.cpp').is_file():
     raise ValueError('Historical candidate source was not produced')
 args.output.parent.mkdir(parents=True, exist_ok=True)
 with args.output.open('x') as result:
-    json.dump(dict(label='historical replay; not current campaign evidence', folder=str(folder), source_ref=locals().get('ref'), produced=[str(p) for p in folder.glob('*.json')]), result, indent=2)
+    json.dump(dict(label='historical replay; not current campaign evidence', folder=str(folder), source_ref=locals().get('ref'), transformations=transformations, produced=[str(p) for p in folder.glob('*.json')]), result, indent=2)
