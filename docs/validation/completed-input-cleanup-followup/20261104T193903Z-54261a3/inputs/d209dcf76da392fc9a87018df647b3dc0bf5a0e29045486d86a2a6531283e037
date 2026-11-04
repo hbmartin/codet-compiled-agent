@@ -1,0 +1,111 @@
+{
+  "format": 1,
+  "tigerports_revision": "522f2e9e495e0ad13d336fb8a71e1a166eecbff9",
+  "dependencies": [
+    {
+      "name": "legacy-support",
+      "version": "1.5.2",
+      "url": "https://codeload.github.com/macports/macports-legacy-support/tar.gz/refs/tags/v1.5.2",
+      "sha256": "16da882281d26d8ddfb434acfde0828fc3e4119aab332445f65688ae879e9962"
+    },
+    {
+      "name": "zlib",
+      "version": "1.3.2",
+      "url": "https://zlib.net/zlib-1.3.2.tar.xz",
+      "sha256": "d7a0654783a4da529d1bb793b7ad9c3318020af77667bcae35f95d0e42a792f3"
+    },
+    {
+      "name": "openssl",
+      "version": "3.6.5",
+      "url": "https://codeload.github.com/openssl/openssl/tar.gz/refs/tags/openssl-3.6.5",
+      "sha256": "f3091b7ccb41a11d877b7406b7afc9dd9c5003d299c6bb33cff882127bc06c91"
+    },
+    {
+      "name": "curl",
+      "version": "8.22.0",
+      "url": "https://curl.se/download/curl-8.22.0.tar.xz",
+      "sha256": "f7ef3ae8a22e521f289803fe93543eb64c329b58aa73a9e224dfd915a2a5f4f7"
+    },
+    {
+      "name": "sqlite",
+      "version": "3.54.0",
+      "url": "https://sqlite.org/2026/sqlite-autoconf-3540000.tar.gz",
+      "sha256": "134ec0802dda5795816e25d25872d20b312cb3973438c49b30bc40b7705ea9ed"
+    },
+    {
+      "name": "ncurses",
+      "version": "6.6",
+      "url": "https://invisible-mirror.net/archives/ncurses/ncurses-6.6.tar.gz",
+      "sha256": "355b4cbbed880b0381a04c46617b7656e362585d52e9cf84a67e2009b749ff11"
+    },
+    {
+      "name": "libedit",
+      "version": "20260512-3.1",
+      "url": "https://thrysoee.dk/editline/libedit-20260512-3.1.tar.gz",
+      "sha256": "432d5e7ea8b0116dd39f2eca7bc11d0eed77faa6b77ea526ace89907c23ea4a0"
+    }
+  ],
+  "patches": [
+    {
+      "name": "curl",
+      "path": "5dbdacaa04c0d09077829dd252c5ee79b6185ff6.patch",
+      "url": "https://raw.githubusercontent.com/alex-free/tigerports-ports/522f2e9e495e0ad13d336fb8a71e1a166eecbff9/net/curl/files/5dbdacaa04c0d09077829dd252c5ee79b6185ff6.patch",
+      "sha256": "3277c5e6a06bbeec4da360046f3f8eca0d3e377646d3586cecbf995efb605f02"
+    },
+    {
+      "name": "curl",
+      "path": "patch-curl-darwin-mach-time-ppc-overflow.diff",
+      "url": "https://raw.githubusercontent.com/alex-free/tigerports-ports/522f2e9e495e0ad13d336fb8a71e1a166eecbff9/net/curl/files/patch-curl-darwin-mach-time-ppc-overflow.diff",
+      "sha256": "df4f27f4518dcefb22b0d9d3dc9834626feef66de0467b25eb2e6ebfd49c2759"
+    },
+    {
+      "name": "ncurses",
+      "path": "hex.diff",
+      "url": "https://raw.githubusercontent.com/alex-free/tigerports-ports/522f2e9e495e0ad13d336fb8a71e1a166eecbff9/devel/ncurses/files/hex.diff",
+      "sha256": "50d7f9e8f5957626da6089b07ce26149695f733493f9fb1af69a62ae42966a4f"
+    },
+    {
+      "name": "ncurses",
+      "path": "modules.patch",
+      "url": "https://raw.githubusercontent.com/alex-free/tigerports-ports/522f2e9e495e0ad13d336fb8a71e1a166eecbff9/devel/ncurses/files/modules.patch",
+      "sha256": "39ceb330888a67de521ca666ef4ff9da394bafbba8fe6039672563549f855f75"
+    },
+    {
+      "name": "libedit",
+      "path": "src__sys.h.patch",
+      "url": "https://raw.githubusercontent.com/alex-free/tigerports-ports/522f2e9e495e0ad13d336fb8a71e1a166eecbff9/devel/libedit/files/src__sys.h.patch",
+      "sha256": "ccc69326cc69e231ea0eec497808fcb5dfd89b4bf9e5faf814d2b44604941e53"
+    },
+    {
+      "name": "libedit",
+      "path": "patch-non_ascii.diff",
+      "url": "https://raw.githubusercontent.com/alex-free/tigerports-ports/522f2e9e495e0ad13d336fb8a71e1a166eecbff9/devel/libedit/files/patch-non_ascii.diff",
+      "sha256": "c189929c796e06974096dc3ebc20c4bbf6439f8b399c5e9110b4e126cefeeb4d"
+    },
+    {
+      "name": "libedit",
+      "path": "patch-no_escaping.diff",
+      "url": "https://raw.githubusercontent.com/alex-free/tigerports-ports/522f2e9e495e0ad13d336fb8a71e1a166eecbff9/devel/libedit/files/patch-no_escaping.diff",
+      "sha256": "de9a59f62b4e1af0ae2cdeea9ad02d09339b0f7afef8b99002a09d388154f0a9"
+    },
+    {
+      "name": "legacy-support",
+      "path": "signal.h",
+      "destination": "include/sys/signal.h",
+      "url": "https://raw.githubusercontent.com/alex-free/tigerports-ports/522f2e9e495e0ad13d336fb8a71e1a166eecbff9/devel/legacy-support/files/signal.h",
+      "sha256": "756277f19144c8b907488765d4dc4cf93fa9fcf6dce903f8c0b9eafe279c86bc"
+    },
+    {
+      "name": "legacy-support",
+      "path": "legacy-signal-gcc14.patch",
+      "local_file": "cmake/patches/legacy-signal-gcc14.patch",
+      "sha256": "847e7f9adde485fa73eebad2ea7416b5fabfedb39aad095670672c1773c3e431"
+    },
+    {
+      "name": "libedit",
+      "path": "libedit-size-max.patch",
+      "local_file": "cmake/patches/libedit-size-max.patch",
+      "sha256": "aac931bf8b90321711c3ca362909235b6bb2eafd2aa4d2a731a27a3e3b8383b7"
+    }
+  ]
+}

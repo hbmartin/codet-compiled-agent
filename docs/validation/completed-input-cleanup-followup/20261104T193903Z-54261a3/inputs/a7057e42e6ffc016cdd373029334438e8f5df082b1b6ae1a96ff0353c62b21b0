@@ -1,0 +1,68 @@
+rules:
+  - id: codet-public-reasoning-model-aware
+    languages: [cpp]
+    severity: ERROR
+    message: Gate default public Responses reasoning by model capability, not just provider.
+    paths:
+      include: ["**/provider.cpp"]
+    pattern-either:
+      - pattern: |
+          if ($CONFIG.provider == "openai")
+            $BODY["reasoning"] = $VALUE;
+      - pattern: |
+          if (!$CONFIG.effort.empty() || $CONFIG.provider == "openai")
+            $BODY["reasoning"] = $VALUE;
+      - pattern: |
+          if ($CONFIG.provider == "openai" || !$CONFIG.effort.empty())
+            $BODY["reasoning"] = $VALUE;
+  - id: codet-epoch-empty-assistant
+    languages: [cpp]
+    severity: ERROR
+    message: Build guarded reply wire before appending an epoch source part; empty replies emit no assistant item.
+    paths:
+      include: ["**/provider.cpp"]
+    pattern: Json::array({{{"role", "assistant"}, {"content", $REPLAY}}})
+  - id: codet-incomplete-event-observed
+    languages: [cpp]
+    severity: ERROR
+    message: Mark a delivered incomplete event as observed before throwing so it cannot trigger a transport retry.
+    paths:
+      include: ["**/provider.cpp"]
+    patterns:
+      - pattern-either:
+          - pattern: |
+              if (event == "response.incomplete")
+                throw ProviderError(...);
+          - pattern: |
+              if (event == "response.incomplete") {
+                ...
+                throw ProviderError(...);
+              }
+      - pattern-not: |
+          if (event == "response.incomplete") {
+            ...
+            saw = true;
+            ...
+            throw ProviderError(...);
+          }
+  - id: codet-public-reasoning-helper-provider-only
+    languages: [cpp]
+    severity: ERROR
+    message: The public reasoning capability helper must retain model/effort gating.
+    paths:
+      include: ["**/provider.cpp"]
+    pattern: |
+      bool public_responses_reasoning(const Config &$CONFIG) {
+        return $CONFIG.provider == "openai";
+      }
+  - id: codet-unguarded-epoch-replay
+    languages: [cpp]
+    severity: ERROR
+    message: Guard the actual assistant replay append against empty replay.
+    paths:
+      include: ["**/provider.cpp"]
+    patterns:
+      - pattern: $WIRE.push_back({{"role", "assistant"}, {"content", $RESULT.message.replay}});
+      - pattern-not-inside: |
+          if (!$RESULT.message.replay.empty())
+            $WIRE.push_back(...);

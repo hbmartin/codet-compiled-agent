@@ -1,0 +1,1639 @@
+Test project /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/asan
+      Start  1: codet.publication-faults
+      Start  2: codet.unit
+ 1/10 Test  #1: codet.publication-faults .........   Passed    8.13 sec
+      Start  3: codet.cli
+ 2/10 Test  #3: codet.cli ........................   Passed    0.22 sec
+      Start  4: codet.integration
+ 3/10 Test  #4: codet.integration ................   Passed   88.62 sec
+      Start  5: codet.prompts
+ 4/10 Test  #5: codet.prompts ....................   Passed    0.48 sec
+      Start  6: codet.build-integrity
+ 5/10 Test  #6: codet.build-integrity ............   Passed    0.16 sec
+      Start  7: codet.semgrep-report
+ 6/10 Test  #7: codet.semgrep-report .............   Passed    0.67 sec
+      Start  8: codet.lint-runner
+ 7/10 Test  #8: codet.lint-runner ................   Passed    1.88 sec
+      Start  9: codet.validation-evidence
+ 8/10 Test  #9: codet.validation-evidence ........   Passed   14.09 sec
+      Start 10: codet.hermetic
+ 9/10 Test #10: codet.hermetic ...................   Passed    0.19 sec
+10/10 Test  #2: codet.unit .......................***Failed  116.23 sec
+[==========] Running 668 tests from 58 test suites.
+[----------] Global test environment set-up.
+[----------] 10 tests from TerminalResources
+[ RUN      ] TerminalResources.ValidationBeforeAcquisitionDoesNotTouchTheTerminal
+[       OK ] TerminalResources.ValidationBeforeAcquisitionDoesNotTouchTheTerminal (0 ms)
+[ RUN      ] TerminalResources.QuarantineWarningSharesThePartialDiagnosticSeparator
+[       OK ] TerminalResources.QuarantineWarningSharesThePartialDiagnosticSeparator (69 ms)
+[ RUN      ] TerminalResources.MissingNativeSymbolReportsASetupFailureInAFreshProcess
+[       OK ] TerminalResources.MissingNativeSymbolReportsASetupFailureInAFreshProcess (72 ms)
+[ RUN      ] TerminalResources.DuplicateStartsCannotOverwriteAnOwnedHandle
+[       OK ] TerminalResources.DuplicateStartsCannotOverwriteAnOwnedHandle (0 ms)
+[ RUN      ] TerminalResources.ActiveModePreparationIsCheckedAndCleanupRestoresAfterFailure
+[       OK ] TerminalResources.ActiveModePreparationIsCheckedAndCleanupRestoresAfterFailure (0 ms)
+[ RUN      ] TerminalResources.FailedEnclosingConstructionClosesEachAcquiredResourceInOrder
+[       OK ] TerminalResources.FailedEnclosingConstructionClosesEachAcquiredResourceInOrder (0 ms)
+[ RUN      ] TerminalResources.FailedAcquisitionsAndRepeatedCloseReleaseOnlyOwnedResources
+[       OK ] TerminalResources.FailedAcquisitionsAndRepeatedCloseReleaseOnlyOwnedResources (0 ms)
+[ RUN      ] TerminalResources.StartupExceptionsRestoreRealPtyModesBeforeReporting
+[       OK ] TerminalResources.StartupExceptionsRestoreRealPtyModesBeforeReporting (592 ms)
+[ RUN      ] TerminalResources.EveryPartialPrivateStreamAcquisitionReleasesItsDescriptors
+[       OK ] TerminalResources.EveryPartialPrivateStreamAcquisitionReleasesItsDescriptors (288 ms)
+[ RUN      ] TerminalResources.ClosedStderrNeedsNoStandardDescriptorReservation
+[       OK ] TerminalResources.ClosedStderrNeedsNoStandardDescriptorReservation (161 ms)
+[----------] 10 tests from TerminalResources (1186 ms total)
+
+[----------] 1 test from TerminalInput
+[ RUN      ] TerminalInput.TransientReadinessFailuresRemainRetryableAndOnlyReadsIndicateEof
+[       OK ] TerminalInput.TransientReadinessFailuresRemainRetryableAndOnlyReadsIndicateEof (0 ms)
+[----------] 1 test from TerminalInput (0 ms total)
+
+[----------] 9 tests from InteractionWarnings
+[ RUN      ] InteractionWarnings.RegistryRequiresDistinctSingleNonzeroBits
+[       OK ] InteractionWarnings.RegistryRequiresDistinctSingleNonzeroBits (0 ms)
+[ RUN      ] InteractionWarnings.FourthKindCannotAliasAnExistingRetry
+[       OK ] InteractionWarnings.FourthKindCannotAliasAnExistingRetry (0 ms)
+[ RUN      ] InteractionWarnings.RetainedWarningsAreNotReadmittedAfterRefreshThrows
+[       OK ] InteractionWarnings.RetainedWarningsAreNotReadmittedAfterRefreshThrows (0 ms)
+[ RUN      ] InteractionWarnings.FailedAdmissionRemainsPendingWithoutReplacingTheOperationException
+[       OK ] InteractionWarnings.FailedAdmissionRemainsPendingWithoutReplacingTheOperationException (0 ms)
+[ RUN      ] InteractionWarnings.NewOccurrencesGetOneIdleAttemptAndFailuresWaitForRealEvents
+[       OK ] InteractionWarnings.NewOccurrencesGetOneIdleAttemptAndFailuresWaitForRealEvents (0 ms)
+[ RUN      ] InteractionWarnings.ConcurrentOccurrenceDuringFailedAdmissionKeepsItsFirstAttempt
+[       OK ] InteractionWarnings.ConcurrentOccurrenceDuringFailedAdmissionKeepsItsFirstAttempt (0 ms)
+[ RUN      ] InteractionWarnings.ThrowingDeliveryStillDrainsNewWarningsWithoutReplacingItsException
+[       OK ] InteractionWarnings.ThrowingDeliveryStillDrainsNewWarningsWithoutReplacingItsException (0 ms)
+[ RUN      ] InteractionWarnings.SurfacesMustSpecifyAdmissionAndRetainedHistorySurvivesRefreshFailure
+[       OK ] InteractionWarnings.SurfacesMustSpecifyAdmissionAndRetainedHistorySurvivesRefreshFailure (0 ms)
+[ RUN      ] InteractionWarnings.CoalescesWorkerFailuresAndRetriesOnMainThreadOnly
+[       OK ] InteractionWarnings.CoalescesWorkerFailuresAndRetriesOnMainThreadOnly (0 ms)
+[----------] 9 tests from InteractionWarnings (1 ms total)
+
+[----------] 25 tests from DiagnosticWriter
+[ RUN      ] DiagnosticWriter.NativeAliasesSeparatePartialRecordsWithoutDuplicatingTheirBoundary
+[       OK ] DiagnosticWriter.NativeAliasesSeparatePartialRecordsWithoutDuplicatingTheirBoundary (71 ms)
+[ RUN      ] DiagnosticWriter.PartialUnterminatedRecordsOweSeparatorButSuccessfulFragmentsDoNot
+[       OK ] DiagnosticWriter.PartialUnterminatedRecordsOweSeparatorButSuccessfulFragmentsDoNot (0 ms)
+[ RUN      ] DiagnosticWriter.TurnCleanupKeepsOriginalFailureAfterQuiescenceAndResetsCancellation
+[       OK ] DiagnosticWriter.TurnCleanupKeepsOriginalFailureAfterQuiescenceAndResetsCancellation (0 ms)
+[ RUN      ] DiagnosticWriter.OlderCompletionCannotClearNewerFailureOrResetEpoch
+[       OK ] DiagnosticWriter.OlderCompletionCannotClearNewerFailureOrResetEpoch (0 ms)
+[ RUN      ] DiagnosticWriter.InterveningRecoverySeparatorCannotSuppressAnAdmittedRecord
+[       OK ] DiagnosticWriter.InterveningRecoverySeparatorCannotSuppressAnAdmittedRecord (0 ms)
+[ RUN      ] DiagnosticWriter.ConcurrentFallbackAndNativeBoundarySnapshotsAreSynchronized
+[       OK ] DiagnosticWriter.ConcurrentFallbackAndNativeBoundarySnapshotsAreSynchronized (3 ms)
+[ RUN      ] DiagnosticWriter.IndeterminatePipeBoundsDoNotRetryStaleInterruptedErrno
+[       OK ] DiagnosticWriter.IndeterminatePipeBoundsDoNotRetryStaleInterruptedErrno (0 ms)
+[ RUN      ] DiagnosticWriter.EmergencyChunksShareEightInterruptionRetriesWithInspectionAndSeparator
+[       OK ] DiagnosticWriter.EmergencyChunksShareEightInterruptionRetriesWithInspectionAndSeparator (0 ms)
+[ RUN      ] DiagnosticWriter.ImmediateVectorOutputRetriesInterruptedCallsAndStopsAtItsBudget
+[       OK ] DiagnosticWriter.ImmediateVectorOutputRetriesInterruptedCallsAndStopsAtItsBudget (0 ms)
+[ RUN      ] DiagnosticWriter.FailedUnterminatedImmediateWarningRetainsItsConservativeBoundary
+[       OK ] DiagnosticWriter.FailedUnterminatedImmediateWarningRetainsItsConservativeBoundary (0 ms)
+[ RUN      ] DiagnosticWriter.InterruptedIdentityInspectionCannotEraseAnAlreadyOwedSeparator
+[       OK ] DiagnosticWriter.InterruptedIdentityInspectionCannotEraseAnAlreadyOwedSeparator (0 ms)
+[ RUN      ] DiagnosticWriter.ImmediatePipeInspectionReadinessAndWritesShareOneRetryBudget
+[       OK ] DiagnosticWriter.ImmediatePipeInspectionReadinessAndWritesShareOneRetryBudget (0 ms)
+[ RUN      ] DiagnosticWriter.InspectionRefreshesFlagsAndCachesPipeBoundsOnlyForTheCurrentDestination
+[       OK ] DiagnosticWriter.InspectionRefreshesFlagsAndCachesPipeBoundsOnlyForTheCurrentDestination (0 ms)
+[ RUN      ] DiagnosticWriter.PartialRecordsRetainASeparatorAcrossFailedAttempts
+[       OK ] DiagnosticWriter.PartialRecordsRetainASeparatorAcrossFailedAttempts (0 ms)
+[ RUN      ] DiagnosticWriter.FailedTrailingNewlineIsRepairedBeforeTheNextRecord
+[       OK ] DiagnosticWriter.FailedTrailingNewlineIsRepairedBeforeTheNextRecord (0 ms)
+[ RUN      ] DiagnosticWriter.ReplacedDestinationsAndNewInvocationsDiscardStaleSeparators
+[       OK ] DiagnosticWriter.ReplacedDestinationsAndNewInvocationsDiscardStaleSeparators (0 ms)
+[ RUN      ] DiagnosticWriter.EmergencyDescriptorStateCannotLeakIntoACapturedStreamOrReboundFd
+[       OK ] DiagnosticWriter.EmergencyDescriptorStateCannotLeakIntoACapturedStreamOrReboundFd (0 ms)
+[ RUN      ] DiagnosticWriter.NativeDescriptorFailureKeepsConfiguredExceptionMasksAndRecovers
+[       OK ] DiagnosticWriter.NativeDescriptorFailureKeepsConfiguredExceptionMasksAndRecovers (0 ms)
+[ RUN      ] DiagnosticWriter.PermissionChangesOnTheSameDescriptorIdentityKeepTheSeparator
+[       OK ] DiagnosticWriter.PermissionChangesOnTheSameDescriptorIdentityKeepTheSeparator (2 ms)
+[ RUN      ] DiagnosticWriter.HumanTextEscapesControlsWithoutChangingRawJsonSanitization
+[       OK ] DiagnosticWriter.HumanTextEscapesControlsWithoutChangingRawJsonSanitization (0 ms)
+[ RUN      ] DiagnosticWriter.DiagnosticBudgetsAccountForEscapedHumanText
+[       OK ] DiagnosticWriter.DiagnosticBudgetsAccountForEscapedHumanText (0 ms)
+[ RUN      ] DiagnosticWriter.BoundedRenderingKeepsWholeEscapesAndNormalizesOnlyHumanCrLf
+[       OK ] DiagnosticWriter.BoundedRenderingKeepsWholeEscapesAndNormalizesOnlyHumanCrLf (0 ms)
+[ RUN      ] DiagnosticWriter.LiteralIdentifiersDistinguishControlsAndEscapeLookingBytes
+[       OK ] DiagnosticWriter.LiteralIdentifiersDistinguishControlsAndEscapeLookingBytes (0 ms)
+[ RUN      ] DiagnosticWriter.HumanTextPreservesPrintableAsciiAndEscapesMalformedPrefixesByteForByte
+[       OK ] DiagnosticWriter.HumanTextPreservesPrintableAsciiAndEscapesMalformedPrefixesByteForByte (0 ms)
+[ RUN      ] DiagnosticWriter.ExplicitTrailingNewlineClosesAnInjectedFragment
+[       OK ] DiagnosticWriter.ExplicitTrailingNewlineClosesAnInjectedFragment (0 ms)
+[----------] 25 tests from DiagnosticWriter (80 ms total)
+
+[----------] 3 tests from LineDestinations
+[ RUN      ] LineDestinations.AliasesShareRecoveryAndPermissionChangesKeepTheBoundary
+[       OK ] LineDestinations.AliasesShareRecoveryAndPermissionChangesKeepTheBoundary (0 ms)
+[ RUN      ] LineDestinations.PresentationTokenRejectsAnInterveningRecordAndRebinding
+[       OK ] LineDestinations.PresentationTokenRejectsAnInterveningRecordAndRebinding (0 ms)
+[ RUN      ] LineDestinations.SuccessfulFragmentsConcatenateButSeparateFromPresentation
+[       OK ] LineDestinations.SuccessfulFragmentsConcatenateButSeparateFromPresentation (0 ms)
+[----------] 3 tests from LineDestinations (0 ms total)
+
+[----------] 1 test from ApprovalIdentity
+[ RUN      ] ApprovalIdentity.RequiresCompleteTypedIdentityAndNeverDefaultsApproval
+[       OK ] ApprovalIdentity.RequiresCompleteTypedIdentityAndNeverDefaultsApproval (0 ms)
+[----------] 1 test from ApprovalIdentity (0 ms total)
+
+[----------] 2 tests from ApprovalReview
+[ RUN      ] ApprovalReview.EveryPageMustRenderAndResizeRestartsReview
+[       OK ] ApprovalReview.EveryPageMustRenderAndResizeRestartsReview (2 ms)
+[ RUN      ] ApprovalReview.WrappingRetainsCompleteUnicodeAndEscapeTokensBeyondTranscriptLimits
+[       OK ] ApprovalReview.WrappingRetainsCompleteUnicodeAndEscapeTokensBeyondTranscriptLimits (27 ms)
+[----------] 2 tests from ApprovalReview (29 ms total)
+
+[----------] 3 tests from CursesInput
+[ RUN      ] CursesInput.IncrementalPreparationPreservesRawBytesAndHasLinearWork
+[       OK ] CursesInput.IncrementalPreparationPreservesRawBytesAndHasLinearWork (237 ms)
+[ RUN      ] CursesInput.CharacterEraseUsesValidatedRawBoundariesAndUpdatesTailOnce
+[       OK ] CursesInput.CharacterEraseUsesValidatedRawBoundariesAndUpdatesTailOnce (0 ms)
+[ RUN      ] CursesInput.SharedDecoderDistinguishesIncompleteAndMalformedTrailingPrefixes
+[       OK ] CursesInput.SharedDecoderDistinguishesIncompleteAndMalformedTrailingPrefixes (0 ms)
+[----------] 3 tests from CursesInput (238 ms total)
+
+[----------] 4 tests from RequestInput
+[ RUN      ] RequestInput.ExpiryAndReplacementNeverReclassifyDraftAnswers
+[       OK ] RequestInput.ExpiryAndReplacementNeverReclassifyDraftAnswers (0 ms)
+[ RUN      ] RequestInput.ClassificationKeepsQuitOutOfBandAndRequiresFreshRequestInput
+[       OK ] RequestInput.ClassificationKeepsQuitOutOfBandAndRequiresFreshRequestInput (0 ms)
+[ RUN      ] RequestInput.DiscardReasonDistinguishesFinishedExpiryFromStaleDrafts
+[       OK ] RequestInput.DiscardReasonDistinguishesFinishedExpiryFromStaleDrafts (0 ms)
+[ RUN      ] RequestInput.ValidSubmissionHasNoDiscardReason
+[       OK ] RequestInput.ValidSubmissionHasNoDiscardReason (0 ms)
+[----------] 4 tests from RequestInput (0 ms total)
+
+[----------] 2 tests from RequestInputController
+[ RUN      ] RequestInputController.FreshEmptyAndPresentationClearsHaveDistinctOwnership
+[       OK ] RequestInputController.FreshEmptyAndPresentationClearsHaveDistinctOwnership (0 ms)
+[ RUN      ] RequestInputController.CompletionPreservesOrdinaryDraftAndQuitRemainsOutOfBand
+[       OK ] RequestInputController.CompletionPreservesOrdinaryDraftAndQuitRemainsOutOfBand (0 ms)
+[----------] 2 tests from RequestInputController (0 ms total)
+
+[----------] 19 tests from LinePrompt
+[ RUN      ] LinePrompt.RestoresTheSafeDraftAndDeletionMatchesSubmittedBytes
+[       OK ] LinePrompt.RestoresTheSafeDraftAndDeletionMatchesSubmittedBytes (0 ms)
+[ RUN      ] LinePrompt.SafeAppendsUseOnlyTheNewPreparedBytes
+[       OK ] LinePrompt.SafeAppendsUseOnlyTheNewPreparedBytes (0 ms)
+[ RUN      ] LinePrompt.UnknownWidthHoldsIncompleteUtf8AndKeepsSnapshotsBounded
+[       OK ] LinePrompt.UnknownWidthHoldsIncompleteUtf8AndKeepsSnapshotsBounded (1 ms)
+[ RUN      ] LinePrompt.BasicEmptyDraftEndsItsRowAndSubmissionExposesDeferredBytes
+[       OK ] LinePrompt.BasicEmptyDraftEndsItsRowAndSubmissionExposesDeferredBytes (0 ms)
+[ RUN      ] LinePrompt.MultipleMutationsAndOwnershipGapsCannotUseTheBasicAppendShortcut
+[       OK ] LinePrompt.MultipleMutationsAndOwnershipGapsCannotUseTheBasicAppendShortcut (0 ms)
+[ RUN      ] LinePrompt.CachedTokensReplaceRawEchoAndOneColumnBackspace
+[       OK ] LinePrompt.CachedTokensReplaceRawEchoAndOneColumnBackspace (0 ms)
+[ RUN      ] LinePrompt.ApprovalAndQuestionDraftsSurviveOutputWithoutDuplicatedAnswers
+[       OK ] LinePrompt.ApprovalAndQuestionDraftsSurviveOutputWithoutDuplicatedAnswers (0 ms)
+[ RUN      ] LinePrompt.RedirectedOutputAndReleasedRecoveryNeverRepaintAnotherPrompt
+[       OK ] LinePrompt.RedirectedOutputAndReleasedRecoveryNeverRepaintAnotherPrompt (0 ms)
+[ RUN      ] LinePrompt.ControllerMutationsInvalidatePresentationWithoutNotifications
+[       OK ] LinePrompt.ControllerMutationsInvalidatePresentationWithoutNotifications (0 ms)
+[ RUN      ] LinePrompt.OldDestinationKeepsOnlyASeparatorAndCannotRepaintTheNewRow
+[       OK ] LinePrompt.OldDestinationKeepsOnlyASeparatorAndCannotRepaintTheNewRow (0 ms)
+[ RUN      ] LinePrompt.MultipleStdoutChangesPreserveTheReachableStderrBoundaryAndGuidance
+[       OK ] LinePrompt.MultipleStdoutChangesPreserveTheReachableStderrBoundaryAndGuidance (0 ms)
+[ RUN      ] LinePrompt.FailedRowsAndGuidanceUseTheSharedRecoveryNewline
+[       OK ] LinePrompt.FailedRowsAndGuidanceUseTheSharedRecoveryNewline (11 ms)
+[ RUN      ] LinePrompt.ErasingTheFinalCharacterRemovesTheActiveOrdinaryPrompt
+[       OK ] LinePrompt.ErasingTheFinalCharacterRemovesTheActiveOrdinaryPrompt (0 ms)
+[ RUN      ] LinePrompt.DraftTrafficIsBoundedAndUnknownGeometryUsesSnapshots
+[       OK ] LinePrompt.DraftTrafficIsBoundedAndUnknownGeometryUsesSnapshots (72 ms)
+[ RUN      ] LinePrompt.FailedConfiguredSinkUsesTheInvocationGate
+[       OK ] LinePrompt.FailedConfiguredSinkUsesTheInvocationGate (0 ms)
+[ RUN      ] LinePrompt.InstructionDeliveryIsIndependentOfPromptDelivery
+[       OK ] LinePrompt.InstructionDeliveryIsIndependentOfPromptDelivery (0 ms)
+[ RUN      ] LinePrompt.KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure
+[       OK ] LinePrompt.KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure (0 ms)
+[ RUN      ] LinePrompt.FailedPromptIsSeparatedAndOnlyRetriedOnAnotherEvent
+[       OK ] LinePrompt.FailedPromptIsSeparatedAndOnlyRetriedOnAnotherEvent (0 ms)
+[ RUN      ] LinePrompt.InjectedFragmentEndsBeforeFrozenPresentation
+[       OK ] LinePrompt.InjectedFragmentEndsBeforeFrozenPresentation (0 ms)
+[----------] 19 tests from LinePrompt (87 ms total)
+
+[----------] 5 tests from UiHistory
+[ RUN      ] UiHistory.PreparationIsBoundedBeforeRawAndRenderedHistoryAllocation
+[       OK ] UiHistory.PreparationIsBoundedBeforeRawAndRenderedHistoryAllocation (74 ms)
+[ RUN      ] UiHistory.ProductionBudgetPreparationAndDirectInsertionAgreeAtEveryEdge
+[       OK ] UiHistory.ProductionBudgetPreparationAndDirectInsertionAgreeAtEveryEdge (6776 ms)
+[ RUN      ] UiHistory.PrefixReportsThePreviousCompleteTokenWithoutASecondScan
+[       OK ] UiHistory.PrefixReportsThePreviousCompleteTokenWithoutASecondScan (0 ms)
+[ RUN      ] UiHistory.PreparedAndDirectInsertionShareExactBudgetAndRowCharges
+[       OK ] UiHistory.PreparedAndDirectInsertionShareExactBudgetAndRowCharges (35 ms)
+[ RUN      ] UiHistory.BoundsBytesBeforeSplittingAndKeepsRecentDecision
+[       OK ] UiHistory.BoundsBytesBeforeSplittingAndKeepsRecentDecision (30 ms)
+[----------] 5 tests from UiHistory (6917 ms total)
+
+[----------] 17 tests from CliDiagnosticsTest
+[ RUN      ] CliDiagnosticsTest.NoticesShareThePartialOrdinaryDiagnosticBoundary
+[       OK ] CliDiagnosticsTest.NoticesShareThePartialOrdinaryDiagnosticBoundary (7 ms)
+[ RUN      ] CliDiagnosticsTest.FailedLineNoticeIsRetainedForOneEmergencyAttemptAfterRestoration
+[       OK ] CliDiagnosticsTest.FailedLineNoticeIsRetainedForOneEmergencyAttemptAfterRestoration (5 ms)
+[ RUN      ] CliDiagnosticsTest.LaterLineNoticesRecoverFromInsertionAndFlushFailuresBeforeExit
+[       OK ] CliDiagnosticsTest.LaterLineNoticesRecoverFromInsertionAndFlushFailuresBeforeExit (5 ms)
+[ RUN      ] CliDiagnosticsTest.StaleStreamErrorsDoNotPreventNewLineWrites
+[       OK ] CliDiagnosticsTest.StaleStreamErrorsDoNotPreventNewLineWrites (6 ms)
+[ RUN      ] CliDiagnosticsTest.OrdinaryWritesRecoverAfterFailureWithoutRequiringAnotherNotice
+[       OK ] CliDiagnosticsTest.OrdinaryWritesRecoverAfterFailureWithoutRequiringAnotherNotice (4 ms)
+[ RUN      ] CliDiagnosticsTest.FailedNoticeDoesNotSuppressLaterOrdinaryStderrDiagnostics
+[       OK ] CliDiagnosticsTest.FailedNoticeDoesNotSuppressLaterOrdinaryStderrDiagnostics (4 ms)
+[ RUN      ] CliDiagnosticsTest.NonblockingStderrFailureRecoversCppAndCStreamStateInAFreshProcess
+[       OK ] CliDiagnosticsTest.NonblockingStderrFailureRecoversCppAndCStreamStateInAFreshProcess (77 ms)
+[ RUN      ] CliDiagnosticsTest.MissingStreamBufferRecoveryCannotMaskTheOriginalFailure
+[       OK ] CliDiagnosticsTest.MissingStreamBufferRecoveryCannotMaskTheOriginalFailure (4 ms)
+[ RUN      ] CliDiagnosticsTest.RecoveryPreservesTheOriginalRendererExceptionAndExceptionMask
+[       OK ] CliDiagnosticsTest.RecoveryPreservesTheOriginalRendererExceptionAndExceptionMask (4 ms)
+[ RUN      ] CliDiagnosticsTest.ImmediateFlushFailureUsesEmergencyAndNextNoticeRecovers
+[       OK ] CliDiagnosticsTest.ImmediateFlushFailureUsesEmergencyAndNextNoticeRecovers (21 ms)
+[ RUN      ] CliDiagnosticsTest.FatalAssertionRestoresTheReceiverBeforeItsLocalStreamIsDestroyed
+[       OK ] CliDiagnosticsTest.FatalAssertionRestoresTheReceiverBeforeItsLocalStreamIsDestroyed (17 ms)
+[ RUN      ] CliDiagnosticsTest.SuccessfulLineNoticeUsesCheckedStreamWithoutFullscreenReplay
+[       OK ] CliDiagnosticsTest.SuccessfulLineNoticeUsesCheckedStreamWithoutFullscreenReplay (4 ms)
+[ RUN      ] CliDiagnosticsTest.NestedScopesRestoreThenReplayLiveCleanupAndFullNoticesOnce
+[       OK ] CliDiagnosticsTest.NestedScopesRestoreThenReplayLiveCleanupAndFullNoticesOnce (4 ms)
+[ RUN      ] CliDiagnosticsTest.EarlyFailurePreservesExceptionAndRestoresFailedPreview
+[       OK ] CliDiagnosticsTest.EarlyFailurePreservesExceptionAndRestoresFailedPreview (4 ms)
+[ RUN      ] CliDiagnosticsTest.RestorationSwitchesActualReceiptFailuresBackToImmediateDelivery
+[       OK ] CliDiagnosticsTest.RestorationSwitchesActualReceiptFailuresBackToImmediateDelivery (21 ms)
+[ RUN      ] CliDiagnosticsTest.ReplayFailureDoesNotSkipAnotherBufferOrFileNotices
+[       OK ] CliDiagnosticsTest.ReplayFailureDoesNotSkipAnotherBufferOrFileNotices (4 ms)
+[ RUN      ] CliDiagnosticsTest.PersistentStreamFailureStillFinishesNoticeAndPreservesCleanupException
+[       OK ] CliDiagnosticsTest.PersistentStreamFailureStillFinishesNoticeAndPreservesCleanupException (4 ms)
+[----------] 17 tests from CliDiagnosticsTest (205 ms total)
+
+[----------] 1 test from ProcessHelperSafety
+[ RUN      ] ProcessHelperSafety.InvalidPidsNeverReachWaitOrSignal
+[       OK ] ProcessHelperSafety.InvalidPidsNeverReachWaitOrSignal (0 ms)
+[----------] 1 test from ProcessHelperSafety (0 ms total)
+
+[----------] 2 tests from TurnInput
+[ RUN      ] TurnInput.CompletedInputKeepsActiveCommandPolicyAndRejectsWrongOrigins
+[       OK ] TurnInput.CompletedInputKeepsActiveCommandPolicyAndRejectsWrongOrigins (0 ms)
+[ RUN      ] TurnInput.ExpiredAnswersNeverBecomeMessagesAndHeldOrderPrecedesSteering
+[       OK ] TurnInput.ExpiredAnswersNeverBecomeMessagesAndHeldOrderPrecedesSteering (0 ms)
+[----------] 2 tests from TurnInput (0 ms total)
+
+[----------] 2 tests from PendingControl
+[ RUN      ] PendingControl.BackspaceConsumesOverflowBeforeTheRetainedPrefix
+[       OK ] PendingControl.BackspaceConsumesOverflowBeforeTheRetainedPrefix (0 ms)
+[ RUN      ] PendingControl.SaturationCannotCreateAFalseQuitAfterDeletion
+[       OK ] PendingControl.SaturationCannotCreateAFalseQuitAfterDeletion (0 ms)
+[----------] 2 tests from PendingControl (0 ms total)
+
+[----------] 33 tests from Pr18
+[ RUN      ] Pr18.CaptureReferencesAreValidatedAgainstTheConfiguredRootInEveryRepairMode
+[       OK ] Pr18.CaptureReferencesAreValidatedAgainstTheConfiguredRootInEveryRepairMode (36 ms)
+[ RUN      ] Pr18.CaptureEvictionProducesDurablePartialHistoryAcrossForkAndCompaction
+[       OK ] Pr18.CaptureEvictionProducesDurablePartialHistoryAcrossForkAndCompaction (59 ms)
+[ RUN      ] Pr18.OwnedAvailableAndUnreadableReferencesKeepTheirExistingTrustPolicies
+[       OK ] Pr18.OwnedAvailableAndUnreadableReferencesKeepTheirExistingTrustPolicies (2 ms)
+[ RUN      ] Pr18.RecoveryRepairPreservesUserJsonResultPathAndNormalizesOwnedToolMetadata
+[       OK ] Pr18.RecoveryRepairPreservesUserJsonResultPathAndNormalizesOwnedToolMetadata (28 ms)
+[ RUN      ] Pr18.ArchiveReadsAndBackupsAllowUnrelatedCommitsWithoutRetry
+[       OK ] Pr18.ArchiveReadsAndBackupsAllowUnrelatedCommitsWithoutRetry (50 ms)
+[ RUN      ] Pr18.SecondInvalidationStopsWithoutRepairWritesAndListsBothBackups
+[       OK ] Pr18.SecondInvalidationStopsWithoutRepairWritesAndListsBothBackups (28 ms)
+[ RUN      ] Pr18.RetryUsesNewTargetRowsAndBacksUpTheAppliedAttempt
+[       OK ] Pr18.RetryUsesNewTargetRowsAndBacksUpTheAppliedAttempt (23 ms)
+[ RUN      ] Pr18.ChangedFilesInvalidatePreparationAndRemoveOnlySupersededCandidates
+[       OK ] Pr18.ChangedFilesInvalidatePreparationAndRemoveOnlySupersededCandidates (26 ms)
+[ RUN      ] Pr18.ProviderRowsAndRevisionUseTheSameActiveSessionSnapshot
+[       OK ] Pr18.ProviderRowsAndRevisionUseTheSameActiveSessionSnapshot (22 ms)
+[ RUN      ] Pr18.ToolAssemblyErrorsKeepArgumentsOrAssociatedFramesWithOneRequest
+[       OK ] Pr18.ToolAssemblyErrorsKeepArgumentsOrAssociatedFramesWithOneRequest (8 ms)
+[ RUN      ] Pr18.ConsumerJsonExceptionsAndCancellationRemainDistinctFromProviderDecoding
+[       OK ] Pr18.ConsumerJsonExceptionsAndCancellationRemainDistinctFromProviderDecoding (2 ms)
+[ RUN      ] Pr18.RestoredPrivateArchivesAreRecheckedAfterPermissionsAreCorrected
+[       OK ] Pr18.RestoredPrivateArchivesAreRecheckedAfterPermissionsAreCorrected (3 ms)
+[ RUN      ] Pr18.CacheChargesTheExistingSerializedArchiveTextConservatively
+[       OK ] Pr18.CacheChargesTheExistingSerializedArchiveTextConservatively (6304 ms)
+[ RUN      ] Pr18.BackupWriteFailureAfterPublicationStillNamesTheRetainedBackup
+[       OK ] Pr18.BackupWriteFailureAfterPublicationStillNamesTheRetainedBackup (19 ms)
+[ RUN      ] Pr18.DeferredRepairCommitFailureRollsBackRowsAndRemovesNewCandidates
+[       OK ] Pr18.DeferredRepairCommitFailureRollsBackRowsAndRemovesNewCandidates (29 ms)
+[ RUN      ] Pr18.DecodedArchiveObservationsRetainTheirIdentityOnMissAndHit
+[       OK ] Pr18.DecodedArchiveObservationsRetainTheirIdentityOnMissAndHit (6 ms)
+[ RUN      ] Pr18.ProviderOnlyRepairReportsProblemsWithoutDependingOnFileStability
+[       OK ] Pr18.ProviderOnlyRepairReportsProblemsWithoutDependingOnFileStability (26 ms)
+[ RUN      ] Pr18.TrustedAnchorAliasesPreserveSubordinateSymlinkChecks
+[       OK ] Pr18.TrustedAnchorAliasesPreserveSubordinateSymlinkChecks (4 ms)
+[ RUN      ] Pr18.CustomRootCandidatesAreRemovedAfterStalenessAndDeferredCommitFailure
+Session repair backup: /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-D6jVXB/stale/repairs/a14982b6-9966-4a81-90d4-01aaf604db1d-backup-cfb5ca2d-43f6-4bcd-8a4b-941293e8ba98.json
+Session repair backup: /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-D6jVXB/stale/repairs/a14982b6-9966-4a81-90d4-01aaf604db1d-backup-7aef61dc-6c50-45a1-b258-ff3b576861ad.json
+Session repair backup: /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-D6jVXB/deferred/repairs/b7654be0-d609-482d-82f2-ac4784519d39-backup-5e3863f9-8186-4fe5-a259-3d23dc88f3b6.json
+[       OK ] Pr18.CustomRootCandidatesAreRemovedAfterStalenessAndDeferredCommitFailure (52 ms)
+[ RUN      ] Pr18.CandidateCleanupProtectsExistingReferencedAndReplacedArchives
+[       OK ] Pr18.CandidateCleanupProtectsExistingReferencedAndReplacedArchives (25 ms)
+[ RUN      ] Pr18.CandidateCleanupHandlesWriterFailureAfterPublication
+[       OK ] Pr18.CandidateCleanupHandlesWriterFailureAfterPublication (6 ms)
+[ RUN      ] Pr18.FinalRepairValidationDoesNotReopenOrReadArchives
+[       OK ] Pr18.FinalRepairValidationDoesNotReopenOrReadArchives (22 ms)
+[ RUN      ] Pr18.FragmentedStructuralErrorsKeepIdentityFramesAndEmptyArgumentsStayInvalid
+[       OK ] Pr18.FragmentedStructuralErrorsKeepIdentityFramesAndEmptyArgumentsStayInvalid (4 ms)
+[ RUN      ] Pr18.RepairRetriesArchiveSwapAfterDecodingOnCacheMissAndHit
+[       OK ] Pr18.RepairRetriesArchiveSwapAfterDecodingOnCacheMissAndHit (570 ms)
+[ RUN      ] Pr18.InvalidRevisionTokensAreReportedAndRepairedEvenWithNoProviderRows
+[       OK ] Pr18.InvalidRevisionTokensAreReportedAndRepairedEvenWithNoProviderRows (37 ms)
+[ RUN      ] Pr18.TokenRepairRollsBackAndPreservesItsBackupOnDeferredCommitFailure
+[       OK ] Pr18.TokenRepairRollsBackAndPreservesItsBackupOnDeferredCommitFailure (23 ms)
+[ RUN      ] Pr18.AbsoluteCheckpointsNormalizeReadOnlyAndRegisterAcrossForkSaveAndRelocation
+[       OK ] Pr18.AbsoluteCheckpointsNormalizeReadOnlyAndRegisterAcrossForkSaveAndRelocation (50 ms)
+[ RUN      ] Pr18.UnsafeAndUnavailableAbsoluteCheckpointsRetainTheirOriginalPointers
+[       OK ] Pr18.UnsafeAndUnavailableAbsoluteCheckpointsRetainTheirOriginalPointers (25 ms)
+[ RUN      ] Pr18.CandidateCleanupAcceptsAbsenceAndContinuesAfterThrowingDiagnostics
+[       OK ] Pr18.CandidateCleanupAcceptsAbsenceAndContinuesAfterThrowingDiagnostics (22 ms)
+[ RUN      ] Pr18.ReferenceInsertionSkipsKnownPathsAndDoesNotPublishNestedKnowledge
+[       OK ] Pr18.ReferenceInsertionSkipsKnownPathsAndDoesNotPublishNestedKnowledge (22 ms)
+[ RUN      ] Pr18.RecoveryCandidateFailuresBeforeWriteAndDuringIdentityCaptureRemainSafe
+[       OK ] Pr18.RecoveryCandidateFailuresBeforeWriteAndDuringIdentityCaptureRemainSafe (22 ms)
+[ RUN      ] Pr18.MessageCorruptionStillFailsAsDataCorruption
+[       OK ] Pr18.MessageCorruptionStillFailsAsDataCorruption (20 ms)
+[ RUN      ] Pr18.RevisionAndProviderCorruptionAreDiscoveredIndependently
+[       OK ] Pr18.RevisionAndProviderCorruptionAreDiscoveredIndependently (21 ms)
+[----------] 33 tests from Pr18 (7610 ms total)
+
+[----------] 12 tests from Pr21
+[ RUN      ] Pr21.ReconciliationUsesStableProvenanceAfterArchiveTrustChanges
+[       OK ] Pr21.ReconciliationUsesStableProvenanceAfterArchiveTrustChanges (34 ms)
+[ RUN      ] Pr21.FallbackIdsDoNotDependOnArchiveAvailabilityAndLoadsRemainReadOnly
+[       OK ] Pr21.FallbackIdsDoNotDependOnArchiveAvailabilityAndLoadsRemainReadOnly (25 ms)
+[ RUN      ] Pr21.AppendRewritesOnlyPendingRowsWithoutReopeningArchives
+[       OK ] Pr21.AppendRewritesOnlyPendingRowsWithoutReopeningArchives (25 ms)
+[ RUN      ] Pr21.NormalTurnPersistsLegacyCheckpointBeforeRelocationAndCompaction
+[       OK ] Pr21.NormalTurnPersistsLegacyCheckpointBeforeRelocationAndCompaction (58 ms)
+[ RUN      ] Pr21.DeferredFailureRetainsPendingRowsForTheNextWriteBeforeReload
+[       OK ] Pr21.DeferredFailureRetainsPendingRowsForTheNextWriteBeforeReload (51 ms)
+[ RUN      ] Pr21.PendingNormalizationRejectsExternalEditsWithoutAppendingOrOverwriting
+[       OK ] Pr21.PendingNormalizationRejectsExternalEditsWithoutAppendingOrOverwriting (27 ms)
+[ RUN      ] Pr21.LazyAnchorRetriesFailuresAndDoesNotBreakDatabaseOperations
+[       OK ] Pr21.LazyAnchorRetriesFailuresAndDoesNotBreakDatabaseOperations (28 ms)
+[ RUN      ] Pr21.RepeatedReferencesValidateOnceAndNewPreparationRechecksUnavailableArchives
+[       OK ] Pr21.RepeatedReferencesValidateOnceAndNewPreparationRechecksUnavailableArchives (27 ms)
+[ RUN      ] Pr21.ReceiptAndForkUseTheInjectedFilesystem
+[       OK ] Pr21.ReceiptAndForkUseTheInjectedFilesystem (24 ms)
+[ RUN      ] Pr21.PinnedAnchorRejectsReplacementAndFullReplacementSupersedesPendingRows
+[       OK ] Pr21.PinnedAnchorRejectsReplacementAndFullReplacementSupersedesPendingRows (26 ms)
+[ RUN      ] Pr21.ChangedCheckpointPreparationRunsBeforeTheWriterLock
+[       OK ] Pr21.ChangedCheckpointPreparationRunsBeforeTheWriterLock (22 ms)
+[ RUN      ] Pr21.NewCheckpointFallbackIdsUseTheLexicallyPortableViewBeforeProjection
+[       OK ] Pr21.NewCheckpointFallbackIdsUseTheLexicallyPortableViewBeforeProjection (21 ms)
+[----------] 12 tests from Pr21 (373 ms total)
+
+[----------] 10 tests from Pr22
+[ RUN      ] Pr22.FailedPreparationDoesNotReplaceProvenanceOrInventStoredFingerprints
+[       OK ] Pr22.FailedPreparationDoesNotReplaceProvenanceOrInventStoredFingerprints (45 ms)
+[ RUN      ] Pr22.CanonicalToolIdsAndMessagesArePublishedTogetherWithExplicitIdsPreserved
+[       OK ] Pr22.CanonicalToolIdsAndMessagesArePublishedTogetherWithExplicitIdsPreserved (23 ms)
+[ RUN      ] Pr22.LegacyBlobsProjectReadOnlyAndMaterializeOnAppend
+[       OK ] Pr22.LegacyBlobsProjectReadOnlyAndMaterializeOnAppend (25 ms)
+[ RUN      ] Pr22.ReconciliationAndToolPublicationPrepareArchivesBeforeTheirWriterLock
+[       OK ] Pr22.ReconciliationAndToolPublicationPrepareArchivesBeforeTheirWriterLock (37 ms)
+[ RUN      ] Pr22.SnapshotCopiesStayIndependentAndPendingRevisionWritesEachPositionOnce
+[       OK ] Pr22.SnapshotCopiesStayIndependentAndPendingRevisionWritesEachPositionOnce (26 ms)
+[ RUN      ] Pr22.ConstWriteAdaptersLeaveTheOriginalSnapshotUntouched
+[       OK ] Pr22.ConstWriteAdaptersLeaveTheOriginalSnapshotUntouched (20 ms)
+[ RUN      ] Pr22.PublishedVirtualBackupsAreReportedWithoutNativeFilesystemQueries
+[       OK ] Pr22.PublishedVirtualBackupsAreReportedWithoutNativeFilesystemQueries (35 ms)
+[ RUN      ] Pr22.DeferredFailureDoesNotPublishANewlyEstablishedMapping
+[       OK ] Pr22.DeferredFailureDoesNotPublishANewlyEstablishedMapping (28 ms)
+[ RUN      ] Pr22.RepeatedConstAdaptersAcceptTheirIdenticalCommittedCheckpointRewrite
+[       OK ] Pr22.RepeatedConstAdaptersAcceptTheirIdenticalCommittedCheckpointRewrite (25 ms)
+[ RUN      ] Pr22.BlobToolCompletionPreservesEachHistoricalToolsNormalizationPolicy
+[       OK ] Pr22.BlobToolCompletionPreservesEachHistoricalToolsNormalizationPolicy (24 ms)
+[----------] 10 tests from Pr22 (293 ms total)
+
+[----------] 10 tests from Pr23
+[ RUN      ] Pr23.BlobAppendAndRevisionRejectTruncatedAndUnrequestedChangesBeforeConversion
+[       OK ] Pr23.BlobAppendAndRevisionRejectTruncatedAndUnrequestedChangesBeforeConversion (38 ms)
+[ RUN      ] Pr23.ValidBlobRevisionAndExplicitReplacementHaveDistinctBoundaries
+[       OK ] Pr23.ValidBlobRevisionAndExplicitReplacementHaveDistinctBoundaries (24 ms)
+[ RUN      ] Pr23.RepairedLoadCapturesJournalBeforeProjectionAllowsAnExternalCommit
+[       OK ] Pr23.RepairedLoadCapturesJournalBeforeProjectionAllowsAnExternalCommit (29 ms)
+[ RUN      ] Pr23.ReconstructedJournalUsesThePreparedCanonicalTranscriptPayload
+[       OK ] Pr23.ReconstructedJournalUsesThePreparedCanonicalTranscriptPayload (25 ms)
+[ RUN      ] Pr23.ReconciliationAllowsRepeatedUnrelatedCommitsWithoutInvalidation
+[       OK ] Pr23.ReconciliationAllowsRepeatedUnrelatedCommitsWithoutInvalidation (29 ms)
+[ RUN      ] Pr23.BackupDiagnosticsDistinguishRetainedFilesFromUnconfirmedCandidates
+[       OK ] Pr23.BackupDiagnosticsDistinguishRetainedFilesFromUnconfirmedCandidates (45 ms)
+[ RUN      ] Pr23.RepeatingAnExplicitConstReplacementCanObserveAnAlreadyRemovedCheckpoint
+[       OK ] Pr23.RepeatingAnExplicitConstReplacementCanObserveAnAlreadyRemovedCheckpoint (31 ms)
+[ RUN      ] Pr23.CopiedBlobProjectionRejectsADifferentCommittedCheckpointAfterConversion
+[       OK ] Pr23.CopiedBlobProjectionRejectsADifferentCommittedCheckpointAfterConversion (24 ms)
+[ RUN      ] Pr23.ConvertedBlobSnapshotsValidateUntouchedOrdinaryRowsBeforeWriting
+[       OK ] Pr23.ConvertedBlobSnapshotsValidateUntouchedOrdinaryRowsBeforeWriting (31 ms)
+[ RUN      ] Pr23.ReconciliationRetriesExternalSelectedCommitsDuringArchivePreparation
+[       OK ] Pr23.ReconciliationRetriesExternalSelectedCommitsDuringArchivePreparation (39 ms)
+[----------] 10 tests from Pr23 (321 ms total)
+
+[----------] 22 tests from Pr24
+[ RUN      ] Pr24.SessionMarkersCoverEveryPersistedInputAndMovedRows
+[       OK ] Pr24.SessionMarkersCoverEveryPersistedInputAndMovedRows (25 ms)
+[ RUN      ] Pr24.MissingAndMalformedSessionTokensAreRepairableInBothMutationModes
+[       OK ] Pr24.MissingAndMalformedSessionTokensAreRepairableInBothMutationModes (37 ms)
+[ RUN      ] Pr24.SessionRevisionInfrastructureRemainsStrictAfterSchemaChanges
+[       OK ] Pr24.SessionRevisionInfrastructureRemainsStrictAfterSchemaChanges (20 ms)
+[ RUN      ] Pr24.SchemaSevenUpgradeSeedsMarkersWithoutConvertingOrDecodingBlobs
+[       OK ] Pr24.SchemaSevenUpgradeSeedsMarkersWithoutConvertingOrDecodingBlobs (36 ms)
+[ RUN      ] Pr24.SchemaEightUpgradeRollsBackAndRequiresInactiveSessions
+[       OK ] Pr24.SchemaEightUpgradeRollsBackAndRequiresInactiveSessions (37 ms)
+[ RUN      ] Pr24.RecoveredPositionsPersistWithAppendAndRevisionInBothStorageFormats
+[       OK ] Pr24.RecoveredPositionsPersistWithAppendAndRevisionInBothStorageFormats (176 ms)
+[ RUN      ] Pr24.RecoveredWritesRejectGenuineSourceAndUnrequestedCallerEdits
+[       OK ] Pr24.RecoveredWritesRejectGenuineSourceAndUnrequestedCallerEdits (39 ms)
+[ RUN      ] Pr24.RecoveryRollbackRetainsProvenanceForRetryBeforeReload
+[       OK ] Pr24.RecoveryRollbackRetainsProvenanceForRetryBeforeReload (50 ms)
+[ RUN      ] Pr24.FailedToolCompletionKeepsOriginalErrorAndPrivateReceiptWithoutReplay
+Uncommitted tool result preserved at /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-1SV1ng/receipt/repairs/4e6e69fc-88ff-46fc-b579-148218345e3e-tool-result-a33e4cad-f48d-4256-a015-371890de9a52.json
+Tool result receipt candidate (publication unconfirmed): /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-1SV1ng/failed-receipt/repairs/2474b28b-dbd3-4c08-bd03-a084ca70f92e-tool-result-5ad91181-530e-4ad3-bb6b-573edec20503.json
+[       OK ] Pr24.FailedToolCompletionKeepsOriginalErrorAndPrivateReceiptWithoutReplay (52 ms)
+[ RUN      ] Pr24.ConstRecoveredSnapshotsCanRepeatAndAppendWithoutReload
+[       OK ] Pr24.ConstRecoveredSnapshotsCanRepeatAndAppendWithoutReload (54 ms)
+[ RUN      ] Pr24.ToolReceiptDiagnosticsUseConfiguredPublicationVerification
+[       OK ] Pr24.ToolReceiptDiagnosticsUseConfiguredPublicationVerification (37 ms)
+[ RUN      ] Pr24.RecoveryMappingsSurviveArchiveLossAndRelocationWithoutAuthorizingReads
+[       OK ] Pr24.RecoveryMappingsSurviveArchiveLossAndRelocationWithoutAuthorizingReads (46 ms)
+[ RUN      ] Pr24.TokenOnlyBackupFailuresRetainOriginalErrorAndNeverChangeTheToken
+[       OK ] Pr24.TokenOnlyBackupFailuresRetainOriginalErrorAndNeverChangeTheToken (57 ms)
+[ RUN      ] Pr24.TokenOnlyDeferredCommitFailureRollsBackAndRetainsTheBackup
+[       OK ] Pr24.TokenOnlyDeferredCommitFailureRollsBackAndRetainsTheBackup (21 ms)
+[ RUN      ] Pr24.ProvisionalRevisionsSurviveMutablePublicationReloadAndReopen
+[       OK ] Pr24.ProvisionalRevisionsSurviveMutablePublicationReloadAndReopen (479 ms)
+[ RUN      ] Pr24.ProvisionalJournalRefreshRollsBackAndValidatesCallIdentity
+[       OK ] Pr24.ProvisionalJournalRefreshRollsBackAndValidatesCallIdentity (27 ms)
+[ RUN      ] Pr24.OrdinaryResultWritesPreserveRunningAndCompletedJournalRecords
+[       OK ] Pr24.OrdinaryResultWritesPreserveRunningAndCompletedJournalRecords (26 ms)
+[ RUN      ] Pr24.EquivalentRecoveryFormattingUsesStrictValidationOnCacheMismatch
+[       OK ] Pr24.EquivalentRecoveryFormattingUsesStrictValidationOnCacheMismatch (136 ms)
+[ RUN      ] Pr24.JournalComparisonsUseTheSanitizedArgumentsAtEveryBoundary
+[       OK ] Pr24.JournalComparisonsUseTheSanitizedArgumentsAtEveryBoundary (66 ms)
+[ RUN      ] Pr24.PreservedFilePathsSurviveDiagnosticAllocationFailures
+[       OK ] Pr24.PreservedFilePathsSurviveDiagnosticAllocationFailures (19 ms)
+[ RUN      ] Pr24.DefaultFileReportingRecoversStderrAndPreservesUnicodeAndOriginalExceptions
+[       OK ] Pr24.DefaultFileReportingRecoversStderrAndPreservesUnicodeAndOriginalExceptions (21 ms)
+[ RUN      ] Pr24.PreservedFileReceiverDefersReportingAndKeepsTheOriginalFailure
+[       OK ] Pr24.PreservedFileReceiverDefersReportingAndKeepsTheOriginalFailure (19 ms)
+[----------] 22 tests from Pr24 (1492 ms total)
+
+[----------] 10 tests from FileDiagnostics
+[ RUN      ] FileDiagnostics.FailedNoticesAreHeldUntilRestorationAndEscapedWithoutTruncation
+[       OK ] FileDiagnostics.FailedNoticesAreHeldUntilRestorationAndEscapedWithoutTruncation (0 ms)
+[ RUN      ] FileDiagnostics.WorkerTransfersNoticesAndSuccessfulRenderingNeedsNoEmergencyOutput
+[       OK ] FileDiagnostics.WorkerTransfersNoticesAndSuccessfulRenderingNeedsNoEmergencyOutput (0 ms)
+[ RUN      ] FileDiagnostics.PreviewRetainsPathsOutsideReplayBudgetsAndFinishesOnceInOrder
+[       OK ] FileDiagnostics.PreviewRetainsPathsOutsideReplayBudgetsAndFinishesOnceInOrder (0 ms)
+[ RUN      ] FileDiagnostics.FailedPreviewIsNotRetriedAndFailedFinalRenderingUsesEmergencyOnce
+[       OK ] FileDiagnostics.FailedPreviewIsNotRetriedAndFailedFinalRenderingUsesEmergencyOnce (0 ms)
+[ RUN      ] FileDiagnostics.NormalTextPreservesUnicodeAndEscapesUnsafeBytesReversibly
+[       OK ] FileDiagnostics.NormalTextPreservesUnicodeAndEscapesUnsafeBytesReversibly (0 ms)
+[ RUN      ] FileDiagnostics.NormalTextEscapesUnicodeControlsAndMalformedUtf8Losslessly
+[       OK ] FileDiagnostics.NormalTextEscapesUnicodeControlsAndMalformedUtf8Losslessly (0 ms)
+[ RUN      ] FileDiagnostics.ClearingOrdinaryBufferPreservesBudgetAndResetsOmission
+[       OK ] FileDiagnostics.ClearingOrdinaryBufferPreservesBudgetAndResetsOmission (0 ms)
+[ RUN      ] FileDiagnostics.EmergencyPathFollowsCursesRestoration
+[       OK ] FileDiagnostics.EmergencyPathFollowsCursesRestoration (87 ms)
+[ RUN      ] FileDiagnostics.TerminalHelperRejectsUnknownModesAndMalformedArguments
+[       OK ] FileDiagnostics.TerminalHelperRejectsUnknownModesAndMalformedArguments (217 ms)
+[ RUN      ] FileDiagnostics.SuccessfulPreviewRetainsLongUnicodePathsBeyondCursesRestoration
+[       OK ] FileDiagnostics.SuccessfulPreviewRetainsLongUnicodePathsBeyondCursesRestoration (75 ms)
+[----------] 10 tests from FileDiagnostics (384 ms total)
+
+[----------] 5 tests from StartupWait
+[ RUN      ] StartupWait.CancellationBeforeWaitingDoesNotNotifyAndReleasesDescriptors
+[       OK ] StartupWait.CancellationBeforeWaitingDoesNotNotifyAndReleasesDescriptors (107 ms)
+[ RUN      ] StartupWait.CancellationFromNotificationSurvivesDiagnosticFailure
+[       OK ] StartupWait.CancellationFromNotificationSurvivesDiagnosticFailure (116 ms)
+[ RUN      ] StartupWait.CancellationDuringContentionIsObservedWithoutAnotherSignal
+[       OK ] StartupWait.CancellationDuringContentionIsObservedWithoutAnotherSignal (65 ms)
+[ RUN      ] StartupWait.ReleasedLockAllowsStartupAfterOneNotification
+[       OK ] StartupWait.ReleasedLockAllowsStartupAfterOneNotification (27 ms)
+[ RUN      ] StartupWait.UntrustedLockStillFailsBeforeWaiting
+[       OK ] StartupWait.UntrustedLockStillFailsBeforeWaiting (0 ms)
+[----------] 5 tests from StartupWait (318 ms total)
+
+[----------] 21 tests from Pr17
+[ RUN      ] Pr17.FailedResponseRestoresBothSnapshotsBeforeTheNextSave
+[       OK ] Pr17.FailedResponseRestoresBothSnapshotsBeforeTheNextSave (116 ms)
+[ RUN      ] Pr17.InterleavedLargeSessionsKeepTheirCommittedPrefixTickets
+[       OK ] Pr17.InterleavedLargeSessionsKeepTheirCommittedPrefixTickets (4665 ms)
+[ RUN      ] Pr17.ExternalChangesAndMovedRowsRotateTheAffectedSessionTokens
+[       OK ] Pr17.ExternalChangesAndMovedRowsRotateTheAffectedSessionTokens (26 ms)
+[ RUN      ] Pr17.UnexpectedTailAndAlteredRevisionInfrastructureFailClosed
+[       OK ] Pr17.UnexpectedTailAndAlteredRevisionInfrastructureFailClosed (28 ms)
+[ RUN      ] Pr17.TailIntroducedDuringSuffixWritesRollsBackBeforePublication
+[       OK ] Pr17.TailIntroducedDuringSuffixWritesRollsBackBeforePublication (27 ms)
+[ RUN      ] Pr17.SchemaSixUpgradeBacksUpAndFailureRollsBackItsSchemaChanges
+[       OK ] Pr17.SchemaSixUpgradeBacksUpAndFailureRollsBackItsSchemaChanges (38 ms)
+[ RUN      ] Pr17.SchemaSixUpgradeRequiresActiveSessionsToStop
+[       OK ] Pr17.SchemaSixUpgradeRequiresActiveSessionsToStop (36 ms)
+[ RUN      ] Pr17.CodexQualificationIsStableAcrossRuntimeAndLaterTurns
+[       OK ] Pr17.CodexQualificationIsStableAcrossRuntimeAndLaterTurns (9 ms)
+[ RUN      ] Pr17.MalformedStreamFieldsAreTypedObservedErrorsAndConsumerFailuresRemainDistinct
+[       OK ] Pr17.MalformedStreamFieldsAreTypedObservedErrorsAndConsumerFailuresRemainDistinct (1 ms)
+[ RUN      ] Pr17.TransportWrappingCannotReplaceAnOutputConsumerFailure
+[       OK ] Pr17.TransportWrappingCannotReplaceAnOutputConsumerFailure (0 ms)
+[ RUN      ] Pr17.ConsumerFailuresSurviveEveryTransportExitWithoutAnotherRequest
+[       OK ] Pr17.ConsumerFailuresSurviveEveryTransportExitWithoutAnotherRequest (2 ms)
+[ RUN      ] Pr17.CompletedSessionSurvivesDeliveryFailureWithTheOriginalException
+[       OK ] Pr17.CompletedSessionSurvivesDeliveryFailureWithTheOriginalException (57 ms)
+[ RUN      ] Pr17.RetiredFactsInEitherLegacySystemFieldProduceAnExplicitRuntimeUpdate
+[       OK ] Pr17.RetiredFactsInEitherLegacySystemFieldProduceAnExplicitRuntimeUpdate (41 ms)
+[ RUN      ] Pr17.RecoveryArchivesAreCachedRevalidatedAndFailuresAreNotSticky
+[       OK ] Pr17.RecoveryArchivesAreCachedRevalidatedAndFailuresAreNotSticky (7 ms)
+[ RUN      ] Pr17.RecoveryArchiveCacheEvictsWithinEightMiB
+[       OK ] Pr17.RecoveryArchiveCacheEvictsWithinEightMiB (11381 ms)
+[ RUN      ] Pr17.CompactedTurnReadsTheUnchangedHistoricalArchiveOnce
+[       OK ] Pr17.CompactedTurnReadsTheUnchangedHistoricalArchiveOnce (70 ms)
+[ RUN      ] Pr17.RepairQuarantinesUnavailableReferencesWithoutChangingTheJournal
+[       OK ] Pr17.RepairQuarantinesUnavailableReferencesWithoutChangingTheJournal (211 ms)
+[ RUN      ] Pr17.RepairFailureNamesItsBackupAndRemovesOnlyNewPartialArchives
+[       OK ] Pr17.RepairFailureNamesItsBackupAndRemovesOnlyNewPartialArchives (29 ms)
+[ RUN      ] Pr17.RepairQueuesConcurrentWritersWithoutKeepingALookupSnapshot
+[       OK ] Pr17.RepairQueuesConcurrentWritersWithoutKeepingALookupSnapshot (23 ms)
+[ RUN      ] Pr17.RepairedUnknownsSurviveRelocationAndSubsequentCompaction
+[       OK ] Pr17.RepairedUnknownsSurviveRelocationAndSubsequentCompaction (57 ms)
+[ RUN      ] Pr17.RuntimeBudgetReservesTheExactEnvelopeForEveryAdapter
+[       OK ] Pr17.RuntimeBudgetReservesTheExactEnvelopeForEveryAdapter (1 ms)
+[----------] 21 tests from Pr17 (16837 ms total)
+
+[----------] 11 tests from CatalogRecovery
+[ RUN      ] CatalogRecovery.MissingCatalogAndRemovedDirectoryRecoverInSameStore
+[       OK ] CatalogRecovery.MissingCatalogAndRemovedDirectoryRecoverInSameStore (25 ms)
+[ RUN      ] CatalogRecovery.CachedIdentityChecksPreserveProcessAdvisoryLocks
+[       OK ] CatalogRecovery.CachedIdentityChecksPreserveProcessAdvisoryLocks (309 ms)
+[ RUN      ] CatalogRecovery.ReplacedCatalogIsReconciled
+[       OK ] CatalogRecovery.ReplacedCatalogIsReconciled (21 ms)
+[ RUN      ] CatalogRecovery.DataPageCorruptionRebuildsWithoutLosingCaptureBytes
+[       OK ] CatalogRecovery.DataPageCorruptionRebuildsWithoutLosingCaptureBytes (30 ms)
+[ RUN      ] CatalogRecovery.HeaderCorruptionRebuildsOnCloseAccounting
+[       OK ] CatalogRecovery.HeaderCorruptionRebuildsOnCloseAccounting (16 ms)
+[ RUN      ] CatalogRecovery.FailedRebuildRollsBackAndNonCorruptionErrorsAreNotRecovered
+[       OK ] CatalogRecovery.FailedRebuildRollsBackAndNonCorruptionErrorsAreNotRecovered (13 ms)
+[ RUN      ] CatalogRecovery.UnsafeCatalogAndSidecarsAreNeverRemoved
+[       OK ] CatalogRecovery.UnsafeCatalogAndSidecarsAreNeverRemoved (49 ms)
+[ RUN      ] CatalogRecovery.RepeatedCorruptionHasOneRecoveryAttempt
+[       OK ] CatalogRecovery.RepeatedCorruptionHasOneRecoveryAttempt (0 ms)
+[ RUN      ] CatalogRecovery.IoErrorsDoNotDeleteOrRetryTheCatalog
+[       OK ] CatalogRecovery.IoErrorsDoNotDeleteOrRetryTheCatalog (0 ms)
+[ RUN      ] CatalogRecovery.AtCapacityClosesDoNotScanAndAbandonedFlagsAreReclaimed
+[       OK ] CatalogRecovery.AtCapacityClosesDoNotScanAndAbandonedFlagsAreReclaimed (94 ms)
+[ RUN      ] CatalogRecovery.AccountingFailureKeepsCompleteBytesAndBoundsItsDiagnostic
+[       OK ] CatalogRecovery.AccountingFailureKeepsCompleteBytesAndBoundsItsDiagnostic (14 ms)
+[----------] 11 tests from CatalogRecovery (577 ms total)
+
+[----------] 17 tests from Checkpoint
+[ RUN      ] Checkpoint.PendingOutputRemainsOwnedUntilCollectedAndNeverRevivesAfterResume
+[       OK ] Checkpoint.PendingOutputRemainsOwnedUntilCollectedAndNeverRevivesAfterResume (255 ms)
+[ RUN      ] Checkpoint.ObservationFailuresStayLocalAndFatalFailuresPropagate
+[       OK ] Checkpoint.ObservationFailuresStayLocalAndFatalFailuresPropagate (253 ms)
+[ RUN      ] Checkpoint.ExpiredNativeRecordsDoNotAbortCheckpointCollection
+[       OK ] Checkpoint.ExpiredNativeRecordsDoNotAbortCheckpointCollection (1781 ms)
+[ RUN      ] Checkpoint.RetiredGroupStillAllowsItsUncollectedOutputToBeReadExactlyOnce
+[       OK ] Checkpoint.RetiredGroupStillAllowsItsUncollectedOutputToBeReadExactlyOnce (578 ms)
+[ RUN      ] Checkpoint.ArchiveIdentityIgnoresOnlyTheTopLevelPresentationFlag
+[       OK ] Checkpoint.ArchiveIdentityIgnoresOnlyTheTopLevelPresentationFlag (26 ms)
+[ RUN      ] Checkpoint.FailedSummaryThenPersistedPreviewCanRetryTheSameArchive
+[       OK ] Checkpoint.FailedSummaryThenPersistedPreviewCanRetryTheSameArchive (70 ms)
+[ RUN      ] Checkpoint.ResponsesRetainOnePassCustomCallTrackingAcrossProviderChanges
+[       OK ] Checkpoint.ResponsesRetainOnePassCustomCallTrackingAcrossProviderChanges (98 ms)
+[ RUN      ] Checkpoint.FailedLexicalAnchorsDoNotConsumeAdmissionOrShadowAUsableSkill
+[       OK ] Checkpoint.FailedLexicalAnchorsDoNotConsumeAdmissionOrShadowAUsableSkill (55 ms)
+[ RUN      ] Checkpoint.SkillAdmissionStillStopsAtOneHundredValidAnchors
+Skill catalog budget exhausted; later skills omitted
+[       OK ] Checkpoint.SkillAdmissionStillStopsAtOneHundredValidAnchors (62 ms)
+[ RUN      ] Checkpoint.RepeatedCompactionKeepsTheOriginalImageArchiveReference
+[       OK ] Checkpoint.RepeatedCompactionKeepsTheOriginalImageArchiveReference (282 ms)
+[ RUN      ] Checkpoint.UnseenImagesAndHooksKeepChronologicalOrderExactlyOnce
+[       OK ] Checkpoint.UnseenImagesAndHooksKeepChronologicalOrderExactlyOnce (280 ms)
+[ RUN      ] Checkpoint.LiveFactsRefreshAfterCheckpointWithoutPersistingRunningProse
+[       OK ] Checkpoint.LiveFactsRefreshAfterCheckpointWithoutPersistingRunningProse (568 ms)
+[ RUN      ] Checkpoint.MissingAndMalformedArchivesPreserveUnknownsAndReconstructJournalFacts
+[       OK ] Checkpoint.MissingAndMalformedArchivesPreserveUnknownsAndReconstructJournalFacts (33 ms)
+[ RUN      ] Checkpoint.OversizedLiveSnapshotsReplaceOneFileWithoutPermanentReferences
+[       OK ] Checkpoint.OversizedLiveSnapshotsReplaceOneFileWithoutPermanentReferences (45 ms)
+[ RUN      ] Checkpoint.CompletedSiblingResultsAreTrimmedBeforeNextBatchAdmission
+[       OK ] Checkpoint.CompletedSiblingResultsAreTrimmedBeforeNextBatchAdmission (145 ms)
+[ RUN      ] Checkpoint.FailedCheckpointRemovesOnlyItsUnreferencedRecoveryCandidate
+[       OK ] Checkpoint.FailedCheckpointRemovesOnlyItsUnreferencedRecoveryCandidate (62 ms)
+[ RUN      ] Checkpoint.LegacySystemExecutionFactsReceiveAnExplicitEmptyRuntimeUpdate
+[       OK ] Checkpoint.LegacySystemExecutionFactsReceiveAnExplicitEmptyRuntimeUpdate (25 ms)
+[----------] 17 tests from Checkpoint (4628 ms total)
+
+[----------] 33 tests from Modernization
+[ RUN      ] Modernization.RawProviderFailuresPreserveBodiesAndRetryRules
+[       OK ] Modernization.RawProviderFailuresPreserveBodiesAndRetryRules (2 ms)
+[ RUN      ] Modernization.PublicResponsesSharesReplayWithoutPrivateHeaders
+[       OK ] Modernization.PublicResponsesSharesReplayWithoutPrivateHeaders (4 ms)
+[ RUN      ] Modernization.PublicResponsesReasoningDefaultsAreModelAware
+[       OK ] Modernization.PublicResponsesReasoningDefaultsAreModelAware (3 ms)
+[ RUN      ] Modernization.SignedPrefixesPersistAndEpochChangesDiscardSignatures
+[       OK ] Modernization.SignedPrefixesPersistAndEpochChangesDiscardSignatures (1325 ms)
+[ RUN      ] Modernization.SemanticProjectionOmitsReplayAndKeepsRecoveryAndReferences
+[       OK ] Modernization.SemanticProjectionOmitsReplayAndKeepsRecoveryAndReferences (1 ms)
+[ RUN      ] Modernization.HookFailuresStopButWarnNeverWeakensVetoes
+Hook: SessionStart: exited with code 1
+Hook: SessionStart: exited with code 1
+Hook: UserPromptSubmit: exited with code 1
+Hook: UserPromptSubmit: exited with code 1
+Hook: PreToolUse: exited with code 1
+Hook: PreToolUse: exited with code 1
+Hook: PermissionRequest: exited with code 1
+Hook: PermissionRequest: exited with code 1
+Hook: PostToolUse: exited with code 1
+Hook: PostToolUse: exited with code 1
+Hook: PreCompact: exited with code 1
+Hook: PreCompact: exited with code 1
+Hook: Stop: exited with code 1
+Hook: Stop: exited with code 1
+Hook: PreToolUse: returned invalid JSON output
+Hook: PreToolUse stdout capture truncated
+Hook: PreToolUse: returned truncated JSON output
+[       OK ] Modernization.HookFailuresStopButWarnNeverWeakensVetoes (12 ms)
+[ RUN      ] Modernization.HookStopsSurviveVetoesInEitherOrder
+[       OK ] Modernization.HookStopsSurviveVetoesInEitherOrder (2 ms)
+[ RUN      ] Modernization.PostToolBlockingFeedbackAllowsTheModelToContinue
+[       OK ] Modernization.PostToolBlockingFeedbackAllowsTheModelToContinue (41 ms)
+[ RUN      ] Modernization.ExplicitPostToolStopStillReconcilesRemainingCalls
+[       OK ] Modernization.ExplicitPostToolStopStillReconcilesRemainingCalls (37 ms)
+[ RUN      ] Modernization.CorruptPlanResumesAndQuarantinesBeforeReplacement
+Invalid saved task plan preserved at /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-iYx45z/invocation/plans/47fdb312-1af1-4227-b519-754bf74e17ca.json; resuming without an active plan
+Invalid saved task plan preserved at /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-iYx45z/invocation/plans/0a502464-e883-4601-b1ad-3796cc04b85b.json; resuming without an active plan
+[       OK ] Modernization.CorruptPlanResumesAndQuarantinesBeforeReplacement (5 ms)
+[ RUN      ] Modernization.IncrementalWritesAndCompletionRollbackInBothDurabilityModes
+Uncommitted tool result preserved at /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-y61171/invocation/durable/repairs/0ced457c-eb14-450c-b764-dc5bccfbfe34-tool-result-c241651a-11a4-417b-a911-b0361eaf3027.json
+Uncommitted tool result preserved at /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-y61171/invocation/fast/repairs/4039ee5f-5e90-4ceb-b6c1-d6434c87520a-tool-result-23a10871-74be-48e3-ae15-a0d9f64282f6.json
+[       OK ] Modernization.IncrementalWritesAndCompletionRollbackInBothDurabilityModes (130 ms)
+[ RUN      ] Modernization.CaptureCatalogRebuildsAndFlushesWithoutWholeStoreScans
+[       OK ] Modernization.CaptureCatalogRebuildsAndFlushesWithoutWholeStoreScans (54 ms)
+[ RUN      ] Modernization.AbandonedCaptureReservationsAreReconciledUnderQuotaPressure
+[       OK ] Modernization.AbandonedCaptureReservationsAreReconciledUnderQuotaPressure (29 ms)
+[ RUN      ] Modernization.HookFailureJournalsTheAffectedCallBeforeCancellingRemainingCalls
+Hook: PreToolUse: exited with code 1
+Hook: PostToolUse: exited with code 1
+[       OK ] Modernization.HookFailureJournalsTheAffectedCallBeforeCancellingRemainingCalls (67 ms)
+[ RUN      ] Modernization.LegacyMigrationBacksUpAndPreservesMalformedBytesIndependently
+[       OK ] Modernization.LegacyMigrationBacksUpAndPreservesMalformedBytesIndependently (10 ms)
+[ RUN      ] Modernization.AbruptExitNeverReexecutesIncompleteToolsInEitherMode
+[       OK ] Modernization.AbruptExitNeverReexecutesIncompleteToolsInEitherMode (492 ms)
+[ RUN      ] Modernization.EmptyAnthropicRepliesKeepSourcePositionsWithoutEmptyWireMessages
+[       OK ] Modernization.EmptyAnthropicRepliesKeepSourcePositionsWithoutEmptyWireMessages (7 ms)
+[ RUN      ] Modernization.AnthropicModelTransitionResetsOnceThenPreservesNewToolPairs
+[       OK ] Modernization.AnthropicModelTransitionResetsOnceThenPreservesNewToolPairs (7 ms)
+[ RUN      ] Modernization.IncompleteResponsesPreserveSpecificDiagnosticAndRawBody
+[       OK ] Modernization.IncompleteResponsesPreserveSpecificDiagnosticAndRawBody (1 ms)
+[ RUN      ] Modernization.MalformedProviderCachesFailClearlyWithoutRepairingStoredBytes
+[       OK ] Modernization.MalformedProviderCachesFailClearlyWithoutRepairingStoredBytes (22 ms)
+[ RUN      ] Modernization.ProviderCacheIsBoundedAndUncachedSavesWriteOnlyChangedParts
+[       OK ] Modernization.ProviderCacheIsBoundedAndUncachedSavesWriteOnlyChangedParts (3020 ms)
+[ RUN      ] Modernization.InvalidProviderWritesAndFailedCommitsDoNotPublishCachedState
+[       OK ] Modernization.InvalidProviderWritesAndFailedCommitsDoNotPublishCachedState (34 ms)
+[ RUN      ] Modernization.ProviderSnapshotsFollowOwningAndNestedCommitOutcomes
+[       OK ] Modernization.ProviderSnapshotsFollowOwningAndNestedCommitOutcomes (471 ms)
+[ RUN      ] Modernization.DurableCompletionAvoidsBarrierWhileFastCompletionKeepsIt
+[       OK ] Modernization.DurableCompletionAvoidsBarrierWhileFastCompletionKeepsIt (45 ms)
+[ RUN      ] Modernization.CurrentSchemaReadersDoNotNeedTheWriterLock
+[       OK ] Modernization.CurrentSchemaReadersDoNotNeedTheWriterLock (26 ms)
+[ RUN      ] Modernization.LegacyEmptyAnthropicPartsNormalizeReadOnlyThenRewriteOnSave
+[       OK ] Modernization.LegacyEmptyAnthropicPartsNormalizeReadOnlyThenRewriteOnSave (28 ms)
+[ RUN      ] Modernization.LargeProviderHintsAvoidPrefixReadsAndRejectExternalChanges
+[       OK ] Modernization.LargeProviderHintsAvoidPrefixReadsAndRejectExternalChanges (1385 ms)
+[ RUN      ] Modernization.ProviderHintRollbackInvalidatesTicketBeforeNextSave
+[       OK ] Modernization.ProviderHintRollbackInvalidatesTicketBeforeNextSave (29 ms)
+[ RUN      ] Modernization.StatelessReasoningIncludeDoesNotChangeEffortDefaults
+[       OK ] Modernization.StatelessReasoningIncludeDoesNotChangeEffortDefaults (2 ms)
+[ RUN      ] Modernization.ExecutionOnlyEpochUpdatesKeepSystemAndDeduplicateWireParts
+[       OK ] Modernization.ExecutionOnlyEpochUpdatesKeepSystemAndDeduplicateWireParts (4 ms)
+[ RUN      ] Modernization.ExplicitRepairRollsBackAfterBackupAndNeverChangesJournal
+Session repair backup: /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-OWWusb/invocation/repairs/7bc00315-9086-4072-88e5-e15e91dbe723-backup-028024e9-a876-4891-b8d4-aa38c8ab6f99.json
+[       OK ] Modernization.ExplicitRepairRollsBackAfterBackupAndNeverChangesJournal (31 ms)
+[ RUN      ] Modernization.LegacyEmptyPartsAllowResumeCompactionAndProviderSwitch
+[       OK ] Modernization.LegacyEmptyPartsAllowResumeCompactionAndProviderSwitch (110 ms)
+[ RUN      ] Modernization.RepairBackupRetainsMalformedUtf8Bytes
+[       OK ] Modernization.RepairBackupRetainsMalformedUtf8Bytes (28 ms)
+[----------] 33 tests from Modernization (7479 ms total)
+
+[----------] 16 tests from SmallCore
+[ RUN      ] SmallCore.FragmentedCodexItemsHaveStableIdsPhasesAndLastMessageOutput
+[       OK ] SmallCore.FragmentedCodexItemsHaveStableIdsPhasesAndLastMessageOutput (41 ms)
+[ RUN      ] SmallCore.NullableProviderItemMetadataUsesStableUntaggedFallback
+[       OK ] SmallCore.NullableProviderItemMetadataUsesStableUntaggedFallback (2 ms)
+[ RUN      ] SmallCore.UntaggedMessagesAndMissingItemIdsRemainCompatible
+[       OK ] SmallCore.UntaggedMessagesAndMissingItemIdsRemainCompatible (26 ms)
+[ RUN      ] SmallCore.AssistantPhasesAgreeThroughoutFragmentedLifecycles
+[       OK ] SmallCore.AssistantPhasesAgreeThroughoutFragmentedLifecycles (277 ms)
+[ RUN      ] SmallCore.InvalidDiscoveryRootsKeepGuidanceAndOtherSkillsWithDeduplicatedWarnings
+[       OK ] SmallCore.InvalidDiscoveryRootsKeepGuidanceAndOtherSkillsWithDeduplicatedWarnings (4 ms)
+[ RUN      ] SmallCore.UnreadableDiscoveryRootsDoNotAbortOtherGuidance
+[       OK ] SmallCore.UnreadableDiscoveryRootsDoNotAbortOtherGuidance (3 ms)
+[ RUN      ] SmallCore.AliasedUserAndAncestorSkillsRespectAnchorsAndDenials
+[       OK ] SmallCore.AliasedUserAndAncestorSkillsRespectAnchorsAndDenials (49 ms)
+[ RUN      ] SmallCore.InstructionPrecedenceAndAncestorSkillMetadataAreDeterministic
+[       OK ] SmallCore.InstructionPrecedenceAndAncestorSkillMetadataAreDeterministic (8 ms)
+[ RUN      ] SmallCore.MalformedMetadataFallsBackAndCatalogIsBounded
+[       OK ] SmallCore.MalformedMetadataFallsBackAndCatalogIsBounded (52 ms)
+[ RUN      ] SmallCore.SkillSymlinksCannotGrantInspectionAndExplicitDenialsRemain
+[       OK ] SmallCore.SkillSymlinksCannotGrantInspectionAndExplicitDenialsRemain (2 ms)
+[ RUN      ] SmallCore.EffortMigrationForkAndResolutionPreserveSelectionPrecedence
+[       OK ] SmallCore.EffortMigrationForkAndResolutionPreserveSelectionPrecedence (27 ms)
+[ RUN      ] SmallCore.ManualCompactionSharesBudgetsAndPreservesLatestHumanAndFailureHistory
+[       OK ] SmallCore.ManualCompactionSharesBudgetsAndPreservesLatestHumanAndFailureHistory (163 ms)
+[ RUN      ] SmallCore.EmptyManualCompactionNeverCallsProvider
+[       OK ] SmallCore.EmptyManualCompactionNeverCallsProvider (27 ms)
+[ RUN      ] SmallCore.ExplicitImagesAuthorizeOnlyTheNamedFileAndRoundTripImageOnlyPrompt
+[       OK ] SmallCore.ExplicitImagesAuthorizeOnlyTheNamedFileAndRoundTripImageOnlyPrompt (37 ms)
+[ RUN      ] SmallCore.MultipleImagesRespectCombinedBudgetBeforePersistence
+[       OK ] SmallCore.MultipleImagesRespectCombinedBudgetBeforePersistence (36 ms)
+[ RUN      ] SmallCore.ImageInspectionAcceptsCaseAliasesAndHardLinksWithValidatedHandles
+[       OK ] SmallCore.ImageInspectionAcceptsCaseAliasesAndHardLinksWithValidatedHandles (8 ms)
+[----------] 16 tests from SmallCore (771 ms total)
+
+[----------] 31 tests from Runtime
+[ RUN      ] Runtime.AbsoluteDeniesSurviveSlashRootsAliasesAndBypass
+[       OK ] Runtime.AbsoluteDeniesSurviveSlashRootsAliasesAndBypass (5 ms)
+[ RUN      ] Runtime.ExecRulesBindCwdAndDefaultShellAndExposeFullApprovalContext
+[       OK ] Runtime.ExecRulesBindCwdAndDefaultShellAndExposeFullApprovalContext (9 ms)
+[ RUN      ] Runtime.RewritesAndFailureHooksUseEffectiveExecutionContext
+[       OK ] Runtime.RewritesAndFailureHooksUseEffectiveExecutionContext (7 ms)
+[ RUN      ] Runtime.ApprovalHooksUseBashIdentityAndRejectInvalidRewriteContextAccurately
+[       OK ] Runtime.ApprovalHooksUseBashIdentityAndRejectInvalidRewriteContextAccurately (7 ms)
+[ RUN      ] Runtime.StdinRulesInspectInputAndKeepOriginAndPlanBlocksEof
+[       OK ] Runtime.StdinRulesInspectInputAndKeepOriginAndPlanBlocksEof (271 ms)
+[ RUN      ] Runtime.PipeEofPublishesFinalOutputAndPtyRejectsBeforeWriting
+[       OK ] Runtime.PipeEofPublishesFinalOutputAndPtyRejectsBeforeWriting (542 ms)
+[ RUN      ] Runtime.WorkerExecCleanupQueuesFixedWarningsAndPreservesTheOriginalFailure
+[       OK ] Runtime.WorkerExecCleanupQueuesFixedWarningsAndPreservesTheOriginalFailure (517 ms)
+[ RUN      ] Runtime.EofRetryDoesNotInventExitStatusAfterFailedCollection
+[       OK ] Runtime.EofRetryDoesNotInventExitStatusAfterFailedCollection (265 ms)
+[ RUN      ] Runtime.CompletedPatchIsJournaledBeforeFatalPostHookWithoutReplay
+[       OK ] Runtime.CompletedPatchIsJournaledBeforeFatalPostHookWithoutReplay (41 ms)
+[ RUN      ] Runtime.CompletedExecRetainsItsOutcomeWhenPostHookExhaustsResources
+[       OK ] Runtime.CompletedExecRetainsItsOutcomeWhenPostHookExhaustsResources (62 ms)
+[ RUN      ] Runtime.StdinHookAllowRequiresExactNestedOperationScopeIncludingEof
+Hook: PermissionRequest allow ignored: stdin approval requires hookSpecificOutput.decision.tool = write_stdin; decision scope must match the requested tool
+Hook: PermissionRequest allow ignored: stdin approval requires hookSpecificOutput.decision.tool = write_stdin; decision scope must match the requested tool
+Hook: PermissionRequest allow ignored: stdin approval requires hookSpecificOutput.decision.tool = write_stdin; decision scope must match the requested tool
+Hook: PermissionRequest allow ignored: stdin approval requires hookSpecificOutput.decision.tool = write_stdin; decision scope must match the requested tool
+Hook: PermissionRequest allow ignored: stdin approval requires hookSpecificOutput.decision.tool = write_stdin; decision scope must match the requested tool
+Hook: PermissionRequest allow ignored: stdin approval requires hookSpecificOutput.decision.tool = write_stdin; decision scope must match the requested tool
+Hook: PermissionRequest: [json.exception.type_error.302] type must be string, but is number
+Hook: PermissionRequest: [json.exception.type_error.302] type must be string, but is number
+[       OK ] Runtime.StdinHookAllowRequiresExactNestedOperationScopeIncludingEof (279 ms)
+[ RUN      ] Runtime.PermissionMatcherAliasesOnlySelectTheirOwnOperationAndDenyAlwaysWins
+[       OK ] Runtime.PermissionMatcherAliasesOnlySelectTheirOwnOperationAndDenyAlwaysWins (7 ms)
+[ RUN      ] Runtime.GlobalOutputLimitStillReportsOriginalTokenCount
+[       OK ] Runtime.GlobalOutputLimitStillReportsOriginalTokenCount (41 ms)
+[ RUN      ] Runtime.ScalarSchemasAndObsoleteHookMatchersAreExplicit
+[       OK ] Runtime.ScalarSchemasAndObsoleteHookMatchersAreExplicit (1 ms)
+[ RUN      ] Runtime.MalformedHookEntriesAreConfigurationErrorsForEveryEvent
+[       OK ] Runtime.MalformedHookEntriesAreConfigurationErrorsForEveryEvent (2 ms)
+[ RUN      ] Runtime.WorkerDeliveryRetainsRemainingEventsOnUiFailureAndExpiresApprovals
+[       OK ] Runtime.WorkerDeliveryRetainsRemainingEventsOnUiFailureAndExpiresApprovals (2 ms)
+[ RUN      ] Runtime.InvalidWorkerEventDoesNotDiscardTheFollowingOutcome
+[       OK ] Runtime.InvalidWorkerEventDoesNotDiscardTheFollowingOutcome (0 ms)
+[ RUN      ] Runtime.CaptureRejectsInvalidDisplayBoundsBeforeImageArithmetic
+[       OK ] Runtime.CaptureRejectsInvalidDisplayBoundsBeforeImageArithmetic (0 ms)
+[ RUN      ] Runtime.PendingInputCannotLeakAcrossTurnOrSessionBoundaries
+[       OK ] Runtime.PendingInputCannotLeakAcrossTurnOrSessionBoundaries (0 ms)
+[ RUN      ] Runtime.ScreenshotSelectsOneDisplayAndRejectsSpansOrMixedSelectors
+[       OK ] Runtime.ScreenshotSelectsOneDisplayAndRejectsSpansOrMixedSelectors (0 ms)
+[ RUN      ] Runtime.EphemeralArtifactRootIsUsedForPersistenceAndReplay
+[       OK ] Runtime.EphemeralArtifactRootIsUsedForPersistenceAndReplay (20 ms)
+[ RUN      ] Runtime.MissingImageNotesPreserveToolEnvelopeAndAnthropicTextAppearsOnce
+[       OK ] Runtime.MissingImageNotesPreserveToolEnvelopeAndAnthropicTextAppearsOnce (7 ms)
+[ RUN      ] Runtime.CaptureAccountingIsLinearAndPendingUtf8DoesNotSpill
+[       OK ] Runtime.CaptureAccountingIsLinearAndPendingUtf8DoesNotSpill (171 ms)
+[ RUN      ] Runtime.StartupDescriptorExhaustionIsFatal
+[       OK ] Runtime.StartupDescriptorExhaustionIsFatal (10 ms)
+[ RUN      ] Runtime.ActualExecWaitLoopDoesNotRenderEveryObservation
+[       OK ] Runtime.ActualExecWaitLoopDoesNotRenderEveryObservation (86 ms)
+[ RUN      ] Runtime.DrainFailureStillFinalizesBufferedCapture
+Process observation during cleanup: injected drain failure
+[       OK ] Runtime.DrainFailureStillFinalizesBufferedCapture (76 ms)
+[ RUN      ] Runtime.ComputerRulesHaveOneTargetAndRemainIndependentOfExecRules
+[       OK ] Runtime.ComputerRulesHaveOneTargetAndRemainIndependentOfExecRules (4 ms)
+[ RUN      ] Runtime.AccessibilityActionNulCannotAuthorizeDifferentDispatchText
+[       OK ] Runtime.AccessibilityActionNulCannotAuthorizeDifferentDispatchText (2 ms)
+[ RUN      ] Runtime.NumericOptionLabelsAreMappedOnlyOnce
+[       OK ] Runtime.NumericOptionLabelsAreMappedOnlyOnce (3 ms)
+[ RUN      ] Runtime.FatalStopHookAbortsWithoutBecomingOrdinaryBlockingFeedback
+[       OK ] Runtime.FatalStopHookAbortsWithoutBecomingOrdinaryBlockingFeedback (40 ms)
+[ RUN      ] Runtime.SteeringAtCompletionBecomesPendingForTheSameSession
+[       OK ] Runtime.SteeringAtCompletionBecomesPendingForTheSameSession (33 ms)
+[----------] 31 tests from Runtime (2529 ms total)
+
+[----------] 1 test from InteractionAdmission
+[ RUN      ] InteractionAdmission.ExactlyEmptyMessagesAreNeverQueued
+[       OK ] InteractionAdmission.ExactlyEmptyMessagesAreNeverQueued (0 ms)
+[----------] 1 test from InteractionAdmission (0 ms total)
+
+[----------] 3 tests from TextCompatibility
+[ RUN      ] TextCompatibility.PaddingAndExactFieldsMatchLibc
+[       OK ] TextCompatibility.PaddingAndExactFieldsMatchLibc (11 ms)
+[ RUN      ] TextCompatibility.TruncationAndReturnValuesMatchLibc
+[       OK ] TextCompatibility.TruncationAndReturnValuesMatchLibc (0 ms)
+[ RUN      ] TextCompatibility.ZeroCapacityAcceptsNull
+[       OK ] TextCompatibility.ZeroCapacityAcceptsNull (0 ms)
+[----------] 3 tests from TextCompatibility (12 ms total)
+
+[----------] 1 test from Sse
+[ RUN      ] Sse.FragmentedCrLfMultilineAndComments
+[       OK ] Sse.FragmentedCrLfMultilineAndComments (0 ms)
+[----------] 1 test from Sse (0 ms total)
+
+[----------] 32 tests from Fixture
+[ RUN      ] Fixture.AtomicWritesPreserveModeAndLeaveNoScratchFiles
+[       OK ] Fixture.AtomicWritesPreserveModeAndLeaveNoScratchFiles (1 ms)
+[ RUN      ] Fixture.PermissionsDenyWinsOverAllowAndBypass
+[       OK ] Fixture.PermissionsDenyWinsOverAllowAndBypass (0 ms)
+[ RUN      ] Fixture.PermissionRootsRejectSiblingAndSymlinkEscapes
+[       OK ] Fixture.PermissionRootsRejectSiblingAndSymlinkEscapes (0 ms)
+[ RUN      ] Fixture.PatchAddsUpdatesAndDeletesFiles
+[       OK ] Fixture.PatchAddsUpdatesAndDeletesFiles (3 ms)
+[ RUN      ] Fixture.ConfigLayeringProfilesOverridesAndTypes
+[       OK ] Fixture.ConfigLayeringProfilesOverridesAndTypes (2 ms)
+[ RUN      ] Fixture.CredentialsImportIsPrivateAndDoesNotModifySource
+[       OK ] Fixture.CredentialsImportIsPrivateAndDoesNotModifySource (1 ms)
+[ RUN      ] Fixture.CredentialRefreshRotatesAndPersistsTokens
+[       OK ] Fixture.CredentialRefreshRotatesAndPersistsTokens (2 ms)
+[ RUN      ] Fixture.ExpiredCredentialsAndFailedRefreshLeaveStoredTokensIntact
+[       OK ] Fixture.ExpiredCredentialsAndFailedRefreshLeaveStoredTokensIntact (3 ms)
+[ RUN      ] Fixture.TransportFailuresHaveBoundedRetriesAndCancellationPropagates
+[       OK ] Fixture.TransportFailuresHaveBoundedRetriesAndCancellationPropagates (1 ms)
+[ RUN      ] Fixture.ProjectConfigurationRequiresExplicitTrustAndCliOverridesWin
+[       OK ] Fixture.ProjectConfigurationRequiresExplicitTrustAndCliOverridesWin (2 ms)
+[ RUN      ] Fixture.ApprovalHooksCannotOverridePlanModeOrExplicitDenials
+[       OK ] Fixture.ApprovalHooksCannotOverridePlanModeOrExplicitDenials (5 ms)
+[ RUN      ] Fixture.OpenaiToolCallsAssembleAcrossArbitraryChunks
+[       OK ] Fixture.OpenaiToolCallsAssembleAcrossArbitraryChunks (1 ms)
+[ RUN      ] Fixture.ProviderRetriesTransientStatusAndRejectsTruncatedStreams
+[       OK ] Fixture.ProviderRetriesTransientStatusAndRejectsTruncatedStreams (0 ms)
+[ RUN      ] Fixture.StatePersistenceForkIsolationAndNewerSchemaRejection
+[       OK ] Fixture.StatePersistenceForkIsolationAndNewerSchemaRejection (31 ms)
+[ RUN      ] Fixture.CrashRecoveryRestoresResultsAndNeverReplaysUnknownEffects
+[       OK ] Fixture.CrashRecoveryRestoresResultsAndNeverReplaysUnknownEffects (33 ms)
+[ RUN      ] Fixture.StateRejectsFutureSchemaWithoutDowngrading
+[       OK ] Fixture.StateRejectsFutureSchemaWithoutDowngrading (28 ms)
+[ RUN      ] Fixture.StateMigratesV1AndRejectsTruncatedMessages
+[       OK ] Fixture.StateMigratesV1AndRejectsTruncatedMessages (46 ms)
+[ RUN      ] Fixture.ControlledInterruptionAlsoRepairsPendingToolResults
+[       OK ] Fixture.ControlledInterruptionAlsoRepairsPendingToolResults (33 ms)
+[ RUN      ] Fixture.StructuredOutputIsValidatedBeforeAcceptance
+[       OK ] Fixture.StructuredOutputIsValidatedBeforeAcceptance (57 ms)
+[ RUN      ] Fixture.ExternalSchemasAreRejectedWithoutNetworking
+[       OK ] Fixture.ExternalSchemasAreRejectedWithoutNetworking (28 ms)
+[ RUN      ] Fixture.CodexRequestReplaysEncryptedReasoningAndCustomPatchOutputs
+[       OK ] Fixture.CodexRequestReplaysEncryptedReasoningAndCustomPatchOutputs (6 ms)
+[ RUN      ] Fixture.CodexCompletionParsesToolsUsageAndReasoningReplay
+[       OK ] Fixture.CodexCompletionParsesToolsUsageAndReasoningReplay (2 ms)
+[ RUN      ] Fixture.AnthropicStreamPreservesThinkingSignatureAndToolArguments
+[       OK ] Fixture.AnthropicStreamPreservesThinkingSignatureAndToolArguments (1 ms)
+[ RUN      ] Fixture.GoogleAndOllamaStreamsHaveRealProtocolFixtures
+[       OK ] Fixture.GoogleAndOllamaStreamsHaveRealProtocolFixtures (1 ms)
+[ RUN      ] Fixture.OllamaToolRoundTripUsesObjectArgumentsAndNamedResults
+[       OK ] Fixture.OllamaToolRoundTripUsesObjectArgumentsAndNamedResults (1 ms)
+[ RUN      ] Fixture.GoogleToolRoundTripGroupsResultsAndPreservesThoughtSignatures
+[       OK ] Fixture.GoogleToolRoundTripGroupsResultsAndPreservesThoughtSignatures (2 ms)
+[ RUN      ] Fixture.HookInputIsJsonAndDenialPreventsMutation
+[       OK ] Fixture.HookInputIsJsonAndDenialPreventsMutation (2 ms)
+[ RUN      ] Fixture.InstructionsIncludesSkillsAndExplicitMemoryRemainBounded
+Skill metadata unavailable: /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-WdUAKd/workspace/.agents/skills/demo/SKILL.md: missing frontmatter
+[       OK ] Fixture.InstructionsIncludesSkillsAndExplicitMemoryRemainBounded (5 ms)
+[ RUN      ] Fixture.UniversalDenyRulesCoverUtilityTools
+[       OK ] Fixture.UniversalDenyRulesCoverUtilityTools (1 ms)
+[ RUN      ] Fixture.ContextCompactionUsesSameProviderAndRetainsCurrentRequest
+[       OK ] Fixture.ContextCompactionUsesSameProviderAndRetainsCurrentRequest (60 ms)
+[ RUN      ] Fixture.RequestLimitStopsWithoutAnExtraProviderCall
+[       OK ] Fixture.RequestLimitStopsWithoutAnExtraProviderCall (39 ms)
+[ RUN      ] Fixture.AgentExecutesToolAndPersistsOnlyCompletedTurn
+[       OK ] Fixture.AgentExecutesToolAndPersistsOnlyCompletedTurn (55 ms)
+[----------] 32 tests from Fixture (468 ms total)
+
+[----------] 4 tests from ProcessIntegration
+[ RUN      ] ProcessIntegration.InteractivePtyInputAndBoundedFloodOutput
+[       OK ] ProcessIntegration.InteractivePtyInputAndBoundedFloodOutput (72 ms)
+[ RUN      ] ProcessIntegration.CancellationTerminatesAWaitingShell
+[       OK ] ProcessIntegration.CancellationTerminatesAWaitingShell (68 ms)
+[ RUN      ] ProcessIntegration.StoppingJobAlsoTerminatesTermIgnoringDescendant
+[       OK ] ProcessIntegration.StoppingJobAlsoTerminatesTermIgnoringDescendant (1264 ms)
+[ RUN      ] ProcessIntegration.OutputQuotingTimeoutAndPty
+[       OK ] ProcessIntegration.OutputQuotingTimeoutAndPty (99 ms)
+[----------] 4 tests from ProcessIntegration (1505 ms total)
+
+[----------] 1 test from NetworkOptIn
+[ RUN      ] NetworkOptIn.TlsHandshake
+/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/tests/core_test.cpp:796: Skipped
+Set CODET_TEST_TLS_URL explicitly for target TLS acceptance
+
+[  SKIPPED ] NetworkOptIn.TlsHandshake (0 ms)
+[----------] 1 test from NetworkOptIn (0 ms total)
+
+[----------] 9 tests from ReviewFixture
+[ RUN      ] ReviewFixture.ScopedShellAllowsRequireLiteralSimpleCommands
+[       OK ] ReviewFixture.ScopedShellAllowsRequireLiteralSimpleCommands (1 ms)
+[ RUN      ] ReviewFixture.ExplicitGrantsBypassDenialsAndPlanKeepTheirMeanings
+[       OK ] ReviewFixture.ExplicitGrantsBypassDenialsAndPlanKeepTheirMeanings (2 ms)
+[ RUN      ] ReviewFixture.GrepIsRetiredAndCompletedHistoricalResultsRemainReadable
+[       OK ] ReviewFixture.GrepIsRetiredAndCompletedHistoricalResultsRemainReadable (44 ms)
+[ RUN      ] ReviewFixture.ShellGrepQuotesPathsOptionsAndExitStatuses
+[       OK ] ReviewFixture.ShellGrepQuotesPathsOptionsAndExitStatuses (119 ms)
+[ RUN      ] ReviewFixture.ShellGrepHandlesLongLinesAndBoundsOutput
+[       OK ] ReviewFixture.ShellGrepHandlesLongLinesAndBoundsOutput (111 ms)
+[ RUN      ] ReviewFixture.EmptyOptionalToolDeclarationsAreOmitted
+[       OK ] ReviewFixture.EmptyOptionalToolDeclarationsAreOmitted (2 ms)
+[ RUN      ] ReviewFixture.EndHookCleanupHonorsTotalBudget
+SessionEnd hook cleanup failed: SessionEnd: exited with code 124
+[       OK ] ReviewFixture.EndHookCleanupHonorsTotalBudget (51 ms)
+[ RUN      ] ReviewFixture.SelectionTracksOnlyExplicitProfileAndCliFields
+[       OK ] ReviewFixture.SelectionTracksOnlyExplicitProfileAndCliFields (8 ms)
+[ RUN      ] ReviewFixture.NormalExitCleansUpTermIgnoringDescendants
+[       OK ] ReviewFixture.NormalExitCleansUpTermIgnoringDescendants (1132 ms)
+[----------] 9 tests from ReviewFixture (1474 ms total)
+
+[----------] 5 tests from ProcessOwnership
+[ RUN      ] ProcessOwnership.NormalCompletionSignalsBeforeReapAndLaterStopsDoNothing
+[       OK ] ProcessOwnership.NormalCompletionSignalsBeforeReapAndLaterStopsDoNothing (31 ms)
+[ RUN      ] ProcessOwnership.FailedWatcherCleansUpWithoutExecutingCommand
+[       OK ] ProcessOwnership.FailedWatcherCleansUpWithoutExecutingCommand (10 ms)
+[ RUN      ] ProcessOwnership.ChildExitBeforeReleaseDoesNotDeliverSigpipeToParent
+[       OK ] ProcessOwnership.ChildExitBeforeReleaseDoesNotDeliverSigpipeToParent (19 ms)
+[ RUN      ] ProcessOwnership.ImmediateExitsCannotRaceWatcherRegistration
+[       OK ] ProcessOwnership.ImmediateExitsCannotRaceWatcherRegistration (454 ms)
+[ RUN      ] ProcessOwnership.ChildResetsIgnoredSigpipeAndBlockedSignalMask
+[       OK ] ProcessOwnership.ChildResetsIgnoredSigpipeAndBlockedSignalMask (38 ms)
+[----------] 5 tests from ProcessOwnership (554 ms total)
+
+[----------] 26 tests from Remaining
+[ RUN      ] Remaining.RecoveryMovesResultsToOwningBatchAndIsIdempotentAcrossForks
+[       OK ] Remaining.RecoveryMovesResultsToOwningBatchAndIsIdempotentAcrossForks (72 ms)
+[ RUN      ] Remaining.RecoveryRejectsDuplicateIdsAndCorruptCompletedRecords
+[       OK ] Remaining.RecoveryRejectsDuplicateIdsAndCorruptCompletedRecords (32 ms)
+[ RUN      ] Remaining.FailedRecoveryTransactionLeavesBothTranscriptAndJournalUntouched
+[       OK ] Remaining.FailedRecoveryTransactionLeavesBothTranscriptAndJournalUntouched (47 ms)
+[ RUN      ] Remaining.AutomaticSqliteRollbackPreservesOriginalFailure
+[       OK ] Remaining.AutomaticSqliteRollbackPreservesOriginalFailure (36 ms)
+[ RUN      ] Remaining.FileInspectionPagesLongLinesWithoutSpilling
+[       OK ] Remaining.FileInspectionPagesLongLinesWithoutSpilling (4 ms)
+[ RUN      ] Remaining.SnapshotLoadAndForkCannotModifyAnOwnedLiveBatch
+[       OK ] Remaining.SnapshotLoadAndForkCannotModifyAnOwnedLiveBatch (55 ms)
+[ RUN      ] Remaining.DuplicateToolReservationsFailClearlyWithoutOverwritingRecovery
+[       OK ] Remaining.DuplicateToolReservationsFailClearlyWithoutOverwritingRecovery (43 ms)
+[ RUN      ] Remaining.CancelledBatchCanContinueInSameSessionWithoutReplayingEffects
+[       OK ] Remaining.CancelledBatchCanContinueInSameSessionWithoutReplayingEffects (106 ms)
+[ RUN      ] Remaining.UnexpectedProviderExceptionsBecomeRecoverableTurnErrors
+[       OK ] Remaining.UnexpectedProviderExceptionsBecomeRecoverableTurnErrors (39 ms)
+[ RUN      ] Remaining.ExplicitPostStopIsJournaledBeforeHaltingTheBatch
+Stop hook stopped execution: Stop vetoed execution
+finished
+[       OK ] Remaining.ExplicitPostStopIsJournaledBeforeHaltingTheBatch (124 ms)
+[ RUN      ] Remaining.PathDenialsCoverAliasesCanonicalTargetsAndWildcardPrefixes
+[       OK ] Remaining.PathDenialsCoverAliasesCanonicalTargetsAndWildcardPrefixes (17 ms)
+[ RUN      ] Remaining.WildcardPathDenialsCoverAdditionalRootsAndBypass
+[       OK ] Remaining.WildcardPathDenialsCoverAdditionalRootsAndBypass (32 ms)
+[ RUN      ] Remaining.DeniedPathsPreventHooksAndRewrittenInputsAreRechecked
+[       OK ] Remaining.DeniedPathsPreventHooksAndRewrittenInputsAreRechecked (100 ms)
+[ RUN      ] Remaining.DirectoryListingFiltersDeniedEntries
+[       OK ] Remaining.DirectoryListingFiltersDeniedEntries (11 ms)
+[ RUN      ] Remaining.PermissionDecisionSharesCanonicalPrefixesAcrossRules
+[       OK ] Remaining.PermissionDecisionSharesCanonicalPrefixesAcrossRules (8 ms)
+[ RUN      ] Remaining.DirectoryListingSharesCanonicalPrefixesAcrossEntries
+[       OK ] Remaining.DirectoryListingSharesCanonicalPrefixesAcrossEntries (98 ms)
+[ RUN      ] Remaining.HookFailurePlaintextStderrAndExplicitDenialsFollowEventSemantics
+Hook: SessionStart stderr: warning
+Hook: UserPromptSubmit stderr: warning
+Hook: PreToolUse: returned invalid JSON output
+Hook: PreToolUse: returned invalid JSON output
+Hook: PreToolUse: exited with code 1
+Hook: PreToolUse: exited with code 1
+Hook: PreToolUse: exited with code 3: x
+Hook: PreToolUse: exited with code 3: x
+[       OK ] Remaining.HookFailurePlaintextStderrAndExplicitDenialsFollowEventSemantics (364 ms)
+[ RUN      ] Remaining.FailedApprovalHookDoesNotGrantAndPostBlockPreservesCompletedEffects
+Hook: PermissionRequest: exited with code 1
+[       OK ] Remaining.FailedApprovalHookDoesNotGrantAndPostBlockPreservesCompletedEffects (63 ms)
+[ RUN      ] Remaining.InvalidHookErrorBytesRemainSerializableAndBounded
+[       OK ] Remaining.InvalidHookErrorBytesRemainSerializableAndBounded (38 ms)
+[ RUN      ] Remaining.InvalidPathMetadataIsSanitizedWithoutChangingFilesystemBytes
+[       OK ] Remaining.InvalidPathMetadataIsSanitizedWithoutChangingFilesystemBytes (2 ms)
+[ RUN      ] Remaining.CompletedOutputHistoryHasAnAggregateByteBudget
+[       OK ] Remaining.CompletedOutputHistoryHasAnAggregateByteBudget (1662 ms)
+[ RUN      ] Remaining.OversizedInstructionsMemoryAndIncludesUseBoundedReads
+Instruction content truncated to project_doc_max_bytes: /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-aXIunx/workspace/AGENTS.md
+Memory context truncated: /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-aXIunx/state/memory/a.md
+Memory context budget exhausted; use read_file to read additional files
+[       OK ] Remaining.OversizedInstructionsMemoryAndIncludesUseBoundedReads (15 ms)
+[ RUN      ] Remaining.ParameterlessGoogleToolsOmitParametersAndTimeoutDefaultsRemainExplicit
+[       OK ] Remaining.ParameterlessGoogleToolsOmitParametersAndTimeoutDefaultsRemainExplicit (6 ms)
+[ RUN      ] Remaining.PatchMatchesReferenceChunksAndPreservesContextEndings
+[       OK ] Remaining.PatchMatchesReferenceChunksAndPreservesContextEndings (66 ms)
+[ RUN      ] Remaining.StartupDeadlinePreventsExecutionBeforeAndAfterWatcherRegistration
+[       OK ] Remaining.StartupDeadlinePreventsExecutionBeforeAndAfterWatcherRegistration (35 ms)
+[ RUN      ] Remaining.StartupCancellationNeverReleasesTheCommand
+[       OK ] Remaining.StartupCancellationNeverReleasesTheCommand (24 ms)
+[----------] 26 tests from Remaining (3111 ms total)
+
+[----------] 27 tests from Contracts
+[ RUN      ] Contracts.RegistryNamesRequiredFieldsAndModeGatesMatchFrozenContract
+[       OK ] Contracts.RegistryNamesRequiredFieldsAndModeGatesMatchFrozenContract (9 ms)
+[ RUN      ] Contracts.LegacyCallsAndPermissionRulesFailExplicitly
+[       OK ] Contracts.LegacyCallsAndPermissionRulesFailExplicitly (3 ms)
+[ RUN      ] Contracts.PlanInspectionListsDirectoriesAndFiltersDeniedSymlinkTargets
+[       OK ] Contracts.PlanInspectionListsDirectoriesAndFiltersDeniedSymlinkTargets (10 ms)
+[ RUN      ] Contracts.PatchNeedsNoPriorReadAndValidatesAllChangesBeforeMutation
+[       OK ] Contracts.PatchNeedsNoPriorReadAndValidatesAllChangesBeforeMutation (7 ms)
+[ RUN      ] Contracts.ExecYieldsNumericSessionAndReadsOnlyNewOutputThroughPipes
+[       OK ] Contracts.ExecYieldsNumericSessionAndReadsOnlyNewOutputThroughPipes (279 ms)
+[ RUN      ] Contracts.IncrementalCollectionsPreserveSplitUnicodeAndStructuredSmallBudgets
+[       OK ] Contracts.IncrementalCollectionsPreserveSplitUnicodeAndStructuredSmallBudgets (316 ms)
+[ RUN      ] Contracts.ExecSupportsWorkdirTtyAndNonzeroStatusWithoutToolFailure
+[       OK ] Contracts.ExecSupportsWorkdirTtyAndNonzeroStatusWithoutToolFailure (42 ms)
+[ RUN      ] Contracts.InvalidBudgetsAndEscalationDoNotStartCommands
+[       OK ] Contracts.InvalidBudgetsAndEscalationDoNotStartCommands (3 ms)
+[ RUN      ] Contracts.CancellingYieldWaitTerminatesOwnedGroup
+[       OK ] Contracts.CancellingYieldWaitTerminatesOwnedGroup (59 ms)
+[ RUN      ] Contracts.PlanPersistsAndRejectsMultipleActiveSteps
+[       OK ] Contracts.PlanPersistsAndRejectsMultipleActiveSteps (8 ms)
+[ RUN      ] Contracts.SynchronousAnswersKeepQuestionIdsAndAllowFreeText
+[       OK ] Contracts.SynchronousAnswersKeepQuestionIdsAndAllowFreeText (3 ms)
+[ RUN      ] Contracts.AsyncQuestionsReturnWithoutInventingAnswersAndSleepWakes
+[       OK ] Contracts.AsyncQuestionsReturnWithoutInventingAnswersAndSleepWakes (29 ms)
+[ RUN      ] Contracts.InteractionRequestsTransferAnswersAcrossThreads
+[       OK ] Contracts.InteractionRequestsTransferAnswersAcrossThreads (8 ms)
+[ RUN      ] Contracts.DesktopObservationsAndMutationsUseDistinctPermissionsAndReportErrors
+[       OK ] Contracts.DesktopObservationsAndMutationsUseDistinctPermissionsAndReportErrors (4 ms)
+[ RUN      ] Contracts.ScreenshotProducesPrivateImmutablePixelsAndNoInlineEventBytes
+[       OK ] Contracts.ScreenshotProducesPrivateImmutablePixelsAndNoInlineEventBytes (7 ms)
+[ RUN      ] Contracts.FramebufferConversionHandlesPpcByteOrderStrideAnd16BitPixels
+[       OK ] Contracts.FramebufferConversionHandlesPpcByteOrderStrideAnd16BitPixels (0 ms)
+[ RUN      ] Contracts.ImageLimitsCapabilitiesAndSessionForkKeepArtifactReferences
+[       OK ] Contracts.ImageLimitsCapabilitiesAndSessionForkKeepArtifactReferences (32 ms)
+[ RUN      ] Contracts.AllProvidersSerializePixelsAndReportMissingArtifactsWithoutReexecution
+[       OK ] Contracts.AllProvidersSerializePixelsAndReportMissingArtifactsWithoutReexecution (35 ms)
+[ RUN      ] Contracts.ResponsesNamespacesAndOtherProviderNamesRoundTrip
+[       OK ] Contracts.ResponsesNamespacesAndOtherProviderNamesRoundTrip (19 ms)
+[ RUN      ] Contracts.ScreenshotCoordinatesRespectCroppingScalingAndNegativeDisplayOrigins
+[       OK ] Contracts.ScreenshotCoordinatesRespectCroppingScalingAndNegativeDisplayOrigins (0 ms)
+[ RUN      ] Contracts.AsyncRepliesJoinTheTranscriptOnlyAfterTheirOwningToolBatch
+[       OK ] Contracts.AsyncRepliesJoinTheTranscriptOnlyAfterTheirOwningToolBatch (55 ms)
+[ RUN      ] Contracts.CompactionRetainsReloadableImageReferences
+[       OK ] Contracts.CompactionRetainsReloadableImageReferences (348 ms)
+[ RUN      ] Contracts.PatchRollsBackAnEarlierWriteWhenALaterFileFails
+[       OK ] Contracts.PatchRollsBackAnEarlierWriteWhenALaterFileFails (6 ms)
+[ RUN      ] Contracts.NativeImageIoCanEncodeAndReloadPixelsWithoutAConsole
+[       OK ] Contracts.NativeImageIoCanEncodeAndReloadPixelsWithoutAConsole (13 ms)
+[ RUN      ] Contracts.ImageRequestBudgetKeepsOnlyFourRecentImages
+[       OK ] Contracts.ImageRequestBudgetKeepsOnlyFourRecentImages (7 ms)
+[ RUN      ] Contracts.NativeTigerDesktopAcceptance
+/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/tests/tool_contract_test.cpp:628: Skipped
+Set CODET_TEST_DESKTOP=1 explicitly on Tiger
+
+[  SKIPPED ] Contracts.NativeTigerDesktopAcceptance (3 ms)
+[ RUN      ] Contracts.SeparateToolLifetimesUseIndependentSessionIdentities
+[       OK ] Contracts.SeparateToolLifetimesUseIndependentSessionIdentities (542 ms)
+[----------] 27 tests from Contracts (1860 ms total)
+
+[----------] 17 tests from Followup
+[ RUN      ] Followup.SelectionRespectsConfiguredPairsAndExplicitFields
+[       OK ] Followup.SelectionRespectsConfiguredPairsAndExplicitFields (0 ms)
+[ RUN      ] Followup.EveryAdapterOmitsEmptyToolsAndKeepsNonemptyDeclarations
+[       OK ] Followup.EveryAdapterOmitsEmptyToolsAndKeepsNonemptyDeclarations (20 ms)
+[ RUN      ] Followup.CompactionUsesRealAdaptersWithoutToolsAndRetainsNormalTools
+[       OK ] Followup.CompactionUsesRealAdaptersWithoutToolsAndRetainsNormalTools (445 ms)
+[ RUN      ] Followup.ShellSpoolPreservesOutputAndSupportsReadPaging
+[       OK ] Followup.ShellSpoolPreservesOutputAndSupportsReadPaging (47 ms)
+[ RUN      ] Followup.SmallCommandsDoNotCreateCaptureFiles
+[       OK ] Followup.SmallCommandsDoNotCreateCaptureFiles (22 ms)
+[ RUN      ] Followup.InvalidByteExpansionKeepsOriginalCaptureAndQuotaMetadata
+[       OK ] Followup.InvalidByteExpansionKeepsOriginalCaptureAndQuotaMetadata (54 ms)
+[ RUN      ] Followup.PortableShellSearchSkipsGeneratedAndBinaryFiles
+[       OK ] Followup.PortableShellSearchSkipsGeneratedAndBinaryFiles (28 ms)
+[ RUN      ] Followup.LongLineCaptureUsesEightMiBCapAndPreservesPreviewTail
+unknown file: Failure
+C++ exception with description "Child process setup failed" thrown in the test body.
+
+[  FAILED  ] Followup.LongLineCaptureUsesEightMiBCapAndPreservesPreviewTail (827 ms)
+[ RUN      ] Followup.ActiveCapturesAreProtectedAndCompletedFilesEvict
+[       OK ] Followup.ActiveCapturesAreProtectedAndCompletedFilesEvict (36 ms)
+[ RUN      ] Followup.CaptureOwnershipCoordinatesAcrossProcesses
+[       OK ] Followup.CaptureOwnershipCoordinatesAcrossProcesses (128 ms)
+[ RUN      ] Followup.SpoolFailureKeepsExitStatusAndSerializablePreview
+Output capture: Output directory must not be a symlink
+[       OK ] Followup.SpoolFailureKeepsExitStatusAndSerializablePreview (32 ms)
+[ RUN      ] Followup.BackgroundAndPtyCommandsRetainLargeOutput
+[       OK ] Followup.BackgroundAndPtyCommandsRetainLargeOutput (83 ms)
+[ RUN      ] Followup.OneShotExitSurvivesSignalAndReapFailures
+[       OK ] Followup.OneShotExitSurvivesSignalAndReapFailures (40 ms)
+[ RUN      ] Followup.OwnershipLossInvalidatesFurtherSignals
+[       OK ] Followup.OwnershipLossInvalidatesFurtherSignals (18 ms)
+[ RUN      ] Followup.ObservationOwnershipLossNeverSignals
+[       OK ] Followup.ObservationOwnershipLossNeverSignals (21 ms)
+[ RUN      ] Followup.HandshakeRetriesEintrAndCancellationWinsOverSetupErrors
+[       OK ] Followup.HandshakeRetriesEintrAndCancellationWinsOverSetupErrors (34 ms)
+[ RUN      ] Followup.CommandsResetInheritedHangupAndSignalMask
+[       OK ] Followup.CommandsResetInheritedHangupAndSignalMask (38 ms)
+[----------] 17 tests from Followup (1880 ms total)
+
+[----------] 18 tests from FinalReview
+[ RUN      ] FinalReview.LiteralRootsAndAuthoredGlobsRemainDistinctAcrossAliases
+[       OK ] FinalReview.LiteralRootsAndAuthoredGlobsRemainDistinctAcrossAliases (34 ms)
+[ RUN      ] FinalReview.CachedRulesRecheckSymlinkPrefixesAndConfiguration
+[       OK ] FinalReview.CachedRulesRecheckSymlinkPrefixesAndConfiguration (7 ms)
+[ RUN      ] FinalReview.SeparateHookChannelsCannotStarveControlOutput
+[       OK ] FinalReview.SeparateHookChannelsCannotStarveControlOutput (112 ms)
+[ RUN      ] FinalReview.HookSourceMatchersPreserveInvocationContextOrder
+[       OK ] FinalReview.HookSourceMatchersPreserveInvocationContextOrder (118 ms)
+[ RUN      ] FinalReview.CrLfProtocolNeverChangesFileNamesAndPreservesContentWhitespace
+[       OK ] FinalReview.CrLfProtocolNeverChangesFileNamesAndPreservesContentWhitespace (10 ms)
+[ RUN      ] FinalReview.LoneCarriageReturnsAreContentAndUntouchedEofStaysUnterminated
+[       OK ] FinalReview.LoneCarriageReturnsAreContentAndUntouchedEofStaysUnterminated (0 ms)
+[ RUN      ] FinalReview.ExactIdsWinAndLockedReloadsNeverResolveNames
+[       OK ] FinalReview.ExactIdsWinAndLockedReloadsNeverResolveNames (25 ms)
+[ RUN      ] FinalReview.AgentOwnershipReloadUsesExactIdWhenAnotherSessionHasThatName
+[       OK ] FinalReview.AgentOwnershipReloadUsesExactIdWhenAnotherSessionHasThatName (28 ms)
+[ RUN      ] FinalReview.FailedExpansionLeavesNoUnpersistedContextOrFalseRecoveryWarning
+[       OK ] FinalReview.FailedExpansionLeavesNoUnpersistedContextOrFalseRecoveryWarning (76 ms)
+[ RUN      ] FinalReview.BoundedReadsRetainStrictSizeAndRegularFilePolicies
+[       OK ] FinalReview.BoundedReadsRetainStrictSizeAndRegularFilePolicies (1 ms)
+[ RUN      ] FinalReview.ExpiredStopAndGraceExpiryHaveTimeoutStatusAndFinishedJobsKeepStatus
+[       OK ] FinalReview.ExpiredStopAndGraceExpiryHaveTimeoutStatusAndFinishedJobsKeepStatus (52 ms)
+[ RUN      ] FinalReview.StopObservesCompletionBeforeForcingTerminationAfterGrace
+[       OK ] FinalReview.StopObservesCompletionBeforeForcingTerminationAfterGrace (21 ms)
+[ RUN      ] FinalReview.TimeoutReasonSurvivesFailedReapingAndRetry
+[       OK ] FinalReview.TimeoutReasonSurvivesFailedReapingAndRetry (7 ms)
+[ RUN      ] FinalReview.BrokenBackgroundJobDoesNotBlockOtherJobsOrHooksAndRemainsOwned
+[       OK ] FinalReview.BrokenBackgroundJobDoesNotBlockOtherJobsOrHooksAndRemainsOwned (51 ms)
+[ RUN      ] FinalReview.LiteralWorkspaceAllowRuleDoesNotGrantMatchingSibling
+[       OK ] FinalReview.LiteralWorkspaceAllowRuleDoesNotGrantMatchingSibling (1 ms)
+[ RUN      ] FinalReview.GlobFiltersLiteralWorkspaceAndRewrittenReadRemainsDenied
+[       OK ] FinalReview.GlobFiltersLiteralWorkspaceAndRewrittenReadRemainsDenied (28 ms)
+[ RUN      ] FinalReview.FailedForegroundCleanupRetainsOwnershipAndRetriesWithoutBlockingOtherWork
+[       OK ] FinalReview.FailedForegroundCleanupRetainsOwnershipAndRetriesWithoutBlockingOtherWork (211 ms)
+[ RUN      ] FinalReview.FailedCleanupJobsContinueToCountAgainstActiveLimit
+Job job-1: injected observation failure
+[       OK ] FinalReview.FailedCleanupJobsContinueToCountAgainstActiveLimit (1291 ms)
+[----------] 18 tests from FinalReview (2082 ms total)
+
+[----------] 2 tests from Sanitization
+[ RUN      ] Sanitization.MatchesPinnedJsonReplacementForEveryBytePairAndRandomSequences
+[       OK ] Sanitization.MatchesPinnedJsonReplacementForEveryBytePairAndRandomSequences (689 ms)
+[ RUN      ] Sanitization.PreservesJsonRepresentationAndInvalidKeyCollisionBehavior
+[       OK ] Sanitization.PreservesJsonRepresentationAndInvalidKeyCollisionBehavior (0 ms)
+[----------] 2 tests from Sanitization (690 ms total)
+
+[----------] 18 tests from OutputReview
+[ RUN      ] OutputReview.ToolPreviewCountsOriginalBytesAndDoesNotCutItsOwnMarker
+[       OK ] OutputReview.ToolPreviewCountsOriginalBytesAndDoesNotCutItsOwnMarker (142 ms)
+[ RUN      ] OutputReview.UnicodeCutsAndRepairExpansionHaveAccurateSourceCounts
+[       OK ] OutputReview.UnicodeCutsAndRepairExpansionHaveAccurateSourceCounts (337 ms)
+[ RUN      ] OutputReview.LongUnicodePathsUseCompleteNoticeOrMetadataFallback
+[       OK ] OutputReview.LongUnicodePathsUseCompleteNoticeOrMetadataFallback (223 ms)
+[ RUN      ] OutputReview.PartialCaptureFailureKeepsRealStatusAndPrefix
+[       OK ] OutputReview.PartialCaptureFailureKeepsRealStatusAndPrefix (36 ms)
+[ RUN      ] OutputReview.CaptureWarningCannotTruncateCompleteSmallOutput
+[       OK ] OutputReview.CaptureWarningCannotTruncateCompleteSmallOutput (3 ms)
+[ RUN      ] OutputReview.BadEntriesDoNotDisableHealthyCaptureAndLegacyFilesCount
+[       OK ] OutputReview.BadEntriesDoNotDisableHealthyCaptureAndLegacyFilesCount (15 ms)
+[ RUN      ] OutputReview.BatchedWritesAvoidPerChunkScanningAndSyncOnlyAtCompletion
+[       OK ] OutputReview.BatchedWritesAvoidPerChunkScanningAndSyncOnlyAtCompletion (16 ms)
+[ RUN      ] OutputReview.SmallCommandsCannotEvictAnOlderLargeCapture
+[       OK ] OutputReview.SmallCommandsCannotEvictAnOlderLargeCapture (1555 ms)
+[ RUN      ] OutputReview.GenericSpillsShareTheManagedQuotaAndNewPerFileLimit
+[       OK ] OutputReview.GenericSpillsShareTheManagedQuotaAndNewPerFileLimit (3803 ms)
+[ RUN      ] OutputReview.HookFeedbackCanActivateCaptureWithoutLosingOriginalBytes
+[       OK ] OutputReview.HookFeedbackCanActivateCaptureWithoutLosingOriginalBytes (60 ms)
+[ RUN      ] OutputReview.InternalPollingNeitherFormatsNorFlushesUnchangedOutput
+[       OK ] OutputReview.InternalPollingNeitherFormatsNorFlushesUnchangedOutput (55 ms)
+[ RUN      ] OutputReview.CompletedRetentionCountsActualWindowAndStagingCapacities
+[       OK ] OutputReview.CompletedRetentionCountsActualWindowAndStagingCapacities (3920 ms)
+[ RUN      ] OutputReview.InvocationCaptureRootAllowsReadPagingButNotWritesOrDeniedReads
+[       OK ] OutputReview.InvocationCaptureRootAllowsReadPagingButNotWritesOrDeniedReads (48 ms)
+[ RUN      ] OutputReview.ActiveCaptureQuotaCannotBeStolenByAnotherCapture
+[       OK ] OutputReview.ActiveCaptureQuotaCannotBeStolenByAnotherCapture (17 ms)
+[ RUN      ] OutputReview.UnreadableRegularEntryCountsWithoutDisablingHealthyCapture
+[       OK ] OutputReview.UnreadableRegularEntryCountsWithoutDisablingHealthyCapture (15 ms)
+[ RUN      ] OutputReview.SyncFailureKeepsCompleteBytesAndDoesNotInventMissingOutput
+[       OK ] OutputReview.SyncFailureKeepsCompleteBytesAndDoesNotInventMissingOutput (16 ms)
+[ RUN      ] OutputReview.IncompleteUtf8PublicationDoesNotRepairACharacterSplitAcrossReads
+[       OK ] OutputReview.IncompleteUtf8PublicationDoesNotRepairACharacterSplitAcrossReads (15 ms)
+[ RUN      ] OutputReview.StoreWideFilesystemFailureCannotReplaceCommandStatus
+[       OK ] OutputReview.StoreWideFilesystemFailureCannotReplaceCommandStatus (19 ms)
+[----------] 18 tests from OutputReview (10304 ms total)
+
+[----------] 12 tests from Policies
+[ RUN      ] Policies.CleanupReapsWithoutAnExitObserverAfterTransientReapFailure
+[       OK ] Policies.CleanupReapsWithoutAnExitObserverAfterTransientReapFailure (150 ms)
+[ RUN      ] Policies.StopAndDestructionTerminateEvenWithPersistentObservationFailure
+Process observation during cleanup: ordinary observer failure
+Process observation during cleanup: ordinary observer failure
+[       OK ] Policies.StopAndDestructionTerminateEvenWithPersistentObservationFailure (299 ms)
+[ RUN      ] Policies.StandardJobFailuresAreIsolatedAndResourceFailuresStillPropagate
+Job job-1: ordinary observer failure
+[       OK ] Policies.StandardJobFailuresAreIsolatedAndResourceFailuresStillPropagate (37 ms)
+[ RUN      ] Policies.StopCleansOwnedChildBeforePropagatingInterruptionOrResourceFailure
+[       OK ] Policies.StopCleansOwnedChildBeforePropagatingInterruptionOrResourceFailure (451 ms)
+[ RUN      ] Policies.FailedInternalCleanupIsPrivateAndConsumesCapacityUntilReaped
+[       OK ] Policies.FailedInternalCleanupIsPrivateAndConsumesCapacityUntilReaped (1397 ms)
+[ RUN      ] Policies.RoutineRefreshRetriesFailedCleanupWithoutAStopGraceLoop
+[       OK ] Policies.RoutineRefreshRetriesFailedCleanupWithoutAStopGraceLoop (178 ms)
+[ RUN      ] Policies.ForegroundFailureRetainsOriginalStandardException
+Process observation during cleanup: ordinary observer failure
+[       OK ] Policies.ForegroundFailureRetainsOriginalStandardException (148 ms)
+[ RUN      ] Policies.CanonicalLoadedWorkspaceAndEquivalentAliasDenyLiteralMetacharacters
+[       OK ] Policies.CanonicalLoadedWorkspaceAndEquivalentAliasDenyLiteralMetacharacters (10 ms)
+[ RUN      ] Policies.WildcardParentsNormalizeWithoutExpandingGlobsAndSnapshotChangesInvalidateRules
+[       OK ] Policies.WildcardParentsNormalizeWithoutExpandingGlobsAndSnapshotChangesInvalidateRules (1 ms)
+[ RUN      ] Policies.DeniedCrLfPatchNeverRunsAnInputRewritingHook
+[       OK ] Policies.DeniedCrLfPatchNeverRunsAnInputRewritingHook (3 ms)
+[ RUN      ] Policies.ValidLargeDenyUsesFullChannelBudgetAndUnusedStdoutIsIgnored
+[       OK ] Policies.ValidLargeDenyUsesFullChannelBudgetAndUnusedStdoutIsIgnored (190 ms)
+[ RUN      ] Policies.FailedPromptSaveRollsBackContextBeforeRecoveryAndNextTurnSucceeds
+[       OK ] Policies.FailedPromptSaveRollsBackContextBeforeRecoveryAndNextTurnSucceeds (80 ms)
+[----------] 12 tests from Policies (2951 ms total)
+
+[----------] 1 test from DiagnosticPolicies
+[ RUN      ] DiagnosticPolicies.SharedBufferBudgetsFormattedMessagesAndReportsOmissionsOnce
+[       OK ] DiagnosticPolicies.SharedBufferBudgetsFormattedMessagesAndReportsOmissionsOnce (0 ms)
+[----------] 1 test from DiagnosticPolicies (0 ms total)
+
+[----------] 1 test from PromptPolicies
+[ RUN      ] PromptPolicies.AllocationFailureAfterFirstAppendRestoresExistingHistory
+[       OK ] PromptPolicies.AllocationFailureAfterFirstAppendRestoresExistingHistory (0 ms)
+[----------] 1 test from PromptPolicies (0 ms total)
+
+[----------] 10 tests from Prompts
+[ RUN      ] Prompts.ExactModelSelectionDeduplicatesAndRetainsExplicitEmptyOverrides
+[       OK ] Prompts.ExactModelSelectionDeduplicatesAndRetainsExplicitEmptyOverrides (6 ms)
+[ RUN      ] Prompts.CapabilityGatesAndGuidanceAgreeForEveryDegradation
+[       OK ] Prompts.CapabilityGatesAndGuidanceAgreeForEveryDegradation (34 ms)
+[ RUN      ] Prompts.ModesQuestionsAndProjectInstructionsRemainAccurate
+[       OK ] Prompts.ModesQuestionsAndProjectInstructionsRemainAccurate (38 ms)
+[ RUN      ] Prompts.RefreshesRuntimeFactsWithoutReloadingProjectDocuments
+[       OK ] Prompts.RefreshesRuntimeFactsWithoutReloadingProjectDocuments (36 ms)
+[ RUN      ] Prompts.TaskPlanRefreshesWithoutReloadingProjectDocuments
+[       OK ] Prompts.TaskPlanRefreshesWithoutReloadingProjectDocuments (38 ms)
+[ RUN      ] Prompts.HookFeedbackNeverReplacesHumanInstructionDuringCompaction
+[       OK ] Prompts.HookFeedbackNeverReplacesHumanInstructionDuringCompaction (114 ms)
+[ RUN      ] Prompts.CompactionPreservesAsyncSteeringAfterCompletedToolBatch
+[       OK ] Prompts.CompactionPreservesAsyncSteeringAfterCompletedToolBatch (90 ms)
+[ RUN      ] Prompts.FixedOverheadAndUnshrinkableSummaryFailWithoutRepeatedRequests
+[       OK ] Prompts.FixedOverheadAndUnshrinkableSummaryFailWithoutRepeatedRequests (98 ms)
+[ RUN      ] Prompts.OversizedFirstInputFailsWithItsOwnBudgetDiagnostic
+[       OK ] Prompts.OversizedFirstInputFailsWithItsOwnBudgetDiagnostic (33 ms)
+[ RUN      ] Prompts.AllProviderAdaptersCarryTheComposedInstructions
+[       OK ] Prompts.AllProviderAdaptersCarryTheComposedInstructions (109 ms)
+[----------] 10 tests from Prompts (599 ms total)
+
+[----------] 55 tests from History
+[ RUN      ] History.PrivateInspectionIsAvailableHeadlesslyInEveryModeButWorkspaceInspectionIsPlanOnly
+Skill metadata unavailable: /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-wLCqee/home/skills/demo/SKILL.md: missing frontmatter
+Skill metadata unavailable: /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-wLCqee/home/skills/demo/SKILL.md: missing frontmatter
+Skill metadata unavailable: /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-wLCqee/home/skills/demo/SKILL.md: missing frontmatter
+Skill metadata unavailable: /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-wLCqee/home/skills/demo/SKILL.md: missing frontmatter
+[       OK ] History.PrivateInspectionIsAvailableHeadlesslyInEveryModeButWorkspaceInspectionIsPlanOnly (38 ms)
+[ RUN      ] History.OnlyAdvertisedSkillsAndReferencedCapturesGainPrivateAccess
+Skill metadata unavailable: /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-S0ml4N/home/skills/demo/SKILL.md: missing frontmatter
+[       OK ] History.OnlyAdvertisedSkillsAndReferencedCapturesGainPrivateAccess (44 ms)
+[ RUN      ] History.HooksCannotExchangePrivateFilesOrAncestorDirectoriesForSymlinks
+[       OK ] History.HooksCannotExchangePrivateFilesOrAncestorDirectoriesForSymlinks (81 ms)
+[ RUN      ] History.FinalValidationHonorsNewDeniesAndConsumesTheOpenedHandle
+[       OK ] History.FinalValidationHonorsNewDeniesAndConsumesTheOpenedHandle (6 ms)
+[ RUN      ] History.BytePagesReturnActualUtf8BoundariesAndUseBoundedReads
+[       OK ] History.BytePagesReturnActualUtf8BoundariesAndUseBoundedReads (61 ms)
+[ RUN      ] History.DefaultBudgetProjectsLargeBatchesWithoutRerunningOrLosingDurableResults
+[       OK ] History.DefaultBudgetProjectsLargeBatchesWithoutRerunningOrLosingDurableResults (2180 ms)
+[ RUN      ] History.SummaryEscapingEmptyAndExhaustionPreserveDurableHistory
+[       OK ] History.SummaryEscapingEmptyAndExhaustionPreserveDurableHistory (358 ms)
+[ RUN      ] History.PlanViewIsBoundedPrioritizedAndOversizedLegacyPlansRemainReadable
+Saved task plan exceeds 1 MiB; preserved at /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-fMDbaU/home/plans/legacy.json; resuming without an active plan
+[       OK ] History.PlanViewIsBoundedPrioritizedAndOversizedLegacyPlansRemainReadable (170 ms)
+[ RUN      ] History.LedgerPreservesEveryObservationAndRetryIdsWithUnknownLegacyChronology
+[       OK ] History.LedgerPreservesEveryObservationAndRetryIdsWithUnknownLegacyChronology (10 ms)
+[ RUN      ] History.RelocationAndForkRebindOnlyExistingLedgersAndReplayRelativeImages
+[       OK ] History.RelocationAndForkRebindOnlyExistingLedgersAndReplayRelativeImages (46 ms)
+[ RUN      ] History.ReconciliationCannotRestoreArchivedAttachmentsFromCompletedJournals
+[       OK ] History.ReconciliationCannotRestoreArchivedAttachmentsFromCompletedJournals (31 ms)
+[ RUN      ] History.ExcerptWorkIsLinearAndAllEscapingDepthsStayWithinBudget
+[       OK ] History.ExcerptWorkIsLinearAndAllEscapingDepthsStayWithinBudget (1486 ms)
+[ RUN      ] History.InvalidSecondaryDisplaysDoNotBlockExplicitOrAutomaticValidSelection
+[       OK ] History.InvalidSecondaryDisplaysDoNotBlockExplicitOrAutomaticValidSelection (0 ms)
+[ RUN      ] History.SmallBudgetCompactionProtectsTheNewestBatchAndFollowingFeedback
+[       OK ] History.SmallBudgetCompactionProtectsTheNewestBatchAndFollowingFeedback (387 ms)
+[ RUN      ] History.ImpossibleToolArgumentsFailBeforeDispatchAndRemainNeverStarted
+[       OK ] History.ImpossibleToolArgumentsFailBeforeDispatchAndRemainNeverStarted (38 ms)
+[ RUN      ] History.FailedCompactionPublicationPreservesHistoryAndRetryDoesNotDuplicateObservations
+[       OK ] History.FailedCompactionPublicationPreservesHistoryAndRetryDoesNotDuplicateObservations (159 ms)
+[ RUN      ] History.FailureHookCarriesCanonicalIdentityAndPublicOperation
+[       OK ] History.FailureHookCarriesCanonicalIdentityAndPublicOperation (25 ms)
+[ RUN      ] History.PrivateDirectoriesKeepTheirChildrenInPlanMode
+Skill metadata unavailable: /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-yVjlUT/home/skills/demo/SKILL.md: missing frontmatter
+[       OK ] History.PrivateDirectoriesKeepTheirChildrenInPlanMode (9 ms)
+[ RUN      ] History.HooksCannotReplaceHomeOrAdvertisedSkillAncestors
+Hook: PreToolUse: Expected regular file for deletion
+Skill metadata unavailable: /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z/tmp/codet-test-WydJwo/work[1]/.agents/skills/demo/SKILL.md: missing frontmatter
+[       OK ] History.HooksCannotReplaceHomeOrAdvertisedSkillAncestors (49 ms)
+[ RUN      ] History.GeneratedLookingNamesDoNotShadowExistingWorkspaceFiles
+[       OK ] History.GeneratedLookingNamesDoNotShadowExistingWorkspaceFiles (14 ms)
+[ RUN      ] History.AllFiveAdaptersPreserveProjectionReferencesAndPagingControls
+[       OK ] History.AllFiveAdaptersPreserveProjectionReferencesAndPagingControls (3 ms)
+[ RUN      ] History.CompleteResultArchivesExceedRawCaptureCapsAndRebindWithoutFollowingStalePaths
+[       OK ] History.CompleteResultArchivesExceedRawCaptureCapsAndRebindWithoutFollowingStalePaths (2556 ms)
+[ RUN      ] History.FailedResultArchivePersistenceDoesNotReplayCompletedEffects
+[       OK ] History.FailedResultArchivePersistenceDoesNotReplayCompletedEffects (876 ms)
+[ RUN      ] History.LegacyIndexesMigrateOnResumeAndForkWithoutNewAttachments
+[       OK ] History.LegacyIndexesMigrateOnResumeAndForkWithoutNewAttachments (26 ms)
+[ RUN      ] History.PlanAndReadBatchesReserveFuturePromptGrowthInEitherOrder
+[       OK ] History.PlanAndReadBatchesReserveFuturePromptGrowthInEitherOrder (146 ms)
+[ RUN      ] History.MigrationWaitsBeyondSqliteTimeoutWithoutMistakingMigratorsForSessions
+[       OK ] History.MigrationWaitsBeyondSqliteTimeoutWithoutMistakingMigratorsForSessions (5246 ms)
+[ RUN      ] History.RejectedPreviewKeepsPortableFloorAcrossReloadRelocationAndCompaction
+[       OK ] History.RejectedPreviewKeepsPortableFloorAcrossReloadRelocationAndCompaction (56 ms)
+[ RUN      ] History.ExhaustedSoftSummaryBudgetDoesNotStartAnotherCheckpointAttempt
+Optional compaction skipped: Compaction exhausted its shared budget of two summary requests; continuation still exceeds allowance; increase context_tokens or reduce output/project context. history retained.
+[       OK ] History.ExhaustedSoftSummaryBudgetDoesNotStartAnotherCheckpointAttempt (85 ms)
+[ RUN      ] History.JsonBytePagesRemainVerbatimThroughSaveForkAndProviderFormatting
+[       OK ] History.JsonBytePagesRemainVerbatimThroughSaveForkAndProviderFormatting (32 ms)
+[ RUN      ] History.DirectoryPagesRespectContextBudgetAndResumeInSortedOrder
+[       OK ] History.DirectoryPagesRespectContextBudgetAndResumeInSortedOrder (340 ms)
+[ RUN      ] History.DirectoryScanLimitHasFinitePartialPagesAndFilteredEof
+[       OK ] History.DirectoryScanLimitHasFinitePartialPagesAndFilteredEof (13755 ms)
+[ RUN      ] History.DirectoryScanMetadataSurvivesBoundedProjection
+[       OK ] History.DirectoryScanMetadataSurvivesBoundedProjection (83 ms)
+[ RUN      ] History.OptionalCanonicalizationFailureKeepsOtherInstructionAndSkillContext
+[       OK ] History.OptionalCanonicalizationFailureKeepsOtherInstructionAndSkillContext (3 ms)
+[ RUN      ] History.PastEndLineCountsAndCaseAndHardLinkInspectionUseActualFiles
+[       OK ] History.PastEndLineCountsAndCaseAndHardLinkInspectionUseActualFiles (9 ms)
+[ RUN      ] History.PlanPreviewStopsOnceAndStaysInsideEightKiB
+[       OK ] History.PlanPreviewStopsOnceAndStaysInsideEightKiB (12 ms)
+[ RUN      ] History.StablePreviewsPreserveRawJournalAndCaptureReferencesAcrossCompactionAndFork
+[       OK ] History.StablePreviewsPreserveRawJournalAndCaptureReferencesAcrossCompactionAndFork (250 ms)
+[ RUN      ] History.OversizedCompletedPatchCanCheckpointAfterSmallerContextResume
+[       OK ] History.OversizedCompletedPatchCanCheckpointAfterSmallerContextResume (313 ms)
+[ RUN      ] History.AdvisorySummaryTargetUsesActualSizeAndRetriesOnlyHardOverflow
+[       OK ] History.AdvisorySummaryTargetUsesActualSizeAndRetriesOnlyHardOverflow (205 ms)
+[ RUN      ] History.LargeNewPatchDispatchesOnceAndFourPlanListingsStayRecoverable
+[       OK ] History.LargeNewPatchDispatchesOnceAndFourPlanListingsStayRecoverable (577 ms)
+[ RUN      ] History.SchemaFourBackfillsJournalReferencesEvenWhenTranscriptWasCompacted
+[       OK ] History.SchemaFourBackfillsJournalReferencesEvenWhenTranscriptWasCompacted (105 ms)
+[ RUN      ] History.SoftFailureCanPromoteOnceWithinSharedHookAndSummaryLimits
+Optional compaction skipped: Compaction request failed; history retained: fixture summary failure
+Optional compaction skipped: Compaction request failed; history retained: fixture summary failure
+[       OK ] History.SoftFailureCanPromoteOnceWithinSharedHookAndSummaryLimits (448 ms)
+[ RUN      ] History.PublishedIndexGrowthPromotesToCheckpointWithOneHookAndSummary
+[       OK ] History.PublishedIndexGrowthPromotesToCheckpointWithOneHookAndSummary (269 ms)
+[ RUN      ] History.SummaryRetryRunsHookOnceAndCancellationPreservesDurableHistory
+[       OK ] History.SummaryRetryRunsHookOnceAndCancellationPreservesDurableHistory (297 ms)
+[ RUN      ] History.ReferencePublicationRollsBackAndRetryDoesNotUseUncommittedCache
+[       OK ] History.ReferencePublicationRollsBackAndRetryDoesNotUseUncommittedCache (39 ms)
+[ RUN      ] History.SchemaFiveSkipsCorruptRowsWithoutChangingThemOrLosingValidReferences
+[       OK ] History.SchemaFiveSkipsCorruptRowsWithoutChangingThemOrLosingValidReferences (87 ms)
+[ RUN      ] History.SchemaFiveDatabaseFailureRollsBackAndCanRetry
+[       OK ] History.SchemaFiveDatabaseFailureRollsBackAndCanRetry (63 ms)
+[ RUN      ] History.FreshImagesSurviveFirstRequestCompactionAndRetry
+[       OK ] History.FreshImagesSurviveFirstRequestCompactionAndRetry (111 ms)
+[ RUN      ] History.SoftSummaryFailureFallsBackButStopsAndHardOverflowDoNot
+Optional compaction skipped: Compaction request failed; history retained: fixture summary failure
+Optional compaction skipped: Compaction returned an empty summary or tool calls; history retained
+[       OK ] History.SoftSummaryFailureFallsBackButStopsAndHardOverflowDoNot (431 ms)
+[ RUN      ] History.FreshFilePageUsesRetainedBudgetAndNeverSkipsItsMiddle
+[       OK ] History.FreshFilePageUsesRetainedBudgetAndNeverSkipsItsMiddle (178 ms)
+[ RUN      ] History.AssistantBudgetCountsWireRepresentationOnceAndDecoratorsForwardItems
+[       OK ] History.AssistantBudgetCountsWireRepresentationOnceAndDecoratorsForwardItems (7 ms)
+[ RUN      ] History.CheckpointStateCoalescesRecoveryAndIgnoresHistoricalExecutionIds
+[       OK ] History.CheckpointStateCoalescesRecoveryAndIgnoresHistoricalExecutionIds (2 ms)
+[ RUN      ] History.ArchiveRetriesReusePublishedContentWithoutSkippingValidation
+[       OK ] History.ArchiveRetriesReusePublishedContentWithoutSkippingValidation (3 ms)
+[ RUN      ] History.ConcurrentSchemaUpgradesSerializeAndRecheckVersion
+[       OK ] History.ConcurrentSchemaUpgradesSerializeAndRecheckVersion (140 ms)
+[ RUN      ] History.LiveExecutionStateRetiresTheTerminalPoll
+[       OK ] History.LiveExecutionStateRetiresTheTerminalPoll (639 ms)
+[ RUN      ] History.CheckpointArchivesOverflowStateAndPreservesUnseenToolImagesWithoutOrphanResults
+[       OK ] History.CheckpointArchivesOverflowStateAndPreservesUnseenToolImagesWithoutOrphanResults (1150 ms)
+[----------] 55 tests from History (33765 ms total)
+
+[----------] 1 test from InspectionRead
+[ RUN      ] InspectionRead.OpeningSizeBoundsReadsSeeksAndRejectsTruncation
+[       OK ] InspectionRead.OpeningSizeBoundsReadsSeeksAndRejectsTruncation (2 ms)
+[----------] 1 test from InspectionRead (2 ms total)
+
+[----------] 1 test from DiagnosticInterface
+[ RUN      ] DiagnosticInterface.LightweightHeaderIsSelfContained
+[       OK ] DiagnosticInterface.LightweightHeaderIsSelfContained (0 ms)
+[----------] 1 test from DiagnosticInterface (0 ms total)
+
+[----------] 7 tests from ApprovalCurses
+[ RUN      ] ApprovalCurses.OrdinaryNativeFailuresKeepStateAndNextFrameRecovers
+[       OK ] ApprovalCurses.OrdinaryNativeFailuresKeepStateAndNextFrameRecovers (2 ms)
+[ RUN      ] ApprovalCurses.ReviewCreditRequiresSuccessfulRowsAndRefresh
+[       OK ] ApprovalCurses.ReviewCreditRequiresSuccessfulRowsAndRefresh (0 ms)
+[ RUN      ] ApprovalCurses.PreparedPagesFitRealCellsInCAndUtf8Locales
+[       OK ] ApprovalCurses.PreparedPagesFitRealCellsInCAndUtf8Locales (6 ms)
+[ RUN      ] ApprovalCurses.InputRemainsWithinBottomRowForEveryBytePrefixAndSmallScreen
+[       OK ] ApprovalCurses.InputRemainsWithinBottomRowForEveryBytePrefixAndSmallScreen (108 ms)
+[ RUN      ] ApprovalCurses.InvisibleAndExcessCombiningBytesAreExplicitInRealCells
+[       OK ] ApprovalCurses.InvisibleAndExcessCombiningBytesAreExplicitInRealCells (1 ms)
+[ RUN      ] ApprovalCurses.BackendFallbackEscapesBytesWithoutChangingSupportedLocaleText
+[       OK ] ApprovalCurses.BackendFallbackEscapesBytesWithoutChangingSupportedLocaleText (0 ms)
+[ RUN      ] ApprovalCurses.ProseNewlinesAndTabsCannotEscapeTheirAssignedRow
+[       OK ] ApprovalCurses.ProseNewlinesAndTabsCannotEscapeTheirAssignedRow (0 ms)
+[----------] 7 tests from ApprovalCurses (120 ms total)
+
+[----------] 2 tests from NativeStat
+[ RUN      ] NativeStat.InterposedMetadataMatchesFileAbiAndObservesEveryCall
+[       OK ] NativeStat.InterposedMetadataMatchesFileAbiAndObservesEveryCall (0 ms)
+[ RUN      ] NativeStat.PipeAndSocketLayoutsRemainIntact
+[       OK ] NativeStat.PipeAndSocketLayoutsRemainIntact (0 ms)
+[----------] 2 tests from NativeStat (0 ms total)
+
+[----------] 28 tests from NativeRecordLifecycle
+[ RUN      ] NativeRecordLifecycle.DeferredEraseRetainsWorkUntilDiagnosticCompletion
+[       OK ] NativeRecordLifecycle.DeferredEraseRetainsWorkUntilDiagnosticCompletion (2 ms)
+[ RUN      ] NativeRecordLifecycle.InjectedStdoutSharesSeparatorWithNativeStderr
+[       OK ] NativeRecordLifecycle.InjectedStdoutSharesSeparatorWithNativeStderr (0 ms)
+[ RUN      ] NativeRecordLifecycle.ObserverAndNativeReservationRequestOnlyOneSeparator
+[       OK ] NativeRecordLifecycle.ObserverAndNativeReservationRequestOnlyOneSeparator (0 ms)
+[ RUN      ] NativeRecordLifecycle.ThrowingObserverReleasesReservationAndPreservesException
+[       OK ] NativeRecordLifecycle.ThrowingObserverReleasesReservationAndPreservesException (0 ms)
+[ RUN      ] NativeRecordLifecycle.FailedPromptDoesNotGenerateIdleRetryEvents
+[       OK ] NativeRecordLifecycle.FailedPromptDoesNotGenerateIdleRetryEvents (0 ms)
+[ RUN      ] NativeRecordLifecycle.PromptWaitsForCompletionAndRecoversWithoutAnotherKey
+[       OK ] NativeRecordLifecycle.PromptWaitsForCompletionAndRecoversWithoutAnotherKey (0 ms)
+[ RUN      ] NativeRecordLifecycle.ConcurrentDeliveryDefersBothSnapshotAndAdmissionRaces
+[       OK ] NativeRecordLifecycle.ConcurrentDeliveryDefersBothSnapshotAndAdmissionRaces (0 ms)
+[ RUN      ] NativeRecordLifecycle.ObserverCannotExposeAnUnreservedSeparatorGap
+[       OK ] NativeRecordLifecycle.ObserverCannotExposeAnUnreservedSeparatorGap (0 ms)
+[ RUN      ] NativeRecordLifecycle.EarlyEmergencyFailureReleasesItsReservation
+[       OK ] NativeRecordLifecycle.EarlyEmergencyFailureReleasesItsReservation (0 ms)
+[ RUN      ] NativeRecordLifecycle.NullStreamCannotMutateNativeBoundaryOwnership
+[       OK ] NativeRecordLifecycle.NullStreamCannotMutateNativeBoundaryOwnership (0 ms)
+[ RUN      ] NativeRecordLifecycle.ReturningFromInjectedBufferAbandonsTheOldLongerRow
+[       OK ] NativeRecordLifecycle.ReturningFromInjectedBufferAbandonsTheOldLongerRow (0 ms)
+[ RUN      ] NativeRecordLifecycle.OlderInspectionRefreshesWithoutDroppingTheCurrentRecord
+[       OK ] NativeRecordLifecycle.OlderInspectionRefreshesWithoutDroppingTheCurrentRecord (0 ms)
+[ RUN      ] NativeRecordLifecycle.StaleInspectionCannotSuppressAnEmergencyOnTheCurrentDescriptor
+[       OK ] NativeRecordLifecycle.StaleInspectionCannotSuppressAnEmergencyOnTheCurrentDescriptor (1 ms)
+[ RUN      ] NativeRecordLifecycle.CaptureRestoresDescriptorsOnExceptions
+[       OK ] NativeRecordLifecycle.CaptureRestoresDescriptorsOnExceptions (0 ms)
+[ DISABLED ] NativeRecordLifecycle.DISABLED_FailurePrinterProbe
+[ RUN      ] NativeRecordLifecycle.DeferredSubmissionRetainsRawBytesAndOriginalRequest
+[       OK ] NativeRecordLifecycle.DeferredSubmissionRetainsRawBytesAndOriginalRequest (0 ms)
+[ RUN      ] NativeRecordLifecycle.MemoryOutputDoesNotClaimAnUnfinishedNativeRow
+[       OK ] NativeRecordLifecycle.MemoryOutputDoesNotClaimAnUnfinishedNativeRow (0 ms)
+[ RUN      ] NativeRecordLifecycle.KnownWidthPendingLineIsVisible
+[       OK ] NativeRecordLifecycle.KnownWidthPendingLineIsVisible (0 ms)
+[ RUN      ] NativeRecordLifecycle.BasicSecondPendingLineIsVisible
+[       OK ] NativeRecordLifecycle.BasicSecondPendingLineIsVisible (0 ms)
+[ RUN      ] NativeRecordLifecycle.BasicFreshPendingLinePositiveControl
+[       OK ] NativeRecordLifecycle.BasicFreshPendingLinePositiveControl (0 ms)
+[ RUN      ] NativeRecordLifecycle.FrozenSubmissionOwnsOriginAndDiscardCompletesExactlyOnce
+[       OK ] NativeRecordLifecycle.FrozenSubmissionOwnsOriginAndDiscardCompletesExactlyOnce (0 ms)
+[ RUN      ] NativeRecordLifecycle.InterruptedSubmissionRepaintsAfterItsSeparatorWasDeferred
+[       OK ] NativeRecordLifecycle.InterruptedSubmissionRepaintsAfterItsSeparatorWasDeferred (0 ms)
+[ RUN      ] NativeRecordLifecycle.FrozenSubmissionReflowsItsBoundedViewAfterResize
+[       OK ] NativeRecordLifecycle.FrozenSubmissionReflowsItsBoundedViewAfterResize (0 ms)
+[ RUN      ] NativeRecordLifecycle.EmptyOrdinarySubmissionDoesNotPaintSteeringPrompt
+[       OK ] NativeRecordLifecycle.EmptyOrdinarySubmissionDoesNotPaintSteeringPrompt (0 ms)
+[ RUN      ] NativeRecordLifecycle.UnseenRevisionReplacesTheSurvivingKnownWidthRow
+[       OK ] NativeRecordLifecycle.UnseenRevisionReplacesTheSurvivingKnownWidthRow (0 ms)
+[ RUN      ] NativeRecordLifecycle.CompletedInterveningRecordCannotHideFrozenSubmission
+[       OK ] NativeRecordLifecycle.CompletedInterveningRecordCannotHideFrozenSubmission (0 ms)
+[ RUN      ] NativeRecordLifecycle.UnterminatedDiagnosticSeparatesFrozenKnownWidthLine
+[       OK ] NativeRecordLifecycle.UnterminatedDiagnosticSeparatesFrozenKnownWidthLine (0 ms)
+[ RUN      ] NativeRecordLifecycle.CompletedSubmissionNewlineDoesNotReplayAfterLaterDiagnostic
+[       OK ] NativeRecordLifecycle.CompletedSubmissionNewlineDoesNotReplayAfterLaterDiagnostic (0 ms)
+[ RUN      ] NativeRecordLifecycle.PartialSubmissionFailureStillSeparatesRecovery
+[       OK ] NativeRecordLifecycle.PartialSubmissionFailureStillSeparatesRecovery (0 ms)
+[----------] 28 tests from NativeRecordLifecycle (16 ms total)
+
+[----------] 1 test from DiagnosticFixture
+[ RUN      ] DiagnosticFixture.FailureDetailsReachParentLogAndDoNotContaminatePty
+[       OK ] DiagnosticFixture.FailureDetailsReachParentLogAndDoNotContaminatePty (98 ms)
+[----------] 1 test from DiagnosticFixture (98 ms total)
+
+[----------] 1 test from DiagnosticFallbackMetadata
+[ RUN      ] DiagnosticFallbackMetadata.ResetMayOverlapAStableReplacedBuffer
+[       OK ] DiagnosticFallbackMetadata.ResetMayOverlapAStableReplacedBuffer (1 ms)
+[----------] 1 test from DiagnosticFallbackMetadata (1 ms total)
+
+[----------] 2 tests from DiagnosticReservations
+[ RUN      ] DiagnosticReservations.CompletionPublishesAnEventButPresentationFailureDoesNot
+[       OK ] DiagnosticReservations.CompletionPublishesAnEventButPresentationFailureDoesNot (0 ms)
+[ RUN      ] DiagnosticReservations.AliasesResetAndOldFailuresRetainTheirOwnership
+[       OK ] DiagnosticReservations.AliasesResetAndOldFailuresRetainTheirOwnership (0 ms)
+[----------] 2 tests from DiagnosticReservations (0 ms total)
+
+[----------] 21 tests from CliOutput
+[ RUN      ] CliOutput.FailedRequiredRecordIsNotRetriedOrFollowedByAnErrorRecord
+[       OK ] CliOutput.FailedRequiredRecordIsNotRetriedOrFollowedByAnErrorRecord (0 ms)
+[ RUN      ] CliOutput.InteractiveDisplayRecoversButSuccessfulQuitStillReportsLoss
+[       OK ] CliOutput.InteractiveDisplayRecoversButSuccessfulQuitStillReportsLoss (0 ms)
+[ RUN      ] CliOutput.SecondaryReportingPreservesTheOperationException
+[       OK ] CliOutput.SecondaryReportingPreservesTheOperationException (0 ms)
+[ RUN      ] CliOutput.MissingBufferAndConfiguredExceptionsCannotBecomeSuccess
+[       OK ] CliOutput.MissingBufferAndConfiguredExceptionsCannotBecomeSuccess (0 ms)
+[ RUN      ] CliOutput.SecondarySerializationCannotReplaceAnExistingFailure
+[       OK ] CliOutput.SecondarySerializationCannotReplaceAnExistingFailure (0 ms)
+[ RUN      ] CliOutput.NonblockingStdoutRecoversCppAndCStateAfterThePipeDrains
+[       OK ] CliOutput.NonblockingStdoutRecoversCppAndCStateAfterThePipeDrains (81 ms)
+[ RUN      ] CliOutput.DescriptorWritesFinishShortWritesAndInterruptedCalls
+[       OK ] CliOutput.DescriptorWritesFinishShortWritesAndInterruptedCalls (0 ms)
+[ RUN      ] CliOutput.AnswerBoundaryEscapesOnlyTerminalDisplays
+[       OK ] CliOutput.AnswerBoundaryEscapesOnlyTerminalDisplays (0 ms)
+[ RUN      ] CliOutput.DescriptorFailuresLatchWithoutRetryingOrFlushingAtDestruction
+[       OK ] CliOutput.DescriptorFailuresLatchWithoutRetryingOrFlushingAtDestruction (0 ms)
+[ RUN      ] CliOutput.TextExportsBatchExactBytesAndDiscardUnpublishedTails
+[       OK ] CliOutput.TextExportsBatchExactBytesAndDiscardUnpublishedTails (0 ms)
+[ RUN      ] CliOutput.HumanExportsRenderAcrossStagingBoundariesWithoutChangingRawExports
+[       OK ] CliOutput.HumanExportsRenderAcrossStagingBoundariesWithoutChangingRawExports (1 ms)
+[ RUN      ] CliOutput.PartialDescriptorRecordDoesNotReplayItsPrefixOrUnwrittenSuffix
+[       OK ] CliOutput.PartialDescriptorRecordDoesNotReplayItsPrefixOrUnwrittenSuffix (0 ms)
+[ RUN      ] CliOutput.CancelledInterruptedAndPartialWritesDoNotBecomeDeliveryFailures
+[       OK ] CliOutput.CancelledInterruptedAndPartialWritesDoNotBecomeDeliveryFailures (0 ms)
+[ RUN      ] CliOutput.FullBlockingPipeObservesCancellationSetByAnotherThread
+[       OK ] CliOutput.FullBlockingPipeObservesCancellationSetByAnotherThread (204 ms)
+[ RUN      ] CliOutput.ProviderCancellationCanReportOnceToAReadyPipeWithoutCancellingDelivery
+[       OK ] CliOutput.ProviderCancellationCanReportOnceToAReadyPipeWithoutCancellingDelivery (0 ms)
+[ RUN      ] CliOutput.DescriptorChunksRespectTheDarwinLimitWithoutReadingHugeStorage
+[       OK ] CliOutput.DescriptorChunksRespectTheDarwinLimitWithoutReadingHugeStorage (0 ms)
+[ RUN      ] CliOutput.GatheredRecordsAdvanceAcrossVectorsAndInterruptedShortWrites
+[       OK ] CliOutput.GatheredRecordsAdvanceAcrossVectorsAndInterruptedShortWrites (0 ms)
+[ RUN      ] CliOutput.FailedGatheredRecordsNeverReplayPartialPrefixesOrLaterRecords
+[       OK ] CliOutput.FailedGatheredRecordsNeverReplayPartialPrefixesOrLaterRecords (0 ms)
+[ RUN      ] CliOutput.FullSocketCancellationAndImmediateDiagnosticsNeverNeedThePeerToDrain
+[       OK ] CliOutput.FullSocketCancellationAndImmediateDiagnosticsNeverNeedThePeerToDrain (202 ms)
+[ RUN      ] CliOutput.SocketReadinessRacesAndPeerClosureRetainDeliveryStatus
+[       OK ] CliOutput.SocketReadinessRacesAndPeerClosureRetainDeliveryStatus (0 ms)
+[ RUN      ] CliOutput.InterruptedSocketSendsAndReadinessRacesAdvanceOnlyDeliveredBytes
+[       OK ] CliOutput.InterruptedSocketSendsAndReadinessRacesAdvanceOnlyDeliveredBytes (0 ms)
+[----------] 21 tests from CliOutput (492 ms total)
+
+[----------] 24 tests from AllAdapters/WireBudget
+[ RUN      ] AllAdapters/WireBudget.ExactCombinedHistoryFitsAndOneByteLessRejectsWithoutMutation/0
+[       OK ] AllAdapters/WireBudget.ExactCombinedHistoryFitsAndOneByteLessRejectsWithoutMutation/0 (24 ms)
+[ RUN      ] AllAdapters/WireBudget.ExactCombinedHistoryFitsAndOneByteLessRejectsWithoutMutation/1
+[       OK ] AllAdapters/WireBudget.ExactCombinedHistoryFitsAndOneByteLessRejectsWithoutMutation/1 (34 ms)
+[ RUN      ] AllAdapters/WireBudget.ExactCombinedHistoryFitsAndOneByteLessRejectsWithoutMutation/2
+[       OK ] AllAdapters/WireBudget.ExactCombinedHistoryFitsAndOneByteLessRejectsWithoutMutation/2 (23 ms)
+[ RUN      ] AllAdapters/WireBudget.ExactCombinedHistoryFitsAndOneByteLessRejectsWithoutMutation/3
+[       OK ] AllAdapters/WireBudget.ExactCombinedHistoryFitsAndOneByteLessRejectsWithoutMutation/3 (25 ms)
+[ RUN      ] AllAdapters/WireBudget.ExactCombinedHistoryFitsAndOneByteLessRejectsWithoutMutation/4
+[       OK ] AllAdapters/WireBudget.ExactCombinedHistoryFitsAndOneByteLessRejectsWithoutMutation/4 (23 ms)
+[ RUN      ] AllAdapters/WireBudget.ExactCombinedHistoryFitsAndOneByteLessRejectsWithoutMutation/5
+[       OK ] AllAdapters/WireBudget.ExactCombinedHistoryFitsAndOneByteLessRejectsWithoutMutation/5 (21 ms)
+[ RUN      ] AllAdapters/WireBudget.FreshPagesAndStablePreviewsKeepTheirBytesWhileNewResultsShareSpace/0
+[       OK ] AllAdapters/WireBudget.FreshPagesAndStablePreviewsKeepTheirBytesWhileNewResultsShareSpace/0 (248 ms)
+[ RUN      ] AllAdapters/WireBudget.FreshPagesAndStablePreviewsKeepTheirBytesWhileNewResultsShareSpace/1
+[       OK ] AllAdapters/WireBudget.FreshPagesAndStablePreviewsKeepTheirBytesWhileNewResultsShareSpace/1 (247 ms)
+[ RUN      ] AllAdapters/WireBudget.FreshPagesAndStablePreviewsKeepTheirBytesWhileNewResultsShareSpace/2
+[       OK ] AllAdapters/WireBudget.FreshPagesAndStablePreviewsKeepTheirBytesWhileNewResultsShareSpace/2 (263 ms)
+[ RUN      ] AllAdapters/WireBudget.FreshPagesAndStablePreviewsKeepTheirBytesWhileNewResultsShareSpace/3
+[       OK ] AllAdapters/WireBudget.FreshPagesAndStablePreviewsKeepTheirBytesWhileNewResultsShareSpace/3 (250 ms)
+[ RUN      ] AllAdapters/WireBudget.FreshPagesAndStablePreviewsKeepTheirBytesWhileNewResultsShareSpace/4
+[       OK ] AllAdapters/WireBudget.FreshPagesAndStablePreviewsKeepTheirBytesWhileNewResultsShareSpace/4 (267 ms)
+[ RUN      ] AllAdapters/WireBudget.FreshPagesAndStablePreviewsKeepTheirBytesWhileNewResultsShareSpace/5
+[       OK ] AllAdapters/WireBudget.FreshPagesAndStablePreviewsKeepTheirBytesWhileNewResultsShareSpace/5 (246 ms)
+[ RUN      ] AllAdapters/WireBudget.SmallFreshResultsUseTheFastPathWithoutCreatingArchives/0
+[       OK ] AllAdapters/WireBudget.SmallFreshResultsUseTheFastPathWithoutCreatingArchives/0 (1 ms)
+[ RUN      ] AllAdapters/WireBudget.SmallFreshResultsUseTheFastPathWithoutCreatingArchives/1
+[       OK ] AllAdapters/WireBudget.SmallFreshResultsUseTheFastPathWithoutCreatingArchives/1 (1 ms)
+[ RUN      ] AllAdapters/WireBudget.SmallFreshResultsUseTheFastPathWithoutCreatingArchives/2
+[       OK ] AllAdapters/WireBudget.SmallFreshResultsUseTheFastPathWithoutCreatingArchives/2 (1 ms)
+[ RUN      ] AllAdapters/WireBudget.SmallFreshResultsUseTheFastPathWithoutCreatingArchives/3
+[       OK ] AllAdapters/WireBudget.SmallFreshResultsUseTheFastPathWithoutCreatingArchives/3 (1 ms)
+[ RUN      ] AllAdapters/WireBudget.SmallFreshResultsUseTheFastPathWithoutCreatingArchives/4
+[       OK ] AllAdapters/WireBudget.SmallFreshResultsUseTheFastPathWithoutCreatingArchives/4 (1 ms)
+[ RUN      ] AllAdapters/WireBudget.SmallFreshResultsUseTheFastPathWithoutCreatingArchives/5
+[       OK ] AllAdapters/WireBudget.SmallFreshResultsUseTheFastPathWithoutCreatingArchives/5 (1 ms)
+[ RUN      ] AllAdapters/WireBudget.QuotedFilePagesUseWireAllowanceAndKeepContiguousUnicode/0
+[       OK ] AllAdapters/WireBudget.QuotedFilePagesUseWireAllowanceAndKeepContiguousUnicode/0 (5 ms)
+[ RUN      ] AllAdapters/WireBudget.QuotedFilePagesUseWireAllowanceAndKeepContiguousUnicode/1
+[       OK ] AllAdapters/WireBudget.QuotedFilePagesUseWireAllowanceAndKeepContiguousUnicode/1 (5 ms)
+[ RUN      ] AllAdapters/WireBudget.QuotedFilePagesUseWireAllowanceAndKeepContiguousUnicode/2
+[       OK ] AllAdapters/WireBudget.QuotedFilePagesUseWireAllowanceAndKeepContiguousUnicode/2 (4 ms)
+[ RUN      ] AllAdapters/WireBudget.QuotedFilePagesUseWireAllowanceAndKeepContiguousUnicode/3
+[       OK ] AllAdapters/WireBudget.QuotedFilePagesUseWireAllowanceAndKeepContiguousUnicode/3 (4 ms)
+[ RUN      ] AllAdapters/WireBudget.QuotedFilePagesUseWireAllowanceAndKeepContiguousUnicode/4
+[       OK ] AllAdapters/WireBudget.QuotedFilePagesUseWireAllowanceAndKeepContiguousUnicode/4 (4 ms)
+[ RUN      ] AllAdapters/WireBudget.QuotedFilePagesUseWireAllowanceAndKeepContiguousUnicode/5
+[       OK ] AllAdapters/WireBudget.QuotedFilePagesUseWireAllowanceAndKeepContiguousUnicode/5 (4 ms)
+[----------] 24 tests from AllAdapters/WireBudget (1716 ms total)
+
+[----------] Global test environment tear-down
+[==========] 668 tests from 58 test suites ran. (116081 ms total)
+[  PASSED  ] 665 tests.
+[  SKIPPED ] 2 tests, listed below:
+[  SKIPPED ] NetworkOptIn.TlsHandshake
+[  SKIPPED ] Contracts.NativeTigerDesktopAcceptance
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] Followup.LongLineCaptureUsesEightMiBCapAndPreservesPreviewTail
+
+ 1 FAILED TEST
+  YOU HAVE 1 DISABLED TEST
+
+
+
+90% tests passed, 1 tests failed out of 10
+
+Total Test time (real) = 116.24 sec
+
+The following tests FAILED:
+	  2 - codet.unit (Failed)
+Errors while running CTest
