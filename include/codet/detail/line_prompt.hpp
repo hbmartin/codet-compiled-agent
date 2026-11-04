@@ -19,6 +19,8 @@ class LinePrompt final : public LineOutputObserver {
     InputLine line;
     std::string tail, view;
     bool tail_attempted = false, redraw = false;
+    uint64_t boundary = 0;
+    size_t columns = 0;
   };
   std::optional<PendingSubmission> pending_;
   StreamDestination binding_;
@@ -455,8 +457,13 @@ public:
           return result;
       }
     } else if (!pending_->tail_attempted) {
-      const auto &text = visible_ && !pending_->redraw ? pending_->tail : pending_->view;
-      if (!pending_->tail.empty() || pending_->redraw) {
+      // The mutable controller is already empty. Only the frozen view can describe this line.
+      // A record completion or geometry change invalidates even an otherwise empty tail.
+      const bool append = visible_ && !pending_->redraw &&
+                          pending_->boundary == boundary_generation_ &&
+                          pending_->columns == columns_;
+      const auto &text = append ? pending_->tail : pending_->view;
+      if (!text.empty()) {
         const auto result = output_.present_result({text}, false, true);
         if (result == DiagnosticResult::deferred)
           return result;
@@ -470,7 +477,7 @@ public:
       return result;
     dirty_ = visible_ = explained_ = false;
     append_valid_ = false;
-    painted_ = previous_bytes_ = 0;
+    painted_ = previous_bytes_ = committed_ = 0;
     guidance_due_ = due_ = true;
     return result;
   }
@@ -480,16 +487,17 @@ public:
   std::optional<InputLine> try_take() {
     if (!pending_) {
       std::string tail;
-      bool redraw = false;
+      bool redraw = !visible_ || painted_revision_ != input_.revision();
       if (owned_ && !columns_ && !input_.stale() && committed_ < input_.input().prepared().size()) {
         const auto remaining = input_.input().prepared().size() - committed_;
-        redraw = remaining > 12; // At most three held UTF-8 bytes; otherwise use the bounded view.
+        redraw = redraw ||
+                 remaining > 12; // At most three held UTF-8 bytes; otherwise use the bounded view.
         if (!redraw)
           tail = input_.input().prepared().substr(committed_);
       }
       auto view = input_.view(prefix(columns_ ? columns_ : 80), columns_ ? columns_ : 80);
-      pending_.emplace(
-          PendingSubmission{input_.take(), std::move(tail), std::move(view), false, redraw});
+      pending_.emplace(PendingSubmission{input_.take(), std::move(tail), std::move(view), false,
+                                         redraw, boundary_generation_, columns_});
     }
     if (submitted() == DiagnosticResult::deferred)
       return {};

@@ -702,3 +702,68 @@ TEST_F(NativeRecordLifecycle, MemoryOutputDoesNotClaimAnUnfinishedNativeRow) {
   EXPECT_TRUE(capture([&] { return detail::immediate_stderr({"warning"}); }));
   EXPECT_EQ(read(), "warning\r\n");
 }
+
+#if defined(CODET_NATIVE_TERMINAL_METRICS)
+namespace {
+void pending_echo(NativeRecordLifecycle &fixture, unsigned columns, bool prior_line) {
+  struct winsize size {};
+  size.ws_row = 24;
+  size.ws_col = static_cast<unsigned short>(columns);
+  ASSERT_EQ(::ioctl(fixture.slave, TIOCSWINSZ, &size), 0);
+  if (prior_line) {
+    fixture.capture([&] {
+      for (char byte : std::string("hello world"))
+        fixture.line->append(byte);
+      (void)fixture.line->try_take();
+    });
+    (void)fixture.read();
+  } else if (columns) {
+    fixture.capture([&] {
+      fixture.line->append('a');
+      fixture.line->append('b');
+    });
+    (void)fixture.read();
+  }
+  DeliveryGate gate;
+  bool held = false;
+  std::optional<detail::InputLine> submitted;
+  fixture.capture([&] {
+    std::thread worker([&] {
+      if (!gate.wait_for_start())
+        return;
+      test::native_io_metrics.interrupt_fd = STDERR_FILENO;
+      test::native_io_metrics.before_output = DeliveryGate::output;
+      test::native_io_metrics.output_context = &gate;
+      (void)detail::immediate_stderr({"held diagnostic"});
+      test::native_io_metrics = {};
+    });
+    JoinDelivery join{gate, worker};
+    gate.begin();
+    if (columns)
+      fixture.line->append('c');
+    else
+      for (char byte : std::string("abc"))
+        fixture.line->append(byte);
+    submitted = fixture.line->try_take();
+    held = !submitted && fixture.line->submission_pending();
+    gate.release();
+    worker.join();
+    submitted = fixture.line->try_take();
+  });
+  ASSERT_TRUE(held);
+  ASSERT_TRUE(submitted);
+  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_FALSE(gate.timed_out);
+  EXPECT_THAT(fixture.read(), HasSubstr("codet> abc")) << "Frozen submitted line was not displayed";
+}
+TEST_F(NativeRecordLifecycle, KnownWidthPendingLineIsVisible) {
+  pending_echo(*this, 80, false);
+}
+TEST_F(NativeRecordLifecycle, BasicSecondPendingLineIsVisible) {
+  pending_echo(*this, 0, true);
+}
+TEST_F(NativeRecordLifecycle, BasicFreshPendingLinePositiveControl) {
+  pending_echo(*this, 0, false);
+}
+} // namespace
+#endif
