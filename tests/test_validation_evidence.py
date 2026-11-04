@@ -812,13 +812,13 @@ class ReplayIntegrity(unittest.TestCase):
         import evidence_campaign as campaign
         ReplayAndGitGuards.git_fixture(self, self.root)
         template = self.root / "template.json"
-        evidence.atomic_json(template, dict(schema_version=4, baseline="HEAD", python39="unavailable-python39", builds=dict(debug="custom-debug", asan="custom-asan", tsan="custom-tsan", cross="custom-cross"), benchmark=dict(sets=3, measured_per_set=4)))
+        evidence.atomic_json(template, dict(schema_version=5, baseline="HEAD", python39="unavailable-python39", builds=dict(debug="custom-debug", asan="custom-asan", tsan="custom-tsan", cross="custom-cross"), benchmark=dict(sets=3, measured_per_set=4)))
         manifest = campaign.prepare(self.root, Path("build/fresh"), check_python=sys.executable, analysis_python=sys.executable,
                                     template_path=template, clang_tidy=sys.executable, cppcheck=sys.executable)
         checks = json.loads(manifest.read_text())["checks"]
         self.assertIn("custom-debug", next(c for c in checks if c["id"] == "debug-configure")["argv"][4])
         config = json.loads((self.root / "build/fresh/config.json").read_text())
-        self.assertEqual((config["sets"], config["measured"], config["python39"]), (3, 4, "unavailable-python39"))
+        self.assertEqual((config["sets"], config["measured"], config["python39"]), (3, 4, campaign.discover_python39(preferred="unavailable-python39")))
         other = campaign.prepare(self.root, Path("build/other"), "HEAD", sys.executable, sys.executable, sys.executable,
                                  template_path=template, clang_tidy=sys.executable, cppcheck=sys.executable)
         self.assertEqual(json.loads((other.parent / "config.json").read_text())["python39"], sys.executable)
@@ -1039,3 +1039,181 @@ class EvidenceV4(ValidationEvidence):
         result = json.loads(output.read_text())
         self.assertEqual(result['files'], 2)
         self.assertEqual(result['git_commands'], 3)
+
+    def test_v5_audit_rejects_jointly_changed_cwd_fields(self):
+        from evidence_bundle import publish_audit_bundle, verify_bundle
+        self.capture()
+        bundle = self.root / 'bundle'
+        publish_audit_bundle(self.manifest, self.folder, bundle)
+        record_path = bundle / 'capture/test.json'
+        record = json.loads(record_path.read_text())
+        report_path = bundle / 'report.json'
+        report = json.loads(report_path.read_text())
+        for value in (record, report['validation'][0]):
+            value['cwd'] = value['canonical_cwd'] = '/unrelated/nonexistent/check-folder'
+        evidence.atomic_json(record_path, record)
+        evidence.atomic_json(report_path, report)
+        inventory = json.loads((bundle / 'inventory.json').read_text())
+        for name in ('capture/test.json', 'report.json'):
+            inventory[name] = evidence.digest(bundle / name)
+        evidence.atomic_json(bundle / 'inventory.json', inventory)
+        with self.assertRaisesRegex(ValueError, 'Working-directory provenance'):
+            verify_bundle(bundle)
+
+    def test_v5_resolution_chains_are_offline_and_rechecked(self):
+        from evidence_paths import verify_working_provenance, working_provenance
+        target = self.root / 'target'
+        target.mkdir()
+        link = self.root / 'link'
+        link.symlink_to('target')
+        manifest = dict(root=str(self.root))
+        provenance = working_provenance(manifest, dict(cwd='link'))
+        run = dict(canonical_root=str(self.root.resolve()), root_resolution=provenance['root'])
+        record = dict(path_before=provenance, path_after=provenance, cwd_spec='link',
+                      cwd=str(target.resolve()), canonical_cwd=str(target.resolve()))
+        link.unlink()  # Auditing must not query the original machine's links.
+        self.assertEqual(verify_working_provenance(manifest, run, record), str(target.resolve()))
+        record['cwd_spec'] = 'other'
+        with self.assertRaisesRegex(ValueError, 'specification'):
+            verify_working_provenance(manifest, run, record)
+
+    def test_v5_relocations_cannot_substitute_another_finding(self):
+        from evidence_analysis import compare_analysis, finding_key
+        old, new = self.root / 'old', self.root / 'new'
+        for root in (old, new):
+            (root / 'src').mkdir(parents=True)
+            (root / 'src/a.cpp').write_text('same statement\n')
+        helper = ComparisonGuards()
+        a, b = helper.analysis(old, 'clang-tidy'), helper.analysis(new, 'clang-tidy')
+        for manifest, root, name in ((a, old, 'removed-rule'), (b, new, 'new-rule')):
+            finding = dict(DiagnosticName=name, DiagnosticMessage=dict(FilePath=str(root / 'src/a.cpp'), FileOffset=0, Message=name))
+            manifest.update(passed=False, findings=1)
+            manifest['results'][0].update(status='findings', findings=[finding])
+        entry = dict(old=finding_key('clang-tidy', a['results'][0]['findings'][0], old),
+                     new=finding_key('clang-tidy', b['results'][0]['findings'][0], new),
+                     context='same statement', rationale='An unrelated finding must never cancel another.')
+        with self.assertRaisesRegex(ValueError, 'relocation'):
+            compare_analysis(a, b, old, new, ['src/a.cpp'], relocations=[entry])
+
+    def test_v5_dependency_mutation_is_retained_even_if_restored(self):
+        dep = self.root / '.deps/json'
+        dep.mkdir(parents=True)
+        header = dep / 'header.hpp'
+        header.write_text('before')
+        self.checks[0].update(directory_inputs=['.deps/json'], argv=[sys.executable, '-c',
+            'from pathlib import Path;Path(".deps/json/header.hpp").write_text("during")'])
+        result = self.capture()['test']
+        self.assertNotEqual(result['external_inputs_before'], result['external_inputs_after'])
+        header.write_text('before')
+        self.rejected('External build inputs changed')
+
+
+class PortableV5(unittest.TestCase):
+    def test_public_ci_pagination_and_identity(self):
+        from evidence_ci import read_public_ci
+        run = dict(id=42, repository=dict(full_name='owner/repo'), head_sha='head', run_attempt=2,
+                   status='completed', conclusion='success')
+        calls = []
+        def request(url):
+            calls.append(url)
+            if '/jobs?' not in url:
+                return run, dict(url=url, status=200)
+            page = int(url.rsplit('=', 1)[1])
+            jobs = [dict(id=n, run_id=42, head_sha='head', status='completed', conclusion='success')
+                    for n in (range(100) if page == 1 else [100])]
+            return dict(total_count=101, jobs=jobs), dict(url=url, status=200)
+        result = read_public_ci('owner/repo', 42, 'head', request=request)
+        self.assertEqual(len(result['jobs']), 101)
+        self.assertEqual(len(calls), 4)
+        with self.assertRaisesRegex(ValueError, 'identity/head'):
+            read_public_ci('owner/repo', 42, 'other', request=request)
+        count = 0
+        def changed(url):
+            nonlocal count
+            value, provenance = request(url)
+            if '/jobs?' not in url:
+                count += 1
+                value = dict(value, run_attempt=count)
+            return value, provenance
+        with self.assertRaisesRegex(ValueError, 'attempt changed'):
+            read_public_ci('owner/repo', 42, 'head', request=changed)
+
+    def test_public_ci_unavailable_and_poll_deadlines(self):
+        from evidence_ci import read_public_ci
+        with self.assertRaisesRegex(ValueError, 'request unavailable'):
+            read_public_ci('owner/repo', 42, 'head', request=lambda url: (_ for _ in ()).throw(TimeoutError('deadline')))
+        now = [0]
+        sleeps = []
+        def pause(seconds):
+            sleeps.append(seconds)
+            now[0] += seconds
+        def request(url):
+            return dict(id=42, repository=dict(full_name='owner/repo'), head_sha='head', run_attempt=1, status='queued'), dict(url=url)
+        with self.assertRaisesRegex(TimeoutError, 'did not complete'):
+            read_public_ci('owner/repo', 42, 'head', request=request, pause=pause, clock=lambda: now[0])
+        self.assertTrue(sleeps)
+        self.assertLessEqual(max(sleeps), 60)
+
+    def test_python39_discovery_and_override(self):
+        import evidence_campaign as campaign
+        with patch.object(campaign.shutil, 'which', side_effect=lambda name: '/tools/' + name), patch.object(campaign, 'command', side_effect=['3.12', '3.9']):
+            self.assertEqual(campaign.discover_python39(preferred='python3'), '/tools/python3.9')
+        with patch.object(campaign.shutil, 'which', return_value=None):
+            self.assertEqual(campaign.discover_python39(), 'python3.9-unavailable')
+            self.assertEqual(campaign.discover_python39('/explicit/python'), '/explicit/python')
+
+    def test_missing_ca_is_rejected_before_campaign_creation(self):
+        import evidence_campaign as campaign
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            with self.assertRaisesRegex(ValueError, 'CA bundle does not exist'):
+                campaign.prepare(root, root / 'new', ca_bundle=root / 'missing')
+            self.assertFalse((root / 'new').exists())
+
+    def test_checked_clang_file_resolution(self):
+        from clang_plist import resolve_files
+        self.assertEqual(resolve_files([dict(file=0)], ['src/a.cpp']), [dict(file='src/a.cpp')])
+        for index in (-1, 1, True):
+            with self.assertRaisesRegex(ValueError, 'file index'):
+                resolve_files(dict(file=index), ['src/a.cpp'])
+
+    def test_supervisor_terminates_descendants_on_timeout(self):
+        import os
+        import time
+
+        from process_supervision import run
+        with tempfile.TemporaryDirectory() as folder:
+            marker = Path(folder) / 'child-survived'
+            program = 'import subprocess,sys,time;subprocess.Popen([sys.executable,"-c",' + repr('import time;from pathlib import Path;time.sleep(1);Path(' + repr(str(marker)) + ').write_text("survived")') + ']);time.sleep(60)'
+            with self.assertRaises(subprocess.TimeoutExpired):
+                run([sys.executable, '-c', program], timeout=.2, cleanup_grace=.1)
+            time.sleep(1.1)
+            self.assertFalse(marker.exists())
+            self.assertGreater(os.getpid(), 0)
+
+    def test_public_ci_rejects_rate_limits_and_failed_jobs(self):
+        import urllib.error
+
+        from evidence_ci import read_public_ci
+        def denied(url):
+            raise urllib.error.HTTPError(url, 403, 'rate limit', {}, None)
+        with self.assertRaisesRegex(ValueError, '403.*rate limit'):
+            read_public_ci('owner/repo', 42, 'head', request=denied)
+        def failed(url):
+            run = dict(id=42, repository=dict(full_name='owner/repo'), head_sha='head', run_attempt=1,
+                       status='completed', conclusion='success')
+            jobs = dict(total_count=1, jobs=[dict(id=1, run_id=42, head_sha='head', status='completed', conclusion='failure')])
+            return (jobs if '/jobs?' in url else run), dict(url=url)
+        with self.assertRaisesRegex(ValueError, 'did not succeed'):
+            read_public_ci('owner/repo', 42, 'head', request=failed)
+
+    def test_historical_replacements_require_explicit_counts(self):
+        import ast
+        path = Path(__file__).resolve().parents[1] / 'docs/validation/diagnostic-record-lifecycle-followup-prepare-candidate.py'
+        tree = ast.parse(path.read_text())
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'checked_replace')
+        scope = dict(transformations=[])
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(path), 'exec'), scope)
+        with self.assertRaisesRegex(ValueError, 'count mismatch'):
+            scope['checked_replace']('two two', 'two', 'one')
+        self.assertEqual(scope['checked_replace']('two two', 'two', 'one', expected=2), 'one one')

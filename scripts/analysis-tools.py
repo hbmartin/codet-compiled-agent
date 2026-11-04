@@ -3,10 +3,10 @@
 import argparse
 import hashlib
 import json
-import subprocess
 import urllib.request
 from pathlib import Path
 
+from process_supervision import run
 from verified_sources import extract_verified
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,9 +36,9 @@ def main():
     if not (source / 'CMakeLists.txt').is_file():
         raise SystemExit('Missing pinned analysis sources; run make fetch-analysis-tools first')
     build = ROOT / 'build/analysis-tools/cppcheck'
-    subprocess.run(['cmake', '-S', str(source), '-B', str(build), '-DCMAKE_BUILD_TYPE=Release',
+    run(['cmake', '-S', str(source), '-B', str(build), '-DCMAKE_BUILD_TYPE=Release',
                     '-DBUILD_GUI=OFF', '-DBUILD_TESTING=OFF', '-DHAVE_RULES=OFF'], check=True, timeout=600)
-    subprocess.run(['cmake', '--build', str(build), '-j', str(args.jobs)], check=True, timeout=600)
+    run(['cmake', '--build', str(build), '-j', str(args.jobs)], check=True, timeout=600)
     print(build / 'bin/cppcheck')
 
 if __name__ == '__main__':

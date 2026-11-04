@@ -8,9 +8,9 @@ import shutil
 import statistics
 import subprocess
 import sys
-import time
 from pathlib import Path
 
+from clang_plist import resolve_files
 from evidence_analysis import compare_analysis, verify_analysis
 from evidence_benchmarks import (
     executable_provenance,
@@ -57,16 +57,38 @@ def history_files(folders):
     return list(dict.fromkeys(files))
 
 
+def discover_python39(override=None, preferred="python3.9"):
+    if override:
+        return str(override)
+    candidates = [preferred, "python3.9", "/usr/bin/python3", "python3"]
+    for candidate in dict.fromkeys(candidates):
+        path = shutil.which(str(candidate))
+        if not path:
+            continue
+        try:
+            version = command([path, "-c", "import sys;print('%d.%d'%sys.version_info[:2])"], timeout=5,
+                              env={"PATH": os.defpath})
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if version == "3.9":
+            return path
+    return "python3.9-unavailable"
+
+
 def prepare(root, folder, baseline=None, check_python=None, python39=None, analysis_python=None,
-            ci_run=None, clang_tidy=None, cppcheck=None, template_path=None, prior_attempt=None):
+            ci_run=None, clang_tidy=None, cppcheck=None, template_path=None, prior_attempt=None, ca_bundle=None):
     from evidence_inputs import executable
     root = root.resolve()
+    if ca_bundle is not None:
+        ca_bundle = Path(ca_bundle).resolve()
+        if not ca_bundle.is_file():
+            raise ValueError("CA bundle does not exist: " + str(ca_bundle))
     folder = (root / folder).resolve()
     if folder.exists():
         raise ValueError("Campaign directory already exists; choose a fresh folder")
     template_path = template_path or Path(__file__).resolve().parents[1] / "checks/validation-replay.json"
     template = json.loads(template_path.read_text())
-    if template.get("schema_version") != 4:
+    if template.get("schema_version") != 5:
         raise ValueError("Unsupported replay template version")
     if set(template) != {"schema_version", "baseline", "builds", "python39", "benchmark"}:
         raise ValueError("Unknown or missing replay template setting")
@@ -90,14 +112,12 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
         return identity["path"]
     python = tool("check-python", check_python or sys.executable)
     analysis_python = tool("analysis-python", analysis_python or python)
-    python39 = tool("python39", python39 or template["python39"], optional=True)
+    python39 = tool("python39", discover_python39(python39, template["python39"]), optional=True)
     native = {n: tool(n, n, version=None if n == "ar" and sys.platform == "darwin" else "--version")
               for n in ("git", "cmake", "ctest", "ninja", "make", "tar", "ar", "cc", "c++")}
     for name in ("pkg-config", "ranlib", "ld", "strip"):
         if shutil.which(name):
             tool(name, name, version=None if sys.platform == "darwin" and name != "pkg-config" else "--version")
-    if ci_run:
-        tool("gh", "gh")
     analyzer_env = dict(CLANG_TIDY=tool("clang-tidy", clang_tidy or shutil.which("clang-tidy-18") or shutil.which("clang-tidy") or "clang-tidy-18"),
                         CPPCHECK=tool("cppcheck", cppcheck or root / "build/analysis-tools/cppcheck/bin/cppcheck"))
     # Record transitive tool invocations, not just the top-level Python/Make binary.
@@ -121,12 +141,14 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
                        LANG="en_US.UTF-8" if sys.platform == "darwin" else "C.UTF-8",
                        HOME=str(folder / "home"), TMPDIR=str(folder / "tmp"))
     environment.update(SEMGREP_ENABLE_VERSION_CHECK="0", SEMGREP_SEND_METRICS="off", SEMGREP_LOG_FILE=str(folder / "semgrep.log"))
-    if sys.platform == "darwin":
-        environment["SSL_CERT_FILE"] = "/opt/homebrew/etc/ca-certificates/cert.pem"
+    if ca_bundle is not None:
+        environment["SSL_CERT_FILE"] = str(ca_bundle)
     for name in ("home", "tmp"):
         (folder / name).mkdir()
     config_path = folder / "config.json"
-    config = dict(schema_version=4, root=str(root), folder=str(folder), baseline=baseline, tools=tools, environment=environment,
+    config = dict(schema_version=5, root=str(root), folder=str(folder), baseline=baseline, tools=tools, environment=environment,
+                  ca_bundle=dict(path=str(ca_bundle), sha256=digest(ca_bundle)) if ca_bundle else None,
+                  dependency_roots=[".deps/" + n for n in ("googletest", "json", "tomlplusplus", "json-schema-validator")],
                   builds=builds, validated_ref=command([native["git"], "-C", root, "rev-parse", "HEAD"]),
                   ci_run=ci_run, analyzer_env=analyzer_env, check_python=python, python39=python39,
                   analysis_python=analysis_python, prior_attempts=[str((root / path).resolve()) for path in
@@ -142,8 +164,10 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     def add(name, argv, requires=(), policy="required", timeout=600, artifacts=(), **extra):
         checks.append(dict(id=name, argv=[str(a) for a in argv], requires=list(requires), policy=policy,
                            timeout_seconds=timeout, artifacts=list(artifacts),
-                           directory_inputs=([".deps/" + n for n in ("googletest", "json", "tomlplusplus", "json-schema-validator")]
-                                             if name.endswith(("-configure", "-build")) else []), **extra))
+                           directory_inputs=(config["dependency_roots"] if
+                               name.endswith(("-configure", "-build", "-selftest", "-analysis")) or
+                               name in ("benchmark-harness", "native-negative-controls") else []),
+                           file_inputs=([dict(path=str(ca_bundle))] if ca_bundle else []) + extra.pop("file_inputs", []), **extra))
     def producer(name, action, requires=(), inputs=(), timeout=600, **extra):
         names = [rel(config_path)] + list(inputs)
         add(name, [python, "scripts/evidence_campaign.py", "produce", config_path, action], requires,
@@ -172,7 +196,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
                      "-DCMAKE_C_FLAGS=-fsanitize=thread", "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread"]
         add(mode + "-configure", args, ["provision-offline"], outputs=configured_outputs(build))
         add(mode + "-build", [native["cmake"], "--build", build, "-j4"], [mode + "-configure"],
-            outputs=[dict(path=rel(build / n), archive=False) for n in ("codet", "codet_tests", "codet_publication_fault_tests")])
+            outputs=configured_outputs(build) + [dict(path=rel(build / n), archive=False) for n in ("codet", "codet_tests", "codet_publication_fault_tests", "libcodet_core.a", "libcodet_text.a", "deps/schema/libnlohmann_json_schema_validator.a", "lib/libgtest.a", "lib/libgmock.a")])
         if mode != "tsan":
             add(mode + "-ctest", [native["ctest"], "--test-dir", build, "--output-on-failure", "-j2"], [mode + "-build"], timeout=900)
         else:
@@ -202,7 +226,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
             outputs=configured_outputs(build), source_inputs=specs)
         add(variant + "-build", [native["cmake"], "--build", build, "--target", "codet_line_input_bench", "codet_output_bench", "codet_export_bench", "-j4"],
             [variant + "-configure"], source_inputs=specs,
-            outputs=[dict(path=rel(build / n), archive=False) for n in ("codet_line_input_bench", "codet_output_bench", "codet_export_bench", "libcodet_core.a")])
+            outputs=configured_outputs(build) + [dict(path=rel(build / n), archive=False) for n in ("codet_line_input_bench", "codet_output_bench", "codet_export_bench", "libcodet_core.a", "deps/schema/libnlohmann_json_schema_validator.a")])
         probe = rel(build / "analysis/selftest/selftest.json")
         add(variant + "-selftest", [analysis_python, source / "scripts/analyze-modern.py", "--build-dir", build, "--selftest", "--jobs", "4"],
             [variant + "-configure"], env=analyzer_env, source_inputs=specs, outputs=[dict(path=probe)])
@@ -224,7 +248,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     producer("build-metadata", "build-info", ["debug-build", "asan-build", "tsan-build", "cross-build", "baseline-build", "changed-build"], metadata_inputs)
     if ci_run:
         producer("ubuntu", "ci", timeout=1800)
-    atomic_json(folder / "manifest.json", dict(schema_version=4, root=str(root), baseline=baseline, single_attempt=True, environment=environment, tools=tools, checks=checks))
+    atomic_json(folder / "manifest.json", dict(schema_version=5, root=str(root), baseline=baseline, single_attempt=True, environment=environment, tools=tools, checks=checks))
     return folder / "manifest.json"
 
 
@@ -376,13 +400,7 @@ def produce(config_path, action, *, output=None):
             argv = result["command"]
             report = Path(argv[argv.index("-o") + 1])
             files = plistlib.loads(report.read_bytes()).get("files", [])
-            def resolved(value, files=files):
-                if isinstance(value, dict):
-                    return {key: files[item] if key == "file" and isinstance(item, int) else resolved(item) for key, item in value.items()}
-                if isinstance(value, list):
-                    return [resolved(item) for item in value]
-                return value
-            result["findings"] = resolved(result["findings"])
+            result["findings"] = resolve_files(result["findings"], files)
         for manifest in manifests.values():
             verify_analysis(manifest, source, expected)
         if run.returncode not in (0, 1):
@@ -458,20 +476,10 @@ def produce(config_path, action, *, output=None):
             payload.append(dict(name=name, cache=cache.read_text(), cache_sha256=digest(cache),
                                 compiler_path=compiler, compiler_sha256=digest(Path(compiler)), compiler=command([compiler, "--version"])))
     elif action == "ci":
-        deadline = time.monotonic() + 1700
-        while True:
-            payload = json.loads(command(["gh", "run", "view", str(config["ci_run"]), "--json", "status,conclusion,headSha,jobs,url"]))
-            verify_git_source(root, root, payload["headSha"])
-            verify_git_validation(root, root, payload["headSha"])
-            if payload["headSha"] != config["validated_ref"]:
-                raise ValueError("CI head does not match validated source commit")
-            if payload["status"] == "completed":
-                if payload["conclusion"] != "success" or any(j["conclusion"] != "success" for j in payload["jobs"]):
-                    raise ValueError("Required CI did not succeed: " + repr(payload))
-                break
-            if time.monotonic() >= deadline:
-                raise TimeoutError("CI did not complete")
-            time.sleep(10)
+        from evidence_ci import read_public_ci
+        payload = read_public_ci("hbmartin/codet-compiled-agent", config["ci_run"], config["validated_ref"])
+        verify_git_source(root, root, payload["head_sha"])
+        verify_git_validation(root, root, payload["head_sha"])
     else:
         raise ValueError("Unknown producer: " + action)
     save(action, payload)
@@ -482,13 +490,14 @@ def main():
     sub = parser.add_subparsers(dest="action", required=True)
     replay = sub.add_parser("prepare")
     replay.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
-    replay.add_argument("--folder", type=Path, default=Path("build/prompt-evidence-integrity-followup"))
+    replay.add_argument("--folder", type=Path, default=Path("build/pending-input-replay-followup"))
     replay.add_argument("--baseline")
     replay.add_argument("--check-python", default=sys.executable)
     replay.add_argument("--python39")
     replay.add_argument("--template", type=Path)
     replay.add_argument("--analysis-python", default=sys.executable)
     replay.add_argument("--ci-run")
+    replay.add_argument("--ca-bundle", type=Path)
     replay.add_argument("--prior-attempt", type=Path, action="append")
     replay.add_argument("--clang-tidy")
     replay.add_argument("--cppcheck")
@@ -498,7 +507,7 @@ def main():
     producer.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.action == "prepare":
-        print(prepare(args.root, args.folder, args.baseline, args.check_python, args.python39, args.analysis_python, args.ci_run, args.clang_tidy, args.cppcheck, args.template, args.prior_attempt))
+        print(prepare(args.root, args.folder, args.baseline, args.check_python, args.python39, args.analysis_python, args.ci_run, args.clang_tidy, args.cppcheck, args.template, args.prior_attempt, args.ca_bundle))
     else:
         return produce(args.config, args.kind, output=args.output)
 
