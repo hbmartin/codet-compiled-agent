@@ -1,0 +1,61 @@
+{
+  "bundle": "20261104T193903Z-54261a3",
+  "inventory_sha256": "a70c04cac805d719308d5e02302d1ffa02ed0dd12071a1b788ad2a3d80c51fbc",
+  "source_freeze": "54261a385f7908198048ab17da85f0f6ace3e2a5",
+  "recorded_at_ns": 1793822537235446000,
+  "audits": [
+    {
+      "label": "in-place",
+      "argv": [
+        "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/lint-venv/bin/python",
+        "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/scripts/validation_evidence.py",
+        "verify-bundle",
+        "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/docs/validation/completed-input-cleanup-followup/20261104T193903Z-54261a3"
+      ],
+      "cwd": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent",
+      "exit": 0,
+      "stdout": "{\n  \"verified\": true,\n  \"eligible_current\": true,\n  \"schema_version\": 5,\n  \"campaign_id\": \"cd9fc08522df4f7cb6e8df3d5cbf15f5\",\n  \"checks\": 43,\n  \"audit_inputs\": 13243,\n  \"reran_binaries\": false\n}\n",
+      "stderr": ""
+    },
+    {
+      "label": "in-place",
+      "argv": [
+        "/usr/bin/python3",
+        "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/scripts/validation_evidence.py",
+        "verify-bundle",
+        "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/docs/validation/completed-input-cleanup-followup/20261104T193903Z-54261a3"
+      ],
+      "cwd": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent",
+      "exit": 0,
+      "stdout": "{\n  \"verified\": true,\n  \"eligible_current\": true,\n  \"schema_version\": 5,\n  \"campaign_id\": \"cd9fc08522df4f7cb6e8df3d5cbf15f5\",\n  \"checks\": 43,\n  \"audit_inputs\": 13243,\n  \"reran_binaries\": false\n}\n",
+      "stderr": ""
+    },
+    {
+      "label": "relocated-archived-verifier",
+      "argv": [
+        "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/lint-venv/bin/python",
+        "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/completed-input-offline-1ahxuinj/archived-source/scripts/validation_evidence.py",
+        "verify-bundle",
+        "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/completed-input-offline-1ahxuinj/relocated-bundle"
+      ],
+      "cwd": "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/completed-input-offline-1ahxuinj",
+      "exit": 0,
+      "stdout": "{\n  \"verified\": true,\n  \"eligible_current\": true,\n  \"schema_version\": 5,\n  \"campaign_id\": \"cd9fc08522df4f7cb6e8df3d5cbf15f5\",\n  \"checks\": 43,\n  \"audit_inputs\": 13243,\n  \"reran_binaries\": false\n}\n",
+      "stderr": ""
+    },
+    {
+      "label": "relocated-archived-verifier",
+      "argv": [
+        "/usr/bin/python3",
+        "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/completed-input-offline-1ahxuinj/archived-source/scripts/validation_evidence.py",
+        "verify-bundle",
+        "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/completed-input-offline-1ahxuinj/relocated-bundle"
+      ],
+      "cwd": "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/completed-input-offline-1ahxuinj",
+      "exit": 0,
+      "stdout": "{\n  \"verified\": true,\n  \"eligible_current\": true,\n  \"schema_version\": 5,\n  \"campaign_id\": \"cd9fc08522df4f7cb6e8df3d5cbf15f5\",\n  \"checks\": 43,\n  \"audit_inputs\": 13243,\n  \"reran_binaries\": false\n}\n",
+      "stderr": ""
+    }
+  ],
+  "scope": "Post-publication offline audits; no original checkout lookup is needed for relocated archived-source verification."
+}

@@ -39,6 +39,8 @@ sys.path.insert(0,str(path.parent));sys.argv=[str(path),binary]
 spec=importlib.util.spec_from_file_location('pending_native_control',path)
 module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
 if target=='CliTests.test_frozen_submission_obeys_turn_outcome_and_services_controls':module.CliTests.pending_outcomes=('quit',)
+if target=='CliTests.test_completed_result_is_saved_and_displayed_before_late_close':module.CliTests.completed_closes=(b'\x04',)
+if target=='CliTests.test_late_signals_preserve_result_and_return_to_usable_prompt':module.CliTests.late_stops=(module.signal.SIGTERM,)
 suite=unittest.defaultTestLoader.loadTestsFromName(target,module)
 if suite.countTestCases()!=1:raise ValueError('Pending-control target was not discovered exactly once')
 result=unittest.TextTestRunner(verbosity=2).run(suite)
@@ -131,9 +133,30 @@ def run_controls(root, folder, build, ninja):
          "std::move(tail), std::move(view),",
          "std::move(tail), view,",
          "LineSubmissionFault.AllocationFailureCannotConsumeAnUnownedLine"),
+        ("fragment-boundary", "tests/diagnostic_lifecycle_test.cpp", "include/codet/detail/output_destination.hpp",
+         '(presentation ? selected.fragment : selected.row)', '(!presentation && selected.row)',
+         "NativeRecordLifecycle.UnterminatedDiagnosticSeparatesFrozenKnownWidthLine"),
+        ("newline-ack", "tests/diagnostic_lifecycle_test.cpp", "include/codet/detail/line_prompt.hpp",
+         '// A successful final newline completes this line. Later output belongs to a later record.',
+         'observe_boundary(); if (pending_ && pending_->boundary != boundary_generation_) { pending_->tail_attempted = false; return DiagnosticResult::deferred; }',
+         "NativeRecordLifecycle.CompletedSubmissionNewlineDoesNotReplayAfterLaterDiagnostic"),
+        ("receipt-admission", "tests/cli_diagnostics_test.cpp", "include/codet/detail/output_destination.hpp",
+         '(expected && (!expected->valid', '(false && expected && (!expected->valid',
+         "LineDestinations.PresentationTokenRejectsAnInterveningRecordAndRebinding"),
+        ("control-overflow", "tests/cli_diagnostics_test.cpp", "include/codet/detail/pending_control.hpp",
+         '--overflow_;', 'overflow_ = 0;', "PendingControl.BackspaceConsumesOverflowBeforeTheRetainedPrefix"),
+        ("held-fifo", "tests/cli_diagnostics_test.cpp", "include/codet/detail/turn_input.hpp",
+         'phase == TurnInputPhase::completed || line.presentation_held || held',
+         'phase == TurnInputPhase::completed || line.presentation_held || (held && false)',
+         "TurnInput.ExpiredAnswersNeverBecomeMessagesAndHeldOrderPrecedesSteering"),
+        ("origin-owner", "tests/cli_diagnostics_test.cpp", "include/codet/detail/turn_input.hpp",
+         'if (!line.origin || line.origin->session != origin.session || line.origin->turn != origin.turn)',
+         'if (false && (!line.origin || line.origin->session != origin.session || line.origin->turn != origin.turn))',
+         "TurnInput.CompletedInputKeepsActiveCommandPolicyAndRejectsWrongOrigins"),
     ]
     results = []
     for name, entry_name, source_name, before, after, target in cases:
+        print("Native control:", name, flush=True)
         directory = folder / ("native-control-" + name)
         directory.mkdir()
         binary_target = "codet_publication_fault_tests" if target.startswith("LineSubmissionFault.") else "codet_tests"
@@ -143,9 +166,13 @@ def run_controls(root, folder, build, ninja):
         source, binary, compiled, linked = compile_mutant(directory, binary_target, "control-tests", entry_name, source_name, before, after)
         mutant = _test(binary, target, directory)
         markers = {"deferred": "deferred", "pending-visible": "Frozen submitted line was not displayed",
-                   "pending-interruption": "read()", "separator": 'read()', "printer": "Expected equality of these values", "pid-guard": "unexpected wait",
+                   "pending-interruption": "Value of: submitted", "separator": 'read()', "printer": "Expected equality of these values", "pid-guard": "unexpected wait",
                    "refresh": "Refresh after failed drawing", "inspection": "handle->read",
-                   "submission-allocation": "Allocation consumed a line without pending ownership"}
+                   "submission-allocation": "Allocation consumed a line without pending ownership",
+                   "fragment-boundary": "Unterminated diagnostic hid frozen input",
+                   "newline-ack": "Frozen completed line was deferred after its newline",
+                   "receipt-admission": "Value of:", "control-overflow": "Value of:",
+                   "origin-owner": "Expected equality", "held-fifo": "Expected equality"}
         if (mutant["exit"] != 1 or not mutant["assertions"] or
                 any("C++ exception" in message or "unknown file" in message for message in mutant["assertions"]) or
                 not any(markers[name] in message for message in mutant["assertions"])):
@@ -168,24 +195,29 @@ def run_controls(root, folder, build, ninja):
     results.append(dict(name="pending-keyboard", target="CliTests.test_frozen_submission_obeys_turn_outcome_and_services_controls", mutation=dict(before=before, after=after, original_sha256=digest(root / "src/modern/cli.cpp"), mutant_sha256=digest(source)), binary_sha256=digest(binary), baseline=baseline, compile=compiled, link=linked, mutant=mutant))
     review_controls = [
         ("pending-control-owner", "CliTests.test_partial_pending_controls_never_stall_or_leak_into_messages",
-         '    if (line_ && (line_->submission_pending() || pending_control_started_)) {',
+         '    if (line_ && (line_->submission_pending() || pending_control_.started())) {',
          '    if (line_ && line_->submission_pending()) {', "Extra pending input became a user message"),
-        ("held-steering-fifo", "CliTests.test_held_and_pending_followups_keep_submission_order",
-         '(line->presentation_held || !held_followups.empty())',
-         'line->presentation_held', "Held follow-ups reversed submission order"),
         ("pending-control-progress", "CliTests.test_partial_pending_controls_never_stall_or_leak_into_messages",
          "      if (read_cancel_ && read_cancel_->requested)\n        return {};",
-         "      if ((read_cancel_ && read_cancel_->requested) || pending_control_size_ || pending_control_overflow_)\n        return {};",
+         "      if ((read_cancel_ && read_cancel_->requested) || pending_control_.started())\n        return {};",
          "Pending sequence gate failed: b'd'"),
         ("completed-quit", "CliTests.test_completed_turn_honors_frozen_quit_and_drops_earlier_followups",
-         '          if (submission.action == detail::InputAction::quit) {\n            quit_requested = true;\n            break; // The completed turn stays complete, and no staged follow-up may run.\n          }\n',
-         "", "Frozen quit did not stop after completed turn"),
-        ("held-fifo", "CliTests.test_held_and_pending_followups_keep_submission_order",
-         '              line->origin->turn == input_turn)\n            hold_followup(*line);',
-         '              line->origin->turn == input_turn)\n            followups.push_back(std::move(line->text));',
-         "Held follow-ups reversed submission order"),
+         '        quit_requested = true;\n        if (phase == detail::TurnInputPhase::active)',
+         '        quit_requested = phase == detail::TurnInputPhase::active;\n        if (phase == detail::TurnInputPhase::active)',
+         "Frozen quit did not stop after completed turn"),
+        ("completed-publication", "CliTests.test_completed_result_is_saved_and_displayed_before_late_close",
+         '      publish_result(result);\n      while (terminal->submission_pending())',
+         '      while (terminal->submission_pending())', "Completed result waited behind pending input"),
+        ("completed-close", "CliTests.test_completed_result_is_saved_and_displayed_before_late_close",
+         '          (void)terminal->take_quit();\n          quit_requested = true;',
+         '          (void)terminal->take_quit();\n          cancel.requested = true; cancel.check();\n          quit_requested = true;',
+         "Completed close became interruption"),
+        ("late-signal-reset", "CliTests.test_late_signals_preserve_result_and_return_to_usable_prompt",
+         '      if (late_cancel && !quit_requested)\n        cancel.requested = false;',
+         '      (void)late_cancel;', "Late signal prevented a fresh interactive turn"),
     ]
     for name, target, before, after, marker in review_controls:
+        print("Integration control:", name, flush=True)
         directory = folder / ("native-control-" + name)
         directory.mkdir()
         baseline = _integration(root, build / "codet", directory, target)

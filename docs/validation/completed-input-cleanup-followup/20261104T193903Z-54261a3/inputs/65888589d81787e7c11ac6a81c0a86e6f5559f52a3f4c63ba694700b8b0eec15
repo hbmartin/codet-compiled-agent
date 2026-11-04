@@ -1,0 +1,9 @@
+Test project /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T185401Z/debug
+      Start  1: codet.publication-faults
+      Start  2: codet.unit
+ 1/10 Test  #1: codet.publication-faults .........   Passed    5.90 sec
+      Start  3: codet.cli
+ 2/10 Test  #3: codet.cli ........................   Passed    0.11 sec
+      Start  4: codet.integration
+ 3/10 Test  #2: codet.unit .......................   Passed   59.89 sec
+      Start  5: codet.prompts

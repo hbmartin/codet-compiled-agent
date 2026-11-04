@@ -75,7 +75,7 @@ def relocation_identity(tool, key):
     if tool == "clang-tidy":
         return key[0], key[1], key[3], key[4]
     if tool == "cppcheck":
-        return key[0], key[1], tuple((loc[0], loc[3]) for loc in key[2])
+        return key[0], key[1], tuple(sorted((loc[0], loc[3]) for loc in key[2]))
     location = json.loads(key[4])
     return key[0], key[1], key[2], key[3], location["file"], key[5]
 
@@ -101,6 +101,37 @@ def diagnostic_context(tool, key, root, expected=None):
     return (root / name).read_text().splitlines()[int(line) - 1]
 
 
+def cppcheck_contexts_match(entry, before, after, baseline_root, changed_root):
+    mappings = entry.get("location_contexts")
+    if not isinstance(mappings, list) or len(mappings) != len(before[2]) or len(mappings) != len(after[2]):
+        return False
+    old, new = [], []
+    for mapping in mappings:
+        if not isinstance(mapping, dict) or set(mapping) != {"old", "new", "context"}:
+            return False
+        if not all(isinstance(mapping[name], (list, tuple)) for name in ("old", "new")):
+            return False
+        previous, current = tuple(mapping["old"]), tuple(mapping["new"])
+        context = mapping["context"]
+        if (len(previous) != 4 or len(current) != 4 or not isinstance(context, str) or not context or
+                (previous[0], previous[3]) != (current[0], current[3])):
+            return False
+        for location, root in ((previous, baseline_root), (current, changed_root)):
+            try:
+                line = location[1]
+                if not (type(line) is int or (type(line) is str and line.isdecimal())):
+                    return False
+                number = int(line)
+                if number <= 0 or (root / location[0]).read_text().splitlines()[number - 1] != context:
+                    return False
+            except (OSError, IndexError, TypeError, ValueError):
+                return False
+        old.append(previous)
+        new.append(current)
+    return (len(set(old)) == len(old) and len(set(new)) == len(new) and
+            Counter(old) == Counter(before[2]) and Counter(new) == Counter(after[2]))
+
+
 def compare_analysis(baseline, changed, baseline_root, changed_root, expected, changed_expected=None, relocations=()):
     if baseline["tool"] != changed["tool"]:
         raise ValueError("Analyzer tool mismatch")
@@ -123,10 +154,14 @@ def compare_analysis(baseline, changed, baseline_root, changed_root, expected, c
         def frozen(value):
             return tuple(frozen(x) for x in value) if isinstance(value, (list, tuple)) else value
         before, after = frozen(before), frozen(after)
+        if tool == "cppcheck":
+            context_matches = cppcheck_contexts_match(entry, before, after, baseline_root, changed_root)
+        else:
+            context_matches = bool(entry.get("context")) and (
+                diagnostic_context(tool, before, baseline_root, entry["context"]) == entry["context"] and
+                diagnostic_context(tool, after, changed_root, entry["context"]) == entry["context"])
         if (relocation_identity(tool, before) != relocation_identity(tool, after) or
-                not entry.get("rationale") or not entry.get("context") or
-                diagnostic_context(tool, before, baseline_root, entry["context"]) != entry["context"] or
-                diagnostic_context(tool, after, changed_root, entry["context"]) != entry["context"] or
+                not entry.get("rationale") or not context_matches or
                 before in used_old or after in used_new or old[before] != 1 or new[after] != 1):
             raise ValueError("Invalid or ambiguous reviewed analyzer relocation")
         used_old.add(before)

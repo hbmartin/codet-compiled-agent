@@ -1,0 +1,259 @@
+{
+  "schema_version": 5,
+  "root": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent",
+  "folder": "/Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T190155Z",
+  "baseline": "6669219b85d74a28ba935c92d7dc039054535c83",
+  "tools": {
+    "check-python": {
+      "path": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/lint-venv/bin/python",
+      "realpath": "/opt/homebrew/Cellar/python@3.12/3.12.15/Frameworks/Python.framework/Versions/3.12/bin/python3.12",
+      "sha256": "af2e87fe5d9aef8abf9002d215320c7eb127a2b90b7686ec365405991d571ef4",
+      "version": "Python 3.12.15"
+    },
+    "analysis-python": {
+      "path": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/lint-venv/bin/python",
+      "realpath": "/opt/homebrew/Cellar/python@3.12/3.12.15/Frameworks/Python.framework/Versions/3.12/bin/python3.12",
+      "sha256": "af2e87fe5d9aef8abf9002d215320c7eb127a2b90b7686ec365405991d571ef4",
+      "version": "Python 3.12.15"
+    },
+    "python39": {
+      "path": "/usr/bin/python3",
+      "realpath": "/usr/bin/python3",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "Python 3.9.6"
+    },
+    "git": {
+      "path": "/usr/bin/git",
+      "realpath": "/usr/bin/git",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "git version 2.54.0 (Apple Git-157)"
+    },
+    "cmake": {
+      "path": "/opt/homebrew/bin/cmake",
+      "realpath": "/opt/homebrew/Cellar/cmake/4.4.4/bin/cmake",
+      "sha256": "64c16ba19481b4e8fa5fc51afa37a7609128d5e5c10236eb1492d16d22d029c4",
+      "version": "cmake version 4.4.4\n\nCMake suite maintained and supported by Kitware (kitware.com/cmake)."
+    },
+    "ctest": {
+      "path": "/opt/homebrew/bin/ctest",
+      "realpath": "/opt/homebrew/Cellar/cmake/4.4.4/bin/ctest",
+      "sha256": "0bc8e30644872bff0b1b9d45eee996f5e9aad5b74b46869f5f6dd683361d478f",
+      "version": "ctest version 4.4.4\n\nCMake suite maintained and supported by Kitware (kitware.com/cmake)."
+    },
+    "ninja": {
+      "path": "/opt/homebrew/bin/ninja",
+      "realpath": "/opt/homebrew/bin/ninja",
+      "sha256": "a9f1537984cf168d119fda94c6c9ee349d2720aa23242bdb50375df5c5ecebd8",
+      "version": "1.11.1.git.kitware.jobserver-1"
+    },
+    "make": {
+      "path": "/usr/bin/make",
+      "realpath": "/usr/bin/make",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "GNU Make 3.81\nCopyright (C) 2006  Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.\nThere is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A\nPARTICULAR PURPOSE.\n\nThis program built for i386-apple-darwin11.3.0"
+    },
+    "tar": {
+      "path": "/usr/bin/tar",
+      "realpath": "/usr/bin/bsdtar",
+      "sha256": "ad4e73ac2e00b3d69969b2e8da466f08c7968a51f424380ecb4d9ff6779b28b9",
+      "version": "bsdtar 3.5.3 - libarchive 3.7.4 zlib/1.2.12 liblzma/5.4.3 bz2lib/1.0.8"
+    },
+    "ar": {
+      "path": "/usr/bin/ar",
+      "realpath": "/usr/bin/ar",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "No supported version probe; executable digest recorded"
+    },
+    "cc": {
+      "path": "/usr/bin/cc",
+      "realpath": "/usr/bin/cc",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "Apple clang version 21.0.0 (clang-2100.4.1.1)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+    },
+    "c++": {
+      "path": "/usr/bin/c++",
+      "realpath": "/usr/bin/c++",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "Apple clang version 21.0.0 (clang-2100.4.1.1)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+    },
+    "pkg-config": {
+      "path": "/opt/homebrew/bin/pkg-config",
+      "realpath": "/opt/homebrew/Cellar/pkgconf/3.0.10/bin/pkgconf",
+      "sha256": "9ab5b4565b097dc4c58515dbdf131adb67386ece44c48488c94670ca478b5ede",
+      "version": "3.0.10"
+    },
+    "ranlib": {
+      "path": "/usr/bin/ranlib",
+      "realpath": "/usr/bin/ranlib",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "No supported version probe; executable digest recorded"
+    },
+    "ld": {
+      "path": "/usr/bin/ld",
+      "realpath": "/usr/bin/ld",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "No supported version probe; executable digest recorded"
+    },
+    "strip": {
+      "path": "/usr/bin/strip",
+      "realpath": "/usr/bin/strip",
+      "sha256": "34129c71a01a74f7f3b2443521519b2e5447553fa187f5fcafaaf8c42cc192e2",
+      "version": "No supported version probe; executable digest recorded"
+    },
+    "ps": {
+      "path": "/bin/ps",
+      "realpath": "/bin/ps",
+      "sha256": "a06fe087161557f1f8c030672eaedcd90bc6a8e92b8f2d44e07cffedc3349205",
+      "version": "No supported version probe; executable digest recorded"
+    },
+    "clang-tidy": {
+      "path": "/opt/homebrew/opt/llvm/bin/clang-tidy",
+      "realpath": "/opt/homebrew/Cellar/llvm/23.1.3_1/bin/clang-tidy",
+      "sha256": "ebbdf65f2d9f3daf67d77890869135c38d33ab6b4c9fd3705a759cbff6c28659",
+      "version": "Homebrew LLVM version 23.1.3\n  Optimized build."
+    },
+    "cppcheck": {
+      "path": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck",
+      "realpath": "/Volumes/Pro2T/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck",
+      "sha256": "191e62b01aad1d25e4412fe9ab8819d56ed4aa84e9249dcbcc890f8332ad6e24",
+      "version": "Cppcheck 2.22.0"
+    },
+    "clang-format": {
+      "path": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/lint-venv/bin/clang-format",
+      "realpath": "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/clang-format",
+      "sha256": "b7389fc2d2773171c6f5505609b4ca1496f300c485a421f6df20f7250bec66ef",
+      "version": "clang-format version 18.1.8"
+    },
+    "ruff": {
+      "path": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/lint-venv/bin/ruff",
+      "realpath": "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/ruff",
+      "sha256": "1cd36902264ba39d8eada510c026a44236ddb55f67937694d8a22b2708fdc0e0",
+      "version": "ruff 0.17.1"
+    },
+    "zizmor": {
+      "path": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/lint-venv/bin/zizmor",
+      "realpath": "/Volumes/Pro2T/codet-compiled-agent/build/lint-venv/bin/zizmor",
+      "sha256": "0717f7c8878caf12f3c8bdb99841bd5dff97e26f0481bba98f59169d414edc34",
+      "version": "zizmor 1.30.1"
+    },
+    "shfmt": {
+      "path": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/lint-tools/bin/shfmt",
+      "realpath": "/Volumes/Pro2T/codet-compiled-agent/build/lint-tools/bin/shfmt",
+      "sha256": "79b9dffab2c47d3a2529cda09254af468565d2f3e6270b908cbc2644a9628713",
+      "version": "v3.14.1"
+    },
+    "actionlint": {
+      "path": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/lint-tools/bin/actionlint",
+      "realpath": "/Volumes/Pro2T/codet-compiled-agent/build/lint-tools/bin/actionlint",
+      "sha256": "7db7b7cf69bac42c28dc5d8256c478bcc5f9c0a3ff4029b09cf6f4d83fb7d60c",
+      "version": "v1.7.12\ninstalled by building from source\nbuilt with go1.27.2 compiler for darwin/arm64"
+    },
+    "shellcheck": {
+      "path": "/opt/homebrew/bin/shellcheck",
+      "realpath": "/opt/homebrew/Cellar/shellcheck/0.11.0/bin/shellcheck",
+      "sha256": "29dca91c54b8bb41ad841bff1c941a9d5dec714242c3ab69ca05594bd69a9020",
+      "version": "ShellCheck - shell script analysis tool\nversion: 0.11.0\nlicense: GNU General Public License, version 3\nwebsite: https://www.shellcheck.net"
+    },
+    "semgrep": {
+      "path": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/semgrep-venv/bin/pysemgrep",
+      "realpath": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/semgrep-venv/bin/pysemgrep",
+      "sha256": "bc18368910b3b20862d72bf5c82385b1d5206ab72536c5ca6154d14c77047d6e",
+      "version": "1.177.0"
+    },
+    "shell": {
+      "path": "/bin/sh",
+      "realpath": "/bin/sh",
+      "sha256": "84ca7f9b83021621e16059a1c7850df72a462d879e8239d566236ca6ddd00953",
+      "version": "No supported version probe; executable digest recorded"
+    },
+    "go": {
+      "path": "/opt/homebrew/bin/go",
+      "realpath": "/opt/homebrew/Cellar/go/1.27.2/libexec/bin/go",
+      "sha256": "fc32e163235c4b98a67a7caae7cbd60c73f706cbd6138ff7bcf6c9d60d5e3312",
+      "version": "go version go1.27.2 darwin/arm64"
+    }
+  },
+  "environment": {
+    "PATH": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/lint-venv/bin:/usr/bin:/opt/homebrew/bin:/bin:/opt/homebrew/opt/llvm/bin:/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/analysis-tools/cppcheck/bin:/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/lint-tools/bin:/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/semgrep-venv/bin",
+    "LANG": "en_US.UTF-8",
+    "HOME": "/Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T190155Z/home",
+    "TMPDIR": "/Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T190155Z/tmp",
+    "SEMGREP_ENABLE_VERSION_CHECK": "0",
+    "SEMGREP_SEND_METRICS": "off",
+    "SEMGREP_LOG_FILE": "/Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T190155Z/semgrep.log"
+  },
+  "hash_correctness_ref": "6669219b85d74a28ba935c92d7dc039054535c83",
+  "ca_bundle": null,
+  "dependency_roots": [
+    ".deps/googletest",
+    ".deps/json",
+    ".deps/tomlplusplus",
+    ".deps/json-schema-validator"
+  ],
+  "builds": {
+    "debug": "/Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T190155Z/debug",
+    "asan": "/Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T190155Z/asan",
+    "tsan": "/Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T190155Z/tsan",
+    "cross": "/Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T190155Z/cross-selection"
+  },
+  "validated_ref": "7a20d2e4034188d9ee44f2c4ba5c8948d4a51bfb",
+  "ci_run": null,
+  "analyzer_env": {
+    "CLANG_TIDY": "/opt/homebrew/opt/llvm/bin/clang-tidy",
+    "CPPCHECK": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/analysis-tools/cppcheck/bin/cppcheck"
+  },
+  "check_python": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/lint-venv/bin/python",
+  "python39": "/usr/bin/python3",
+  "analysis_python": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/build/lint-venv/bin/python",
+  "prior_attempts": [
+    "/Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T173706Z",
+    "/Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T174935Z",
+    "/Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T180630Z",
+    "/Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T183014Z",
+    "/Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T185401Z"
+  ],
+  "cases": {
+    "line": [
+      "allocation-positive",
+      "geometry-positive",
+      "busy",
+      "native-busy",
+      "editing",
+      "editing-basic",
+      "native-editing",
+      "deletion",
+      "unchanged",
+      "deferred-tail",
+      "native-boundary",
+      "native-flush-boundary",
+      "native-unchanged",
+      "pending-submission",
+      "native-pending-submission",
+      "native-pending-fragment"
+    ],
+    "tooling": [
+      "hashing",
+      "git-inspection",
+      "supervision"
+    ],
+    "output": [
+      "write-positive",
+      "stat-positive",
+      "flags-positive",
+      "bounds-positive",
+      "diagnostics-amplified",
+      "diagnostics-standalone-amplified",
+      "diagnostics-pipe-amplified"
+    ],
+    "export": [
+      "small",
+      "large"
+    ]
+  },
+  "sets": 2,
+  "measured": 5,
+  "sdk": {
+    "path": "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk",
+    "version": "27.2"
+  }
+}

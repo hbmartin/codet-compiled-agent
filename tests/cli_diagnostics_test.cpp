@@ -5,9 +5,11 @@
 #include "codet/detail/curses_input.hpp"
 #include "codet/detail/line_prompt.hpp"
 #include "codet/detail/native_output.hpp"
+#include "codet/detail/pending_control.hpp"
 #include "codet/detail/request_input.hpp"
 #include "codet/detail/request_input_controller.hpp"
 #include "codet/detail/terminal_input.hpp"
+#include "codet/detail/turn_input.hpp"
 #include "codet/detail/ui_history.hpp"
 #include "codet/interaction.hpp"
 #include "native_io_metrics.hpp"
@@ -2119,4 +2121,139 @@ TEST(ProcessHelperSafety, InvalidPidsNeverReachWaitOrSignal) {
   int status = 0;
   EXPECT_FALSE(test::wait_helper(0, status, ops));
   EXPECT_FALSE(test::wait_helper(-1, status, ops));
+}
+
+TEST(TurnInput, CompletedInputKeepsActiveCommandPolicyAndRejectsWrongOrigins) {
+  const detail::InputOrigin origin{"session", 7};
+  for (auto phase : {detail::TurnInputPhase::active, detail::TurnInputPhase::completed}) {
+    for (const std::string text :
+         {"/model", "/model next", "/status", "/compact", "/permissions plan"}) {
+      detail::InputLine line{text, {}, false, origin};
+      const auto decision = detail::classify_turn_input(line, nullptr, origin, phase, false);
+      EXPECT_EQ(decision.action, detail::TurnInputAction::restricted);
+      EXPECT_FALSE(decision.guidance.empty());
+    }
+    detail::InputLine fresh{"/new", {}, false, origin};
+    EXPECT_EQ(detail::classify_turn_input(fresh, nullptr, origin, phase, false).action,
+              detail::TurnInputAction::new_session);
+    for (auto wrong :
+         {std::optional<detail::InputOrigin>{}, std::optional<detail::InputOrigin>{{"other", 7}},
+          std::optional<detail::InputOrigin>{{"session", 6}}}) {
+      detail::InputLine line{"/new", {}, false, wrong};
+      EXPECT_EQ(detail::classify_turn_input(line, nullptr, origin, phase, false).action,
+                detail::TurnInputAction::reject_origin);
+    }
+  }
+}
+TEST(TurnInput, ExpiredAnswersNeverBecomeMessagesAndHeldOrderPrecedesSteering) {
+  const detail::InputOrigin origin{"session", 7};
+  detail::InputLine expired{"yes", detail::ApprovalIdentity{"session", "old", 7}, false, origin};
+  const auto rejected = detail::classify_turn_input(expired, nullptr, origin,
+                                                    detail::TurnInputPhase::completed, false);
+  EXPECT_EQ(rejected.action, detail::TurnInputAction::discard);
+  EXPECT_EQ(rejected.rejection, detail::InputDiscard::expired);
+  detail::InputLine next{"second", {}, false, origin};
+  EXPECT_EQ(detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::active, true)
+                .action,
+            detail::TurnInputAction::hold);
+  EXPECT_EQ(
+      detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::active, false)
+          .action,
+      detail::TurnInputAction::steer);
+  EXPECT_EQ(
+      detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::completed, false)
+          .action,
+      detail::TurnInputAction::hold);
+}
+
+TEST(PendingControl, BackspaceConsumesOverflowBeforeTheRetainedPrefix) {
+  for (const std::string command : {"/quit", "/exit"}) {
+    detail::PendingControl<> input;
+    for (char byte : command + "xxx")
+      input.append(byte);
+    for (unsigned i = 0; i != 3; ++i)
+      input.erase();
+    EXPECT_TRUE(input.submit()) << command;
+    EXPECT_FALSE(input.started());
+  }
+  detail::PendingControl<> input;
+  input.append('x');
+  input.erase();
+  EXPECT_TRUE(input.started()); // Ownership lasts through the ignored line boundary.
+  EXPECT_FALSE(input.submit());
+  EXPECT_FALSE(input.started());
+}
+TEST(PendingControl, SaturationCannotCreateAFalseQuitAfterDeletion) {
+  detail::PendingControl<2> input;
+  for (char byte : std::string("/quitxxxxx"))
+    input.append(byte);
+  for (unsigned i = 0; i != 20; ++i)
+    input.erase();
+  EXPECT_FALSE(input.submit());
+  for (char byte : std::string("/quit"))
+    input.append(byte);
+  EXPECT_TRUE(input.submit());
+}
+
+TEST(LineDestinations, PresentationTokenRejectsAnInterveningRecordAndRebinding) {
+  detail::LineDestinations destinations;
+  struct stat tty {};
+  tty.st_mode = S_IFCHR;
+  tty.st_ino = 1;
+  destinations.bind(1, tty);
+  destinations.bind(2, tty);
+  destinations.open(tty);
+  const auto before = destinations.token(1, tty);
+  const auto diagnostic = destinations.admit(2, false);
+  EXPECT_FALSE(destinations.admit(1, true, &before).admitted);
+  destinations.finish(diagnostic, true, true);
+  EXPECT_FALSE(destinations.admit(1, true, &before).admitted);
+  const auto current = destinations.token(1, tty);
+  auto presentation = destinations.admit(1, true, &current);
+  EXPECT_TRUE(presentation.admitted);
+  destinations.finish(presentation, true, true);
+  ++tty.st_ino;
+  destinations.bind(1, tty);
+  EXPECT_FALSE(destinations.admit(1, true, &current).admitted);
+}
+TEST(LineDestinations, SuccessfulFragmentsConcatenateButSeparateFromPresentation) {
+  detail::LineDestinations destinations;
+  struct stat tty {};
+  tty.st_mode = S_IFCHR;
+  destinations.bind(1, tty);
+  destinations.bind(2, tty);
+  auto first = destinations.admit(2, false);
+  destinations.finish(first, true, false);
+  auto second = destinations.admit(2, false);
+  EXPECT_FALSE(second.separator);
+  destinations.finish(second, true, false);
+  const auto presentation = destinations.admit(1, true);
+  EXPECT_TRUE(presentation.separator);
+  destinations.finish(presentation, true, true);
+  const auto next = destinations.admit(2, false);
+  EXPECT_FALSE(next.separator);
+  destinations.finish(next, true, true);
+}
+TEST(LinePrompt, InjectedFragmentEndsBeforeFrozenPresentation) {
+  LineFixture f;
+  f.line->append('a');
+  f.line->append('b');
+  f.input.append('c');
+  if (f.line->before_output(STDERR_FILENO, f.tty))
+    f.output.echo({"\n"});
+  f.output.display({"fragment"}, false);
+  auto submitted = f.line->try_take();
+  ASSERT_TRUE(submitted);
+  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_THAT(f.stream.str(), EndsWith("fragment\ncodet> abc\n"));
+}
+
+TEST(DiagnosticWriter, ExplicitTrailingNewlineClosesAnInjectedFragment) {
+  std::ostringstream stream;
+  detail::DiagnosticWriter writer(stream);
+  EXPECT_TRUE(writer.write({"fragment"}, false));
+  EXPECT_TRUE(writer.write({" ends\n"}, false));
+  const auto receipt = writer.write_receipt({"prompt"}, false, true, true);
+  EXPECT_EQ(receipt.result, detail::DiagnosticResult::success);
+  EXPECT_EQ(stream.str(), "fragment ends\nprompt");
 }

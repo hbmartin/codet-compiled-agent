@@ -154,7 +154,8 @@ class ProcessInspection(unittest.TestCase):
                      dict(executable="/usr/bin/python3", argv=["python3", "-c", "analyze-modern.py"]),
                      dict(executable="/usr/bin/ctest", argv=["ctest", "--test-dir", "build/host"]),
                      dict(executable="/usr/bin/python3", argv=["python3", "-u", "scripts/analyze-modern.py"]),
-                     dict(executable="build/host/codet_tests", argv=["codet_tests", "--gtest_filter=x"])]
+                     dict(executable="build/host/codet_tests", argv=["codet_tests", "--gtest_filter=x"]),
+                     dict(executable="/usr/bin/python3", argv=["python3", "-X", "utf8", "scripts/gtest_isolation.py", "--report", "result.json", "binary"])]
         self.assertEqual(evidence.blocking_processes(processes), processes[2:])
 
     def test_failed_or_empty_inspection_is_not_clean(self):
@@ -880,6 +881,376 @@ class ReplayIntegrity(unittest.TestCase):
             campaign.produce(config, "measure", output=self.root / "wrong.json")
         work.assert_not_called()
 
+
+
+class ProcessCleanup(unittest.TestCase):
+    def test_repeated_interruptions_do_not_skip_escalation_or_replace_timeout(self):
+        import contextlib
+        import signal
+
+        import process_supervision as supervisor
+        clock, signals, sleeps, scans, waits = [0.0], [], [0], [0], [0]
+        original = subprocess.TimeoutExpired(['owned'], 1)
+        class Process:
+            pid, returncode = 123456, -9
+            def communicate(self, **kwargs): raise original
+            def wait(self, timeout):
+                waits[0] += 1
+                if waits[0] == 1: raise KeyboardInterrupt('reap')
+                return -9
+            def kill(self): raise AssertionError('Unexpected direct kill')
+        process = Process()
+        def kill(group, action):
+            signals.append(action)
+            if len(signals) == 1: raise KeyboardInterrupt('signal')
+        def inspect(group, **kwargs):
+            scans[0] += 1
+            if scans[0] == 1: raise KeyboardInterrupt('inspection')
+            return False, ['S']
+        def sleep(delay):
+            clock[0] += delay
+            sleeps[0] += 1
+            if sleeps[0] == 1: raise KeyboardInterrupt('grace')
+        with patch.object(supervisor, 'interruption', contextlib.nullcontext), \
+             patch.object(supervisor, 'cleanup_interruptions', lambda _: contextlib.nullcontext()), \
+             patch.object(supervisor.subprocess, 'Popen', return_value=process), \
+             patch.object(supervisor.os, 'killpg', side_effect=kill), \
+             patch.object(supervisor, 'group_inactive', side_effect=inspect), \
+             patch.object(supervisor.time, 'sleep', side_effect=sleep), \
+             patch.object(supervisor.time, 'monotonic', side_effect=lambda:clock[0]):
+            with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                supervisor.run(['owned'], timeout=1, cleanup_grace=.1)
+        self.assertIs(caught.exception, original, 'Cleanup replaced the original timeout')
+        self.assertIn(signal.SIGKILL, signals, 'Repeated interruption skipped escalation')
+        self.assertTrue(original.process_cleanup['reaped'])
+        self.assertEqual(len(original.process_cleanup['interruptions']), 4)
+        self.assertEqual(original.returncode, -9)
+
+    def test_cleanup_exception_cannot_replace_original_failure(self):
+        import contextlib
+
+        import process_supervision as supervisor
+        original = subprocess.TimeoutExpired(['owned'], 1)
+        class Process:
+            pid, returncode = 123456, -9
+            group_cleanup = dict(reaped=True)
+            def communicate(self, **kwargs): raise original
+        with patch.object(supervisor, 'interruption', contextlib.nullcontext), \
+             patch.object(supervisor.subprocess, 'Popen', return_value=Process()), \
+             patch.object(supervisor, 'stop_group', side_effect=KeyboardInterrupt('restoring handlers')):
+            try:
+                with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                    supervisor.run(['owned'], timeout=1)
+            except KeyboardInterrupt:
+                self.fail('Cleanup restoration replaced the original timeout')
+        self.assertIs(caught.exception, original, 'Cleanup restoration replaced the original timeout')
+        self.assertEqual(original.cleanup_failure, 'restoring handlers')
+        self.assertTrue(original.process_cleanup['reaped'])
+
+    def test_inactive_group_returns_before_the_remaining_grace(self):
+        import contextlib
+        import signal
+
+        import process_supervision as supervisor
+        clock, signals, scans = [0.0], [], [0]
+        class Process:
+            pid = 123456
+            def wait(self, timeout):
+                self_outer.assertEqual(scans[0], 2, 'Leader was reaped before group ownership ended')
+                return 0
+        self_outer = self
+        process = Process()
+        def inspect(group, **kwargs):
+            scans[0] += 1
+            return scans[0] > 1, ['Z'] if scans[0] > 1 else ['S']
+        with patch.object(supervisor, 'cleanup_interruptions', lambda _: contextlib.nullcontext()), \
+             patch.object(supervisor.os, 'killpg', side_effect=lambda group, action:signals.append(action)), \
+             patch.object(supervisor, 'group_inactive', side_effect=inspect), \
+             patch.object(supervisor.time, 'sleep', side_effect=lambda delay:clock.__setitem__(0,clock[0]+delay)), \
+             patch.object(supervisor.time, 'monotonic', side_effect=lambda:clock[0]):
+            self.assertEqual(supervisor.stop_group(process, grace=2), 0)
+        self.assertEqual(clock[0], .05, 'Inactive group consumed the complete grace period')
+        self.assertEqual(signals, [signal.SIGTERM])
+
+    def test_second_signal_is_deferred_and_real_descendants_are_reaped(self):
+        import os
+        import select
+        import signal
+        import time
+        with tempfile.TemporaryDirectory() as folder:
+            marker = Path(folder)/'escaped'
+            grandchild = 'import signal,time;from pathlib import Path;signal.signal(signal.SIGTERM,signal.SIG_IGN);print("grandchild",flush=True);time.sleep(1);Path('+repr(str(marker))+').write_text("escaped")'
+            child = 'import signal,subprocess,sys,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);p=subprocess.Popen([sys.executable,"-c",'+repr(grandchild)+'],stdout=subprocess.PIPE);p.stdout.readline();print("ready",flush=True);time.sleep(2)'
+            program = '''import json,signal,sys
+import process_supervision as s
+previous={n:signal.getsignal(n) for n in (signal.SIGINT,signal.SIGTERM)}
+original=s.group_inactive
+announced=False
+def inspect(*a,**k):
+ global announced
+ if not announced:print("cleanup-ready",flush=True);announced=True
+ return original(*a,**k)
+s.group_inactive=inspect
+try:s.run([sys.executable,"-c",CHILD],timeout=60,cleanup_grace=.3)
+except KeyboardInterrupt as error:
+ print(json.dumps(dict(message=str(error),cleanup=error.process_cleanup,restored=all(signal.getsignal(n)==h for n,h in previous.items()))),flush=True)
+ raise SystemExit(17)
+'''.replace('CHILD',repr(child))
+            process = subprocess.Popen([sys.executable,'-c',program],stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                env=dict(os.environ,PYTHONPATH=str(Path(__file__).resolve().parents[1]/'scripts')))
+            def line():
+                self.assertTrue(select.select([process.stdout],[],[],5)[0], 'Supervisor readiness gate was not reached')
+                return process.stdout.readline()
+            try:
+                self.assertEqual(line(),b'ready\n')
+                process.send_signal(signal.SIGTERM)
+                self.assertEqual(line(),b'cleanup-ready\n')
+                process.send_signal(signal.SIGTERM)
+                process.send_signal(signal.SIGINT)
+                result=json.loads(line())
+                self.assertEqual(process.wait(timeout=5),17)
+                self.assertEqual(result['message'],'Interrupted by SIGTERM')
+                self.assertTrue(result['cleanup']['reaped'])
+                self.assertTrue(result['restored'])
+                self.assertGreaterEqual(len(result['cleanup']['interruptions']),1)
+                self.assertIn(int(signal.SIGKILL),[s['signal'] for s in result['cleanup']['signals']])
+                time.sleep(1.1)
+                self.assertFalse(marker.exists(),'Repeated interruption left a live descendant')
+            finally:
+                if process.poll() is None:process.kill();process.wait(timeout=5)
+                process.stdout.close();process.stderr.close()
+
+
+class ReviewedCppcheckLocations(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name); self.old, self.new = root/'old', root/'new'
+        for tree in (self.old, self.new):
+            (tree/'src').mkdir(parents=True)
+        def contents(first, second):
+            lines = ['filler']*45
+            lines[first-1], lines[second-1] = 'first context', 'second context'
+            return '\n'.join(lines)+'\n'
+        (self.old/'src/a.cpp').write_text(contents(10,20))
+        (self.new/'src/a.cpp').write_text(contents(30,20))
+
+    def comparison(self, repeated=False, strings=False):
+        from evidence_analysis import finding_key
+        def finding(first, second):
+            return dict(id='warning',msg='same diagnostic',locations=[
+                dict(file='src/a.cpp',line=str(first) if strings else first,column='1' if strings else 1,info='first'),
+                dict(file='src/a.cpp',line=str(second) if strings else second,column='1' if strings else 1,info='first' if repeated else 'second')])
+        def manifest(finding):
+            return dict(tool='cppcheck',expected_sources=['src/a.cpp'],completed_sources=['src/a.cpp'],
+                canaries=[dict(passed=True)],versions=[dict(stdout='same cppcheck',exit_code=0)],
+                results=[dict(status='findings',completed_sources=['src/a.cpp'],findings=[finding])],findings=1,passed=False)
+        old, new = finding(10,20), finding(30,20)
+        old_key, new_key = finding_key('cppcheck',old,self.old), finding_key('cppcheck',new,self.new)
+        mappings=[]
+        for previous in old_key[2]:
+            current=next(location for location in new_key[2] if int(location[1]) == (30 if int(previous[1])==10 else 20))
+            mappings.append(dict(old=list(previous),new=list(current),context='first context' if int(previous[1])==10 else 'second context'))
+        return manifest(old),manifest(new),dict(old=old_key,new=new_key,rationale='reviewed same-location identities',location_contexts=mappings)
+
+    def compare(self, a, b, entry):
+        from evidence_analysis import compare_analysis
+        return compare_analysis(a,b,self.old,self.new,['src/a.cpp'],relocations=[entry])
+
+    def test_same_file_locations_can_reorder_without_changing_identity(self):
+        for repeated,strings in ((False,False),(True,False),(False,True),(True,True)):
+            with self.subTest(repeated=repeated,strings=strings):
+                a,b,entry=self.comparison(repeated,strings)
+                try:
+                    result=self.compare(a,b,entry)
+                except ValueError as error:
+                    self.fail('Valid reordered Cppcheck relocation was rejected: '+str(error))
+                self.assertTrue(result['equal'])
+                self.assertEqual(result['reviewed_relocations'],1)
+
+    def test_every_location_requires_unique_same_identity_context(self):
+        import copy
+        a,b,entry=self.comparison()
+        for change in ('missing','duplicate','context','file','info','repeated'):
+            with self.subTest(change=change):
+                invalid=copy.deepcopy(entry)
+                if change=='missing':invalid['location_contexts'].pop()
+                elif change=='duplicate':invalid['location_contexts'][1]=copy.deepcopy(invalid['location_contexts'][0])
+                elif change=='context':invalid['location_contexts'][1]['context']='different'
+                elif change=='file':invalid['location_contexts'][1]['new'][0]='src/other.cpp'
+                elif change=='info':invalid['location_contexts'][1]['new'][3]='unrelated'
+                else:invalid['location_contexts'].append(copy.deepcopy(invalid['location_contexts'][0]))
+                with self.assertRaisesRegex(ValueError,'relocation'):
+                    self.compare(a,b,invalid)
+
+    def test_same_context_cannot_hide_message_or_location_multiplicity_changes(self):
+        import copy
+        a,b,entry=self.comparison()
+        for message in (True,False):
+            changed=copy.deepcopy(b)
+            if message:changed['results'][0]['findings'][0]['msg']='new diagnostic'
+            else:changed['results'][0]['findings'][0]['locations'].append(copy.deepcopy(changed['results'][0]['findings'][0]['locations'][0]))
+            with self.assertRaisesRegex(ValueError,'relocation'):
+                self.compare(a,changed,entry)
+
+
+class SanitizerIsolation(unittest.TestCase):
+    def payload(self):
+        xml='<testsuites tests="2"><testsuite name="Suite"><testcase name="A"/><testcase name="DISABLED_Probe"/></testsuite></testsuites>'
+        result='<testsuites tests="1"><testsuite name="Suite"><testcase classname="Suite" name="A" status="run"/></testsuite></testsuites>'
+        return dict(binary='/original/opaque/binary',binary_sha256='a'*64,
+                    inventory_argv=['/original/opaque/binary','--gtest_list_tests','--gtest_output=xml:/opaque/list.xml'],
+                    inventory_xml=xml,enabled=1,disabled=['Suite.DISABLED_Probe'],skipped=[],failures=0,
+                    results=[dict(test='Suite.A',exit=0,xml=result,argv=['/original/opaque/binary','--gtest_filter=Suite.A','--gtest_output=xml:/opaque/result.xml'])])
+
+    def test_captured_launcher_binds_its_report_to_the_declared_executable(self):
+        import hashlib
+        import os
+
+        import gtest_isolation as isolated
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);binary=root/'binary';binary.write_bytes(b'executable identity');report=root/'report.json'
+            value=self.payload();value.update(binary=str(binary),binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest())
+            value['inventory_argv'][0]=str(binary);value['results'][0]['argv'][0]=str(binary)
+            context=dict(schema_version=5,campaign_id='campaign',capture_run_id='run',check_id='asan-ctest',root=str(root),
+                         production_hashes={},validation_hashes={},declared_artifacts=[dict(path=str(report),kind='gtest-isolation',inputs=['binary'])])
+            argv=['launcher','--report',str(report),'--inputs',json.dumps(['binary']),str(binary)]
+            with patch.object(sys,'argv',argv),patch.dict(os.environ,CODET_EVIDENCE_CONTEXT=json.dumps(context)),patch.object(isolated,'run',return_value=value):
+                self.assertEqual(isolated.main(),0)
+            envelope=json.loads(report.read_text())
+            self.assertEqual(envelope['capture_run_id'],'run')
+            self.assertEqual(envelope['input_hashes'],{'binary':value['binary_sha256']})
+            self.assertEqual(isolated.verify_payload(envelope['payload'],envelope['input_hashes'])['failures'],0)
+
+    def test_executable_binding_is_checked_without_resolving_host_paths(self):
+        from gtest_isolation import verify_payload
+        value=self.payload();value.update(binary='/original/opaque/binary',binary_sha256='a'*64)
+        verify_payload(value,{'/original/opaque/binary':'a'*64})
+        for hashes in ({},{'/original/opaque/binary':'b'*64}):
+            with self.assertRaisesRegex(ValueError,'executable binding mismatch'):verify_payload(value,hashes)
+        value.pop('binary_sha256')
+        with self.assertRaisesRegex(ValueError,'executable binding mismatch'):verify_payload(value,{})
+
+    def test_full_coverage_and_normal_disabled_policy(self):
+        from gtest_isolation import verify_payload
+        self.assertEqual(verify_payload(self.payload()),dict(tests=1,disabled=1,skipped=0,failures=0))
+
+    def test_missing_duplicate_and_substituted_tests_are_rejected(self):
+        import copy
+
+        from gtest_isolation import verify_payload
+        for change in ('missing','duplicate','substitute'):
+            with self.subTest(change=change):
+                value=copy.deepcopy(self.payload())
+                if change=='missing':value['results']=[]
+                elif change=='duplicate':value['results']*=2
+                else:
+                    value['results'][0]['test']='Suite.Other'
+                    value['results'][0]['argv'][1]='--gtest_filter=Suite.Other'
+                    value['results'][0]['xml']=value['results'][0]['xml'].replace('name="A"','name="Other"')
+                with self.assertRaisesRegex(ValueError,'coverage mismatch'):
+                    verify_payload(value)
+
+    def test_malformed_xml_and_inventory_counts_are_rejected(self):
+        from gtest_isolation import inventory, verify_payload
+        for raw in ('<invalid', '<testsuites tests="0"/>', '<testsuites tests="not-a-number"/>'):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):inventory(raw)
+        value=self.payload();value['results'][0]['xml']='<invalid'
+        with self.assertRaisesRegex(ValueError,'Malformed GoogleTest XML'):verify_payload(value)
+
+    def test_status_exit_xml_and_skip_accounting_are_checked(self):
+        import copy
+
+        from gtest_isolation import verify_payload
+        for change in ('status','exit','name','skip','inventory','command'):
+            with self.subTest(change=change):
+                value=copy.deepcopy(self.payload());result=value['results'][0]
+                if change=='status':result['xml']=result['xml'].replace('status="run"','status="notrun"')
+                elif change=='exit':result['exit']=1
+                elif change=='name':result['xml']=result['xml'].replace('name="A"','name="Other"')
+                elif change=='skip':value['skipped']=['Suite.A']
+                elif change=='command':result['argv'][1]='--gtest_filter=Suite.Other'
+                else:value['enabled']=2
+                with self.assertRaises(ValueError):verify_payload(value)
+
+
+class HashMetricScope(unittest.TestCase):
+    def test_tooling_commands_and_memory_have_distinct_verified_scopes(self):
+        from evidence_benchmarks import verify_tooling_metrics
+        row=dict(harness='tooling',workload='supervision',metric_version=2,files=0,owned_processes=5,
+            check_output_calls=5,git_commands=0,process_inspection_commands=5,
+            retained_traced_blocks=1,retained_traced_bytes=10,peak_traced_bytes=20)
+        verify_tooling_metrics(row)
+        for change in ('missing','classification','git','memory','version','ambiguous','files','owned'):
+            with self.subTest(change=change):
+                value=dict(row)
+                if change=='missing':value.pop('process_inspection_commands')
+                elif change=='classification':value['check_output_calls']=7
+                elif change=='git':value.update(check_output_calls=6,git_commands=1)
+                elif change=='memory':value['peak_traced_bytes']=1
+                elif change=='ambiguous':value['allocations']=1
+                elif change=='files':value['files']=1
+                elif change=='owned':value['owned_processes']=0
+                else:value['metric_version']=3
+                with self.assertRaisesRegex(ValueError,'[Tt]ooling|Supervision'):
+                    verify_tooling_metrics(value)
+        verify_tooling_metrics(dict(harness='tooling',git_commands=5)) # Historical, not relabeled.
+
+    def payload(self):
+        from evidence_hash_experiment import METRIC_SCOPE, ROLES
+        rows, summary, profiles = [], [], []
+        for number in (1,2):
+            for role in ROLES:
+                for variant,value in (('baseline',2),('changed',1)):
+                    metrics=dict(milliseconds=value,files=1,peak_traced_bytes=20*value,
+                        retained_traced_bytes=10*value,retained_traced_blocks=value,
+                        explicit_stat_calls=value,direntry_is_file_calls=value,direntry_is_dir_calls=value)
+                    group=dict(set=number,workload=role,harness='hash-snapshot',variant=variant)
+                    summary.append(dict(group,**metrics))
+                    for sample in range(6):
+                        rows.append(dict(group,**metrics,sample=sample,warmup=sample==0,identity='same'))
+                        functions=[dict(name=name,calls=value) for name in
+                            ('<built-in method posix.stat>',"<method 'is_file' of 'posix.DirEntry' objects>","<method 'is_dir' of 'posix.DirEntry' objects>")]
+                        profiles.append(dict(set=number,sample=sample,variant=variant,role=role,functions=functions,
+                            positive_controls=dict(explicit_stat_calls=1,direntry_is_file_calls=1,direntry_is_dir_calls=1,live_traced_bytes=4096)))
+        return dict(metrics_version=2,metric_scope=METRIC_SCOPE,rows=rows,summary=summary,profiles=profiles,
+            code_hashes={v:{n:'0'*64 for n in ('evidence_inputs.py','verified_sources.py')} for v in ('baseline','changed')},latency_gate_passed=True)
+
+    def test_v2_labels_counters_without_claiming_total_allocation_work(self):
+        from evidence_hash_experiment import verify_experiment
+        payload=self.payload()
+        self.assertTrue(verify_experiment(payload))
+        self.assertNotIn('work_gate_passed',payload)
+        self.assertNotIn('allocations',payload['rows'][0])
+        self.assertNotIn('metadata_queries',payload['rows'][0])
+
+    def test_missing_versions_bad_controls_and_ambiguous_names_are_rejected(self):
+        import copy
+
+        from evidence_hash_experiment import verify_experiment
+        for change in ('missing-version','future-version','control','count','scope','old-claim'):
+            with self.subTest(change=change):
+                value=copy.deepcopy(self.payload())
+                if change=='missing-version':value.pop('metrics_version')
+                elif change=='future-version':value['metrics_version']=3
+                elif change=='control':value['profiles'][0]['positive_controls']['direntry_is_file_calls']=0
+                elif change=='count':value['profiles'][0]['functions'][0]['calls']=0
+                elif change=='scope':value['metric_scope']={}
+                else:value['work_gate_passed']=True
+                with self.assertRaisesRegex(ValueError,'[Hh]ash'):
+                    verify_experiment(value)
+
+    def test_production_program_observes_call_and_live_memory_controls(self):
+        from evidence_hash_experiment import PROGRAM
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'src').mkdir();(root/'src/a.cpp').write_text('source')
+            result=subprocess.run([sys.executable,'-c',PROGRAM,str(Path(__file__).resolve().parents[1]/'scripts'),str(root),'production'],
+                check=True,text=True,capture_output=True,timeout=10)
+            value=json.loads(result.stdout)
+            for name in ('explicit_stat_calls','direntry_is_file_calls','direntry_is_dir_calls'):
+                self.assertEqual(value['positive_controls'][name],1)
+            self.assertGreaterEqual(value['positive_controls']['live_traced_bytes'],4096)
+            self.assertGreaterEqual(value['peak_traced_bytes'],value['retained_traced_bytes'])
+            self.assertGreater(value['retained_traced_blocks'],0)
 
 if __name__ == "__main__":
     unittest.main()

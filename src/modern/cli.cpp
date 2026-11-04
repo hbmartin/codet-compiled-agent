@@ -10,8 +10,10 @@
 #include "codet/detail/curses_render.hpp"
 #include "codet/detail/line_prompt.hpp"
 #include "codet/detail/native_terminal.hpp"
+#include "codet/detail/pending_control.hpp"
 #include "codet/detail/request_input_controller.hpp"
 #include "codet/detail/terminal_input.hpp"
+#include "codet/detail/turn_input.hpp"
 #include "codet/detail/ui_history.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/interaction.hpp"
@@ -575,14 +577,9 @@ public:
   void remember(const std::string &text) {
     transcript_.add(text);
   }
-  std::array<char, 6> pending_control_{};
-  size_t pending_control_size_ = 0;
-  bool pending_control_overflow_ = false, pending_control_started_ = false;
+  detail::PendingControl<> pending_control_;
   bool pending_quit_ = false;
-  void clear_pending_control() noexcept {
-    pending_control_size_ = 0;
-    pending_control_overflow_ = pending_control_started_ = false;
-  }
+  std::optional<detail::InputOrigin> input_origin_;
   bool take_quit() noexcept {
     return std::exchange(pending_quit_, false);
   }
@@ -590,6 +587,7 @@ public:
     return line_ && line_->submission_pending();
   }
   void input_origin(const std::string &session, uint64_t turn) {
+    input_origin_ = detail::InputOrigin{session, turn};
     if (line_)
       line_->origin(session, turn);
   }
@@ -597,23 +595,26 @@ public:
     if (!line_)
       return;
     auto line = line_->discard_pending();
-    clear_pending_control();
+    pending_control_.clear();
+    if (line)
+      pending_not_sent(line->text, immediate);
+  }
+  void pending_not_sent(std::string_view text, bool immediate = false) noexcept {
     try {
-      if (line) {
-        const auto message = "[Pending message not sent: " + line->text + "]";
-        if (immediate) {
-          const auto shown = detail::terminal_text(message);
-          (void)detail::immediate_stderr({shown});
-        } else
-          say(message);
-      }
+      std::string message = "[Pending message not sent: ";
+      message.append(text);
+      message += ']';
+      if (immediate) {
+        const auto shown = detail::terminal_text(message);
+        (void)detail::immediate_stderr({shown});
+      } else
+        say(message);
     } catch (...) {
-      // Keep an allocation-free explanation if formatting or the renderer failed.
       (void)detail::immediate_stderr({"[Pending message not sent]\n"});
     }
   }
   std::optional<std::string> read(Cancellation &cancel) {
-    if (!curses_ && (submission_pending() || pending_control_started_ || input_.stale() ||
+    if (!curses_ && (submission_pending() || pending_control_.started() || input_.stale() ||
                      (input_.ordinary_draft() && !input_.input().empty()))) {
       begin_active(cancel);
       flush_prompt();
@@ -634,7 +635,7 @@ public:
           return std::nullopt;
         flush_prompt();
         bool closed = false;
-        const bool discarding_controls = pending_control_started_;
+        const bool discarding_controls = pending_control_.started();
         auto line = active_input(closed);
         if (closed) {
           discard_pending(true);
@@ -649,7 +650,7 @@ public:
             history(resources_.entries(), &history_event_, H_ENTER, line->text.c_str());
           return std::move(line->text);
         }
-        if (discarding_controls && !pending_control_started_ && !submission_pending())
+        if (discarding_controls && !pending_control_.started() && !submission_pending())
           break; // The ignored extra line ended; return the empty idle prompt to libedit.
       }
     }
@@ -748,7 +749,7 @@ public:
       } else if (ready < 0 && !retry_input(errno, this))
         throw Error("Cannot wait for terminal input: " + std::string(std::strerror(errno)));
     }
-    if (line_ && (line_->submission_pending() || pending_control_started_)) {
+    if (line_ && (line_->submission_pending() || pending_control_.started())) {
       auto &pending_line = *line_;
       // Extra typing remains a control-only line, even if the frozen line completes first.
       // It must never delay that independent presentation/handoff or become a later message.
@@ -759,25 +760,16 @@ public:
       if (ch != ERR) {
         ++input_events_;
         if (ch == bindings_["submit"] || ch == KEY_ENTER || ch == '\r') {
-          const std::string_view control(pending_control_.data(), pending_control_size_);
-          const bool quit =
-              !pending_control_overflow_ && (control == "/quit" || control == "/exit");
-          clear_pending_control();
+          const bool quit = pending_control_.submit();
           if (quit) {
             pending_quit_ = true;
             closed = true;
             return {};
           }
         } else if (ch == bindings_["backspace"] || ch == KEY_BACKSPACE || ch == 8) {
-          if (pending_control_size_)
-            --pending_control_size_;
-        } else if (ch >= 32 && ch <= 255) {
-          pending_control_started_ = true;
-          if (pending_control_size_ < pending_control_.size())
-            pending_control_[pending_control_size_++] = static_cast<char>(ch);
-          else
-            pending_control_overflow_ = true;
-        }
+          pending_control_.erase();
+        } else if (ch >= 32 && ch <= 255)
+          pending_control_.append(static_cast<char>(ch));
       }
       if (read_cancel_ && read_cancel_->requested)
         return {};
@@ -805,7 +797,10 @@ public:
       return {};
     }
     if (ch == bindings_["submit"] || ch == KEY_ENTER || ch == '\r') {
+      auto origin = line_ ? std::optional<detail::InputOrigin>{} : input_origin_;
       auto ready = line_ ? line_->try_take() : std::optional<detail::InputLine>(input_.take());
+      if (ready && !line_)
+        ready->origin = std::move(origin);
       if (!ready) {
         // Keep servicing the existing UI loop without spinning while a diagnostic owns output.
         (void)detail::retry_terminal_input(EAGAIN,
@@ -1273,10 +1268,35 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   std::optional<Usage> last_usage;
   std::deque<std::string> followups;
   uint64_t input_turn = 0;
-  auto execute_agent = [&](const std::string &text, bool steering) -> RunResult {
-    if (!terminal)
-      return compacting ? agent.compact(session, cancel)
-                        : agent.run(session, text, cancel, schema, !steering, pending_images);
+  const auto publish_result = [&](const RunResult &result) {
+    if (!compacting)
+      last_usage = result.usage;
+    const auto answer = result.structured.is_null() ? result.text : result.structured.dump();
+    if (!o.output.empty() && !compacting)
+      files.atomic_write(fs::absolute(o.output), answer + "\n", true);
+    if (terminal)
+      terminal->say(answer);
+    else if (o.format == "text")
+      output.answer(answer, isatty(STDOUT_FILENO));
+    else if (o.format == "json")
+      output.required({Json({{"session_id", session.id},
+                             {"status", "success"},
+                             {"result", result.text},
+                             {"structured_output", result.structured},
+                             {"usage",
+                              {{"input_tokens", result.usage.input},
+                               {"output_tokens", result.usage.output},
+                               {"cached_input_tokens", result.usage.cached}}}})
+                           .dump()});
+  };
+  auto execute_agent = [&](const std::string &text, bool steering) -> int {
+    if (!terminal) {
+      const auto result = compacting
+                              ? agent.compact(session, cancel)
+                              : agent.run(session, text, cancel, schema, !steering, pending_images);
+      publish_result(result);
+      return 0;
+    }
     interaction->begin_turn(session.id);
     terminal->input_origin(session.id, ++input_turn);
     std::future<RunResult> work;
@@ -1286,8 +1306,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       try {
         held_followups.push_back(std::move(line));
       } catch (...) {
-        detail::secondary_diagnostic(
-            [&] { terminal->say("[Pending message not sent: " + line.text + "]"); });
+        terminal->pending_not_sent(line.text);
         throw;
       }
     };
@@ -1336,6 +1355,56 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
           },
           diagnostic, recovering);
     };
+    const detail::InputOrigin origin{session.id, input_turn};
+    const auto dispatch = [&](detail::InputLine &line, detail::TurnInputPhase phase) {
+      const auto action = detail::classify_turn_input(
+          line, phase == detail::TurnInputPhase::active && pending ? &*pending : nullptr, origin,
+          phase, !held_followups.empty());
+      switch (action.action) {
+      case detail::TurnInputAction::quit:
+        quit_requested = true;
+        if (phase == detail::TurnInputPhase::active)
+          cancel.requested = true;
+        break;
+      case detail::TurnInputAction::discard:
+        terminal->discarded_line(*action.rejection);
+        break;
+      case detail::TurnInputAction::reject_origin:
+        terminal->pending_not_sent(line.text);
+        break;
+      case detail::TurnInputAction::restricted:
+        terminal->say(std::string(action.guidance));
+        break;
+      case detail::TurnInputAction::new_session:
+        new_requested = true;
+        terminal->say("Starting a new session after pending messages are handled.");
+        break;
+      case detail::TurnInputAction::answer: {
+        if (pending->value("type", "") == "codet.approval" && detail::approves(line.text) &&
+            !terminal->approval_reviewed(*pending))
+          break;
+        const bool answered = interaction->answer(pending->at("request_id"), line.text);
+        pending.reset();
+        terminal->end_approval(answered ? std::optional<std::string_view>(line.text)
+                                        : std::nullopt);
+        if (!answered)
+          terminal->discarded_line(detail::InputDiscard::expired);
+        break;
+      }
+      case detail::TurnInputAction::hold:
+        hold_followup(line);
+        break;
+      case detail::TurnInputAction::steer:
+        try {
+          interaction->submit(line.text);
+        } catch (const Error &error) {
+          terminal->say(error.what());
+        }
+        break;
+      case detail::TurnInputAction::ignore:
+        break;
+      }
+    };
     try {
       terminal->begin_active(cancel);
       work = std::async(std::launch::async, [&] {
@@ -1360,89 +1429,44 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
             quit_requested = true;
           cancel.requested = true;
         }
-        if (line) {
-          const auto &text = line->text;
-          const auto submission = line->classify(pending ? &*pending : nullptr);
-          const auto action = submission.action;
-          if (action == detail::InputAction::quit) {
-            quit_requested = true;
-            cancel.requested = true;
-          } else if (action == detail::InputAction::discard) {
-            terminal->discarded_line(*submission.rejection);
-
-          } else if (text == "/model" || text.rfind("/model ", 0) == 0 || text == "/status" ||
-                     text == "/compact") {
-            terminal->say("Use /model, /status and /compact after the active turn completes.");
-          } else if (action == detail::InputAction::answer) {
-            if (pending->value("type", "") == "codet.approval" && detail::approves(text) &&
-                !terminal->approval_reviewed(*pending))
-              continue;
-            const bool answered = interaction->answer(pending->at("request_id"), text);
-            pending.reset();
-            terminal->end_approval(answered ? std::optional<std::string_view>(text) : std::nullopt);
-            if (!answered)
-              terminal->discarded_line(detail::InputDiscard::expired);
-          } else if (text.rfind("/permissions", 0) == 0)
-            terminal->say("Change permission modes after the active turn completes.");
-          else if (text == "/new") {
-            new_requested = true;
-            terminal->say("Starting a new session after pending messages are handled.");
-          } else if ((line->presentation_held || !held_followups.empty()) && !text.empty()) {
-            hold_followup(*line);
-          } else if (!text.empty()) {
-            try {
-              interaction->submit(text);
-            } catch (const Error &error) {
-              terminal->say(error.what());
-            }
-          }
-        }
+        if (line)
+          dispatch(*line, detail::TurnInputPhase::active);
       }
+
       deliver(false, true);
       auto result = work.get(); // Ownership is resolved against the original operation outcome.
       if (lifecycle.turn_completed)
         lifecycle.turn_completed(lifecycle.context);
-      if (!held_followups.empty())
-        cancel.check();
+      // The worker's successful result is published before any pending-input wait or stop.
+      publish_result(result);
       while (terminal->submission_pending()) {
         if (cancel.requested || quit_requested) {
           terminal->discard_pending();
-          cancel.check();
           break;
         }
         bool closed = false;
         auto line = terminal->active_input(closed);
         if (closed) {
-          if (terminal->take_quit() || (pending && pending->value("type", "") == "codet.approval"))
-            quit_requested = true;
-          cancel.requested = true;
+          (void)terminal->take_quit();
+          quit_requested = true;
           terminal->discard_pending();
-          cancel.check();
+          break;
         }
-        if (line) {
-          const auto submission = line->classify();
-          if (submission.action == detail::InputAction::quit) {
-            quit_requested = true;
-            break; // The completed turn stays complete, and no staged follow-up may run.
-          }
-          if (submission.action == detail::InputAction::message && !line->text.empty() &&
-              line->origin && line->origin->session == session.id &&
-              line->origin->turn == input_turn)
-            hold_followup(*line);
-          else if (submission.rejection)
-            terminal->discarded_line(*submission.rejection);
-        }
+        if (line)
+          dispatch(*line, detail::TurnInputPhase::completed);
       }
+      const bool late_cancel = cancel.requested;
       for (auto &line : held_followups) {
         if (line.origin && line.origin->session == session.id && line.origin->turn == input_turn &&
             !line.text.empty() && !cancel.requested && !quit_requested)
           followups.push_back(std::move(line.text));
         else
-          detail::secondary_diagnostic(
-              [&] { terminal->say("[Pending message not sent: " + line.text + "]"); });
+          terminal->pending_not_sent(line.text);
       }
       terminal->end_active();
-      return result;
+      if (late_cancel && !quit_requested)
+        cancel.requested = false;
+      return late_cancel ? 130 : 0;
     } catch (...) {
       detail::recover_turn(
           std::current_exception(), cancel, quit_requested, work,
@@ -1450,8 +1474,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
             terminal->discard_pending();
             for (const auto &line : held_followups)
               if (!line.text.empty())
-                detail::secondary_diagnostic(
-                    [&] { terminal->say("[Pending message not sent: " + line.text + "]"); });
+                terminal->pending_not_sent(line.text);
             pending.reset();
             terminal->end_active();
           },
@@ -1465,14 +1488,14 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     interaction->end_turn();
     if (!resume) {
       for (const auto &text : followups)
-        terminal->say("[Pending message not sent: " + text + "]");
+        terminal->pending_not_sent(text);
       followups.clear();
     }
     for (const auto &text : interaction->take_pending(session.id)) {
       if (resume && !quit_requested)
         followups.push_back(text);
       else
-        terminal->say("[Pending message not sent: " + text + "]");
+        terminal->pending_not_sent(text);
     }
   };
   auto run = [&](const std::string &text, bool steering = false) {
@@ -1491,28 +1514,9 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       }
     } clear_images{pending_images, !compacting};
     try {
-      auto result = execute_agent(text, steering);
-      pending_input(true);
-      if (!compacting)
-        last_usage = result.usage;
-      const auto answer = result.structured.is_null() ? result.text : result.structured.dump();
-      if (!o.output.empty() && !compacting)
-        files.atomic_write(fs::absolute(o.output), answer + "\n", true);
-      if (terminal)
-        terminal->say(answer);
-      else if (o.format == "text") {
-        output.answer(answer, isatty(STDOUT_FILENO));
-      } else if (o.format == "json")
-        output.required({Json({{"session_id", session.id},
-                               {"status", "success"},
-                               {"result", result.text},
-                               {"structured_output", result.structured},
-                               {"usage",
-                                {{"input_tokens", result.usage.input},
-                                 {"output_tokens", result.usage.output},
-                                 {"cached_input_tokens", result.usage.cached}}}})
-                             .dump()});
-      return 0;
+      const int status = execute_agent(text, steering);
+      pending_input(status == 0 && !quit_requested);
+      return status;
     } catch (const Error &e) {
       if (terminal) {
         pending_input(false);

@@ -142,10 +142,12 @@ int main(int argc, char **argv) {
   const std::string mode = argv[1];
   const bool native = mode == "native-busy" || mode == "native-editing" ||
                       mode == "native-boundary" || mode == "native-flush-boundary" ||
-                      mode == "native-rebind" || mode == "native-unchanged";
+                      mode == "native-rebind" || mode == "native-unchanged" ||
+                      mode == "native-pending-submission" || mode == "native-pending-fragment";
   const bool warnings =
       mode == "warning-empty" || mode == "warning-new" || mode == "warning-failed-idle";
-  const bool deferred = mode == "deferred-tail" || mode == "pending-submission";
+  const bool deferred = mode == "deferred-tail" || mode == "pending-submission" ||
+                        mode == "native-pending-submission" || mode == "native-pending-fragment";
   const bool editing = mode == "editing" || mode == "editing-basic" ||
                        mode == "editing-patterned" || mode == "native-editing";
   int child = -1;
@@ -174,7 +176,8 @@ int main(int argc, char **argv) {
     if (::dup2(slave, STDOUT_FILENO) < 0 || ::fstat(STDOUT_FILENO, &tty) < 0)
       return 3;
     ::close(slave);
-    if ((mode == "native-boundary" || mode == "native-flush-boundary") &&
+    if ((mode == "native-boundary" || mode == "native-flush-boundary" ||
+         mode == "native-pending-fragment") &&
         ::dup2(STDOUT_FILENO, STDERR_FILENO) < 0)
       return 3;
   }
@@ -193,8 +196,9 @@ int main(int argc, char **argv) {
          ++i)
       input.append('x');
   const std::string label = "codet> ";
-  auto line = prompt<detail::LinePrompt>(0, mode == "editing-basic" || deferred ? 0u : 80u, input,
-                                         output, io, label, tty);
+  auto line =
+      prompt<detail::LinePrompt>(0, mode == "editing-basic" || (deferred && !native) ? 0u : 80u,
+                                 input, output, io, label, tty);
   line->acquire();
   line->flush();
   const auto initial = input.input().rebuilt_bytes();
@@ -224,6 +228,8 @@ int main(int argc, char **argv) {
     } else if (deferred) {
       line->append('a');
       line->append(static_cast<char>(0xe9));
+      if (mode == "native-pending-fragment")
+        (void)detail::write_diagnostic(std::cerr, {"fragment"}, false);
       if (line->take().text != std::string("a\xe9"))
         return 6;
     } else if (mode == "native-rebind") {
@@ -260,7 +266,8 @@ int main(int argc, char **argv) {
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
   observing = test::descriptor_bench::observing = false;
   if (native) {
-    if (mode == "native-boundary" || mode == "native-flush-boundary")
+    if (mode == "native-boundary" || mode == "native-flush-boundary" ||
+        mode == "native-pending-fragment")
       ::close(STDERR_FILENO);
     ::close(STDOUT_FILENO);
     int status;

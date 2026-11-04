@@ -964,3 +964,86 @@ TEST_F(NativeRecordLifecycle, CompletedInterveningRecordCannotHideFrozenSubmissi
   EXPECT_THAT(read(), EndsWith("codet> abc\r\n"));
   EXPECT_FALSE(gate.timed_out);
 }
+
+TEST_F(NativeRecordLifecycle, UnterminatedDiagnosticSeparatesFrozenKnownWidthLine) {
+  capture([&] {
+    line->append('a');
+    line->append('b');
+  });
+  (void)read();
+  input.append('c');
+  std::optional<detail::InputLine> submitted;
+  capture([&] {
+    (void)detail::immediate_stderr({"fragment"}, false);
+    submitted = line->try_take();
+  });
+  ASSERT_TRUE(submitted);
+  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_EQ(read(), "\r\nfragment\r\ncodet> abc\r\n") << "Unterminated diagnostic hid frozen input";
+}
+TEST_F(NativeRecordLifecycle, CompletedSubmissionNewlineDoesNotReplayAfterLaterDiagnostic) {
+  draft();
+  DeliveryGate gate;
+  bool delivered = false;
+  std::optional<detail::InputLine> submitted;
+  capture([&] {
+    std::thread worker([&] {
+      if (!gate.wait_for_start())
+        return;
+      auto &metrics = test::native_io_metrics;
+      metrics.interrupt_fd = STDERR_FILENO;
+      metrics.before_output = DeliveryGate::output;
+      metrics.output_context = &gate;
+      delivered = detail::immediate_stderr({"after completed newline"});
+      metrics = {};
+    });
+    JoinDelivery join{gate, worker};
+    struct After {
+      DeliveryGate &gate;
+      std::thread &worker;
+      static void written(void *context, bool newline) {
+        if (!newline) {
+          test::native_io_metrics.after_output = written;
+          return;
+        }
+        auto &state = *static_cast<After *>(context);
+        state.gate.begin();
+        state.gate.release();
+        state.worker.join();
+      }
+    } after{gate, worker};
+    auto &metrics = test::native_io_metrics;
+    metrics.interrupt_fd = STDOUT_FILENO;
+    metrics.after_output = After::written;
+    metrics.after_output_context = &after;
+    submitted = line->try_take();
+    metrics = {};
+  });
+  ASSERT_TRUE(submitted) << "Frozen completed line was deferred after its newline";
+  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_TRUE(delivered);
+  EXPECT_FALSE(gate.timed_out);
+  const auto wire = read();
+  const auto first = wire.find("codet> abc");
+  ASSERT_NE(first, std::string::npos);
+  EXPECT_EQ(wire.find("codet> abc", first + 1), std::string::npos)
+      << "Frozen completed line replayed";
+  capture([&] { line->flush(); });
+  EXPECT_TRUE(read().empty());
+}
+TEST_F(NativeRecordLifecycle, PartialSubmissionFailureStillSeparatesRecovery) {
+  draft();
+  (void)read();
+  capture([&] {
+    auto &metrics = test::native_io_metrics;
+    metrics.interrupt_fd = STDOUT_FILENO;
+    metrics.scalar_partial = true;
+    line->append(static_cast<char>(0x1b));
+    metrics = {};
+  });
+  std::optional<detail::InputLine> submitted;
+  capture([&] { submitted = line->try_take(); });
+  ASSERT_TRUE(submitted);
+  EXPECT_EQ(submitted->text, std::string("abc\x1b"));
+  EXPECT_EQ(read(), "\\x\r\ncodet> abc\\x1B\r\n");
+}

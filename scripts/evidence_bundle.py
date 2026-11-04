@@ -255,6 +255,11 @@ def verify_bundle(folder):
                 for filename, signature in envelope["payload"]["code_hashes"]["changed"].items():
                     if report["validation_hashes"].get("scripts/" + filename) != signature:
                         raise ValueError("Hash experiment candidate code mismatch")
+            if envelope['kind'] == 'gtest-isolation':
+                from gtest_isolation import verify_payload
+                isolated = verify_payload(envelope['payload'], envelope['input_hashes'])
+                if isolated['failures']:
+                    raise ValueError('Isolated sanitizer coverage or executable binding failed')
             derived.append(envelope)
             expected = dict(schema_version=SCHEMA_VERSION, campaign_id=run["campaign_id"], capture_run_id=run["id"],
                             check_id=name, production_hashes=report["production_hashes"], validation_hashes=report["validation_hashes"])

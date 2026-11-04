@@ -1,0 +1,210 @@
+Test project /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T173706Z/asan
+      Start  1: codet.publication-faults
+      Start  2: codet.unit
+ 1/10 Test  #1: codet.publication-faults .........***Failed    7.22 sec
+[==========] Running 69 tests from 7 test suites.
+[----------] Global test environment set-up.
+[----------] 1 test from LineViewportFault
+[ RUN      ] LineViewportFault.CachedRestorationHasNoDraftSizedAllocation
+[       OK ] LineViewportFault.CachedRestorationHasNoDraftSizedAllocation (235 ms)
+[----------] 1 test from LineViewportFault (235 ms total)
+
+[----------] 1 test from InteractionWarningFault
+[ RUN      ] InteractionWarningFault.ProducerAndFixedConsumerNeedNoAllocation
+[       OK ] InteractionWarningFault.ProducerAndFixedConsumerNeedNoAllocation (0 ms)
+[----------] 1 test from InteractionWarningFault (0 ms total)
+
+[----------] 3 tests from UiBudgetFault
+[ RUN      ] UiBudgetFault.BoundedRawPreparationCapsAllocationsAndPropagatesFailure
+[       OK ] UiBudgetFault.BoundedRawPreparationCapsAllocationsAndPropagatesFailure (21 ms)
+[ RUN      ] UiBudgetFault.RedrawAndHistoryDoNotAllocateInProportionToWholeInput
+[       OK ] UiBudgetFault.RedrawAndHistoryDoNotAllocateInProportionToWholeInput (243 ms)
+[ RUN      ] UiBudgetFault.FailedInputMutationDiscardsItsPartialCacheAndAllowsFreshInput
+[       OK ] UiBudgetFault.FailedInputMutationDiscardsItsPartialCacheAndAllowsFreshInput (3 ms)
+[----------] 3 tests from UiBudgetFault (269 ms total)
+
+[----------] 13 tests from FileDiagnosticsFault
+[ RUN      ] FileDiagnosticsFault.RedirectedAnswersBorrowTheirBytesWithoutAllocation
+[       OK ] FileDiagnosticsFault.RedirectedAnswersBorrowTheirBytesWithoutAllocation (0 ms)
+[ RUN      ] FileDiagnosticsFault.ExhaustedDiagnosticBudgetsDoNotAllocateForDiscardedInput
+[       OK ] FileDiagnosticsFault.ExhaustedDiagnosticBudgetsDoNotAllocateForDiscardedInput (0 ms)
+[ RUN      ] FileDiagnosticsFault.SmallBudgetsBoundEscapingAllocationsAndRenderedCallbacksDoNotCopy
+[       OK ] FileDiagnosticsFault.SmallBudgetsBoundEscapingAllocationsAndRenderedCallbacksDoNotCopy (0 ms)
+[ RUN      ] FileDiagnosticsFault.OwnershipTransferAndEmergencyFlushDoNotAllocate
+[       OK ] FileDiagnosticsFault.OwnershipTransferAndEmergencyFlushDoNotAllocate (0 ms)
+[ RUN      ] FileDiagnosticsFault.ClearingOrdinaryDiagnosticsDoesNotAllocateOrLoseTheBudget
+[       OK ] FileDiagnosticsFault.ClearingOrdinaryDiagnosticsDoesNotAllocateOrLoseTheBudget (0 ms)
+[ RUN      ] FileDiagnosticsFault.PartialDiagnosticRecoveryAndSeparatorRetentionDoNotAllocate
+[       OK ] FileDiagnosticsFault.PartialDiagnosticRecoveryAndSeparatorRetentionDoNotAllocate (0 ms)
+[ RUN      ] FileDiagnosticsFault.LiveReplayAllocationFailureDoesNotDiscardCleanupOrNotices
+[       OK ] FileDiagnosticsFault.LiveReplayAllocationFailureDoesNotDiscardCleanupOrNotices (7 ms)
+[ RUN      ] FileDiagnosticsFault.DefaultFileSinkIsAvailableWithoutAllocating
+[       OK ] FileDiagnosticsFault.DefaultFileSinkIsAvailableWithoutAllocating (59 ms)
+[ RUN      ] FileDiagnosticsFault.DefaultFileSinkRemainsAvailableDuringLateStaticDestruction
+[       OK ] FileDiagnosticsFault.DefaultFileSinkRemainsAvailableDuringLateStaticDestruction (59 ms)
+[ RUN      ] FileDiagnosticsFault.DefaultFileSinkRegistersNoDestructorWithAWorkingPositiveControl
+[       OK ] FileDiagnosticsFault.DefaultFileSinkRegistersNoDestructorWithAWorkingPositiveControl (58 ms)
+[ RUN      ] FileDiagnosticsFault.NativeResourceCleanupDoesNotAllocate
+[       OK ] FileDiagnosticsFault.NativeResourceCleanupDoesNotAllocate (0 ms)
+[ RUN      ] FileDiagnosticsFault.PreviewAllocationFailureRetainsTheOwnedPathUntilFinish
+[       OK ] FileDiagnosticsFault.PreviewAllocationFailureRetainsTheOwnedPathUntilFinish (0 ms)
+[ RUN      ] FileDiagnosticsFault.SuccessfulPreviewRetentionAndEmergencyFlushDoNotAllocate
+[       OK ] FileDiagnosticsFault.SuccessfulPreviewRetentionAndEmergencyFlushDoNotAllocate (0 ms)
+[----------] 13 tests from FileDiagnosticsFault (187 ms total)
+
+[----------] 1 test from FaultAllocator
+[ RUN      ] FaultAllocator.NothrowAllocationsUseTheSameReplacementAndFailureInjection
+[       OK ] FaultAllocator.NothrowAllocationsUseTheSameReplacementAndFailureInjection (0 ms)
+[----------] 1 test from FaultAllocator (0 ms total)
+
+[----------] 49 tests from PublicationFault
+[ RUN      ] PublicationFault.OwningWritesRemainSuccessfulAndTheNextSaveWorksWithoutReload
+[       OK ] PublicationFault.OwningWritesRemainSuccessfulAndTheNextSaveWorksWithoutReload (365 ms)
+[ RUN      ] PublicationFault.LoadCacheFailureDoesNotFailAValidLoad
+[       OK ] PublicationFault.LoadCacheFailureDoesNotFailAValidLoad (19 ms)
+[ RUN      ] PublicationFault.AgentKeepsCommittedResponseAndProviderAdapterWithoutAReceipt
+[       OK ] PublicationFault.AgentKeepsCommittedResponseAndProviderAdapterWithoutAReceipt (29 ms)
+[ RUN      ] PublicationFault.ActualLoadKeepsOldProviderRowsUnderTheOldRevisionToken
+[       OK ] PublicationFault.ActualLoadKeepsOldProviderRowsUnderTheOldRevisionToken (20 ms)
+[ RUN      ] PublicationFault.TokenAllocationAndQueryFailuresLeaveValidLoadsSuccessful
+[       OK ] PublicationFault.TokenAllocationAndQueryFailuresLeaveValidLoadsSuccessful (27 ms)
+[ RUN      ] PublicationFault.RepairStopsImmediatelyOnOperationalReadFailureWithOrWithoutRollback
+[       OK ] PublicationFault.RepairStopsImmediatelyOnOperationalReadFailureWithOrWithoutRollback (19 ms)
+[ RUN      ] PublicationFault.InvalidRevisionTokensRemainMandatoryLoadErrors
+[       OK ] PublicationFault.InvalidRevisionTokensRemainMandatoryLoadErrors (19 ms)
+[ RUN      ] PublicationFault.SessionLoadAndRepairPreserveOperationalAndAllocationFailures
+[       OK ] PublicationFault.SessionLoadAndRepairPreserveOperationalAndAllocationFailures (19 ms)
+[ RUN      ] PublicationFault.MigrationInspectionReportsSqlFailuresWithoutClaimingInvalidSchema
+[       OK ] PublicationFault.MigrationInspectionReportsSqlFailuresWithoutClaimingInvalidSchema (97 ms)
+[ RUN      ] PublicationFault.OptionalReferenceKnowledgeCannotFailCommittedRows
+[       OK ] PublicationFault.OptionalReferenceKnowledgeCannotFailCommittedRows (18 ms)
+[ RUN      ] PublicationFault.OwningCheckpointAcknowledgementDoesNotAllocateAfterCommit
+[       OK ] PublicationFault.OwningCheckpointAcknowledgementDoesNotAllocateAfterCommit (20 ms)
+[ RUN      ] PublicationFault.PreparationAllocationFailuresLeaveSnapshotAndNextWriteUsable
+[       OK ] PublicationFault.PreparationAllocationFailuresLeaveSnapshotAndNextWriteUsable (312 ms)
+[ RUN      ] PublicationFault.BlobConversionDeferredFailureRetainsItsOriginalStorage
+[       OK ] PublicationFault.BlobConversionDeferredFailureRetainsItsOriginalStorage (22 ms)
+[ RUN      ] PublicationFault.AcknowledgedMappingsNeedNoRowReadsOrPayloadCopiesDuringOrdinaryAppends
+[       OK ] PublicationFault.AcknowledgedMappingsNeedNoRowReadsOrPayloadCopiesDuringOrdinaryAppends (25 ms)
+[ RUN      ] PublicationFault.ReconciliationRetiresCopiedJsonWithoutAllocatingAfterCommit
+[       OK ] PublicationFault.ReconciliationRetiresCopiedJsonWithoutAllocatingAfterCommit (20 ms)
+[ RUN      ] PublicationFault.PublicTranscriptMutationsRejectUnownedTransactionsWithoutPublication
+[       OK ] PublicationFault.PublicTranscriptMutationsRejectUnownedTransactionsWithoutPublication (839 ms)
+[ RUN      ] PublicationFault.ConstAdaptersAndReconciliationBorrowLargeProviderState
+[       OK ] PublicationFault.ConstAdaptersAndReconciliationBorrowLargeProviderState (87 ms)
+[ RUN      ] PublicationFault.ConstPreparedJsonCleanupDoesNotAllocateAfterCommit
+[       OK ] PublicationFault.ConstPreparedJsonCleanupDoesNotAllocateAfterCommit (39 ms)
+[ RUN      ] PublicationFault.ReconciliationDetectsSameConnectionDmlAndDdlAndRetriesOnlyOnce
+[       OK ] PublicationFault.ReconciliationDetectsSameConnectionDmlAndDdlAndRetriesOnlyOnce (96 ms)
+[ RUN      ] PublicationFault.OptionalTokenSnapshotLossUsesAlreadyCapturedLoadInputs
+[       OK ] PublicationFault.OptionalTokenSnapshotLossUsesAlreadyCapturedLoadInputs (24 ms)
+[ RUN      ] PublicationFault.LegacySnapshotHandoffChecksItsVersionThenRestoresSuffixOnlyWrites
+[       OK ] PublicationFault.LegacySnapshotHandoffChecksItsVersionThenRestoresSuffixOnlyWrites (22 ms)
+[ RUN      ] PublicationFault.SessionRevisionRetriesOnlySelectedChangesAndKeepsToolOutput
+[       OK ] PublicationFault.SessionRevisionRetriesOnlySelectedChangesAndKeepsToolOutput (92 ms)
+[ RUN      ] PublicationFault.RepairSelectedSameConnectionChangesRetryAndUnrelatedChangesDoNot
+[       OK ] PublicationFault.RepairSelectedSameConnectionChangesRetryAndUnrelatedChangesDoNot (99 ms)
+[ RUN      ] PublicationFault.RequiredSessionRevisionFailuresAbortWithoutMutationOrFurtherReads
+[       OK ] PublicationFault.RequiredSessionRevisionFailuresAbortWithoutMutationOrFurtherReads (159 ms)
+[ RUN      ] PublicationFault.ConstLegacyValidationSerializesOnlySuffixAndMutableHandoffPublishesIds
+[       OK ] PublicationFault.ConstLegacyValidationSerializesOnlySuffixAndMutableHandoffPublishesIds (302 ms)
+[ RUN      ] PublicationFault.RecoverySeparatesStoredBaselineFromUnsavedSuffixAndRequestedEdits
+[       OK ] PublicationFault.RecoverySeparatesStoredBaselineFromUnsavedSuffixAndRequestedEdits (201 ms)
+[ RUN      ] PublicationFault.ReadOnlyRecoveryAndForkSupportMissingTokensAndNeverSavedParents
+[       OK ] PublicationFault.ReadOnlyRecoveryAndForkSupportMissingTokensAndNeverSavedParents (23 ms)
+[ RUN      ] PublicationFault.EveryExistingSessionMutatorRejectsDamagedTokensBeforeRotatingThem
+[       OK ] PublicationFault.EveryExistingSessionMutatorRejectsDamagedTokensBeforeRotatingThem (607 ms)
+[ RUN      ] PublicationFault.TokenOnlyRepairPreservesRawRowsAndRequiresNoDecoding
+[       OK ] PublicationFault.TokenOnlyRepairPreservesRawRowsAndRequiresNoDecoding (43 ms)
+[ RUN      ] PublicationFault.TokenOnlyRepairRetriesOnceAndReportsBackupsSeparately
+[       OK ] PublicationFault.TokenOnlyRepairRetriesOnceAndReportsBackupsSeparately (43 ms)
+[ RUN      ] PublicationFault.ToolCompletionReplacesProvisionalResultsAndCanRepeatIdentically
+[       OK ] PublicationFault.ToolCompletionReplacesProvisionalResultsAndCanRepeatIdentically (59 ms)
+[ RUN      ] PublicationFault.RetainedConstRecoveryDoesNotSynthesizeOtherLiveCalls
+[       OK ] PublicationFault.RetainedConstRecoveryDoesNotSynthesizeOtherLiveCalls (33 ms)
+[ RUN      ] PublicationFault.UnavailableAbsoluteCheckpointCanRepeatConstRecoveryWritesWithoutReload
+[       OK ] PublicationFault.UnavailableAbsoluteCheckpointCanRepeatConstRecoveryWritesWithoutReload (68 ms)
+[ RUN      ] PublicationFault.ConstRecoveryReceiptSkipsSqlScansButChecksCallerPrefixAndExternalBytes
+[       OK ] PublicationFault.ConstRecoveryReceiptSkipsSqlScansButChecksCallerPrefixAndExternalBytes (36 ms)
+[ RUN      ] PublicationFault.CompletionKeepsExceptionTypesAndDiagnosticFailuresCannotReplaceThem
+Uncommitted tool result preserved at /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T173706Z/tmp/codet-test-rhoEKv/state/repairs/02369815-c424-41d2-a38e-6c3be79942f2-tool-result-32d917ff-d998-4c10-a231-09b0c8a76e75.json
+Uncommitted tool result preserved at /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T173706Z/tmp/codet-test-rhoEKv/state/repairs/02369815-c424-41d2-a38e-6c3be79942f2-tool-result-737f3eb2-f123-43c2-b793-001ffa78dd19.json
+Uncommitted tool result preserved at /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T173706Z/tmp/codet-test-rhoEKv/state/repairs/02369815-c424-41d2-a38e-6c3be79942f2-tool-result-d4731110-de3a-4df5-ba72-a1697418a1ad.json
+Uncommitted tool result preserved at /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T173706Z/tmp/codet-test-rhoEKv/state/repairs/02369815-c424-41d2-a38e-6c3be79942f2-tool-result-80a904a2-22d6-4c0c-89f3-b7e37530ece3.json
+Uncommitted tool result preserved at /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T173706Z/tmp/codet-test-rhoEKv/state/repairs/02369815-c424-41d2-a38e-6c3be79942f2-tool-result-329f1142-a503-4a16-a816-6fb8900ed20b.json
+Uncommitted tool result preserved at /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T173706Z/tmp/codet-test-rhoEKv/state/repairs/02369815-c424-41d2-a38e-6c3be79942f2-tool-result-33dd009e-d14f-4ad9-ba9b-e4a943be49a5.json
+Uncommitted tool result preserved at /Volumes/Pro2T/codet-compiled-agent/build/completed-input-cleanup-20261104T173706Z/tmp/codet-test-rhoEKv/state/repairs/02369815-c424-41d2-a38e-6c3be79942f2-tool-result-b04b0a8e-4021-4849-a11f-f34fbf5bcd0a.json
+[       OK ] PublicationFault.CompletionKeepsExceptionTypesAndDiagnosticFailuresCannotReplaceThem (31 ms)
+[ RUN      ] PublicationFault.ReceiptPathIsReportedWhenDiagnosticConstructionCannotAllocate
+[       OK ] PublicationFault.ReceiptPathIsReportedWhenDiagnosticConstructionCannotAllocate (18 ms)
+[ RUN      ] PublicationFault.RevisionSchemaOperationalFailuresRetainSqliteResultCodes
+[       OK ] PublicationFault.RevisionSchemaOperationalFailuresRetainSqliteResultCodes (85 ms)
+[ RUN      ] PublicationFault.AgentExecutesACompletedToolOnceAcrossPublicationRetries
+[       OK ] PublicationFault.AgentExecutesACompletedToolOnceAcrossPublicationRetries (118 ms)
+[ RUN      ] PublicationFault.CompletionAndConstReceiptAcknowledgementsDoNotAllocateAfterCommit
+[       OK ] PublicationFault.CompletionAndConstReceiptAcknowledgementsDoNotAllocateAfterCommit (52 ms)
+[ RUN      ] PublicationFault.ConstReceiptEvictionUsesFullValidationAndMutableHandoffKeepsCanonicalIds
+[       OK ] PublicationFault.ConstReceiptEvictionUsesFullValidationAndMutableHandoffKeepsCanonicalIds (32 ms)
+[ RUN      ] PublicationFault.CompletionPreservesPrivateRevisionExceptionIdentity
+[       OK ] PublicationFault.CompletionPreservesPrivateRevisionExceptionIdentity (47 ms)
+[ RUN      ] PublicationFault.ProvisionalCandidatesUseBoundedIndexedBatches
+[       OK ] PublicationFault.ProvisionalCandidatesUseBoundedIndexedBatches (928 ms)
+[ RUN      ] PublicationFault.ProvisionalBatchesRespectTheConnectionsVariableLimit
+[       OK ] PublicationFault.ProvisionalBatchesRespectTheConnectionsVariableLimit (41 ms)
+[ RUN      ] PublicationFault.ProvisionalDuplicatesWithinAndAcrossBatchesRollBack
+[       OK ] PublicationFault.ProvisionalDuplicatesWithinAndAcrossBatchesRollBack (142 ms)
+[ RUN      ] PublicationFault.ProvisionalBatchReadFailureLeavesBothTablesUnchanged
+[       OK ] PublicationFault.ProvisionalBatchReadFailureLeavesBothTablesUnchanged (291 ms)
+[ RUN      ] PublicationFault.ProvisionalCandidateQueriesDoNotMaterializeResultPayloads
+[       OK ] PublicationFault.ProvisionalCandidateQueriesDoNotMaterializeResultPayloads (252 ms)
+[ RUN      ] PublicationFault.ProvisionalBatchPublicationRejectsStatusAndIdentityConflicts
+[       OK ] PublicationFault.ProvisionalBatchPublicationRejectsStatusAndIdentityConflicts (183 ms)
+[ RUN      ] PublicationFault.ProvisionalBatchAcknowledgementDoesNotAllocateAfterCommit
+[       OK ] PublicationFault.ProvisionalBatchAcknowledgementDoesNotAllocateAfterCommit (126 ms)
+[ RUN      ] PublicationFault.NativeMetadataFirstUseAndEmergencyDeliveryDoNotAllocate
+/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/tests/publication_fault_test.cpp:2282: Failure
+Value of: (((*(int *)&(status)) & 127) == 0)
+  Actual: false
+Expected: true
+
+[  FAILED  ] PublicationFault.NativeMetadataFirstUseAndEmergencyDeliveryDoNotAllocate (132 ms)
+[----------] 49 tests from PublicationFault (6406 ms total)
+
+[----------] 1 test from LineSubmissionFault
+[ RUN      ] LineSubmissionFault.AllocationFailureCannotConsumeAnUnownedLine
+[       OK ] LineSubmissionFault.AllocationFailureCannotConsumeAnUnownedLine (2 ms)
+[----------] 1 test from LineSubmissionFault (3 ms total)
+
+[----------] Global test environment tear-down
+[==========] 69 tests from 7 test suites ran. (7102 ms total)
+[  PASSED  ] 68 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] PublicationFault.NativeMetadataFirstUseAndEmergencyDeliveryDoNotAllocate
+
+ 1 FAILED TEST
+
+      Start  3: codet.cli
+ 2/10 Test  #3: codet.cli ........................   Passed    0.22 sec
+      Start  4: codet.integration
+ 3/10 Test  #4: codet.integration ................   Passed   87.93 sec
+      Start  5: codet.prompts
+ 4/10 Test  #5: codet.prompts ....................   Passed    0.37 sec
+      Start  6: codet.build-integrity
+ 5/10 Test  #6: codet.build-integrity ............   Passed    0.14 sec
+      Start  7: codet.semgrep-report
+ 6/10 Test  #7: codet.semgrep-report .............   Passed    0.65 sec
+      Start  8: codet.lint-runner
+ 7/10 Test  #8: codet.lint-runner ................   Passed    2.11 sec
+      Start  9: codet.validation-evidence
+ 8/10 Test  #9: codet.validation-evidence ........   Passed   10.69 sec
+      Start 10: codet.hermetic
+ 9/10 Test #10: codet.hermetic ...................   Passed    0.16 sec
+10/10 Test  #2: codet.unit .......................   Passed  114.62 sec
+
+90% tests passed, 1 tests failed out of 10
+
+Total Test time (real) = 114.62 sec
+
+The following tests FAILED:
+	  1 - codet.publication-faults (Failed)
+Errors while running CTest

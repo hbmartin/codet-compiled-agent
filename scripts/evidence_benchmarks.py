@@ -26,6 +26,26 @@ def verify_git_validation(repository, root, ref):
     return expected
 
 
+def verify_tooling_metrics(row):
+    if row.get('harness') != 'tooling' or 'metric_version' not in row:
+        return # Historical unversioned observations keep their original field interpretation.
+    if row['metric_version'] != 2:
+        raise ValueError('Unsupported tooling metric version')
+    fields = ('files', 'owned_processes', 'check_output_calls', 'git_commands', 'process_inspection_commands',
+              'retained_traced_blocks', 'retained_traced_bytes', 'peak_traced_bytes')
+    if (any(type(row.get(name)) is not int or row[name] < 0 for name in fields) or
+            {'retained_allocations', 'retained_bytes', 'allocations', 'metadata_queries'} & set(row)):
+        raise ValueError('Missing or ambiguous tooling counters')
+    if row['check_output_calls'] != row['git_commands'] + row['process_inspection_commands']:
+        raise ValueError('Tooling command counter classification mismatch')
+    if row['retained_traced_bytes'] > row['peak_traced_bytes']:
+        raise ValueError('Tooling retained memory exceeds peak')
+    if row.get('workload') == 'supervision' and (row['git_commands'] or row['files'] or row['owned_processes'] != 5):
+        raise ValueError('Supervision must record five owned processes, no files or Git commands')
+    if row.get('workload') in ('hashing', 'git-inspection') and row['owned_processes']:
+        raise ValueError('Hash/Git workloads cannot claim owned processes')
+
+
 def verify_samples(rows, summary, workloads, *, sets=2, measured=5):
     expected = {(s, harness, workload, variant) for s in range(1, sets + 1)
                 for harness, names in workloads.items() for workload in names
@@ -36,6 +56,7 @@ def verify_samples(rows, summary, workloads, *, sets=2, measured=5):
     grouped = {key: [] for key in expected}
     seen = set()
     for row in rows:
+        verify_tooling_metrics(row)
         key = (row["set"], row["harness"], row["workload"], row["variant"])
         if type(row["set"]) is not int or key not in grouped:
             raise ValueError("Unexpected benchmark group")

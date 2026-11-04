@@ -1,0 +1,47 @@
+[1/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/failure.cpp.o
+[2/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/support.cpp.o
+[3/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/capture_catalog.cpp.o
+[4/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/reliability.cpp.o
+[5/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/platform.cpp.o
+[6/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/output.cpp.o
+[7/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/config.cpp.o
+[8/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/patch.cpp.o
+[9/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/provider.cpp.o
+[10/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/hooks.cpp.o
+[11/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/state.cpp.o
+[12/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/interaction.cpp.o
+[13/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/tool_registry.cpp.o
+[14/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/computer.cpp.o
+[15/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/images.cpp.o
+/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/src/modern/images.cpp:81:76: warning: implicit conversion from 'const unsigned long' to 'double' may lose precision [-Wimplicit-int-float-conversion]
+   81 |   const double scale = detail == "original" ? 1.0 : std::min(1.0, 1280.0 / std::max(width, height));
+      |                                                                          ~ ^~~~~~~~~~~~~~~~~~~~~~~
+/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/src/modern/images.cpp:82:60: warning: implicit conversion from 'size_t' (aka 'unsigned long') to 'double' may lose precision [-Wimplicit-int-float-conversion]
+   82 |   const size_t w = std::max(size_t{1}, static_cast<size_t>(width * scale)),
+      |                                                            ^~~~~ ~
+/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent/src/modern/images.cpp:83:60: warning: implicit conversion from 'size_t' (aka 'unsigned long') to 'double' may lose precision [-Wimplicit-int-float-conversion]
+   83 |                h = std::max(size_t{1}, static_cast<size_t>(height * scale));
+      |                                                            ^~~~~~ ~
+3 warnings generated.
+[16/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/instructions.cpp.o
+[17/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/inspection.cpp.o
+[18/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/tools.cpp.o
+[19/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/context.cpp.o
+[20/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/artifacts.cpp.o
+[21/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/prompts.cpp.o
+[22/37] Building CXX object CMakeFiles/codet_line_input_bench.dir/tests/line_input_bench.cpp.o
+[23/37] Building CXX object CMakeFiles/codet_output_bench.dir/tests/output_bench.cpp.o
+[24/37] Building CXX object deps/schema/CMakeFiles/nlohmann_json_schema_validator.dir/src/smtp-address-validator.cpp.o
+[25/37] Building CXX object CMakeFiles/codet_export_bench.dir/tests/export_bench.cpp.o
+[26/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/agent.cpp.o
+[27/37] Building CXX object deps/schema/CMakeFiles/nlohmann_json_schema_validator.dir/src/json-schema-draft7.json.cpp.o
+[28/37] Building CXX object deps/schema/CMakeFiles/nlohmann_json_schema_validator.dir/src/json-uri.cpp.o
+[29/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/cli.cpp.o
+[30/37] Building CXX object deps/schema/CMakeFiles/nlohmann_json_schema_validator.dir/src/json-patch.cpp.o
+[31/37] Building CXX object deps/schema/CMakeFiles/nlohmann_json_schema_validator.dir/src/string-format-check.cpp.o
+[32/37] Building CXX object deps/schema/CMakeFiles/nlohmann_json_schema_validator.dir/src/json-validator.cpp.o
+[33/37] Linking CXX static library deps/schema/libnlohmann_json_schema_validator.a
+[34/37] Linking CXX static library libcodet_core.a
+[35/37] Linking CXX executable codet_line_input_bench
+[36/37] Linking CXX executable codet_export_bench
+[37/37] Linking CXX executable codet_output_bench

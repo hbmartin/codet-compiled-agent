@@ -2279,7 +2279,7 @@ TEST_F(PublicationFault, NativeMetadataFirstUseAndEmergencyDeliveryDoNotAllocate
   ASSERT_GT(child, 0);
   int status = 0;
   ASSERT_TRUE(test::wait_helper(child, status));
-  ASSERT_TRUE(WIFEXITED(status));
+  ASSERT_TRUE(WIFEXITED(status)) << "Native metadata helper raw wait status: " << status;
   EXPECT_EQ(WEXITSTATUS(status), 0);
 }
 

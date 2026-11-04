@@ -20,7 +20,7 @@
     "include/codet/detail/approval_review.hpp": "6275783e5e2b70c81ef10447b8e3c38e1ad96729172407fc3d7c16e3caddf2a4",
     "include/codet/detail/approval_unicode.hpp": "81b289def9f7f2453bca3043619e788e61a36765713f30809f1ff149ff9746b7",
     "include/codet/detail/cleanup_diagnostics.hpp": "8251d5a169981c80cc02629dbe674c2d07cd4e4f9c1344685cbfc533f5db4409",
-    "include/codet/detail/cli.hpp": "c10ef98ffbda273264f944dd2a1e8294d6182c77b52f108f869004ed90c5896f",
+    "include/codet/detail/cli.hpp": "1b447716ee69eeeec62589f0495541df9afc8ce1015a313768555b53bc96bc39",
     "include/codet/detail/cli_diagnostics.hpp": "7ce7e967fef9020205d5bd69581a4d087c64b74bafd330dd89b4e21201874ddb",
     "include/codet/detail/cli_output.hpp": "c4b727f754374be226eff3ea83b854484e35ad96b4ab7a11a3d4d450620de0b8",
     "include/codet/detail/curses_input.hpp": "51c9edf6b7a3ebd2dc4eb065b3a5142c31503acb07c60471bc371f2edeb18e65",
@@ -28,13 +28,13 @@
     "include/codet/detail/curses_text.hpp": "679b9a272baa6f173f65833d782b73c550bff3559568c85ae9015afc061bfe53",
     "include/codet/detail/diagnostic_stream.hpp": "e8f6edb266372de9b56aa1d3d3e26ce0b1e4aa9997addf626c8df10053f8f468",
     "include/codet/detail/history_excerpt.hpp": "ad5264d743ae321ae98c421a6a7bfd1d2a1341a9f4fb5607362285a47fe5ef10",
-    "include/codet/detail/line_prompt.hpp": "72d1edd631fb9bf746971a99b0ca93e0602e4a766b8c0faa4c26967fc5932135",
+    "include/codet/detail/line_prompt.hpp": "42ced7120b2473067bb49cfe1727d5435f1d0fd2d08caf6c0105e514b4416d56",
     "include/codet/detail/native_output.hpp": "01b354b050beed49222734d8d5357b9a54d6e3e39c82d5863fa8cf97f71b9305",
     "include/codet/detail/native_terminal.hpp": "2af5ae2b24491079f35c529bbbb29419d6ba244ea001e27fbc0ec5637c87b72c",
     "include/codet/detail/output_destination.hpp": "05a1f40cf7b6784fcd9c191176cb9bc70d172aa85bc9e8bc7cb4821922d7a4e3",
-    "include/codet/detail/request_input.hpp": "b86027f8a6e046be24bb2a4a86fa28621d3e89603af937965c0bc01284791544",
+    "include/codet/detail/request_input.hpp": "9699a8c66013eb072fa859dc190b15c56fd5f59ed5c51d7412b6b532a4f64d8c",
     "include/codet/detail/request_input_controller.hpp": "fe9c7ac661151c6721987f73348a5689468976ec40a2954293ab1b5a092d42d0",
-    "include/codet/detail/terminal_input.hpp": "7933f978f5ed6e4e6ed379f7d1ec63764f5e6aa048599388b6d9747a8fa33aa1",
+    "include/codet/detail/terminal_input.hpp": "1fe60fc88ef4d233daf10a21f5bcff99e57a5432d44ed08d516cad27dde1fb53",
     "include/codet/detail/terminal_resources.hpp": "3de15d72934e39d0c296459b75518e181b5cbf39c6f355c912b1102efd019bbf",
     "include/codet/detail/ui_history.hpp": "93f1b86c2675fadd799dd58976ac181eaaddfe6ba0e004de2f145a94e3573f43",
     "include/codet/detail/warning_bits.hpp": "e3e73e8e969a8cdd127fa48a2afa052a281d212626bedbb66faa2160cc6510b3",
@@ -57,7 +57,7 @@
     "src/modern/agent.cpp": "e12c09f5a3df81421d10bfa0ac22c62b8b2ee8acf3edb724c629bc043d1504fc",
     "src/modern/artifacts.cpp": "6bd6b5576aa7167b2fba7a085efe17ab381a689c3a9f8fdfd00a4cf9a2fe145c",
     "src/modern/capture_catalog.cpp": "2d34912ab50f692309883726bb9cb1bc1b31c5ce5e92aca8d564511b0bb3db1c",
-    "src/modern/cli.cpp": "484cb467760245fcc1f1e39cd4ca927c526aedb2b913b2aeafcd8e0a0744c25c",
+    "src/modern/cli.cpp": "563fc4733e6aca2886723074fc5ec5b6f7a373656343ddaadf0fb2816e34ecbf",
     "src/modern/computer.cpp": "280112859a870db9deaa3d51cc1311f5fcdefa3eaec4ee7f3daac68145172ff9",
     "src/modern/config.cpp": "6ef1d1b7829a83339e773843cbeff09db275db4a3dd8499e7c0fa0dad0d802ca",
     "src/modern/context.cpp": "30ef96299db52a88a0904e30461f945da4e13b20ff7d5e15969534ed2de10825",
@@ -70,7 +70,7 @@
     "src/modern/main.cpp": "487894eb1027ee280062729da92b21de628fbfd56189384cf4efd0d5177c2e64",
     "src/modern/output.cpp": "8b9b0b68e8923a0045dd07d5004ca2b43a3e0c7608d5276a444ccb1f19079b75",
     "src/modern/patch.cpp": "8c99791527f8a6b09b35674802db3c29cafe2adde4700a67ca7adda60562f770",
-    "src/modern/platform.cpp": "20caaffd0c07ca2da238fcb270312aea656a4cf6127e5a7475b6f6c68db38a6d",
+    "src/modern/platform.cpp": "843a306f5ba086c190f2f4ab10415cb13c56e2ac5dd9c2135c77352d16845b17",
     "src/modern/prompts.cpp": "57082e86bf22ccad9d788b2bcff866788507bec072a7531797237a6fcfa0d367",
     "src/modern/provider.cpp": "9560c6f08c03b9417209f6ee7b0b5f1f0337184048ba00e55fc4bbb9172161dc",
     "src/modern/reliability.cpp": "d924d9c1e8875c7b7e053509e2ab2fe3e24e5aee814c706dbdc9c4e608461356",
@@ -140,20 +140,22 @@
     "include/codet/detail/cleanup_diagnostics.hpp": "8251d5a169981c80cc02629dbe674c2d07cd4e4f9c1344685cbfc533f5db4409",
     "include/codet/detail/cli.hpp": "1b447716ee69eeeec62589f0495541df9afc8ce1015a313768555b53bc96bc39",
     "include/codet/detail/cli_diagnostics.hpp": "7ce7e967fef9020205d5bd69581a4d087c64b74bafd330dd89b4e21201874ddb",
-    "include/codet/detail/cli_output.hpp": "c4b727f754374be226eff3ea83b854484e35ad96b4ab7a11a3d4d450620de0b8",
+    "include/codet/detail/cli_output.hpp": "d1559b7d9d0dfcbeb950646e6c7d9fb3d861fdf9aa180cdc698b84aca289bddd",
     "include/codet/detail/curses_input.hpp": "51c9edf6b7a3ebd2dc4eb065b3a5142c31503acb07c60471bc371f2edeb18e65",
     "include/codet/detail/curses_render.hpp": "392ec70454219f6ee7e93d1842fea99f1577adffef4500916afa5e6309364714",
     "include/codet/detail/curses_text.hpp": "679b9a272baa6f173f65833d782b73c550bff3559568c85ae9015afc061bfe53",
-    "include/codet/detail/diagnostic_stream.hpp": "e8f6edb266372de9b56aa1d3d3e26ce0b1e4aa9997addf626c8df10053f8f468",
+    "include/codet/detail/diagnostic_stream.hpp": "2e659ce835c214493d32bb36ac2df3cd5e3ef30daa48d1e2ac816569267bebcf",
     "include/codet/detail/history_excerpt.hpp": "ad5264d743ae321ae98c421a6a7bfd1d2a1341a9f4fb5607362285a47fe5ef10",
-    "include/codet/detail/line_prompt.hpp": "42ced7120b2473067bb49cfe1727d5435f1d0fd2d08caf6c0105e514b4416d56",
+    "include/codet/detail/line_prompt.hpp": "c0ca36d40e52f682bb139079f79b444d11b7cdb0dbc9d203cd37f94171bf86b4",
     "include/codet/detail/native_output.hpp": "01b354b050beed49222734d8d5357b9a54d6e3e39c82d5863fa8cf97f71b9305",
     "include/codet/detail/native_terminal.hpp": "2af5ae2b24491079f35c529bbbb29419d6ba244ea001e27fbc0ec5637c87b72c",
-    "include/codet/detail/output_destination.hpp": "05a1f40cf7b6784fcd9c191176cb9bc70d172aa85bc9e8bc7cb4821922d7a4e3",
+    "include/codet/detail/output_destination.hpp": "b17ca6680746e1d902b61f4217ba0a52f94911384633b3ebd5cff0d511459834",
+    "include/codet/detail/pending_control.hpp": "67daca239defa99da46c3105dc7f7ea45f68cd388a7210cd801d325242881dd9",
     "include/codet/detail/request_input.hpp": "9699a8c66013eb072fa859dc190b15c56fd5f59ed5c51d7412b6b532a4f64d8c",
     "include/codet/detail/request_input_controller.hpp": "fe9c7ac661151c6721987f73348a5689468976ec40a2954293ab1b5a092d42d0",
-    "include/codet/detail/terminal_input.hpp": "7933f978f5ed6e4e6ed379f7d1ec63764f5e6aa048599388b6d9747a8fa33aa1",
+    "include/codet/detail/terminal_input.hpp": "1fe60fc88ef4d233daf10a21f5bcff99e57a5432d44ed08d516cad27dde1fb53",
     "include/codet/detail/terminal_resources.hpp": "3de15d72934e39d0c296459b75518e181b5cbf39c6f355c912b1102efd019bbf",
+    "include/codet/detail/turn_input.hpp": "e41035e227e9d99f3f0a1b254d4ce7d73ee8fa71c7461cf58143bba206628a12",
     "include/codet/detail/ui_history.hpp": "93f1b86c2675fadd799dd58976ac181eaaddfe6ba0e004de2f145a94e3573f43",
     "include/codet/detail/warning_bits.hpp": "e3e73e8e969a8cdd127fa48a2afa052a281d212626bedbb66faa2160cc6510b3",
     "include/codet/diagnostics.hpp": "a0a894b40b7ac5fe433a571a3e4f967b7cb70e6cd8961712dd657c7d864864cd",
@@ -175,7 +177,7 @@
     "src/modern/agent.cpp": "e12c09f5a3df81421d10bfa0ac22c62b8b2ee8acf3edb724c629bc043d1504fc",
     "src/modern/artifacts.cpp": "6bd6b5576aa7167b2fba7a085efe17ab381a689c3a9f8fdfd00a4cf9a2fe145c",
     "src/modern/capture_catalog.cpp": "2d34912ab50f692309883726bb9cb1bc1b31c5ce5e92aca8d564511b0bb3db1c",
-    "src/modern/cli.cpp": "563fc4733e6aca2886723074fc5ec5b6f7a373656343ddaadf0fb2816e34ecbf",
+    "src/modern/cli.cpp": "a57563a10d2b730e4a5dda785b893672c0ed835515a2a0807047230c2906369f",
     "src/modern/computer.cpp": "280112859a870db9deaa3d51cc1311f5fcdefa3eaec4ee7f3daac68145172ff9",
     "src/modern/config.cpp": "6ef1d1b7829a83339e773843cbeff09db275db4a3dd8499e7c0fa0dad0d802ca",
     "src/modern/context.cpp": "30ef96299db52a88a0904e30461f945da4e13b20ff7d5e15969534ed2de10825",
@@ -188,7 +190,7 @@
     "src/modern/main.cpp": "487894eb1027ee280062729da92b21de628fbfd56189384cf4efd0d5177c2e64",
     "src/modern/output.cpp": "8b9b0b68e8923a0045dd07d5004ca2b43a3e0c7608d5276a444ccb1f19079b75",
     "src/modern/patch.cpp": "8c99791527f8a6b09b35674802db3c29cafe2adde4700a67ca7adda60562f770",
-    "src/modern/platform.cpp": "20caaffd0c07ca2da238fcb270312aea656a4cf6127e5a7475b6f6c68db38a6d",
+    "src/modern/platform.cpp": "690b52ce395cc358a292a9d2d15dd59d4978a28690f4ec5922d51d65a116ec85",
     "src/modern/prompts.cpp": "57082e86bf22ccad9d788b2bcff866788507bec072a7531797237a6fcfa0d367",
     "src/modern/provider.cpp": "9560c6f08c03b9417209f6ee7b0b5f1f0337184048ba00e55fc4bbb9172161dc",
     "src/modern/reliability.cpp": "d924d9c1e8875c7b7e053509e2ab2fe3e24e5aee814c706dbdc9c4e608461356",
@@ -242,95 +244,931 @@
       "old": [
         "bugprone-signed-bitwise",
         "include/codet/detail/line_prompt.hpp",
-        4975,
-        "use of a signed integer operand with a binary bitwise operator",
-        "src/modern/cli.cpp"
-      ],
-      "new": [
-        "bugprone-signed-bitwise",
-        "include/codet/detail/line_prompt.hpp",
         5372,
         "use of a signed integer operand with a binary bitwise operator",
         "src/modern/cli.cpp"
       ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/line_prompt.hpp",
+        5533,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/cli.cpp"
+      ],
       "context": "            S_ISCHR(value.st_mode) && ::ioctl(descriptor, TIOCGWINSZ, &size) == 0 ? size.ws_col : 0;",
-      "rationale": "Unchanged diagnostic identity and exact source line/token column; preceding pending-input handling moved the source location."
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
     },
     {
       "tool": "clang-tidy",
       "old": [
-        "bugprone-signed-bitwise",
-        "include/codet/detail/line_prompt.hpp",
-        5021,
-        "use of a signed integer operand with a binary bitwise operator",
-        "src/modern/cli.cpp"
-      ],
-      "new": [
         "bugprone-signed-bitwise",
         "include/codet/detail/line_prompt.hpp",
         5418,
         "use of a signed integer operand with a binary bitwise operator",
         "src/modern/cli.cpp"
       ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/line_prompt.hpp",
+        5579,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/cli.cpp"
+      ],
       "context": "            S_ISCHR(value.st_mode) && ::ioctl(descriptor, TIOCGWINSZ, &size) == 0 ? size.ws_col : 0;",
-      "rationale": "Unchanged diagnostic identity and exact source line/token column; preceding pending-input handling moved the source location."
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
     },
     {
       "tool": "clang-tidy",
       "old": [
-        "bugprone-signed-bitwise",
-        "include/codet/detail/line_prompt.hpp",
-        11329,
-        "use of a signed integer operand with a binary bitwise operator",
-        "src/modern/cli.cpp"
-      ],
-      "new": [
         "bugprone-signed-bitwise",
         "include/codet/detail/line_prompt.hpp",
         12940,
         "use of a signed integer operand with a binary bitwise operator",
         "src/modern/cli.cpp"
       ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/line_prompt.hpp",
+        13101,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/cli.cpp"
+      ],
       "context": "    if (S_ISCHR(value.st_mode) && same_destination(value, terminal_)) {",
-      "rationale": "Unchanged diagnostic identity and exact source line/token column; preceding pending-input handling moved the source location."
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/output_destination.hpp",
+        300,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/cli.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/output_destination.hpp",
+        554,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/cli.cpp"
+      ],
+      "context": "         (a.st_mode & S_IFMT) == (b.st_mode & S_IFMT) && a.st_rdev == b.st_rdev;",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/output_destination.hpp",
+        324,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/cli.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/output_destination.hpp",
+        578,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/cli.cpp"
+      ],
+      "context": "         (a.st_mode & S_IFMT) == (b.st_mode & S_IFMT) && a.st_rdev == b.st_rdev;",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/output_destination.hpp",
+        1734,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/cli.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/output_destination.hpp",
+        2090,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/cli.cpp"
+      ],
+      "context": "S_ISCHR(identity.st_mode)",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
     },
     {
       "tool": "clang-tidy",
       "old": [
         "bugprone-unchecked-optional-access",
         "src/modern/cli.cpp",
-        27001,
+        12955,
         "unchecked access to optional value",
         "src/modern/cli.cpp"
       ],
       "new": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        13038,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "context": "      if (!approval_->usable()) {",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        13472,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "new": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        13555,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "context": "        const auto heading = \"Approval review \" + std::to_string(approval_->page() + 1) + \"/\" +",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        13547,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "new": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        13630,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "context": "                             std::to_string(approval_->pages());",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        13684,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "new": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        13767,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "context": "        for (size_t i = 0; i < approval_->capacity(); ++i)",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        13752,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "new": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        13835,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "context": "          draw(static_cast<int>(i) + 1, approval_->line(i));",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        14072,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "new": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        14155,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "context": "                                        : approval_->approved_review()",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        14497,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "new": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        14580,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "context": "      const bool previously_reviewed = approval_->approved_review();",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        14533,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "new": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        14616,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "context": "      approval_->displayed();",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        14610,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "new": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        14693,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "context": "      if (!input_.stale() && !previously_reviewed && approval_->approved_review()) {",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        16696,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "new": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        16779,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
+      "context": "    transcript_.add(approval_->document(),",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/cli.cpp",
+        18725,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/cli.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/cli.cpp",
+        18808,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/cli.cpp"
+      ],
+      "context": "        attron(COLOR_PAIR(1));",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
         "bugprone-unchecked-optional-access",
         "src/modern/cli.cpp",
         29982,
         "unchecked access to optional value",
         "src/modern/cli.cpp"
       ],
+      "new": [
+        "bugprone-unchecked-optional-access",
+        "src/modern/cli.cpp",
+        29564,
+        "unchecked access to optional value",
+        "src/modern/cli.cpp"
+      ],
       "context": "        approval_->previous();",
-      "rationale": "Unchanged diagnostic identity and exact source line/token column; preceding pending-input handling moved the source location."
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
     },
     {
       "tool": "clang-tidy",
       "old": [
         "bugprone-unchecked-optional-access",
         "src/modern/cli.cpp",
-        27043,
+        30024,
         "unchecked access to optional value",
         "src/modern/cli.cpp"
       ],
       "new": [
         "bugprone-unchecked-optional-access",
         "src/modern/cli.cpp",
-        30024,
+        29606,
         "unchecked access to optional value",
         "src/modern/cli.cpp"
       ],
       "context": "        approval_->next();",
-      "rationale": "Unchanged diagnostic identity and exact source line/token column; preceding pending-input handling moved the source location."
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/output_destination.hpp",
+        300,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/main.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/output_destination.hpp",
+        554,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/main.cpp"
+      ],
+      "context": "         (a.st_mode & S_IFMT) == (b.st_mode & S_IFMT) && a.st_rdev == b.st_rdev;",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/output_destination.hpp",
+        324,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/main.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/output_destination.hpp",
+        578,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/main.cpp"
+      ],
+      "context": "         (a.st_mode & S_IFMT) == (b.st_mode & S_IFMT) && a.st_rdev == b.st_rdev;",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/output_destination.hpp",
+        1734,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/main.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/output_destination.hpp",
+        2090,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/main.cpp"
+      ],
+      "context": "S_ISCHR(identity.st_mode)",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/output_destination.hpp",
+        300,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/output_destination.hpp",
+        554,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "         (a.st_mode & S_IFMT) == (b.st_mode & S_IFMT) && a.st_rdev == b.st_rdev;",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/output_destination.hpp",
+        324,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/output_destination.hpp",
+        578,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "         (a.st_mode & S_IFMT) == (b.st_mode & S_IFMT) && a.st_rdev == b.st_rdev;",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/output_destination.hpp",
+        1734,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "include/codet/detail/output_destination.hpp",
+        2090,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "S_ISCHR(identity.st_mode)",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-suspicious-stringview-data-usage",
+        "src/modern/platform.cpp",
+        25075,
+        "result of a `data()` call may not be null terminated, provide size information to the callee to prevent potential issues",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-suspicious-stringview-data-usage",
+        "src/modern/platform.cpp",
+        26290,
+        "result of a `data()` call may not be null terminated, provide size information to the callee to prevent potential issues",
+        "src/modern/platform.cpp"
+      ],
+      "context": "      output_.write(part.data(), static_cast<std::streamsize>(count));",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        33065,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        34286,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "    while (end > 0 && (static_cast<unsigned char>(clean[end]) & 0xc0) == 0x80)",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        34667,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        35888,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "  bytes[6] = (bytes[6] & 15) | 64;",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        34679,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        35900,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "  bytes[6] = (bytes[6] & 15) | 64;",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        34702,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        35923,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "  bytes[8] = (bytes[8] & 63) | 128;",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        34714,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        35935,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "  bytes[8] = (bytes[8] & 63) | 128;",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        34917,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        36138,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "    out += hex[bytes[i] >> 4];",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        34947,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        36168,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "    out += hex[bytes[i] & 15];",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        35609,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        36830,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "      out += hex[c >> 4];",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        35634,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        36855,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "      out += hex[c & 15];",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        35892,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        37113,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "  static const int initialized = [] { return curl_global_init(CURL_GLOBAL_DEFAULT); }();",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        39169,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        40390,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "  Fd fd(::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK));",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        39342,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        40563,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "  if (::fstat(fd.n, &status) != 0 || !S_ISREG(status.st_mode))",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        41634,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        42855,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "  if (exists && !S_ISREG(old.st_mode))",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        42064,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        43285,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "    const mode_t mode = private_file ? 0600 : (exists ? (old.st_mode & 0777) : 0644);",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        43615,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        44836,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "  if (lstat(p.c_str(), &st) != 0 || !S_ISREG(st.st_mode))",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        44482,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        45703,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "    EV_SET(&event, static_cast<uintptr_t>(pid), EVFILT_PROC, EV_ADD | EV_ENABLE | EV_ONESHOT,",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        45215,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        46436,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "    if (count && (event.flags & EV_ERROR)) {",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        52682,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        53903,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "      if (::ioctl(slave, TIOCSCTTY, 0) < 0)",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        58234,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        59455,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "          while (lead && (static_cast<unsigned char>(chunk[lead - 1]) & 0xc0) == 0x80)",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        62996,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        64217,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "                     : job.termination_status.value_or(WIFEXITED(status) ? WEXITSTATUS(status)",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        63016,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        64237,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "                     : job.termination_status.value_or(WIFEXITED(status) ? WEXITSTATUS(status)",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        63117,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "bugprone-signed-bitwise",
+        "src/modern/platform.cpp",
+        64338,
+        "use of a signed integer operand with a binary bitwise operator",
+        "src/modern/platform.cpp"
+      ],
+      "context": "                                                                         : 128 + WTERMSIG(status));",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
+    },
+    {
+      "tool": "clang-tidy",
+      "old": [
+        "performance-use-std-move",
+        "src/modern/platform.cpp",
+        66629,
+        "'current' could be moved here",
+        "src/modern/platform.cpp"
+      ],
+      "new": [
+        "performance-use-std-move",
+        "src/modern/platform.cpp",
+        67850,
+        "'current' could be moved here",
+        "src/modern/platform.cpp"
+      ],
+      "context": "      failure = current;",
+      "rationale": "Reviewed unchanged diagnostic identity, translation unit, and source expression. Position follows added fields/helpers; repeated expressions retain their source order."
     }
   ]
 }

@@ -341,14 +341,14 @@ class StreamRecord {
 
 public:
   bool pending = false, available = true;
-  StreamRecord(std::ostream &output, detail::DiagnosticState &local) noexcept
+  StreamRecord(std::ostream &output, detail::DiagnosticState &local, bool presentation) noexcept
       : local_(local), shared_(&output == &std::cerr   ? &stderr_stream_state
                                : &output == &std::cout ? &stdout_stream_state
                                                        : nullptr),
         buffer_(output.rdbuf()) {
     if (!shared_) {
       local_.bind(buffer_);
-      pending = local_.pending;
+      pending = local_.pending || (presentation && local_.fragment);
       return;
     }
     NativeMetadataGuard guard;
@@ -362,23 +362,25 @@ public:
     }
     epoch_ = shared_->epoch;
     serial_ = ++shared_->serial;
-    pending = shared_->state.pending;
+    pending = shared_->state.pending || (presentation && shared_->state.fragment);
     shared_->state.pending = true;
   }
-  void finish(bool complete, bool attempted) noexcept {
+  void finish(bool complete, bool attempted, bool fragment) noexcept {
     if (!shared_) {
-      if (complete)
+      if (complete) {
         local_.pending = false;
-      else if (attempted)
+        local_.fragment = fragment;
+      } else if (attempted)
         local_.pending = true;
       return;
     }
     NativeMetadataGuard guard;
     if (guard.locked && shared_->epoch == epoch_ && shared_->serial == serial_ &&
         shared_->state.buffer == buffer_) {
-      if (complete)
+      if (complete) {
         shared_->state.pending = false;
-      else if (attempted)
+        shared_->state.fragment = fragment;
+      } else if (attempted)
         shared_->state.pending = true;
     }
   }
@@ -444,6 +446,15 @@ std::string FileNotice::text() const {
 }
 namespace {
 // Ordinary diagnostics and streamed notices use the same record boundaries and attempt.
+bool record_ends_line(std::initializer_list<std::string_view> parts, bool newline) noexcept {
+  if (newline)
+    return true;
+  bool ended = false;
+  for (auto part : parts)
+    if (!part.empty())
+      ended = part.back() == '\n';
+  return ended;
+}
 class NativeDiagnosticRecord {
   detail::OutputAttempt &attempt_;
   int native_;
@@ -454,7 +465,8 @@ class NativeDiagnosticRecord {
 
 public:
   NativeDiagnosticRecord(int descriptor, NativeInspection inspection,
-                         detail::OutputAttempt &attempt, bool presentation = false) noexcept
+                         detail::OutputAttempt &attempt, bool presentation = false,
+                         const detail::PresentationToken *expected = nullptr) noexcept
       : attempt_(attempt), native_(descriptor), inspection_(inspection),
         descriptor_(descriptor, attempt, inspection_.inspected ? &inspection_.identity : nullptr,
                     inspection_.pipe_limit) {
@@ -469,7 +481,7 @@ public:
       if (inspection_.inspected &&
           detail::same_destination(inspection_.identity, descriptor_state(native_).identity))
         descriptor_state(native_).pipe_limit = inspection_.pipe_limit;
-      reservation_ = native_destinations.admit(native_, presentation);
+      reservation_ = native_destinations.admit(native_, presentation, expected);
       ready_ = reservation_.admitted;
       deferred_ = presentation && !reservation_.admitted;
     }
@@ -479,6 +491,9 @@ public:
   NativeDiagnosticRecord &operator=(const NativeDiagnosticRecord &) = delete;
   ~NativeDiagnosticRecord() {
     complete(false, false);
+  }
+  const detail::PresentationToken &token() const noexcept {
+    return reservation_.token;
   }
   bool deferred() const noexcept {
     return deferred_;
@@ -508,7 +523,7 @@ public:
   }
   bool finish(std::initializer_list<std::string_view> tail = {}, bool newline = true) noexcept {
     const bool success = write(tail, newline);
-    complete(success, newline);
+    complete(success, record_ends_line(tail, newline));
     return success;
   }
 };
@@ -595,7 +610,7 @@ detail::BoundarySnapshot
 detail::BoundaryAccess::snapshot(int descriptor, const struct stat &identity) const noexcept {
   return boundary_access(local_, [&](auto &owner) {
     return BoundarySnapshot{true, owner.row(identity), owner.generation(descriptor),
-                            owner.active(descriptor)};
+                            owner.active(descriptor), owner.token(descriptor, identity)};
   });
 }
 detail::BoundaryAccess detail::native_line_destinations() noexcept {
@@ -621,6 +636,12 @@ bool detail::DiagnosticWriter::write(std::initializer_list<std::string_view> par
 detail::DiagnosticResult
 detail::DiagnosticWriter::write_result(std::initializer_list<std::string_view> parts, bool newline,
                                        bool flush) {
+  return write_receipt(parts, newline, flush).result;
+}
+detail::PresentationReceipt
+detail::DiagnosticWriter::write_receipt(std::initializer_list<std::string_view> parts, bool newline,
+                                        bool flush, bool presentation,
+                                        const PresentationToken *expected) {
   const auto mode = io_ ? OutputMode::diagnostic : OutputMode::immediate;
   OutputAttempt attempt(io_ ? io_->cancel : nullptr, mode);
   const int native = destination().descriptor;
@@ -629,21 +650,21 @@ detail::DiagnosticWriter::write_result(std::initializer_list<std::string_view> p
     {
       NativeMetadataGuard guard;
       if (!guard.locked)
-        return DiagnosticResult::failure;
+        return {DiagnosticResult::failure, {}};
       if (!output_ || (file_ && std::ferror(file_)))
         (void)recover_diagnostic_stream(output_);
     }
-    const bool presentation = io_ && io_->line_output && io_->line_output->presenting();
-    NativeDiagnosticRecord record(native, inspection, attempt, presentation);
+    presentation = presentation || (io_ && io_->line_output && io_->line_output->presenting());
+    NativeDiagnosticRecord record(native, inspection, attempt, presentation, expected);
     if (presentation && record.deferred())
-      return DiagnosticResult::deferred;
+      return {DiagnosticResult::deferred, {}};
     if (!presentation && io_ && inspection.inspected && io_->line_output)
       record.request_separator(io_->line_output->before_output(native, inspection.identity));
     const bool success = record.finish(parts, newline);
     if (!success) {
       NativeMetadataGuard guard;
       if (!guard.locked)
-        return DiagnosticResult::failure;
+        return {DiagnosticResult::failure, {}};
       try {
         output_.setstate(std::ios::badbit);
       } catch (...) {
@@ -652,29 +673,30 @@ detail::DiagnosticWriter::write_result(std::initializer_list<std::string_view> p
       }
       (void)recover_diagnostic_stream(output_);
     }
-    return success ? DiagnosticResult::success : DiagnosticResult::failure;
+    return {success ? DiagnosticResult::success : DiagnosticResult::failure, record.token()};
   }
-  StreamRecord record(output_, local_);
+  StreamRecord record(output_, local_, presentation);
   if (!record.available)
-    return DiagnosticResult::failure;
+    return {DiagnosticResult::failure, {}};
 
   struct Recovery {
     std::ostream &stream;
     StreamRecord &record;
-    bool attempted = false, complete = false;
-    Recovery(std::ostream &out, StreamRecord &value) noexcept : stream(out), record(value) {}
+    bool attempted = false, complete = false, fragment;
+    Recovery(std::ostream &out, StreamRecord &value, bool open) noexcept
+        : stream(out), record(value), fragment(open) {}
     ~Recovery() {
-      record.finish(complete, attempted);
+      record.finish(complete, attempted, fragment);
       if (!complete)
         recover_diagnostic_stream(stream);
     }
-  } recovery{output_, record};
+  } recovery{output_, record, !presentation && !record_ends_line(parts, newline)};
   if ((!output_ || (file_ && std::ferror(file_))) && !recover_diagnostic_stream(output_))
     output_.clear(output_.rdstate()); // Preserve configured exception-mask behavior.
   if (record.pending) {
     output_.put('\n');
     if (!output_)
-      return DiagnosticResult::failure;
+      return {DiagnosticResult::failure, {}};
     record.pending = false;
   }
   for (auto part : parts) {
@@ -695,7 +717,7 @@ detail::DiagnosticWriter::write_result(std::initializer_list<std::string_view> p
   if (flush)
     output_.flush();
   recovery.complete = static_cast<bool>(output_);
-  return recovery.complete ? DiagnosticResult::success : DiagnosticResult::failure;
+  return {recovery.complete ? DiagnosticResult::success : DiagnosticResult::failure, {}};
 }
 bool detail::write_diagnostic(std::ostream &output, std::initializer_list<std::string_view> parts,
                               bool newline, bool flush) {

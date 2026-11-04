@@ -13,6 +13,16 @@
 namespace codet::test {
 thread_local NativeIoMetrics native_io_metrics;
 }
+namespace {
+void after_output(int descriptor, bool newline) {
+  auto &metrics = codet::test::native_io_metrics;
+  if (descriptor == metrics.interrupt_fd)
+    if (auto callback = metrics.after_output) {
+      metrics.after_output = nullptr;
+      callback(metrics.after_output_context, newline);
+    }
+}
+} // namespace
 extern "C" ssize_t sendmsg(int descriptor, const msghdr *message, int flags) {
   using Send = ssize_t (*)(int, const msghdr *, int);
   static const auto original = reinterpret_cast<Send>(codet::test::native_symbol("sendmsg"));
@@ -68,13 +78,25 @@ extern "C" ssize_t write(int descriptor, const void *bytes, size_t size) {
       gate(metrics.output_context);
     }
     ++metrics.writes;
+    if (metrics.scalar_partial) {
+      metrics.scalar_partial = false;
+      metrics.scalar_failure = true;
+      return original(descriptor, bytes, std::min(size, size_t{2}));
+    }
+    if (metrics.scalar_failure) {
+      metrics.scalar_failure = false;
+      errno = EIO;
+      return -1;
+    }
     if (metrics.writes_interrupted) {
       --metrics.writes_interrupted;
       errno = EINTR;
       return -1;
     }
   }
-  return original(descriptor, bytes, size);
+  const auto answer = original(descriptor, bytes, size);
+  after_output(descriptor, answer > 0 && static_cast<const char *>(bytes)[answer - 1] == '\n');
+  return answer;
 }
 extern "C" ssize_t writev(int descriptor, const iovec *parts, int count) {
   using Write = ssize_t (*)(int, const iovec *, int);
@@ -104,7 +126,19 @@ extern "C" ssize_t writev(int descriptor, const iovec *parts, int count) {
       return -1;
     }
   }
-  return original(descriptor, parts, count);
+  const auto answer = original(descriptor, parts, count);
+  if (descriptor == metrics.interrupt_fd && metrics.after_output) {
+    size_t remaining = answer > 0 ? static_cast<size_t>(answer) : 0;
+    bool newline = false;
+    for (int i = 0; i < count && remaining; ++i) {
+      const auto consumed = std::min(remaining, parts[i].iov_len);
+      if (consumed)
+        newline = static_cast<const char *>(parts[i].iov_base)[consumed - 1] == '\n';
+      remaining -= consumed;
+    }
+    after_output(descriptor, newline);
+  }
+  return answer;
 }
 void codet::test::observed_stat(int descriptor) noexcept {
   auto &metrics = native_io_metrics;

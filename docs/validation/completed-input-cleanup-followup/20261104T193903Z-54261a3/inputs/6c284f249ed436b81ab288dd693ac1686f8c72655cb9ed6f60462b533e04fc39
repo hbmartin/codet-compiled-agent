@@ -1,0 +1,147 @@
+{
+  "exception": {
+    "codes": "0x0000000000000001, 0x000000018d62442c",
+    "rawCodes": [
+      1,
+      6666994732
+    ],
+    "type": "EXC_BREAKPOINT",
+    "signal": "SIGKILL"
+  },
+  "termination": {
+    "namespace": "FOUNDATION",
+    "flags": 2,
+    "code": 1
+  },
+  "application": {
+    "libsystem_platform.dylib": [
+      "BUG IN CLIENT OF LIBPLATFORM: os_unfair_lock is corrupt",
+      "Abort Cause 258"
+    ],
+    "libsystem_c.dylib": [
+      "crashed on child side of fork pre-exec"
+    ]
+  },
+  "frames": [
+    {
+      "imageOffset": 33836,
+      "symbol": "_os_unfair_lock_corruption_abort",
+      "symbolLocation": 88,
+      "imageIndex": 4
+    },
+    {
+      "imageOffset": 6972,
+      "symbol": "_os_unfair_lock_lock_slow",
+      "symbolLocation": 328,
+      "imageIndex": 4
+    },
+    {
+      "imageOffset": 439160,
+      "symbol": "__sanitizer::StackStore::BlockInfo::Create(__sanitizer::StackStore*)",
+      "symbolLocation": 124,
+      "imageIndex": 3
+    },
+    {
+      "imageOffset": 436628,
+      "symbol": "__sanitizer::StackStore::Alloc(unsigned long, unsigned long*, unsigned long*)",
+      "symbolLocation": 252,
+      "imageIndex": 3
+    },
+    {
+      "imageOffset": 436260,
+      "symbol": "__sanitizer::StackStore::Store(__sanitizer::StackTrace const&, unsigned long*)",
+      "symbolLocation": 128,
+      "imageIndex": 3
+    },
+    {
+      "imageOffset": 444604,
+      "symbol": "__sanitizer::StackDepotNode::store(unsigned int, __sanitizer::StackTrace const&, unsigned long long)",
+      "symbolLocation": 52,
+      "imageIndex": 3
+    },
+    {
+      "imageOffset": 445944,
+      "symbol": "__sanitizer::StackDepotBase<__sanitizer::StackDepotNode, 1, 20>::Put(__sanitizer::StackTrace, bool*)",
+      "symbolLocation": 444,
+      "imageIndex": 3
+    },
+    {
+      "imageOffset": 29408,
+      "symbol": "__asan::Allocator::QuarantineChunk(__asan::AsanChunk*, void*, __sanitizer::BufferedStackTrace*)",
+      "symbolLocation": 84,
+      "imageIndex": 3
+    },
+    {
+      "imageOffset": 267212,
+      "symbol": "wrap_free",
+      "symbolLocation": 224,
+      "imageIndex": 3
+    },
+    {
+      "imageOffset": 242612,
+      "symbol": "_objc_atfork_child",
+      "symbolLocation": 364,
+      "imageIndex": 5
+    },
+    {
+      "imageOffset": 4532,
+      "symbol": "dispatch_atfork_child",
+      "symbolLocation": 20,
+      "imageIndex": 6
+    },
+    {
+      "imageOffset": 5632,
+      "symbol": "libSystem_atfork_child",
+      "symbolLocation": 52,
+      "imageIndex": 7
+    },
+    {
+      "imageOffset": 148492,
+      "symbol": "fork",
+      "symbolLocation": 112,
+      "imageIndex": 8
+    },
+    {
+      "imageOffset": 657780,
+      "sourceLine": 21,
+      "sourceFile": "process_helper.hpp",
+      "symbol": "codet::test::start_helper(std::__1::vector<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, std::__1::allocator<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>> const&, std::__1::vector<int, std::__1::allocator<int>> const&)",
+      "imageIndex": 0,
+      "symbolLocation": 1712
+    },
+    {
+      "imageOffset": 653020,
+      "sourceLine": 2278,
+      "sourceFile": "publication_fault_test.cpp",
+      "symbol": "PublicationFault_NativeMetadataFirstUseAndEmergencyDeliveryDoNotAllocate_Test::TestBody()",
+      "imageIndex": 0,
+      "symbolLocation": 996
+    },
+    {
+      "imageOffset": 12872716,
+      "sourceLine": 2664,
+      "sourceFile": "gtest.cc",
+      "symbol": "void testing::internal::HandleSehExceptionsInMethodIfSupported<testing::Test, void>(testing::Test*, void (testing::Test::*)(), char const*)",
+      "imageIndex": 0,
+      "symbolLocation": 240
+    },
+    {
+      "imageOffset": 12011276,
+      "sourceLine": 2700,
+      "sourceFile": "gtest.cc",
+      "symbol": "void testing::internal::HandleExceptionsInMethodIfSupported<testing::Test, void>(testing::Test*, void (testing::Test::*)(), char const*)",
+      "imageIndex": 0,
+      "symbolLocation": 500
+    },
+    {
+      "imageOffset": 12010472,
+      "sourceLine": 2739,
+      "sourceFile": "gtest.cc",
+      "symbol": "testing::Test::Run()",
+      "imageIndex": 0,
+      "symbolLocation": 700
+    }
+  ],
+  "source_sha256": "179a64730f4926860878ebd7b975c76c8a429a0a20c817d323173c406f15389b",
+  "interpretation": "OS crash-report excerpt: host Apple sanitizer/Foundation atfork hook before helper exec; not a production application sanitizer report"
+}

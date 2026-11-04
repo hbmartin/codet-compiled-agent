@@ -26,7 +26,7 @@ class Result(unittest.TextTestResult):
 result=unittest.TextTestRunner(verbosity=2,resultclass=Result).run(unittest.defaultTestLoader.loadTestsFromName(test_name))
 exit_code=int(not result.wasSuccessful())
 Path(output).write_text(json.dumps(dict(tests_run=result.testsRun,errors=len(result.errors),skipped=len(result.skipped),
- failures=len(result.failures),assertion_failure=result.assertion_failure,expected_failures=len(result.expectedFailures),
+ failure_details=[trace for _,trace in result.failures],failures=len(result.failures),assertion_failure=result.assertion_failure,expected_failures=len(result.expectedFailures),
  unexpected_successes=len(result.unexpectedSuccesses),exit=exit_code)))
 raise SystemExit(exit_code)
 '''
@@ -74,8 +74,25 @@ def run_controls(root, folder):
          '', "EvidenceV4.test_string_vector_is_rejected_at_load"),
         ("empty-analyzer-version", "evidence_analysis", 'not manifest["versions"] or ',
          '', "EvidenceV4.test_analyzers_require_versions_and_their_own_source_sets"),
-        ("relocation-context", "evidence_analysis", 'diagnostic_context(tool, before, baseline_root, entry["context"]) != entry["context"] or\n                diagnostic_context(tool, after, changed_root, entry["context"]) != entry["context"] or',
-         'False or', "EvidenceV4.test_relocations_require_full_identity_and_real_unchanged_source_context"),
+        ("relocation-context", "evidence_analysis", 'not entry.get("rationale") or not context_matches or',
+         'not entry.get("rationale") or False or', "EvidenceV4.test_relocations_require_full_identity_and_real_unchanged_source_context"),
+        ("cppcheck-order", "evidence_analysis", 'tuple(sorted((loc[0], loc[3]) for loc in key[2]))',
+         'tuple((loc[0], loc[3]) for loc in key[2])', "ReviewedCppcheckLocations.test_same_file_locations_can_reorder_without_changing_identity"),
+        ("hash-version", "evidence_hash_experiment", "if payload.get('metric_scope') != METRIC_SCOPE or 'work_gate_passed' in payload:",
+         'if False:', "HashMetricScope.test_missing_versions_bad_controls_and_ambiguous_names_are_rejected"),
+        ("cleanup-original", "process_supervision", 'except BaseException as cleanup:',
+         'except Exception as cleanup:', "ProcessCleanup.test_cleanup_exception_cannot_replace_original_failure"),
+        ("cleanup-escalation", "process_supervision",
+         "            except KeyboardInterrupt as error:\n                observation['interruptions'].append(dict(exception=type(error).__name__))\n            except (OSError, ValueError, subprocess.SubprocessError) as error:",
+         '            except KeyboardInterrupt:\n                raise\n            except (OSError, ValueError, subprocess.SubprocessError) as error:',
+         "ProcessCleanup.test_repeated_interruptions_do_not_skip_escalation_or_replace_timeout"),
+        ("cleanup-inactive", "process_supervision", 'inactive = inspect(term_deadline)',
+         'inactive = inspect(term_deadline) and False', "ProcessCleanup.test_inactive_group_returns_before_the_remaining_grace"),
+        ("tooling-counts", "evidence_benchmarks",
+         "if row['check_output_calls'] != row['git_commands'] + row['process_inspection_commands']:",
+         'if False:', "HashMetricScope.test_tooling_commands_and_memory_have_distinct_verified_scopes"),
+        ("isolated-coverage", "gtest_isolation", 'if Counter(actual) != Counter(expected):',
+         'if False:', "SanitizerIsolation.test_missing_duplicate_and_substituted_tests_are_rejected"),
     ]
     results = []
     for name, module, before, after, target in cases:
@@ -101,5 +118,12 @@ def run_controls(root, folder):
             verify_unittest_result(*runs)
         except ValueError as error:
             raise ValueError("Control " + name + ": " + repr(runs)) from error
+        markers = {"cleanup-original": "Cleanup restoration replaced the original timeout",
+                   "cleanup-escalation": "Repeated interruption skipped escalation",
+                   "cleanup-inactive": "Leader was reaped before group ownership ended",
+                   "cppcheck-order": "Valid reordered Cppcheck relocation was rejected",
+                   "hash-version": "ValueError not raised", "tooling-counts": "ValueError not raised", "isolated-coverage": "ValueError not raised"}
+        if name in markers and not any(markers[name] in text for text in runs[1]["failure_details"]):
+            raise ValueError("Control missed its intended assertion: " + name)
         results.append(dict(name=name, test=target, baseline=runs[0], mutant=runs[1]))
     return results

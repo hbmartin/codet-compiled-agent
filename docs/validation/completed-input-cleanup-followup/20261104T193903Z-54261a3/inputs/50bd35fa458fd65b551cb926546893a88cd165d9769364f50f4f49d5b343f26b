@@ -1,0 +1,12 @@
+{
+  "schema_version": 5,
+  "id": "524f82a92bf14a62992852ce6f606f3c",
+  "campaign_id": "4d094490f2a146e5a228cc6a0296f811",
+  "manifest_sha256": "4b0b4a6937d676f8d58f999cfd3793387005578cc8b1336f7885985197e7e30d",
+  "canonical_root": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent",
+  "root_resolution": {
+    "path": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent",
+    "canonical": "/Users/haroldmartin/.codex/worktrees/pending-input-replay-followup/codet-compiled-agent",
+    "links": []
+  }
+}
