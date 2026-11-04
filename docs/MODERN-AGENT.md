@@ -32,6 +32,19 @@ Runtime libraries use the logical `/opt/tigr` prefix. Set `TIGERPORTS_PREFIX` co
 
 Runtime sources and patches are locked to the TigerPorts revision in `tiger-dependencies.lock.json`. The sysroot manifest records versions, hashes, flags, installation prefix, and the recipe hash. OpenSSL uses statically linked GCC atomic support for 64-bit operations on PPC32. Curl uses the staged modern zlib, not Tiger's old system zlib. Builds record development-image package versions; target runtime verification is separate from reproducible cross-linking.
 
+For a portable distribution, run `python3 scripts/package-tiger-portable.py --ca-bundle /path/to/cacert.pem`
+inside the same toolchain container after static verification. It writes
+`build/dist/codet-tiger-ppc-portable.tar.gz` and a SHA-256 sidecar. This archive includes
+the runtime libraries with executable-relative install names, terminal data, and the
+supplied PEM trust bundle. Extract the folder and use its `./codet` launcher; keep
+the folder together. TigerPorts installation is not required for this variant.
+The launcher preserves the working directory and sets `CODET_CA_BUNDLE` and
+`TERMINFO`. An explicitly supplied `CODET_CA_BUNDLE` overrides the bundled trust
+file; HTTPS certificate and hostname verification remain enabled. The packaging
+step is offline and records the supplied certificate file's digest. Obtain and
+verify the CA bundle separately. Portable packaging still does not establish
+Tiger runtime acceptance.
+
 ## Command contract
 
 ```sh

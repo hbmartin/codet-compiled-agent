@@ -2685,8 +2685,9 @@ TEST_F(Pr24, OrdinaryResultWritesPreserveRunningAndCompletedJournalRecords) {
     EXPECT_EQ(raw.value("SELECT result FROM tools WHERE session='" + s.id + "'"), journal);
     EXPECT_EQ(raw.value("SELECT status FROM tools WHERE session='" + s.id + "'"),
               complete ? "complete" : "running");
-    if (complete)
+    if (complete) {
       EXPECT_EQ(state.load_id(s.id).messages[1].text, result.text);
+    }
   }
 }
 TEST_F(Pr24, EquivalentRecoveryFormattingUsesStrictValidationOnCacheMismatch) {
@@ -2723,8 +2724,9 @@ TEST_F(Pr24, EquivalentRecoveryFormattingUsesStrictValidationOnCacheMismatch) {
           else
             ASSERT_NO_THROW(state.revise_messages(s, {}));
           EXPECT_EQ(state.load_id(s.id).messages[1].text, expected);
-          if (!constant)
+          if (!constant) {
             EXPECT_EQ(s.messages[1].text, expected);
+          }
         }
 }
 TEST_F(Pr24, JournalComparisonsUseTheSanitizedArgumentsAtEveryBoundary) {
@@ -2787,8 +2789,9 @@ TEST_F(Pr24, PreservedFilePathsSurviveDiagnosticAllocationFailures) {
   const auto backup_diagnostic = testing::internal::GetCapturedStderr();
   EXPECT_THAT(backup_diagnostic, HasSubstr("Session repair backup: "));
   for (const auto &entry : fs::directory_iterator(config.state_root / "repairs"))
-    if (entry.path().filename().string().find("-backup-") != std::string::npos)
+    if (entry.path().filename().string().find("-backup-") != std::string::npos) {
       EXPECT_THAT(backup_diagnostic, HasSubstr(entry.path().string()));
+    }
 }
 TEST_F(Pr24, DefaultFileReportingRecoversStderrAndPreservesUnicodeAndOriginalExceptions) {
   struct RestoreStderr {
