@@ -66,17 +66,26 @@ def role_hashes(root, role):
             if p.is_file() and role_selected(str(p.relative_to(root)), role)}
 
 
-def git_hashes(repository, ref, role):
-    names = subprocess.check_output(["git", "-C", str(repository), "ls-tree", "-rz", "--name-only", ref], timeout=30).split(b"\0")
+def git_hashes(repository, ref, role, git="git"):
+    names = subprocess.check_output([git, "-C", str(repository), "ls-tree", "-rz", "--name-only", ref], timeout=30).split(b"\0")
     names = [os.fsdecode(n) for n in names if n and role_selected(os.fsdecode(n), role)]
-    data = subprocess.check_output(["git", "-C", str(repository), "cat-file", "--batch"],
+    if any("\n" in name for name in names):
+        raise ValueError("Git batch input contains a newline")
+    data = subprocess.check_output([git, "-C", str(repository), "cat-file", "--batch"],
                                    input="".join(ref + ":" + n + "\n" for n in names).encode(), timeout=30)
     result, offset = {}, 0
     for name in names:
         end = data.index(b"\n", offset)
-        size = int(data[offset:end].split()[-1])
+        header = data[offset:end].split()
+        if len(header) != 3 or header[1] != b"blob":
+            raise ValueError("Invalid Git batch object header")
+        size = int(header[2])
+        if size < 0 or end + 1 + size >= len(data) or data[end + 1 + size] != 10:
+            raise ValueError("Truncated Git batch object")
         result[name] = hashlib.sha256(data[end+1:end+1+size]).hexdigest()
         offset = end + 2 + size
+    if offset != len(data):
+        raise ValueError("Unexpected Git batch trailing bytes")
     return result
 
 
@@ -97,17 +106,7 @@ def source_inputs(root, specs):
         if spec.get("git_ref"):
             ref = spec["git_ref"]
             git = spec.get("git") or shutil.which("git", path=os.defpath)
-            names = subprocess.check_output([git, "-C", str(root), "ls-tree", "-rz", "--name-only", ref], timeout=30).split(b"\0")
-            names = [os.fsdecode(n) for n in names if n and selected(os.fsdecode(n))]
-            data = subprocess.check_output([git, "-C", str(root), "cat-file", "--batch"],
-                                           input="".join(ref + ":" + n + "\n" for n in names).encode(), timeout=30)
-            expected = {}
-            offset = 0
-            for filename in names:
-                end = data.index(b"\n", offset)
-                size = int(data[offset:end].split()[-1])
-                expected[filename] = hashlib.sha256(data[end + 1:end + 1 + size]).hexdigest()
-                offset = end + 2 + size
+            expected = git_hashes(root, ref, "build", git)
             if actual != expected:
                 raise ValueError("Source input does not match Git commit: " + name)
         result[name] = actual
