@@ -1193,11 +1193,12 @@ class PortableV5(unittest.TestCase):
             self.assertGreater(os.getpid(), 0)
 
     def test_public_ci_rejects_rate_limits_and_failed_jobs(self):
+        import io
         import urllib.error
 
         from evidence_ci import read_public_ci
         def denied(url):
-            error = urllib.error.HTTPError(url, 403, 'rate limit', {}, None)
+            error = urllib.error.HTTPError(url, 403, 'rate limit', {}, io.BytesIO())
             error.close()
             raise error
         with self.assertRaisesRegex(ValueError, '403.*rate limit'):
