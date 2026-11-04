@@ -881,6 +881,141 @@ class ReplayIntegrity(unittest.TestCase):
         work.assert_not_called()
 
 
+
+class ProcessCleanup(unittest.TestCase):
+    def test_repeated_interruptions_do_not_skip_escalation_or_replace_timeout(self):
+        import contextlib
+        import signal
+
+        import process_supervision as supervisor
+        clock, signals, sleeps, scans, waits = [0.0], [], [0], [0], [0]
+        original = subprocess.TimeoutExpired(['owned'], 1)
+        class Process:
+            pid, returncode = 123456, -9
+            def communicate(self, **kwargs): raise original
+            def wait(self, timeout):
+                waits[0] += 1
+                if waits[0] == 1: raise KeyboardInterrupt('reap')
+                return -9
+            def kill(self): raise AssertionError('Unexpected direct kill')
+        process = Process()
+        def kill(group, action):
+            signals.append(action)
+            if len(signals) == 1: raise KeyboardInterrupt('signal')
+        def inspect(group, **kwargs):
+            scans[0] += 1
+            if scans[0] == 1: raise KeyboardInterrupt('inspection')
+            return False, ['S']
+        def sleep(delay):
+            clock[0] += delay
+            sleeps[0] += 1
+            if sleeps[0] == 1: raise KeyboardInterrupt('grace')
+        with patch.object(supervisor, 'interruption', contextlib.nullcontext), \
+             patch.object(supervisor, 'cleanup_interruptions', lambda _: contextlib.nullcontext()), \
+             patch.object(supervisor.subprocess, 'Popen', return_value=process), \
+             patch.object(supervisor.os, 'killpg', side_effect=kill), \
+             patch.object(supervisor, 'group_inactive', side_effect=inspect), \
+             patch.object(supervisor.time, 'sleep', side_effect=sleep), \
+             patch.object(supervisor.time, 'monotonic', side_effect=lambda:clock[0]):
+            with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                supervisor.run(['owned'], timeout=1, cleanup_grace=.1)
+        self.assertIs(caught.exception, original, 'Cleanup replaced the original timeout')
+        self.assertIn(signal.SIGKILL, signals, 'Repeated interruption skipped escalation')
+        self.assertTrue(original.process_cleanup['reaped'])
+        self.assertEqual(len(original.process_cleanup['interruptions']), 4)
+        self.assertEqual(original.returncode, -9)
+
+    def test_cleanup_exception_cannot_replace_original_failure(self):
+        import contextlib
+
+        import process_supervision as supervisor
+        original = subprocess.TimeoutExpired(['owned'], 1)
+        class Process:
+            pid, returncode = 123456, -9
+            group_cleanup = dict(reaped=True)
+            def communicate(self, **kwargs): raise original
+        with patch.object(supervisor, 'interruption', contextlib.nullcontext), \
+             patch.object(supervisor.subprocess, 'Popen', return_value=Process()), \
+             patch.object(supervisor, 'stop_group', side_effect=KeyboardInterrupt('restoring handlers')):
+            with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                supervisor.run(['owned'], timeout=1)
+        self.assertIs(caught.exception, original, 'Cleanup restoration replaced the original timeout')
+        self.assertEqual(original.cleanup_failure, 'restoring handlers')
+        self.assertTrue(original.process_cleanup['reaped'])
+
+    def test_inactive_group_returns_before_the_remaining_grace(self):
+        import contextlib
+        import signal
+
+        import process_supervision as supervisor
+        clock, signals, scans = [0.0], [], [0]
+        class Process:
+            pid = 123456
+            def wait(self, timeout):
+                self_outer.assertEqual(scans[0], 2, 'Leader was reaped before group ownership ended')
+                return 0
+        self_outer = self
+        process = Process()
+        def inspect(group, **kwargs):
+            scans[0] += 1
+            return scans[0] > 1, ['Z'] if scans[0] > 1 else ['S']
+        with patch.object(supervisor, 'cleanup_interruptions', lambda _: contextlib.nullcontext()), \
+             patch.object(supervisor.os, 'killpg', side_effect=lambda group, action:signals.append(action)), \
+             patch.object(supervisor, 'group_inactive', side_effect=inspect), \
+             patch.object(supervisor.time, 'sleep', side_effect=lambda delay:clock.__setitem__(0,clock[0]+delay)), \
+             patch.object(supervisor.time, 'monotonic', side_effect=lambda:clock[0]):
+            self.assertEqual(supervisor.stop_group(process, grace=2), 0)
+        self.assertEqual(clock[0], .05, 'Inactive group consumed the complete grace period')
+        self.assertEqual(signals, [signal.SIGTERM])
+
+    def test_second_signal_is_deferred_and_real_descendants_are_reaped(self):
+        import os
+        import select
+        import signal
+        import time
+        with tempfile.TemporaryDirectory() as folder:
+            marker = Path(folder)/'escaped'
+            grandchild = 'import signal,time;from pathlib import Path;signal.signal(signal.SIGTERM,signal.SIG_IGN);print("grandchild",flush=True);time.sleep(1);Path('+repr(str(marker))+').write_text("escaped")'
+            child = 'import signal,subprocess,sys,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);p=subprocess.Popen([sys.executable,"-c",'+repr(grandchild)+'],stdout=subprocess.PIPE);p.stdout.readline();print("ready",flush=True);time.sleep(2)'
+            program = '''import json,signal,sys
+import process_supervision as s
+previous={n:signal.getsignal(n) for n in (signal.SIGINT,signal.SIGTERM)}
+original=s.group_inactive
+announced=False
+def inspect(*a,**k):
+ global announced
+ if not announced:print("cleanup-ready",flush=True);announced=True
+ return original(*a,**k)
+s.group_inactive=inspect
+try:s.run([sys.executable,"-c",CHILD],timeout=60,cleanup_grace=.3)
+except KeyboardInterrupt as error:
+ print(json.dumps(dict(message=str(error),cleanup=error.process_cleanup,restored=all(signal.getsignal(n)==h for n,h in previous.items()))),flush=True)
+ raise SystemExit(17)
+'''.replace('CHILD',repr(child))
+            process = subprocess.Popen([sys.executable,'-c',program],stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                env=dict(os.environ,PYTHONPATH=str(Path(__file__).resolve().parents[1]/'scripts')))
+            def line():
+                self.assertTrue(select.select([process.stdout],[],[],5)[0], 'Supervisor readiness gate was not reached')
+                return process.stdout.readline()
+            try:
+                self.assertEqual(line(),b'ready\n')
+                process.send_signal(signal.SIGTERM)
+                self.assertEqual(line(),b'cleanup-ready\n')
+                process.send_signal(signal.SIGTERM)
+                process.send_signal(signal.SIGINT)
+                result=json.loads(line())
+                self.assertEqual(process.wait(timeout=5),17)
+                self.assertEqual(result['message'],'Interrupted by SIGTERM')
+                self.assertTrue(result['cleanup']['reaped'])
+                self.assertTrue(result['restored'])
+                self.assertGreaterEqual(len(result['cleanup']['interruptions']),1)
+                self.assertIn(int(signal.SIGKILL),[s['signal'] for s in result['cleanup']['signals']])
+                time.sleep(1.1)
+                self.assertFalse(marker.exists(),'Repeated interruption left a live descendant')
+            finally:
+                if process.poll() is None:process.kill();process.wait(timeout=5)
+                process.stdout.close();process.stderr.close()
+
 if __name__ == "__main__":
     unittest.main()
 
