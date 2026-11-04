@@ -1535,6 +1535,18 @@ class CliTests(unittest.TestCase):
                 os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
                 self.assertEqual(process.returncode,0,received)
 
+    def test_pending_quit_can_be_corrected_after_overflow(self):
+        for command in (b'/quit',b'/exit'):
+            with self.subTest(command=command),self.pending_sequence() as context:
+                process,master,trigger,received,collect,token,release,before=context
+                os.write(trigger,b'h');token(b'r');os.write(master,b'abc\n');token(b's')
+                os.write(master,command+b'xx\x7f\x7f\x01');token(b'i')
+                os.write(master,b'\n');release.set();os.write(trigger,b'g')
+                collect(lambda:process.poll() is not None)
+                self.assertEqual(process.returncode,0,received)
+                self.assertEqual(len(self.server.requests),before+1,'Corrected quit was ignored')
+                self.assertIn(b'Pending message not sent: abc',received)
+
     def test_frozen_submission_obeys_turn_outcome_and_services_controls(self):
         for outcome in self.pending_outcomes:
             with self.subTest(outcome=outcome),PtyProcess() as resources:

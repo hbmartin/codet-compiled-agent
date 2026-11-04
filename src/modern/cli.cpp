@@ -10,6 +10,7 @@
 #include "codet/detail/curses_render.hpp"
 #include "codet/detail/line_prompt.hpp"
 #include "codet/detail/native_terminal.hpp"
+#include "codet/detail/pending_control.hpp"
 #include "codet/detail/request_input_controller.hpp"
 #include "codet/detail/terminal_input.hpp"
 #include "codet/detail/turn_input.hpp"
@@ -576,15 +577,9 @@ public:
   void remember(const std::string &text) {
     transcript_.add(text);
   }
-  std::array<char, 6> pending_control_{};
-  size_t pending_control_size_ = 0;
-  bool pending_control_overflow_ = false, pending_control_started_ = false;
+  detail::PendingControl<> pending_control_;
   bool pending_quit_ = false;
   std::optional<detail::InputOrigin> input_origin_;
-  void clear_pending_control() noexcept {
-    pending_control_size_ = 0;
-    pending_control_overflow_ = pending_control_started_ = false;
-  }
   bool take_quit() noexcept {
     return std::exchange(pending_quit_, false);
   }
@@ -600,7 +595,7 @@ public:
     if (!line_)
       return;
     auto line = line_->discard_pending();
-    clear_pending_control();
+    pending_control_.clear();
     if (line)
       pending_not_sent(line->text, immediate);
   }
@@ -619,7 +614,7 @@ public:
     }
   }
   std::optional<std::string> read(Cancellation &cancel) {
-    if (!curses_ && (submission_pending() || pending_control_started_ || input_.stale() ||
+    if (!curses_ && (submission_pending() || pending_control_.started() || input_.stale() ||
                      (input_.ordinary_draft() && !input_.input().empty()))) {
       begin_active(cancel);
       flush_prompt();
@@ -640,7 +635,7 @@ public:
           return std::nullopt;
         flush_prompt();
         bool closed = false;
-        const bool discarding_controls = pending_control_started_;
+        const bool discarding_controls = pending_control_.started();
         auto line = active_input(closed);
         if (closed) {
           discard_pending(true);
@@ -655,7 +650,7 @@ public:
             history(resources_.entries(), &history_event_, H_ENTER, line->text.c_str());
           return std::move(line->text);
         }
-        if (discarding_controls && !pending_control_started_ && !submission_pending())
+        if (discarding_controls && !pending_control_.started() && !submission_pending())
           break; // The ignored extra line ended; return the empty idle prompt to libedit.
       }
     }
@@ -754,7 +749,7 @@ public:
       } else if (ready < 0 && !retry_input(errno, this))
         throw Error("Cannot wait for terminal input: " + std::string(std::strerror(errno)));
     }
-    if (line_ && (line_->submission_pending() || pending_control_started_)) {
+    if (line_ && (line_->submission_pending() || pending_control_.started())) {
       auto &pending_line = *line_;
       // Extra typing remains a control-only line, even if the frozen line completes first.
       // It must never delay that independent presentation/handoff or become a later message.
@@ -765,25 +760,16 @@ public:
       if (ch != ERR) {
         ++input_events_;
         if (ch == bindings_["submit"] || ch == KEY_ENTER || ch == '\r') {
-          const std::string_view control(pending_control_.data(), pending_control_size_);
-          const bool quit =
-              !pending_control_overflow_ && (control == "/quit" || control == "/exit");
-          clear_pending_control();
+          const bool quit = pending_control_.submit();
           if (quit) {
             pending_quit_ = true;
             closed = true;
             return {};
           }
         } else if (ch == bindings_["backspace"] || ch == KEY_BACKSPACE || ch == 8) {
-          if (pending_control_size_)
-            --pending_control_size_;
-        } else if (ch >= 32 && ch <= 255) {
-          pending_control_started_ = true;
-          if (pending_control_size_ < pending_control_.size())
-            pending_control_[pending_control_size_++] = static_cast<char>(ch);
-          else
-            pending_control_overflow_ = true;
-        }
+          pending_control_.erase();
+        } else if (ch >= 32 && ch <= 255)
+          pending_control_.append(static_cast<char>(ch));
       }
       if (read_cancel_ && read_cancel_->requested)
         return {};

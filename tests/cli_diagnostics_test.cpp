@@ -5,6 +5,7 @@
 #include "codet/detail/curses_input.hpp"
 #include "codet/detail/line_prompt.hpp"
 #include "codet/detail/native_output.hpp"
+#include "codet/detail/pending_control.hpp"
 #include "codet/detail/request_input.hpp"
 #include "codet/detail/request_input_controller.hpp"
 #include "codet/detail/terminal_input.hpp"
@@ -2165,3 +2166,31 @@ TEST(TurnInput, ExpiredAnswersNeverBecomeMessagesAndHeldOrderPrecedesSteering) {
       detail::TurnInputAction::hold);
 }
 
+TEST(PendingControl, BackspaceConsumesOverflowBeforeTheRetainedPrefix) {
+  for (const std::string command : {"/quit", "/exit"}) {
+    detail::PendingControl<> input;
+    for (char byte : command + "xxx")
+      input.append(byte);
+    for (unsigned i = 0; i != 3; ++i)
+      input.erase();
+    EXPECT_TRUE(input.submit()) << command;
+    EXPECT_FALSE(input.started());
+  }
+  detail::PendingControl<> input;
+  input.append('x');
+  input.erase();
+  EXPECT_TRUE(input.started()); // Ownership lasts through the ignored line boundary.
+  EXPECT_FALSE(input.submit());
+  EXPECT_FALSE(input.started());
+}
+TEST(PendingControl, SaturationCannotCreateAFalseQuitAfterDeletion) {
+  detail::PendingControl<2> input;
+  for (char byte : std::string("/quitxxxxx"))
+    input.append(byte);
+  for (unsigned i = 0; i != 20; ++i)
+    input.erase();
+  EXPECT_FALSE(input.submit());
+  for (char byte : std::string("/quit"))
+    input.append(byte);
+  EXPECT_TRUE(input.submit());
+}
