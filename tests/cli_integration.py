@@ -1331,7 +1331,7 @@ class CliTests(unittest.TestCase):
                         resources.close()
 
     def test_frozen_submission_obeys_turn_outcome_and_services_controls(self):
-        for outcome in ('complete','cancel','quit','eof','term'):
+        for outcome in ('complete','cancel','quit','ctrl-d','eof','term','failure'):
             with self.subTest(outcome=outcome),PtyProcess() as resources:
                 ready,release=threading.Event(),threading.Event()
                 self.server.signal_gate=(ready,release);self.server.releases.append(release)
@@ -1339,7 +1339,8 @@ class CliTests(unittest.TestCase):
                 master,slave=resources.openpty();arm,trigger=resources.pipe();notice,notify=resources.pipe()
                 helper=str(pathlib.Path(BIN).with_name('codet_tests'))
                 process=resources.start([helper,'--codet-pending-input-helper',str(arm),str(notify),
-                    '-C',str(self.workspace),'--ui','line','--color','never','fixture-signal-wait'],
+                    '-C',str(self.workspace),'--ui','line','--color','never',
+                    'fixture-signal-wait fixture-error' if outcome=='failure' else 'fixture-signal-wait'],
                     stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=dict(self.env,TERM='xterm'))
                 received=bytearray()
                 collect=partial(collect_pty,self,master,received)
@@ -1362,7 +1363,8 @@ class CliTests(unittest.TestCase):
                         if outcome=='cancel':process.send_signal(signal.SIGINT)
                         elif outcome=='term':process.send_signal(signal.SIGTERM)
                         elif outcome=='quit':os.write(master,b'/quit\n');token(b's')
-                        else:os.write(master,b'\x04')
+                        elif outcome=='ctrl-d':os.write(master,b'\x04')
+                        elif outcome=='eof':os.write(master,b'\0')
                         # Let cancellation reach the original provider before unblocking output.
                         release.set();os.write(trigger,b'g')
                         collect(lambda received=received,process=process:b'Error:' in received or process.poll() is not None)

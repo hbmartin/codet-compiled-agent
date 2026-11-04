@@ -37,6 +37,8 @@ int pending_poll(pollfd *fds, nfds_t count, int timeout) {
 }
 ssize_t pending_read(int fd, void *data, size_t size) {
   const auto count = ::read(fd, data, size);
+  if (count == 1 && *static_cast<char *>(data) == '\0')
+    return 0; // Deterministic EOF at the raw-input seam, while the PTY remains inspectable.
   if (count == 1 && (*static_cast<char *>(data) == '\n' || *static_cast<char *>(data) == '\r'))
     pending_enter = true;
   return count;
