@@ -1097,8 +1097,29 @@ class SanitizerIsolation(unittest.TestCase):
     def payload(self):
         xml='<testsuites tests="2"><testsuite name="Suite"><testcase name="A"/><testcase name="DISABLED_Probe"/></testsuite></testsuites>'
         result='<testsuites tests="1"><testsuite name="Suite"><testcase classname="Suite" name="A" status="run"/></testsuite></testsuites>'
-        return dict(inventory_xml=xml,enabled=1,disabled=['Suite.DISABLED_Probe'],skipped=[],failures=0,
-                    results=[dict(test='Suite.A',exit=0,xml=result)])
+        return dict(binary='/original/opaque/binary',binary_sha256='a'*64,
+                    inventory_argv=['/original/opaque/binary','--gtest_list_tests','--gtest_output=xml:/opaque/list.xml'],
+                    inventory_xml=xml,enabled=1,disabled=['Suite.DISABLED_Probe'],skipped=[],failures=0,
+                    results=[dict(test='Suite.A',exit=0,xml=result,argv=['/original/opaque/binary','--gtest_filter=Suite.A','--gtest_output=xml:/opaque/result.xml'])])
+
+    def test_captured_launcher_binds_its_report_to_the_declared_executable(self):
+        import hashlib
+        import os
+
+        import gtest_isolation as isolated
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);binary=root/'binary';binary.write_bytes(b'executable identity');report=root/'report.json'
+            value=self.payload();value.update(binary=str(binary),binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest())
+            value['inventory_argv'][0]=str(binary);value['results'][0]['argv'][0]=str(binary)
+            context=dict(schema_version=5,campaign_id='campaign',capture_run_id='run',check_id='asan-ctest',root=str(root),
+                         production_hashes={},validation_hashes={},declared_artifacts=[dict(path=str(report),kind='gtest-isolation',inputs=['binary'])])
+            argv=['launcher','--report',str(report),'--inputs',json.dumps(['binary']),str(binary)]
+            with patch.object(sys,'argv',argv),patch.dict(os.environ,CODET_EVIDENCE_CONTEXT=json.dumps(context)),patch.object(isolated,'run',return_value=value):
+                self.assertEqual(isolated.main(),0)
+            envelope=json.loads(report.read_text())
+            self.assertEqual(envelope['capture_run_id'],'run')
+            self.assertEqual(envelope['input_hashes'],{'binary':value['binary_sha256']})
+            self.assertEqual(isolated.verify_payload(envelope['payload'],envelope['input_hashes'])['failures'],0)
 
     def test_executable_binding_is_checked_without_resolving_host_paths(self):
         from gtest_isolation import verify_payload
@@ -1124,6 +1145,7 @@ class SanitizerIsolation(unittest.TestCase):
                 elif change=='duplicate':value['results']*=2
                 else:
                     value['results'][0]['test']='Suite.Other'
+                    value['results'][0]['argv'][1]='--gtest_filter=Suite.Other'
                     value['results'][0]['xml']=value['results'][0]['xml'].replace('name="A"','name="Other"')
                 with self.assertRaisesRegex(ValueError,'coverage mismatch'):
                     verify_payload(value)
@@ -1139,13 +1161,14 @@ class SanitizerIsolation(unittest.TestCase):
         import copy
 
         from gtest_isolation import verify_payload
-        for change in ('status','exit','name','skip','inventory'):
+        for change in ('status','exit','name','skip','inventory','command'):
             with self.subTest(change=change):
                 value=copy.deepcopy(self.payload());result=value['results'][0]
                 if change=='status':result['xml']=result['xml'].replace('status="run"','status="notrun"')
                 elif change=='exit':result['exit']=1
                 elif change=='name':result['xml']=result['xml'].replace('name="A"','name="Other"')
                 elif change=='skip':value['skipped']=['Suite.A']
+                elif change=='command':result['argv'][1]='--gtest_filter=Suite.Other'
                 else:value['enabled']=2
                 with self.assertRaises(ValueError):verify_payload(value)
 

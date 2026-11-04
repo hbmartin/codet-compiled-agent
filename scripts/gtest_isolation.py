@@ -34,8 +34,12 @@ def inventory(xml):
 def verify_payload(value, inputs=None):
     if inputs is not None and (not isinstance(value.get('binary'), str) or
             not re.fullmatch(r'[0-9a-f]{64}', str(value.get('binary_sha256', ''))) or
-            inputs.get(value['binary']) != value['binary_sha256']):
+            inputs.get(value.get('binary_input', value['binary'])) != value['binary_sha256']):
         raise ValueError('Isolated GoogleTest executable binding mismatch')
+    command = value.get('inventory_argv', [])
+    if (len(command) != 3 or command[0] != value.get('binary') or
+            command[1] != '--gtest_list_tests' or not command[2].startswith('--gtest_output=xml:')):
+        raise ValueError('Isolated inventory command mismatch')
     names, disabled = inventory(value['inventory_xml'])
     expected = [name for name in names if name not in disabled]
     actual = [record['test'] for record in value['results']]
@@ -46,6 +50,11 @@ def verify_payload(value, inputs=None):
     skipped = []
     failures = 0
     for record in value['results']:
+        command = record.get('argv', [])
+        if (len(command) != 3 or command[0] != value['binary'] or
+                command[1] != '--gtest_filter='+record['test'] or
+                not command[2].startswith('--gtest_output=xml:')):
+            raise ValueError('Isolated test command mismatch')
         if record.get('error'):
             failures += 1
             continue
@@ -71,6 +80,9 @@ def verify_payload(value, inputs=None):
 
 
 def run(binary):
+    if any(os.environ.get(name) for name in ('GTEST_FILTER', 'GTEST_TOTAL_SHARDS', 'GTEST_SHARD_INDEX',
+                                           'GTEST_REPEAT', 'GTEST_ALSO_RUN_DISABLED_TESTS')):
+        raise ValueError('Isolation requires an unfiltered, unsharded GoogleTest environment')
     before = digest(binary)
     results, skipped = [], []
     failures = 0
@@ -123,10 +135,11 @@ def main():
     value = run(args.binary.resolve())
     if 'CODET_EVIDENCE_CONTEXT' in os.environ:
         from validation_evidence import write_artifact
-        candidates = [name for name in args.inputs if (Path.cwd() / name).resolve() == args.binary.resolve()]
+        root = Path(json.loads(os.environ['CODET_EVIDENCE_CONTEXT'])['root'])
+        candidates = [name for name in args.inputs if (root / name).resolve() == args.binary.resolve()]
         if len(candidates) != 1:
             raise ValueError('Isolated executable must be declared exactly once')
-        value['binary'] = candidates[0]
+        value['binary_input'] = candidates[0]
         write_artifact(args.report, 'gtest-isolation', value, args.inputs)
     else:
         args.report.write_text(json.dumps(dict(binding='standalone-unbound', payload=value), indent=2)+'\n')
