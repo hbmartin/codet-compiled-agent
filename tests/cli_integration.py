@@ -1379,6 +1379,44 @@ class CliTests(unittest.TestCase):
                 finally:
                     release.set()
 
+    def test_frozen_request_answer_expires_without_becoming_a_message_or_next_answer(self):
+        for prompt,flags,guidance,first,tail in (
+            ('fixture-command',[],b'Approve? [y/N]',b'ye',b's\n'),
+            ('fixture-question',['--permission-mode','plan'],b'Enter a choice',b'2',b'\n')):
+            with self.subTest(prompt=prompt),PtyProcess() as resources:
+                before=len(self.server.requests)
+                master,slave=resources.openpty();arm,trigger=resources.pipe();notice,notify=resources.pipe()
+                helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+                process=resources.start([helper,'--codet-pending-input-helper',str(arm),str(notify),
+                    '-C',str(self.workspace),'--ui','line','--color','never',*flags,prompt],
+                    stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=dict(self.env,TERM='xterm'))
+                received=bytearray();collect=partial(collect_pty,self,master,received)
+                def token(expected,notice=notice,collect=collect):
+                    collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]),seconds=5)
+                    self.assertEqual(os.read(notice,1),expected)
+                collect(lambda guidance=guidance,received=received:guidance in received)
+                os.write(master,first);collect(lambda first=first,received=received:first in received)
+                os.write(trigger,b'h');token(b'r')
+                os.write(master,tail);token(b's')
+                process.send_signal(signal.SIGINT)
+                os.write(trigger,b'g')
+                collect(lambda received=received:b'Interrupted' in received and b'Pending message not sent' in received)
+                self.assertEqual(len(self.server.requests),before+1)
+                received.clear();os.write(master,b'/new\n')
+                collect(lambda received=received:b'Started ' in received)
+                received.clear();os.write(master,(prompt+'\n').encode())
+                collect(lambda guidance=guidance,received=received:guidance in received)
+                # The next request requires a fresh answer; the frozen old answer owns neither it
+                # nor an ordinary user message. A fresh session also avoids the fixture's fixed IDs.
+                self.assertEqual(len(self.server.requests),before+2)
+                os.write(master,b'n\n' if prompt=='fixture-command' else b'2\n')
+                collect(lambda received=received:b'fixture done' in received or b'question answered' in received)
+                for request in self.server.requests[before:]:
+                    self.assertFalse(any(m['role']=='user' and m.get('content') in ('yes','2')
+                                         for m in request['body'].get('messages',[])))
+                os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                self.assertEqual(process.returncode,0,bytes(received))
+
     def test_native_notices_and_cleanup_restore_request_drafts_once(self):
         import select
         for kind in ('approval','question'):
