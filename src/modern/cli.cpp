@@ -1321,7 +1321,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
         terminal->flush_prompt();
         bool closed = false;
         const auto input_events = terminal->input_events();
-        const auto line = terminal->active_input(closed);
+        auto line = terminal->active_input(closed);
         if (terminal->input_events() != input_events || closed)
           drain_warnings();
         if (closed) {
@@ -1357,7 +1357,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
             new_requested = true;
             terminal->say("Starting a new session after pending messages are handled.");
           } else if (line->presentation_held && !text.empty()) {
-            held_followups.push_back(*line);
+            held_followups.push_back(std::move(*line));
           } else if (!text.empty()) {
             try {
               interaction->submit(text);

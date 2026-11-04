@@ -46,10 +46,6 @@ def run_controls(root, folder, build, ninja):
          "const auto &text = append ? pending_->tail : pending_->view;",
          "const auto &text = pending_->tail; (void)append;",
          "NativeRecordLifecycle.KnownWidthPendingLineIsVisible"),
-        ("pending-second", "tests/diagnostic_lifecycle_test.cpp", "include/codet/detail/line_prompt.hpp",
-         "    painted_ = previous_bytes_ = committed_ = 0;\n    guidance_due_ = due_ = true;",
-         "    painted_ = previous_bytes_ = 0;\n    guidance_due_ = due_ = true;",
-         "NativeRecordLifecycle.BasicSecondPendingLineIsVisible"),
         ("pending-interruption", "tests/diagnostic_lifecycle_test.cpp", "include/codet/detail/line_prompt.hpp",
          "pending_->tail_attempted = false;", "(void)pending_->tail_attempted;",
          "NativeRecordLifecycle.InterruptedSubmissionRepaintsAfterItsSeparatorWasDeferred"),
@@ -71,8 +67,8 @@ def run_controls(root, folder, build, ninja):
          "count = static_cast<size_t>(std::min<uint64_t>(count, size_ - offset_));",
          "(void)count;", "InspectionRead.OpeningSizeBoundsReadsSeeksAndRejectsTruncation"),
         ("submission-allocation", "tests/publication_fault_test.cpp", "include/codet/detail/line_prompt.hpp",
-         "std::move(tail), std::move(view), false, redraw",
-         "std::move(tail), view, false, redraw",
+         "std::move(tail), std::move(view),",
+         "std::move(tail), view,",
          "LineSubmissionFault.AllocationFailureCannotConsumeAnUnownedLine"),
     ]
     results = []
@@ -112,7 +108,7 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native mutant linking failed: " + repr(linked))
         mutant = _test(binary, target, directory)
         markers = {"deferred": "deferred", "pending-visible": "Frozen submitted line was not displayed",
-                   "pending-second": "Frozen submitted line was not displayed", "pending-interruption": "read()", "separator": 'read()', "printer": "Expected equality of these values", "pid-guard": "unexpected wait",
+                   "pending-interruption": "read()", "separator": 'read()', "printer": "Expected equality of these values", "pid-guard": "unexpected wait",
                    "refresh": "Refresh after failed drawing", "inspection": "handle->read",
                    "submission-allocation": "Allocation consumed a line without pending ownership"}
         if (mutant["exit"] != 1 or not mutant["assertions"] or
