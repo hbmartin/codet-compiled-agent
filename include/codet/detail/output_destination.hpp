@@ -6,6 +6,15 @@
 #include <unistd.h>
 
 namespace codet::detail {
+enum class DiagnosticResult : uint8_t;
+struct PresentationToken {
+  uint64_t binding = 0, generation = 0;
+  bool valid = false;
+};
+struct PresentationReceipt {
+  DiagnosticResult result;
+  PresentationToken token{};
+};
 inline bool same_destination(const struct stat &a, const struct stat &b) noexcept {
   return a.st_dev == b.st_dev && a.st_ino == b.st_ino &&
          (a.st_mode & S_IFMT) == (b.st_mode & S_IFMT) && a.st_rdev == b.st_rdev;
@@ -15,7 +24,7 @@ inline bool same_destination(const struct stat &a, const struct stat &b) noexcep
 class LineDestinations {
   struct Channel {
     struct stat identity {};
-    bool known = false, row = false, pending = false;
+    bool known = false, row = false, pending = false, fragment = false;
     uint64_t generation = 0;
     uint64_t binding = 0, failure = 0;
     size_t active = 0;
@@ -39,12 +48,17 @@ public:
   struct Reservation {
     uint64_t binding = 0, failure = 0;
     bool admitted = false, separator = false, presentation = false;
+    PresentationToken token{};
   };
   void bind(int descriptor, const struct stat &identity) noexcept {
     auto &channel = channels_[index(descriptor)];
     if (channel.known && same_destination(channel.identity, identity))
       return;
-    Channel next{identity, true, presented_ && S_ISCHR(identity.st_mode), false, ++generation_};
+    Channel next;
+    next.identity = identity;
+    next.known = true;
+    next.row = presented_ && S_ISCHR(identity.st_mode);
+    next.generation = ++generation_;
     next.binding = ++binding_;
     for (const auto &other : channels_)
       if (&other != &channel && other.known && same_destination(other.identity, identity))
@@ -72,8 +86,8 @@ public:
   bool separate(int descriptor) noexcept {
     bool result = false;
     related(descriptor, [&](auto &channel) {
-      result = result || channel.row;
-      channel.row = false;
+      result = result || channel.row || channel.fragment;
+      channel.row = channel.fragment = false;
     });
     return result;
   }
@@ -90,18 +104,26 @@ public:
       channel.generation = next;
     });
   }
-  Reservation admit(int descriptor, bool presentation) noexcept {
+  Reservation admit(int descriptor, bool presentation,
+                    const PresentationToken *expected = nullptr) noexcept {
     auto &selected = channels_[index(descriptor)];
     if (!selected.binding)
       selected.binding = ++binding_;
-    if (presentation && selected.active)
+    if (presentation && (selected.active ||
+                         (expected && (!expected->valid || expected->binding != selected.binding ||
+                                       expected->generation != selected.generation))))
       return {};
-    Reservation result{selected.binding, selected.failure, true,
-                       selected.pending || (!presentation && selected.row), presentation};
+    Reservation result{selected.binding,
+                       selected.failure,
+                       true,
+                       selected.pending || (presentation ? selected.fragment : selected.row),
+                       presentation,
+                       {selected.binding, selected.generation, selected.known}};
     const auto next = presentation ? selected.generation : ++generation_;
     related(descriptor, [&](auto &channel) {
       channel.pending = true;
       channel.row = presentation;
+      channel.fragment = false;
       channel.generation = next;
       if (!presentation)
         ++channel.active;
@@ -127,10 +149,16 @@ public:
         ++channel.failure;
       } else if (!channel.active && channel.failure == record.failure) {
         channel.pending = false;
+        channel.fragment = !record.presentation && !newline;
         if (record.presentation)
           channel.row = !newline;
       }
     }
+  }
+  PresentationToken token(int descriptor, const struct stat &identity) const noexcept {
+    const auto &channel = channels_[index(descriptor)];
+    return {channel.binding, channel.generation,
+            channel.known && same_destination(channel.identity, identity)};
   }
   size_t active(int descriptor) const noexcept {
     return channels_[index(descriptor)].active;
@@ -151,6 +179,7 @@ struct BoundarySnapshot {
   bool available = false, row = false;
   uint64_t generation = 0;
   size_t active = 0;
+  PresentationToken token{};
 };
 // Null selects the synchronized native owner. No mutable native references escape its guard.
 class BoundaryAccess {

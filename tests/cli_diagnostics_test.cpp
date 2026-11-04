@@ -2194,3 +2194,66 @@ TEST(PendingControl, SaturationCannotCreateAFalseQuitAfterDeletion) {
     input.append(byte);
   EXPECT_TRUE(input.submit());
 }
+
+TEST(LineDestinations, PresentationTokenRejectsAnInterveningRecordAndRebinding) {
+  detail::LineDestinations destinations;
+  struct stat tty {};
+  tty.st_mode = S_IFCHR;
+  tty.st_ino = 1;
+  destinations.bind(1, tty);
+  destinations.bind(2, tty);
+  destinations.open(tty);
+  const auto before = destinations.token(1, tty);
+  const auto diagnostic = destinations.admit(2, false);
+  EXPECT_FALSE(destinations.admit(1, true, &before).admitted);
+  destinations.finish(diagnostic, true, true);
+  EXPECT_FALSE(destinations.admit(1, true, &before).admitted);
+  const auto current = destinations.token(1, tty);
+  auto presentation = destinations.admit(1, true, &current);
+  EXPECT_TRUE(presentation.admitted);
+  destinations.finish(presentation, true, true);
+  ++tty.st_ino;
+  destinations.bind(1, tty);
+  EXPECT_FALSE(destinations.admit(1, true, &current).admitted);
+}
+TEST(LineDestinations, SuccessfulFragmentsConcatenateButSeparateFromPresentation) {
+  detail::LineDestinations destinations;
+  struct stat tty {};
+  tty.st_mode = S_IFCHR;
+  destinations.bind(1, tty);
+  destinations.bind(2, tty);
+  auto first = destinations.admit(2, false);
+  destinations.finish(first, true, false);
+  auto second = destinations.admit(2, false);
+  EXPECT_FALSE(second.separator);
+  destinations.finish(second, true, false);
+  const auto presentation = destinations.admit(1, true);
+  EXPECT_TRUE(presentation.separator);
+  destinations.finish(presentation, true, true);
+  const auto next = destinations.admit(2, false);
+  EXPECT_FALSE(next.separator);
+  destinations.finish(next, true, true);
+}
+TEST(LinePrompt, InjectedFragmentEndsBeforeFrozenPresentation) {
+  LineFixture f;
+  f.line->append('a');
+  f.line->append('b');
+  f.input.append('c');
+  if (f.line->before_output(STDERR_FILENO, f.tty))
+    f.output.echo({"\n"});
+  f.output.display({"fragment"}, false);
+  auto submitted = f.line->try_take();
+  ASSERT_TRUE(submitted);
+  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_THAT(f.stream.str(), EndsWith("fragment\ncodet> abc\n"));
+}
+
+TEST(DiagnosticWriter, ExplicitTrailingNewlineClosesAnInjectedFragment) {
+  std::ostringstream stream;
+  detail::DiagnosticWriter writer(stream);
+  EXPECT_TRUE(writer.write({"fragment"}, false));
+  EXPECT_TRUE(writer.write({" ends\n"}, false));
+  const auto receipt = writer.write_receipt({"prompt"}, false, true, true);
+  EXPECT_EQ(receipt.result, detail::DiagnosticResult::success);
+  EXPECT_EQ(stream.str(), "fragment ends\nprompt");
+}

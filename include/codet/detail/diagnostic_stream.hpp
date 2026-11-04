@@ -14,6 +14,8 @@ inline std::array<char, 4> escaped_byte(unsigned char byte) noexcept {
   return {'\\', 'x', hex[byte >> 4u], hex[byte & 15u]};
 }
 struct IoContext;
+struct PresentationToken;
+struct PresentationReceipt;
 // Borrowed for one invocation; called only for a resolved native output destination.
 class LineOutputObserver {
 public:
@@ -49,10 +51,10 @@ RenderedToken rendered_token(std::string_view, size_t) noexcept;
 size_t rendered_prefix(std::string_view, size_t, size_t *last_token = nullptr) noexcept;
 struct DiagnosticState {
   std::streambuf *buffer = nullptr;
-  bool pending = false;
+  bool pending = false, fragment = false;
   void reset(std::streambuf *destination) noexcept {
     buffer = destination;
-    pending = false;
+    pending = fragment = false;
   }
   void bind(std::streambuf *destination) noexcept {
     if (buffer != destination)
@@ -76,6 +78,9 @@ public:
   DiagnosticWriter &operator=(const DiagnosticWriter &) = delete;
   bool write(std::initializer_list<std::string_view>, bool newline = true, bool flush = false);
   DiagnosticResult write_result(std::initializer_list<std::string_view>, bool newline, bool flush);
+  PresentationReceipt write_receipt(std::initializer_list<std::string_view>, bool newline,
+                                    bool flush, bool presentation = false,
+                                    const PresentationToken * = nullptr);
   StreamDestination destination() const noexcept;
   void file(const std::string &);
 };

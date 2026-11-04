@@ -70,19 +70,24 @@ public:
   bool presentation_deferred() const noexcept {
     return deferred_;
   }
-  DiagnosticResult present_result(std::initializer_list<std::string_view> parts,
-                                  bool newline = false, bool keyboard = false) {
+  PresentationReceipt present_receipt(std::initializer_list<std::string_view> parts,
+                                      bool newline = false, bool keyboard = false,
+                                      const PresentationToken *expected = nullptr) {
     try {
-      const auto result = writer_.write_result(parts, newline, true);
-      deferred_ |= result == DiagnosticResult::deferred;
+      const auto receipt = writer_.write_receipt(parts, newline, true, true, expected);
+      deferred_ |= receipt.result == DiagnosticResult::deferred;
       if (!keyboard)
-        failed_ |= result == DiagnosticResult::failure;
-      return result;
+        failed_ |= receipt.result == DiagnosticResult::failure;
+      return receipt;
     } catch (const std::ios_base::failure &) {
       if (!keyboard)
         failed_ = true;
-      return DiagnosticResult::failure;
+      return {DiagnosticResult::failure, {}};
     }
+  }
+  DiagnosticResult present_result(std::initializer_list<std::string_view> parts,
+                                  bool newline = false, bool keyboard = false) {
+    return present_receipt(parts, newline, keyboard).result;
   }
   bool present(std::initializer_list<std::string_view> parts, bool newline = false,
                bool keyboard = false) {

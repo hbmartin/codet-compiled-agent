@@ -14,6 +14,9 @@ struct NativeIoMetrics {
   unsigned bound_queries = 0;
   bool bound_indeterminate = false;
   bool vector_partial = false, vector_failure = false;
+  bool scalar_partial = false, scalar_failure = false;
+  void (*after_output)(void *, bool) = nullptr;
+  void *after_output_context = nullptr;
   void (*before_output)(void *) = nullptr;
   void *output_context = nullptr;
   void (*after_stat)(void *) = nullptr;

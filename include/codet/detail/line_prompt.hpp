@@ -24,6 +24,7 @@ class LinePrompt final : public LineOutputObserver {
     uint64_t boundary = 0;
     size_t columns = 0;
     bool failed = false;
+    PresentationToken receipt{};
   };
   std::optional<PendingSubmission> pending_;
   std::optional<InputOrigin> origin_;
@@ -37,6 +38,7 @@ class LinePrompt final : public LineOutputObserver {
   uint64_t revision_ = 0, request_revision_ = 0;
   uint64_t painted_revision_ = 0, boundary_generation_ = 0;
   bool append_valid_ = false;
+  PresentationToken boundary_token_;
   bool guidance_due_ = true;
   std::array<char, 1280> row_{};
   std::array<char, 1280> previous_row_{};
@@ -86,6 +88,7 @@ class LinePrompt final : public LineOutputObserver {
       abandon_geometry();
       return;
     }
+    boundary_token_ = state.token;
     boundary_busy_ = state.active != 0;
     if (boundary_generation_ != state.generation) {
       visible_ = append_valid_ = false;
@@ -105,10 +108,10 @@ class LinePrompt final : public LineOutputObserver {
     painted_revision_ = 0;
     guidance_due_ = due_ = true;
   }
-  DiagnosticResult separate() {
+  DiagnosticResult separate(const PresentationToken *expected = nullptr) {
     if (dirty_) {
       Internal guard(internal_);
-      const auto result = output_.present_result({"\n"}, false, true);
+      const auto result = output_.present_receipt({}, true, true, expected).result;
       if (result == DiagnosticResult::deferred)
         return DiagnosticResult::deferred;
       if (result == DiagnosticResult::success)
@@ -523,35 +526,31 @@ public:
             return separation;
           }
         }
-        const auto result =
+        const auto receipt =
             !append && columns_ && dirty_ && visible_
-                ? output_.present_result({"\r", std::string_view(spaces_.data(), painted_),
-                                          painted_ ? "\r" : "", text},
-                                         false, true)
-                : output_.present_result({text}, false, true);
-        if (result == DiagnosticResult::deferred)
-          return result;
-        submission.failed = result == DiagnosticResult::failure;
-        visible_ = result == DiagnosticResult::success;
+                ? output_.present_receipt({"\r", std::string_view(spaces_.data(), painted_),
+                                           painted_ ? "\r" : "", text},
+                                          false, true)
+                : output_.present_receipt({text}, false, true);
+        if (receipt.result == DiagnosticResult::deferred)
+          return receipt.result;
+        submission.receipt = receipt.token;
+        submission.failed = receipt.result == DiagnosticResult::failure;
+        visible_ = receipt.result == DiagnosticResult::success;
         dirty_ = true;
         boundaries().open(terminal_);
       }
-      submission.boundary = boundary_generation_;
+      submission.boundary =
+          submission.receipt.valid ? submission.receipt.generation : boundary_generation_;
       submission.columns = columns_;
       submission.tail_attempted = true;
     }
-    const auto result = separate();
+    const auto *expected =
+        pending_ && pending_->receipt.valid && !pending_->failed ? &pending_->receipt : nullptr;
+    const auto result = separate(expected);
     if (result == DiagnosticResult::deferred)
       return result;
-    if (result == DiagnosticResult::success && pending_ && !pending_->failed) {
-      auto &submission = *pending_;
-      observe_boundary();
-      if (boundary_busy_ || submission.boundary != boundary_generation_) {
-        submission.tail_attempted = false;
-        submission.redraw = true;
-        return DiagnosticResult::deferred;
-      }
-    }
+    // A successful final newline completes this line. Later output belongs to a later record.
     finish_line();
     return result;
   }
@@ -590,6 +589,7 @@ public:
                                          std::move(label), kind, omitted, false, redraw,
                                          boundary_generation_, columns_});
       pending_->line.origin = std::move(origin);
+      pending_->receipt = boundary_token_;
     }
     const auto submission_result = submitted();
     if (!pending_)
