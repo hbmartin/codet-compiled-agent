@@ -55,7 +55,7 @@ def main():
     STAGE.mkdir()
     installed=STAGE/PREFIX.lstrip('/');installed.mkdir(parents=True,exist_ok=True)
     include=installed/'include';lib=installed/'lib'
-    environment=os.environ.copy();environment.update(CC=CC,CXX=CC.replace('gcc','g++'),AR=CC.replace('gcc','ar'),RANLIB=CC.replace('gcc','ranlib'),NM=CC.replace('gcc','nm'),STRIP=CC.replace('gcc','strip'),CFLAGS=FLAGS,CXXFLAGS=FLAGS,CPPFLAGS=f'-I{include}/LegacySupport -I{include}',LDFLAGS=f'{FLAGS} -L{lib}',PKG_CONFIG_LIBDIR=str(lib/'pkgconfig'),ZERO_AR_DATE='1')
+    environment=os.environ.copy();environment.update(CC=CC,CXX=CC.replace('gcc','g++'),AR=CC.replace('gcc','ar'),RANLIB=CC.replace('gcc','ranlib'),NM=CC.replace('gcc','nm'),STRIP=CC.replace('gcc','strip'),CFLAGS=FLAGS,CXXFLAGS=FLAGS,CPPFLAGS=f'-I{include}/LegacySupport -I{include}',LDFLAGS=f'{FLAGS} -Wl,-headerpad_max_install_names -L{lib}',PKG_CONFIG_LIBDIR=str(lib/'pkgconfig'),ZERO_AR_DATE='1')
     source_hash=fingerprint
     source_trees={}
     for dep in lock['dependencies']:
@@ -85,7 +85,7 @@ def main():
         run(['make','-j'+JOBS,'EX_LIBS='+atomic],source,e);run(['make','install_sw','EX_LIBS='+atomic,f'DESTDIR={STAGE}'],source,e)
       elif name=='sqlite':
         (lib).mkdir(exist_ok=True);include.mkdir(exist_ok=True)
-        run([CC,*FLAGS.split(),'-DSQLITE_THREADSAFE=1','-DSQLITE_WITHOUT_ZONEMALLOC','-DSQLITE_DISABLE_INTRINSIC','-dynamiclib','sqlite3.c','-o',lib/'libsqlite3.0.dylib',f'-Wl,-install_name,{PREFIX}/lib/libsqlite3.0.dylib','-Wl,-compatibility_version,9.0.0','-Wl,-current_version,9.54.0','-lpthread'],source,e)
+        run([CC,*FLAGS.split(),'-DSQLITE_THREADSAFE=1','-DSQLITE_WITHOUT_ZONEMALLOC','-DSQLITE_DISABLE_INTRINSIC','-dynamiclib','sqlite3.c','-o',lib/'libsqlite3.0.dylib',f'-Wl,-install_name,{PREFIX}/lib/libsqlite3.0.dylib','-Wl,-headerpad_max_install_names','-Wl,-compatibility_version,9.0.0','-Wl,-current_version,9.54.0','-lpthread'],source,e)
         (lib/'libsqlite3.dylib').unlink(missing_ok=True);(lib/'libsqlite3.dylib').symlink_to('libsqlite3.0.dylib');shutil.copy2(source/'sqlite3.h',include/'sqlite3.h')
       else:
         args=['./configure','--host=powerpc-apple-darwin8','--build=x86_64-pc-linux-gnu',f'--prefix={PREFIX}','--enable-shared','--disable-static']

@@ -1032,6 +1032,8 @@ HttpResponse CurlTransport::perform(const HttpRequest &r, const Cancellation &ca
   curl_easy_setopt(raw, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
   curl_easy_setopt(raw, CURLOPT_HTTPHEADER, headers);
   curl_easy_setopt(raw, CURLOPT_NOSIGNAL, 1L);
+  if (const char *bundle = std::getenv("CODET_CA_BUNDLE"); bundle && *bundle)
+    curl_easy_setopt(raw, CURLOPT_CAINFO, bundle);
   curl_easy_setopt(raw, CURLOPT_CONNECTTIMEOUT, static_cast<long>(r.connect_timeout_seconds));
   curl_easy_setopt(raw, CURLOPT_TIMEOUT, static_cast<long>(r.timeout_seconds));
   curl_easy_setopt(raw, CURLOPT_ERRORBUFFER, error);

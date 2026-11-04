@@ -41,7 +41,7 @@ inline int wait_terminal_input(int descriptor, int milliseconds,
   }
   fd_set readers;
   FD_ZERO(&readers);
-  FD_SET(descriptor, &readers);
+  FD_SET(static_cast<unsigned>(descriptor), &readers);
   struct timeval limit {};
   limit.tv_sec = milliseconds / 1000;
   limit.tv_usec = static_cast<decltype(limit.tv_usec)>((milliseconds % 1000) * 1000);

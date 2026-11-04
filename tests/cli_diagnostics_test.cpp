@@ -1182,8 +1182,9 @@ TEST(DiagnosticWriter, TurnCleanupKeepsOriginalFailureAfterQuiescenceAndResetsCa
     EXPECT_TRUE(finished);
     EXPECT_EQ(reports, 2u);
     EXPECT_EQ(cancel.requested.load(), quitting);
-    if (!quitting)
+    if (!quitting) {
       EXPECT_NO_THROW(cancel.check());
+    }
     worker.get();
   }
 }

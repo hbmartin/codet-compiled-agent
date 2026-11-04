@@ -250,9 +250,10 @@ TEST(TerminalResources, StartupExceptionsRestoreRealPtyModesBeforeReporting) {
     EXPECT_EQ(after.c_cflag, before.c_cflag) << phase;
     EXPECT_EQ(after.c_lflag, before.c_lflag) << phase;
     EXPECT_EQ(std::memcmp(after.c_cc, before.c_cc, sizeof(before.c_cc)), 0) << phase;
-    if (std::string(phase) != "unchanged")
+    if (std::string(phase) != "unchanged") {
       EXPECT_NE(output.find("startup exception preserved after restoration"), std::string::npos)
           << phase;
+    }
   }
 }
 TEST(TerminalResources, EveryPartialPrivateStreamAcquisitionReleasesItsDescriptors) {
