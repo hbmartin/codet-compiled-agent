@@ -40,3 +40,5 @@ The final concrete manifest adds focused completed-input integration repetitions
 The bundle is an offline audit archive, not a relocatable executable distribution. Known analyzer findings, unsupported platforms, and unavailable native Tiger coverage are reported separately. Existing blocking-TTY and best-effort emergency delivery limitations remain. Historical artifacts are unchanged.
 
 On host Darwin ASan builds, fresh-process test helpers use `posix_spawn` with checked close actions. This avoids a captured Apple sanitizer/Foundation child-side `fork` lock-corruption crash before `exec`. Non-ASan and Tiger-targeted helpers retain the fork/exec implementation. Assertions and allocation traps remain enabled. The first failed capture is preserved separately from acceptance.
+
+The shared tooling harness records `check_output_calls`, actual `git_commands`, and `process_inspection_commands` separately. Version-2 verification checks their classification and memory scopes. These are observed Python command invocations, not all kernel operations. An interrupted pre-measurement campaign is retained after correcting the previously ambiguous shared counter label.

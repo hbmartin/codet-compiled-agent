@@ -1093,6 +1093,25 @@ class ReviewedCppcheckLocations(unittest.TestCase):
 
 
 class HashMetricScope(unittest.TestCase):
+    def test_tooling_commands_and_memory_have_distinct_verified_scopes(self):
+        from evidence_benchmarks import verify_tooling_metrics
+        row=dict(harness='tooling',workload='supervision',metric_version=2,
+            check_output_calls=5,git_commands=0,process_inspection_commands=5,
+            retained_traced_blocks=1,retained_traced_bytes=10,peak_traced_bytes=20)
+        verify_tooling_metrics(row)
+        for change in ('missing','classification','git','memory','version','ambiguous'):
+            with self.subTest(change=change):
+                value=dict(row)
+                if change=='missing':value.pop('process_inspection_commands')
+                elif change=='classification':value['check_output_calls']=7
+                elif change=='git':value.update(check_output_calls=6,git_commands=1)
+                elif change=='memory':value['peak_traced_bytes']=1
+                elif change=='ambiguous':value['allocations']=1
+                else:value['metric_version']=3
+                with self.assertRaisesRegex(ValueError,'[Tt]ooling|Supervision'):
+                    verify_tooling_metrics(value)
+        verify_tooling_metrics(dict(harness='tooling',git_commands=5)) # Historical, not relabeled.
+
     def payload(self):
         from evidence_hash_experiment import METRIC_SCOPE, ROLES
         rows, summary, profiles = [], [], []

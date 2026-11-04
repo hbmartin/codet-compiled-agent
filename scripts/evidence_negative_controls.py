@@ -88,6 +88,9 @@ def run_controls(root, folder):
          "ProcessCleanup.test_repeated_interruptions_do_not_skip_escalation_or_replace_timeout"),
         ("cleanup-inactive", "process_supervision", 'inactive = inspect(term_deadline)',
          'inactive = inspect(term_deadline) and False', "ProcessCleanup.test_inactive_group_returns_before_the_remaining_grace"),
+        ("tooling-counts", "evidence_benchmarks",
+         "if row['check_output_calls'] != row['git_commands'] + row['process_inspection_commands']:",
+         'if False:', "HashMetricScope.test_tooling_commands_and_memory_have_distinct_verified_scopes"),
     ]
     results = []
     for name, module, before, after, target in cases:
@@ -117,7 +120,7 @@ def run_controls(root, folder):
                    "cleanup-escalation": "Repeated interruption skipped escalation",
                    "cleanup-inactive": "Leader was reaped before group ownership ended",
                    "cppcheck-order": "Valid reordered Cppcheck relocation was rejected",
-                   "hash-version": "ValueError not raised"}
+                   "hash-version": "ValueError not raised", "tooling-counts": "ValueError not raised"}
         if name in markers and not any(markers[name] in text for text in runs[1]["failure_details"]):
             raise ValueError("Control missed its intended assertion: " + name)
         results.append(dict(name=name, test=target, baseline=runs[0], mutant=runs[1]))

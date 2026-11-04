@@ -1,4 +1,4 @@
-"""Small replayable hashing/Git workload; reports Python allocation and subprocess work."""
+"""Hashing, Git, and supervision observations with scoped memory/command counters."""
 import json
 import subprocess
 import sys
@@ -15,11 +15,15 @@ from validation_evidence import production_hashes
 
 
 def measure(root, ref, workload, repository=None):
-    calls = 0
+    calls = git_calls = process_inspections = 0
     native = subprocess.check_output
     def counted(*args, **kwargs):
-        nonlocal calls
+        nonlocal calls, git_calls, process_inspections
         calls += 1
+        argv = args[0] if args else kwargs.get('args', [])
+        name = Path(argv[0]).name if isinstance(argv, (list, tuple)) and argv else ''
+        git_calls += name == 'git'
+        process_inspections += name == 'ps'
         return native(*args, **kwargs)
     subprocess.check_output = counted
     tracemalloc.start()
@@ -55,7 +59,8 @@ def measure(root, ref, workload, repository=None):
         tracemalloc.stop()
     if not hashes or (workload == "git-inspection" and calls < 3):
         raise ValueError("Hash/Git work counter positive control failed")
-    return dict(case=workload, milliseconds=elapsed, files=len(hashes), git_commands=calls,
+    return dict(case=workload, milliseconds=elapsed, files=len(hashes), check_output_calls=calls, git_commands=git_calls,
+                process_inspection_commands=process_inspections,
                 metric_version=2, retained_traced_blocks=sum(s.count for s in stats), retained_traced_bytes=retained, peak_traced_bytes=peak)
 
 
