@@ -59,7 +59,9 @@ def measure(root, ref, workload, repository=None):
         tracemalloc.stop()
     if not hashes or (workload == "git-inspection" and calls < 3):
         raise ValueError("Hash/Git work counter positive control failed")
-    return dict(case=workload, milliseconds=elapsed, files=len(hashes), check_output_calls=calls, git_commands=git_calls,
+    return dict(case=workload, milliseconds=elapsed, files=0 if workload == "supervision" else len(hashes),
+                owned_processes=len(hashes) if workload == "supervision" else 0,
+                check_output_calls=calls, git_commands=git_calls,
                 process_inspection_commands=process_inspections,
                 metric_version=2, retained_traced_blocks=sum(s.count for s in stats), retained_traced_bytes=retained, peak_traced_bytes=peak)
 
