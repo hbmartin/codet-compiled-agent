@@ -138,7 +138,7 @@
     "include/codet/detail/approval_review.hpp": "6275783e5e2b70c81ef10447b8e3c38e1ad96729172407fc3d7c16e3caddf2a4",
     "include/codet/detail/approval_unicode.hpp": "81b289def9f7f2453bca3043619e788e61a36765713f30809f1ff149ff9746b7",
     "include/codet/detail/cleanup_diagnostics.hpp": "8251d5a169981c80cc02629dbe674c2d07cd4e4f9c1344685cbfc533f5db4409",
-    "include/codet/detail/cli.hpp": "c10ef98ffbda273264f944dd2a1e8294d6182c77b52f108f869004ed90c5896f",
+    "include/codet/detail/cli.hpp": "1b447716ee69eeeec62589f0495541df9afc8ce1015a313768555b53bc96bc39",
     "include/codet/detail/cli_diagnostics.hpp": "7ce7e967fef9020205d5bd69581a4d087c64b74bafd330dd89b4e21201874ddb",
     "include/codet/detail/cli_output.hpp": "c4b727f754374be226eff3ea83b854484e35ad96b4ab7a11a3d4d450620de0b8",
     "include/codet/detail/curses_input.hpp": "51c9edf6b7a3ebd2dc4eb065b3a5142c31503acb07c60471bc371f2edeb18e65",
@@ -175,7 +175,7 @@
     "src/modern/agent.cpp": "e12c09f5a3df81421d10bfa0ac22c62b8b2ee8acf3edb724c629bc043d1504fc",
     "src/modern/artifacts.cpp": "6bd6b5576aa7167b2fba7a085efe17ab381a689c3a9f8fdfd00a4cf9a2fe145c",
     "src/modern/capture_catalog.cpp": "2d34912ab50f692309883726bb9cb1bc1b31c5ce5e92aca8d564511b0bb3db1c",
-    "src/modern/cli.cpp": "d25286e58cd9ab3dfa8e3b9a2830e0281e583138950b855cfaaa187fb9ac93c0",
+    "src/modern/cli.cpp": "563fc4733e6aca2886723074fc5ec5b6f7a373656343ddaadf0fb2816e34ecbf",
     "src/modern/computer.cpp": "280112859a870db9deaa3d51cc1311f5fcdefa3eaec4ee7f3daac68145172ff9",
     "src/modern/config.cpp": "6ef1d1b7829a83339e773843cbeff09db275db4a3dd8499e7c0fa0dad0d802ca",
     "src/modern/context.cpp": "30ef96299db52a88a0904e30461f945da4e13b20ff7d5e15969534ed2de10825",
@@ -254,7 +254,7 @@
         "src/modern/cli.cpp"
       ],
       "context": "            S_ISCHR(value.st_mode) && ::ioctl(descriptor, TIOCGWINSZ, &size) == 0 ? size.ws_col : 0;",
-      "rationale": "Unchanged diagnostic identity and exact source line/token column; preceding frozen-input handling moved the source location."
+      "rationale": "Unchanged diagnostic identity and exact source line/token column; preceding pending-input handling moved the source location."
     },
     {
       "tool": "clang-tidy",
@@ -273,7 +273,7 @@
         "src/modern/cli.cpp"
       ],
       "context": "            S_ISCHR(value.st_mode) && ::ioctl(descriptor, TIOCGWINSZ, &size) == 0 ? size.ws_col : 0;",
-      "rationale": "Unchanged diagnostic identity and exact source line/token column; preceding frozen-input handling moved the source location."
+      "rationale": "Unchanged diagnostic identity and exact source line/token column; preceding pending-input handling moved the source location."
     },
     {
       "tool": "clang-tidy",
@@ -292,7 +292,7 @@
         "src/modern/cli.cpp"
       ],
       "context": "    if (S_ISCHR(value.st_mode) && same_destination(value, terminal_)) {",
-      "rationale": "Unchanged diagnostic identity and exact source line/token column; preceding frozen-input handling moved the source location."
+      "rationale": "Unchanged diagnostic identity and exact source line/token column; preceding pending-input handling moved the source location."
     },
     {
       "tool": "clang-tidy",
@@ -306,12 +306,12 @@
       "new": [
         "bugprone-unchecked-optional-access",
         "src/modern/cli.cpp",
-        29443,
+        29982,
         "unchecked access to optional value",
         "src/modern/cli.cpp"
       ],
       "context": "        approval_->previous();",
-      "rationale": "Unchanged diagnostic identity and exact source line/token column; preceding frozen-input handling moved the source location."
+      "rationale": "Unchanged diagnostic identity and exact source line/token column; preceding pending-input handling moved the source location."
     },
     {
       "tool": "clang-tidy",
@@ -325,12 +325,12 @@
       "new": [
         "bugprone-unchecked-optional-access",
         "src/modern/cli.cpp",
-        29485,
+        30024,
         "unchecked access to optional value",
         "src/modern/cli.cpp"
       ],
       "context": "        approval_->next();",
-      "rationale": "Unchanged diagnostic identity and exact source line/token column; preceding frozen-input handling moved the source location."
+      "rationale": "Unchanged diagnostic identity and exact source line/token column; preceding pending-input handling moved the source location."
     }
   ]
 }
