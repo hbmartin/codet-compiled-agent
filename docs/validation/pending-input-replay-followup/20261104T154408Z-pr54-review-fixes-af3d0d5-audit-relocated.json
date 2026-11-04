@@ -1,0 +1,9 @@
+{
+  "verified": true,
+  "eligible_current": true,
+  "schema_version": 5,
+  "campaign_id": "6a2c2efd355f45a8b0ad083880e4cd30",
+  "checks": 35,
+  "audit_inputs": 10328,
+  "reran_binaries": false
+}
