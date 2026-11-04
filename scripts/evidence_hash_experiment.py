@@ -1,13 +1,13 @@
 """Measure snapshot hashing implementations against one immutable input set."""
 import json
 import statistics
-import subprocess
 import sys
 from pathlib import Path
 
 from evidence_benchmarks import verify_samples
 from evidence_inputs import sha256
 from evidence_processes import require_quiet_processes
+from process_supervision import run as supervised_run
 
 ROLES = ('production', 'validation', 'build')
 PROGRAM = r'''
@@ -96,7 +96,7 @@ def measure(root, correctness, python=sys.executable):
                 order = ('baseline', 'changed') if (number + sample) % 2 else ('changed', 'baseline')
                 for variant in order:
                     argv = [python, '-c', PROGRAM, str(variants[variant]), str(root), role]
-                    result = subprocess.run(argv, check=True, text=True, capture_output=True, timeout=180)
+                    result = supervised_run(argv, check=True, text=True, capture_output=True, timeout=180)
                     row = json.loads(result.stdout)
                     profiles.append(dict(set=number, sample=sample, variant=variant, role=role,
                                          functions=row.pop('functions'), argv=argv, exit=result.returncode))

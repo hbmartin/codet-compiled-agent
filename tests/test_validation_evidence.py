@@ -1267,8 +1267,8 @@ class PortableV5(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             marker = Path(directory) / 'escaped'
-            grandchild = 'import time;from pathlib import Path;time.sleep(1);Path(' + repr(str(marker)) + ').write_text("escaped")'
-            child = 'import subprocess,sys,time;subprocess.Popen([sys.executable,"-c",' + repr(grandchild) + ']);print("ready",flush=True);time.sleep(60)'
+            grandchild = 'import time,signal;from pathlib import Path;signal.signal(signal.SIGTERM,signal.SIG_IGN);print("grandchild-ready",flush=True);time.sleep(1);Path(' + repr(str(marker)) + ').write_text("escaped")'
+            child = 'import subprocess,sys,time;p=subprocess.Popen([sys.executable,"-c",' + repr(grandchild) + '],stdout=subprocess.PIPE);p.stdout.readline();print("ready",flush=True);time.sleep(60)'
             script = 'from process_supervision import run\nimport sys\ntry:run([sys.executable,"-c",' + repr(child) + '],timeout=60,cleanup_grace=.1)\nexcept KeyboardInterrupt:raise SystemExit(17)'
             process = subprocess.Popen([sys.executable, '-c', script], stdout=subprocess.PIPE,
                                        env=dict(PATH='/bin:/usr/bin', PYTHONPATH=str(Path(__file__).resolve().parents[1] / 'scripts')))
@@ -1285,3 +1285,17 @@ class PortableV5(unittest.TestCase):
                     process.wait(timeout=5)
                 process.stdout.close()
             self.assertGreater(os.getpid(), 0)
+
+    def test_real_popen_failure_keeps_launch_classification(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'src').mkdir()
+            (root / 'src/a.cpp').write_text('source')
+            (root / 'not-directory').write_text('file')
+            manifest = root / 'manifest.json'
+            evidence.atomic_json(manifest, dict(root=str(root), checks=[dict(id='bad-cwd', cwd='not-directory',
+                argv=[sys.executable, '-c', 'print("must not execute")'])]))
+            result = evidence.capture(manifest, root / 'capture')['bad-cwd']
+            self.assertEqual(result['outcome'], 'launch-error')
+            self.assertIsNone(result['exit'])
+            self.assertIn('not-directory', result['error'])

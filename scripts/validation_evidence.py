@@ -215,10 +215,15 @@ def capture(manifest_path, folder, *, campaign_id=None):
                         record["outcome"] = "passed" if process.returncode == 0 else "failed"
                     except subprocess.TimeoutExpired as error:
                         record["exit"] = getattr(error, "returncode", None)
+                        record["process_cleanup"] = getattr(error, "process_cleanup", {})
                         if hasattr(error, "cleanup_failure"):
                             record["cleanup_failure"] = error.cleanup_failure
                         record["outcome"] = "timeout"
-                    except KeyboardInterrupt:
+                    except KeyboardInterrupt as error:
+                        record["exit"] = getattr(error, "returncode", None)
+                        record["process_cleanup"] = getattr(error, "process_cleanup", {})
+                        if hasattr(error, "cleanup_failure"):
+                            record["cleanup_failure"] = error.cleanup_failure
                         record["outcome"] = "interrupted"
                         raise
                 phase = "artifact"
@@ -231,6 +236,8 @@ def capture(manifest_path, folder, *, campaign_id=None):
                         validate_artifact(path, spec, context)
                         record["artifacts"].append(dict(path=spec["path"], sha256=digest(path)))
         except OSError as error:
+            if getattr(error, "process_launch_failure", False):
+                phase = "launch"
             record["outcome"] = "launch-error" if phase == "launch" else ("execution-error" if phase == "execution" else "artifact-error")
             record["error"] = str(error)
             with log.open("a") as stream:

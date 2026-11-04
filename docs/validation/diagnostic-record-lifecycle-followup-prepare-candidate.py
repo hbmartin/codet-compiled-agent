@@ -4,7 +4,7 @@ def checked_replace(text, before, after, expected=1):
     count = text.count(before)
     if count != expected:
         raise ValueError('Historical transformation count mismatch: ' + repr(before))
-    transformations.append(dict(before=before, count=count))
+    transformations.append(dict(before=before, count=count, expected=expected))
     return text.replace(before, after)
 import argparse
 _parser = argparse.ArgumentParser(description=__doc__)
@@ -52,4 +52,4 @@ if not (src / 'src/modern/platform.cpp').is_file():
     raise ValueError('Historical candidate source was not produced')
 args.output.parent.mkdir(parents=True, exist_ok=True)
 with args.output.open('x') as result:
-    json.dump(dict(label='historical replay; not current campaign evidence', folder=str(folder), source_ref=locals().get('ref'), produced=[str(p) for p in folder.glob('*.json')]), result, indent=2)
+    json.dump(dict(label='historical replay; not current campaign evidence', folder=str(folder), source_ref=locals().get('ref'), transformations=transformations, produced=[str(p) for p in folder.glob('*.json')]), result, indent=2)

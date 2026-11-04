@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from process_supervision import system_ps
+
 NATIVE_BLOCKERS = {"ctest", "codet_tests", "codet_publication_fault_tests", "clang-tidy", "cppcheck", "ninja", "pytest"}
 SCRIPT_BLOCKERS = {"analyze-modern.py", "cli_integration.py", "test_validation_evidence.py"}
 
@@ -130,7 +132,7 @@ def read_argv(pid, platform=None):
 def process_snapshot():
     if sys.platform != "darwin" and not sys.platform.startswith("linux"):
         raise ValueError("Process inspection unsupported on " + sys.platform)
-    identities = subprocess.check_output(["ps", "-axo", "pid=,stat=,comm="], text=True, timeout=5)
+    identities = subprocess.check_output([system_ps(), "-axo", "pid=,stat=,comm="], text=True, timeout=5)
     processes = []
     for line in identities.splitlines():
         fields = line.strip().split(None, 2)

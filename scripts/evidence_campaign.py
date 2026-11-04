@@ -19,6 +19,7 @@ from evidence_benchmarks import (
     verify_samples,
 )
 from modern_sources import application_sources
+from process_supervision import run as supervised_run
 from validation_evidence import atomic_json, digest, require_quiet_processes, write_artifact
 
 CASES = {
@@ -35,7 +36,8 @@ TOOLS = ("clang-tidy", "cppcheck", "clang-analyzer")
 
 
 def command(argv, *, cwd=None, timeout=30, env=None):
-    return subprocess.check_output([str(s) for s in argv], cwd=cwd, text=True, timeout=timeout, env=env).strip()
+    return supervised_run([str(s) for s in argv], cwd=cwd, text=True, stdout=subprocess.PIPE,
+                          check=True, timeout=timeout, env=env).stdout.strip()
 
 
 def input_name(root, path):
@@ -115,9 +117,9 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     python39 = tool("python39", discover_python39(python39, template["python39"]), optional=True)
     native = {n: tool(n, n, version=None if n == "ar" and sys.platform == "darwin" else "--version")
               for n in ("git", "cmake", "ctest", "ninja", "make", "tar", "ar", "cc", "c++")}
-    for name in ("pkg-config", "ranlib", "ld", "strip"):
+    for name in ("pkg-config", "ranlib", "ld", "strip", "ps"):
         if shutil.which(name):
-            tool(name, name, version=None if sys.platform == "darwin" and name != "pkg-config" else "--version")
+            tool(name, shutil.which("ps", path=os.defpath) if name == "ps" else name, version=None if sys.platform == "darwin" and name != "pkg-config" else "--version")
     analyzer_env = dict(CLANG_TIDY=tool("clang-tidy", clang_tidy or shutil.which("clang-tidy-18") or shutil.which("clang-tidy") or "clang-tidy-18"),
                         CPPCHECK=tool("cppcheck", cppcheck or root / "build/analysis-tools/cppcheck/bin/cppcheck"))
     # Record transitive tool invocations, not just the top-level Python/Make binary.
@@ -307,7 +309,7 @@ def measure(config):
                             argv = [config["check_python"], str(folder / "harness-src/scripts/evidence_tool_bench.py"), str(source), ref, case, str(result), str(root)]
                         else:
                             argv = [binaries[variant][harness]["path"], case, str(result)] + (["file"] if harness == "export" else [])
-                        run = subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=180)
+                        run = supervised_run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=180)
                         if run.returncode:
                             raise ValueError("Benchmark failed: " + repr((argv, run.returncode, run.stderr)))
                         row = json.loads(result.read_text())
@@ -388,8 +390,8 @@ def produce(config_path, action, *, output=None):
             directory = build / "analysis" / tool
             if directory.exists():
                 shutil.rmtree(directory)
-        run = subprocess.run([config["analysis_python"], str(source / "scripts/analyze-modern.py"),
-                              "--build-dir", str(build), "--tool", "all", "--jobs", "4"], timeout=1750)
+        run = supervised_run([config["analysis_python"], str(source / "scripts/analyze-modern.py"),
+                              "--build-dir", str(build), "--tool", "all", "--jobs", "4"], timeout=1750, cleanup_grace=4)
         if variant == "baseline":
             verify_git_source(root, source, config["baseline"])
             verify_git_validation(root, source, config["baseline"])
@@ -441,7 +443,7 @@ def produce(config_path, action, *, output=None):
             path = shutil.which(name)
             result = dict(tool=name, path=path, outcome="unavailable")
             if path:
-                run = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=5)
+                run = supervised_run([path, "--version"], capture_output=True, text=True, timeout=5)
                 result.update(outcome="available", exit=run.returncode, stdout=run.stdout, stderr=run.stderr)
             payload["tools"].append(result)
     elif action == "harness":
@@ -496,8 +498,8 @@ def produce(config_path, action, *, output=None):
             for member in members:
                 target = source / member.name
                 target.parent.mkdir(parents=True, exist_ok=True)
-                with archive.extractfile(member) as stream, target.open("wb") as output:
-                    shutil.copyfileobj(stream, output)
+                with archive.extractfile(member) as stream, target.open("wb") as target_stream:
+                    shutil.copyfileobj(stream, target_stream)
         expected = git_hashes(root, ref, "validation", config["tools"]["git"]["path"])
         if any(digest(source / name) != expected[name] for name in names):
             raise ValueError("Hash correctness snapshot does not match its recorded commit")
