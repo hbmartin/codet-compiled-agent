@@ -29,8 +29,21 @@ codet::Cancellation *pending_cancel = nullptr;
 thread_local int pending_notify = -1;
 thread_local bool pending_enter = false;
 thread_local bool pending_frozen = false;
+thread_local codet::detail::IoContext *pending_sequence_io = nullptr;
+thread_local bool pending_sequence_active = false, pending_sequence_barrier = false;
 int pending_poll(pollfd *fds, nfds_t count, int timeout) {
-  if (pending_enter) {
+  if (pending_sequence_io) {
+    if (pending_sequence_barrier) {
+      pending_sequence_barrier = false;
+      (void)::write(pending_notify, "i", 1);
+    }
+    const auto *line = dynamic_cast<codet::detail::LinePrompt *>(pending_sequence_io->line_output);
+    const bool active = line && line->submission_pending();
+    if (active != pending_sequence_active) {
+      pending_sequence_active = active;
+      (void)::write(pending_notify, active ? "s" : "d", 1);
+    }
+  } else if (pending_enter) {
     pending_enter = false;
     pending_frozen = true;
     (void)::write(pending_notify, "s", 1);
@@ -39,6 +52,11 @@ int pending_poll(pollfd *fds, nfds_t count, int timeout) {
 }
 ssize_t pending_read(int fd, void *data, size_t size) {
   const auto count = ::read(fd, data, size);
+  if (pending_sequence_io) {
+    if (count == 1 && *static_cast<char *>(data) == 1)
+      pending_sequence_barrier = true; // Next poll proves all preceding bytes were processed.
+    return count;
+  }
   if (count == 1 && (*static_cast<char *>(data) == '\0' || *static_cast<char *>(data) == 4))
     (void)::write(pending_notify, "k", 1);
   if (count == 1 && *static_cast<char *>(data) == '\0')
@@ -135,8 +153,12 @@ int main(int argc, char **argv) {
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
 #ifdef CODET_NATIVE_TERMINAL_METRICS
-    if (argc > 4 && std::string(argv[1]) == "--codet-pending-input-helper") {
+    const bool sequence = argc > 5 && std::string(argv[1]) == "--codet-pending-sequence-helper";
+    if (sequence || (argc > 4 && std::string(argv[1]) == "--codet-pending-input-helper")) {
       const int release = std::stoi(argv[2]), notify = std::stoi(argv[3]);
+      const int rounds = sequence ? std::stoi(argv[4]) : 1;
+      if (rounds < 1 || rounds > 2)
+        throw codet::Error("Pending sequence helper requires one or two reservations", 2);
       codet::Cancellation cancel;
       pending_cancel = &cancel;
       const auto old_int = std::signal(SIGINT, pending_interrupt);
@@ -150,30 +172,51 @@ int main(int argc, char **argv) {
         }
       } signals{old_int, old_term};
       auto writer = std::async(std::launch::async, [=] {
-        char token;
-        if (!codet::test::read_token(release, token, std::chrono::seconds(30)))
-          return false;
-        struct Gate {
-          int release, notify;
-        } gate{release, notify};
-        auto &metrics = codet::test::native_io_metrics;
-        metrics.interrupt_fd = STDERR_FILENO;
-        metrics.output_context = &gate;
-        metrics.before_output = +[](void *context) {
-          auto &g = *static_cast<Gate *>(context);
-          char byte;
-          (void)::write(g.notify, "r", 1);
-          (void)codet::test::read_token(g.release, byte, std::chrono::seconds(30));
-        };
-        const bool delivered = codet::detail::immediate_stderr({"held diagnostic"});
-        metrics = {};
-        return delivered;
+        bool all = true;
+        for (int round = 0; round < rounds; ++round) {
+          char token;
+          if (!codet::test::read_token(release, token, std::chrono::seconds(30)))
+            return false;
+          struct Gate {
+            int release, notify;
+          } gate{release, notify};
+          auto &metrics = codet::test::native_io_metrics;
+          metrics.interrupt_fd = STDERR_FILENO;
+          metrics.output_context = &gate;
+          metrics.before_output = +[](void *context) {
+            auto &g = *static_cast<Gate *>(context);
+            char byte;
+            (void)::write(g.notify, "r", 1);
+            (void)codet::test::read_token(g.release, byte, std::chrono::seconds(30));
+          };
+          const bool delivered = codet::detail::immediate_stderr({"held diagnostic"});
+          metrics = {};
+          all = all && delivered;
+        }
+        return all;
       });
       codet::detail::IoContext io(cancel);
       pending_notify = notify;
+      if (sequence)
+        pending_sequence_io = &io;
       const codet::detail::TerminalInputOps ops{pending_poll, ::select, pending_read};
       io.terminal_input = &ops;
-      const std::vector<std::string> arguments(argv + 4, argv + argc);
+      const std::vector<std::string> arguments(argv + (sequence ? 5 : 4), argv + argc);
+      if (sequence) {
+        struct Completion {
+          int notify;
+          bool observed = false;
+        } completion{notify};
+        const codet::detail::CliLifecycleOps lifecycle{+[](void *context) noexcept {
+                                                         auto &event =
+                                                             *static_cast<Completion *>(context);
+                                                         if (!std::exchange(event.observed, true))
+                                                           (void)::write(event.notify, "c", 1);
+                                                       },
+                                                       &completion};
+        return codet::detail::cli_main(arguments, cancel, io, codet::detail::CursesDrawOps{},
+                                       lifecycle);
+      }
       return codet::detail::cli_main(arguments, cancel, io);
     }
     if (argc == 3 && std::string(argv[1]) == "--codet-line-boundary-helper") {

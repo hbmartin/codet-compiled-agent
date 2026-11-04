@@ -577,8 +577,12 @@ public:
   }
   std::array<char, 6> pending_control_{};
   size_t pending_control_size_ = 0;
-  bool pending_control_overflow_ = false;
+  bool pending_control_overflow_ = false, pending_control_started_ = false;
   bool pending_quit_ = false;
+  void clear_pending_control() noexcept {
+    pending_control_size_ = 0;
+    pending_control_overflow_ = pending_control_started_ = false;
+  }
   bool take_quit() noexcept {
     return std::exchange(pending_quit_, false);
   }
@@ -593,8 +597,7 @@ public:
     if (!line_)
       return;
     auto line = line_->discard_pending();
-    pending_control_size_ = 0;
-    pending_control_overflow_ = false;
+    clear_pending_control();
     try {
       if (line) {
         const auto message = "[Pending message not sent: " + line->text + "]";
@@ -610,7 +613,7 @@ public:
     }
   }
   std::optional<std::string> read(Cancellation &cancel) {
-    if (!curses_ && ((line_ && line_->submission_pending()) || input_.stale() ||
+    if (!curses_ && (submission_pending() || pending_control_started_ || input_.stale() ||
                      (input_.ordinary_draft() && !input_.input().empty()))) {
       begin_active(cancel);
       flush_prompt();
@@ -631,6 +634,7 @@ public:
           return std::nullopt;
         flush_prompt();
         bool closed = false;
+        const bool discarding_controls = pending_control_started_;
         auto line = active_input(closed);
         if (closed) {
           discard_pending(true);
@@ -645,6 +649,8 @@ public:
             history(resources_.entries(), &history_event_, H_ENTER, line->text.c_str());
           return std::move(line->text);
         }
+        if (discarding_controls && !pending_control_started_ && !submission_pending())
+          break; // The ignored extra line ended; return the empty idle prompt to libedit.
       }
     }
     if (!curses_) {
@@ -742,8 +748,10 @@ public:
       } else if (ready < 0 && !retry_input(errno, this))
         throw Error("Cannot wait for terminal input: " + std::string(std::strerror(errno)));
     }
-    if (line_ && line_->submission_pending()) {
-      // Read controls before attempting handoff, including when output remains reserved.
+    if (line_ && (line_->submission_pending() || pending_control_started_)) {
+      auto &pending_line = *line_;
+      // Extra typing remains a control-only line, even if the frozen line completes first.
+      // It must never delay that independent presentation/handoff or become a later message.
       if (closed || ch == bindings_["quit"] || ch == 4) {
         closed = true;
         return {};
@@ -754,8 +762,7 @@ public:
           const std::string_view control(pending_control_.data(), pending_control_size_);
           const bool quit =
               !pending_control_overflow_ && (control == "/quit" || control == "/exit");
-          pending_control_size_ = 0;
-          pending_control_overflow_ = false;
+          clear_pending_control();
           if (quit) {
             pending_quit_ = true;
             closed = true;
@@ -765,16 +772,16 @@ public:
           if (pending_control_size_)
             --pending_control_size_;
         } else if (ch >= 32 && ch <= 255) {
+          pending_control_started_ = true;
           if (pending_control_size_ < pending_control_.size())
             pending_control_[pending_control_size_++] = static_cast<char>(ch);
           else
             pending_control_overflow_ = true;
         }
       }
-      if ((read_cancel_ && read_cancel_->requested) || pending_control_size_ ||
-          pending_control_overflow_)
+      if (read_cancel_ && read_cancel_->requested)
         return {};
-      return line_->try_take();
+      return pending_line.submission_pending() ? pending_line.try_take() : std::nullopt;
     }
     if (ch == ERR)
       return {};
@@ -872,6 +879,10 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
 }
 int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel, IoContext &io,
                      const CursesDrawOps &drawing) {
+  return detail::cli_main(args, cancel, io, drawing, CliLifecycleOps{});
+}
+int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel, IoContext &io,
+                     const CursesDrawOps &drawing, const CliLifecycleOps &lifecycle) {
   detail::DiagnosticWriter errors(std::cerr, &io);
   detail::reset_standard_diagnostics();
   io.line_destinations = {};
@@ -1271,6 +1282,15 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     std::future<RunResult> work;
     std::optional<Json> pending;
     std::vector<detail::InputLine> held_followups;
+    const auto hold_followup = [&](detail::InputLine &line) {
+      try {
+        held_followups.push_back(std::move(line));
+      } catch (...) {
+        detail::secondary_diagnostic(
+            [&] { terminal->say("[Pending message not sent: " + line.text + "]"); });
+        throw;
+      }
+    };
     const auto drain_warnings = [&](bool retry = true) {
       interaction->drain_warnings(
           [&](std::string_view text) {
@@ -1367,14 +1387,8 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
           else if (text == "/new") {
             new_requested = true;
             terminal->say("Starting a new session after pending messages are handled.");
-          } else if (line->presentation_held && !text.empty()) {
-            try {
-              held_followups.push_back(std::move(*line));
-            } catch (...) {
-              detail::secondary_diagnostic(
-                  [&] { terminal->say("[Pending message not sent: " + line->text + "]"); });
-              throw;
-            }
+          } else if ((line->presentation_held || !held_followups.empty()) && !text.empty()) {
+            hold_followup(*line);
           } else if (!text.empty()) {
             try {
               interaction->submit(text);
@@ -1386,6 +1400,8 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       }
       deliver(false, true);
       auto result = work.get(); // Ownership is resolved against the original operation outcome.
+      if (lifecycle.turn_completed)
+        lifecycle.turn_completed(lifecycle.context);
       if (!held_followups.empty())
         cancel.check();
       while (terminal->submission_pending()) {
@@ -1405,10 +1421,14 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
         }
         if (line) {
           const auto submission = line->classify();
+          if (submission.action == detail::InputAction::quit) {
+            quit_requested = true;
+            break; // The completed turn stays complete, and no staged follow-up may run.
+          }
           if (submission.action == detail::InputAction::message && !line->text.empty() &&
               line->origin && line->origin->session == session.id &&
               line->origin->turn == input_turn)
-            followups.push_back(std::move(line->text));
+            hold_followup(*line);
           else if (submission.rejection)
             terminal->discarded_line(*submission.rejection);
         }
