@@ -818,6 +818,7 @@ class ReplayIntegrity(unittest.TestCase):
         checks = json.loads(manifest.read_text())["checks"]
         self.assertIn("custom-debug", next(c for c in checks if c["id"] == "debug-configure")["argv"][4])
         config = json.loads((self.root / "build/fresh/config.json").read_text())
+        self.assertNotIn("SSL_CERT_FILE", config["environment"])
         self.assertEqual((config["sets"], config["measured"], config["python39"]), (3, 4, campaign.discover_python39(preferred="unavailable-python39")))
         other = campaign.prepare(self.root, Path("build/other"), "HEAD", sys.executable, sys.executable, sys.executable,
                                  template_path=template, clang_tidy=sys.executable, cppcheck=sys.executable)
@@ -1196,7 +1197,9 @@ class PortableV5(unittest.TestCase):
 
         from evidence_ci import read_public_ci
         def denied(url):
-            raise urllib.error.HTTPError(url, 403, 'rate limit', {}, None)
+            error = urllib.error.HTTPError(url, 403, 'rate limit', {}, None)
+            error.close()
+            raise error
         with self.assertRaisesRegex(ValueError, '403.*rate limit'):
             read_public_ci('owner/repo', 42, 'head', request=denied)
         def failed(url):
@@ -1217,3 +1220,68 @@ class PortableV5(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'count mismatch'):
             scope['checked_replace']('two two', 'two', 'one')
         self.assertEqual(scope['checked_replace']('two two', 'two', 'one', expected=2), 'one one')
+
+    def test_hash_snapshot_reuses_only_local_storage_and_preserves_selection(self):
+        import hashlib
+        import io
+
+        from evidence_inputs import role_hashes, selected
+        from verified_sources import file_hash, stream_hash
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'src').mkdir()
+            file = root / 'src/a.cpp'
+            file.write_bytes(b'bytes\0' * 20000)
+            (root / 'src/.DS_Store').write_text('Finder metadata')
+            first = role_hashes(root, 'production')
+            self.assertEqual(first, {'src/a.cpp': hashlib.sha256(file.read_bytes()).hexdigest()})
+            file.write_text('changed after the logical snapshot')
+            self.assertNotEqual(role_hashes(root, 'production'), first)
+            self.assertEqual(file_hash(file, bytearray(65536)), hashlib.sha256(file.read_bytes()).hexdigest())
+            self.assertEqual(stream_hash(io.BytesIO(b'bytes')), hashlib.sha256(b'bytes').hexdigest())
+            self.assertFalse(selected('src/.DS_Store'))
+            self.assertTrue(selected('prompts/a.md'))
+
+    def test_hash_experiment_recomputes_gate_and_samples(self):
+        from evidence_hash_experiment import ROLES, verify_experiment
+        rows, summary = [], []
+        for number in (1, 2):
+            for role in ROLES:
+                for variant, value in (('baseline', 2), ('changed', 1)):
+                    metrics = dict(milliseconds=value, files=1, peak_bytes=value, allocations=value, metadata_queries=value)
+                    group = dict(set=number, workload=role, harness='hash-snapshot', variant=variant)
+                    summary.append(dict(group, **metrics))
+                    for sample in range(6):
+                        rows.append(dict(group, **metrics, sample=sample, warmup=sample == 0, identity='same'))
+        payload = dict(rows=rows, summary=summary, latency_gate_passed=True, work_gate_passed=True)
+        self.assertTrue(verify_experiment(payload))
+        payload['work_gate_passed'] = False
+        with self.assertRaisesRegex(ValueError, 'work acceptance'):
+            verify_experiment(payload)
+
+    def test_supervisor_preserves_signal_interruption_after_descendant_cleanup(self):
+        import os
+        import select
+        import signal
+        import time
+
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / 'escaped'
+            grandchild = 'import time;from pathlib import Path;time.sleep(1);Path(' + repr(str(marker)) + ').write_text("escaped")'
+            child = 'import subprocess,sys,time;subprocess.Popen([sys.executable,"-c",' + repr(grandchild) + ']);print("ready",flush=True);time.sleep(60)'
+            script = 'from process_supervision import run\nimport sys\ntry:run([sys.executable,"-c",' + repr(child) + '],timeout=60,cleanup_grace=.1)\nexcept KeyboardInterrupt:raise SystemExit(17)'
+            process = subprocess.Popen([sys.executable, '-c', script], stdout=subprocess.PIPE,
+                                       env=dict(PATH='/bin:/usr/bin', PYTHONPATH=str(Path(__file__).resolve().parents[1] / 'scripts')))
+            try:
+                self.assertTrue(select.select([process.stdout], [], [], 5)[0])
+                self.assertEqual(process.stdout.readline(), b'ready\n')
+                process.send_signal(signal.SIGTERM)
+                self.assertEqual(process.wait(timeout=5), 17)
+                time.sleep(1.1)
+                self.assertFalse(marker.exists())
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=5)
+                process.stdout.close()
+            self.assertGreater(os.getpid(), 0)

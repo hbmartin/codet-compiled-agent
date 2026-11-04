@@ -76,7 +76,7 @@ def discover_python39(override=None, preferred="python3.9"):
 
 
 def prepare(root, folder, baseline=None, check_python=None, python39=None, analysis_python=None,
-            ci_run=None, clang_tidy=None, cppcheck=None, template_path=None, prior_attempt=None, ca_bundle=None):
+            ci_run=None, clang_tidy=None, cppcheck=None, template_path=None, prior_attempt=None, ca_bundle=None, hash_correctness_ref=None):
     from evidence_inputs import executable
     root = root.resolve()
     if ca_bundle is not None:
@@ -147,6 +147,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
         (folder / name).mkdir()
     config_path = folder / "config.json"
     config = dict(schema_version=5, root=str(root), folder=str(folder), baseline=baseline, tools=tools, environment=environment,
+                  hash_correctness_ref=command([native["git"], "-C", root, "rev-parse", (hash_correctness_ref or baseline) + "^{commit}"]),
                   ca_bundle=dict(path=str(ca_bundle), sha256=digest(ca_bundle)) if ca_bundle else None,
                   dependency_roots=[".deps/" + n for n in ("googletest", "json", "tomlplusplus", "json-schema-validator")],
                   builds=builds, validated_ref=command([native["git"], "-C", root, "rev-parse", "HEAD"]),
@@ -241,7 +242,9 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     harness_outputs = [dict(path=rel(folder / (v + "-harness") / n), archive=False) for v in ("baseline", "changed") for n in ("codet_line_input_bench", "codet_output_bench", "codet_export_bench")]
     producer("benchmark-harness", "harness", ["baseline-build", "changed-build"], harness_inputs, timeout=1800, outputs=harness_outputs,
              file_inputs=[dict(path=rel(folder / (v + "-release/libcodet_core.a")), archive=False) for v in ("baseline", "changed")])
-    producer("benchmarks", "measure", ["benchmark-harness", "static-comparison", "python-negative-controls", "native-negative-controls", "semgrep-controls"],
+    producer("hash-experiment", "hash-profile", ["static-comparison", "python-negative-controls", "native-negative-controls", "semgrep-controls"],
+             timeout=1800, outputs=[dict(path=rel(folder / "hash-correctness/scripts" / name)) for name in ("evidence_inputs.py", "verified_sources.py")])
+    producer("benchmarks", "measure", ["benchmark-harness", "static-comparison", "python-negative-controls", "native-negative-controls", "semgrep-controls", "hash-experiment"],
              [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")] + [rel(folder / "harness.json")], timeout=1800)
     metadata_inputs = [rel(Path(b) / "CMakeCache.txt") for b in builds.values()] + [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")]
     producer("platform-availability", "platforms")
@@ -475,6 +478,31 @@ def produce(config_path, action, *, output=None):
             compiler = next(line.split("=", 1)[1] for line in cache.read_text().splitlines() if line.startswith("CMAKE_CXX_COMPILER:"))
             payload.append(dict(name=name, cache=cache.read_text(), cache_sha256=digest(cache),
                                 compiler_path=compiler, compiler_sha256=digest(Path(compiler)), compiler=command([compiler, "--version"])))
+    elif action == "hash-profile":
+        import io
+        import tarfile
+
+        from evidence_hash_experiment import measure as hash_measure
+        from evidence_inputs import git_hashes
+        source = folder / "hash-correctness"
+        source.mkdir()
+        ref = config["hash_correctness_ref"]
+        names = {"scripts/evidence_inputs.py", "scripts/verified_sources.py"}
+        data = subprocess.check_output([config["tools"]["git"]["path"], "-C", str(root), "archive", ref, *sorted(names)], timeout=30)
+        with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+            members = [m for m in archive.getmembers() if m.isfile()]
+            if {m.name for m in members} != names or len(members) != len(names):
+                raise ValueError("Hash correctness archive coverage mismatch")
+            for member in members:
+                target = source / member.name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.extractfile(member) as stream, target.open("wb") as output:
+                    shutil.copyfileobj(stream, output)
+        expected = git_hashes(root, ref, "validation", config["tools"]["git"]["path"])
+        if any(digest(source / name) != expected[name] for name in names):
+            raise ValueError("Hash correctness snapshot does not match its recorded commit")
+        payload = hash_measure(root, source, config["check_python"])
+        payload["correctness_ref"] = ref
     elif action == "ci":
         from evidence_ci import read_public_ci
         payload = read_public_ci("hbmartin/codet-compiled-agent", config["ci_run"], config["validated_ref"])
@@ -498,16 +526,17 @@ def main():
     replay.add_argument("--analysis-python", default=sys.executable)
     replay.add_argument("--ci-run")
     replay.add_argument("--ca-bundle", type=Path)
+    replay.add_argument("--hash-correctness-ref")
     replay.add_argument("--prior-attempt", type=Path, action="append")
     replay.add_argument("--clang-tidy")
     replay.add_argument("--cppcheck")
     producer = sub.add_parser("produce")
     producer.add_argument("config", type=Path)
-    producer.add_argument("kind", choices=("archive", "harness", "platforms", "semgrep-controls", "analysis", "analysis-baseline", "analysis-changed", "measure", "negative-controls", "native-negative-controls", "cross-placeholder", "build-info", "ci", "history"))
+    producer.add_argument("kind", choices=("archive", "harness", "platforms", "semgrep-controls", "analysis", "analysis-baseline", "analysis-changed", "measure", "negative-controls", "native-negative-controls", "cross-placeholder", "build-info", "ci", "history", "hash-profile"))
     producer.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.action == "prepare":
-        print(prepare(args.root, args.folder, args.baseline, args.check_python, args.python39, args.analysis_python, args.ci_run, args.clang_tidy, args.cppcheck, args.template, args.prior_attempt, args.ca_bundle))
+        print(prepare(args.root, args.folder, args.baseline, args.check_python, args.python39, args.analysis_python, args.ci_run, args.clang_tidy, args.cppcheck, args.template, args.prior_attempt, args.ca_bundle, args.hash_correctness_ref))
     else:
         return produce(args.config, args.kind, output=args.output)
 

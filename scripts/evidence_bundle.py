@@ -243,6 +243,18 @@ def verify_bundle(folder):
             if saved["path"] != spec["path"] or digest(path) != saved["sha256"]:
                 raise ValueError("Audit artifact digest mismatch")
             envelope = json.loads(path.read_text())
+            if envelope["kind"] == "hash-profile":
+                from evidence_hash_experiment import verify_experiment
+                verify_experiment(envelope["payload"])
+                if not envelope["payload"].get("profiles"):
+                    raise ValueError("Hash experiment profiling evidence missing")
+                for filename, signature in envelope["payload"]["code_hashes"]["baseline"].items():
+                    matches = [output for output in record["outputs"] if output["path"].endswith("/hash-correctness/scripts/" + filename)]
+                    if len(matches) != 1 or not matches[0]["archive"] or matches[0]["sha256"] != signature:
+                        raise ValueError("Hash experiment correctness code mismatch")
+                for filename, signature in envelope["payload"]["code_hashes"]["changed"].items():
+                    if report["validation_hashes"].get("scripts/" + filename) != signature:
+                        raise ValueError("Hash experiment candidate code mismatch")
             derived.append(envelope)
             expected = dict(schema_version=SCHEMA_VERSION, campaign_id=run["campaign_id"], capture_run_id=run["id"],
                             check_id=name, production_hashes=report["production_hashes"], validation_hashes=report["validation_hashes"])
