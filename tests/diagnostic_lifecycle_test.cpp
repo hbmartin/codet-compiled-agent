@@ -767,3 +767,40 @@ TEST_F(NativeRecordLifecycle, BasicFreshPendingLinePositiveControl) {
 }
 } // namespace
 #endif
+
+TEST_F(NativeRecordLifecycle, FrozenSubmissionOwnsOriginAndDiscardCompletesExactlyOnce) {
+  line->origin("origin-session", 7);
+  draft();
+  (void)read();
+  DeliveryGate gate;
+  bool held = false;
+  std::optional<detail::InputLine> discarded;
+  capture([&] {
+    std::thread worker([&] {
+      if (!gate.wait_for_start())
+        return;
+      auto &metrics = test::native_io_metrics;
+      metrics.interrupt_fd = STDERR_FILENO;
+      metrics.before_output = DeliveryGate::output;
+      metrics.output_context = &gate;
+      (void)detail::immediate_stderr({"held diagnostic"});
+      metrics = {};
+    });
+    JoinDelivery join{gate, worker};
+    gate.begin();
+    held = !line->try_take();
+    line->origin("replacement-session", 8);
+    input.open({"replacement-session", "replacement", 8}, detail::RequestKind::approval);
+    line->append('y');
+    discarded = line->discard_pending();
+    gate.release();
+  });
+  ASSERT_TRUE(held);
+  ASSERT_TRUE(discarded);
+  EXPECT_EQ(discarded->text, "abc");
+  ASSERT_TRUE(discarded->origin);
+  EXPECT_EQ(discarded->origin->session, "origin-session");
+  EXPECT_EQ(discarded->origin->turn, 7u);
+  EXPECT_FALSE(line->discard_pending());
+  EXPECT_TRUE(input.input().empty());
+}

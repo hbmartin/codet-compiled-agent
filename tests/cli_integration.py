@@ -1330,6 +1330,49 @@ class CliTests(unittest.TestCase):
                         if process.poll() is None:process.kill();process.wait(timeout=5)
                         resources.close()
 
+    def test_frozen_submission_obeys_turn_outcome_and_services_controls(self):
+        for outcome in ('complete','cancel','quit','eof','term'):
+            with self.subTest(outcome=outcome),PtyProcess() as resources:
+                ready,release=threading.Event(),threading.Event()
+                self.server.signal_gate=(ready,release);self.server.releases.append(release)
+                before=len(self.server.requests)
+                master,slave=resources.openpty();arm,trigger=resources.pipe();notice,notify=resources.pipe()
+                helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+                process=resources.start([helper,'--codet-pending-input-helper',str(arm),str(notify),
+                    '-C',str(self.workspace),'--ui','line','--color','never','fixture-signal-wait'],
+                    stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=dict(self.env,TERM='xterm'))
+                received=bytearray()
+                collect=partial(collect_pty,self,master,received)
+                def token(expected,notice=notice,collect=collect):
+                    collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
+                    self.assertEqual(os.read(notice,1),expected)
+                try:
+                    self.assertTrue(ready.wait(10))
+                    os.write(master,b'ab');collect(lambda received=received:b'ab' in received)
+                    os.write(trigger,b'h');token(b'r')
+                    os.write(master,b'c\n');token(b's')
+                    if outcome=='complete':
+                        release.set();os.write(trigger,b'g')
+                        collect(lambda before=before:len(self.server.requests)>=before+2)
+                        collect(lambda received=received:b'fixture done' in received)
+                        self.assertIn('abc','\n'.join(line_cells(received)))
+                        self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'abc')
+                        os.write(master,b'/quit\n')
+                    else:
+                        if outcome=='cancel':process.send_signal(signal.SIGINT)
+                        elif outcome=='term':process.send_signal(signal.SIGTERM)
+                        elif outcome=='quit':os.write(master,b'/quit\n');token(b's')
+                        else:os.write(master,b'\x04')
+                        # Let cancellation reach the original provider before unblocking output.
+                        release.set();os.write(trigger,b'g')
+                        collect(lambda received=received,process=process:b'Error:' in received or process.poll() is not None)
+                        if process.poll() is None:
+                            os.write(master,b'/quit\n')
+                    collect(lambda process=process:process.poll() is not None)
+                    if outcome!='complete':self.assertEqual(len(self.server.requests),before+1)
+                finally:
+                    release.set()
+
     def test_native_notices_and_cleanup_restore_request_drafts_once(self):
         import select
         for kind in ('approval','question'):
@@ -1436,7 +1479,8 @@ class CliTests(unittest.TestCase):
                     while select.select([master],[],[],.02)[0]:received.extend(os.read(master,65536))
                     self.assertEqual(process.returncode,0,received)
                     if mode=='submit-resize':
-                        self.assertEqual(bytes(received).count(b'\\xE9'),1,received)
+                        self.assertEqual(bytes(received).count(b'\\xE9'),2 if columns else 1,received)
+                        self.assertNotIn(br'\xE9\xE9',received)
                     elif mode=='buffer-rebind':
                         self.assertIn('codet> abcde',line_cells(received),received)
                     else:

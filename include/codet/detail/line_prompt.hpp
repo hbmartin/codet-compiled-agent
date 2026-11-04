@@ -23,6 +23,7 @@ class LinePrompt final : public LineOutputObserver {
     size_t columns = 0;
   };
   std::optional<PendingSubmission> pending_;
+  std::optional<InputOrigin> origin_;
   StreamDestination binding_;
   bool binding_initialized_ = false;
   BoundaryAccess boundaries_;
@@ -445,6 +446,7 @@ public:
       if (pending_)
         pending_->tail_attempted = true;
       explained_ = visible_ = append_valid_ = false;
+      committed_ = painted_ = previous_bytes_ = 0;
       guidance_due_ = true;
       return geometry_result;
     }
@@ -481,6 +483,19 @@ public:
     guidance_due_ = due_ = true;
     return result;
   }
+  void origin(std::string session, uint64_t turn) {
+    origin_ = InputOrigin{std::move(session), turn};
+  }
+  std::optional<InputLine> discard_pending() noexcept {
+    if (!pending_)
+      return {};
+    auto line = std::move(pending_->line);
+    pending_.reset();
+    dirty_ = visible_ = explained_ = append_valid_ = false;
+    painted_ = previous_bytes_ = committed_ = 0;
+    due_ = guidance_due_ = true;
+    return line;
+  }
   bool submission_pending() const noexcept {
     return pending_.has_value();
   }
@@ -496,11 +511,15 @@ public:
           tail = input_.input().prepared().substr(committed_);
       }
       auto view = input_.view(prefix(columns_ ? columns_ : 80), columns_ ? columns_ : 80);
+      auto origin = origin_; // Allocate before consuming the controller.
       pending_.emplace(PendingSubmission{input_.take(), std::move(tail), std::move(view), false,
                                          redraw, boundary_generation_, columns_});
+      pending_->line.origin = std::move(origin);
     }
-    if (submitted() == DiagnosticResult::deferred)
+    if (submitted() == DiagnosticResult::deferred) {
+      pending_->line.presentation_held = true;
       return {};
+    }
     if (!pending_)
       throw Error("Pending input submission lost its owner");
     auto line = std::move(pending_->line);

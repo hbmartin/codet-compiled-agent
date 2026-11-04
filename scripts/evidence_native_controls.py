@@ -39,8 +39,8 @@ def run_controls(root, folder, build, ninja):
         return link
     cases = [
         ("deferred", "tests/diagnostic_lifecycle_test.cpp", "include/codet/detail/line_prompt.hpp",
-         "if (submitted() == DiagnosticResult::deferred)\n      return {};",
-         "if (false)\n      return {};",
+         "if (submitted() == DiagnosticResult::deferred) {",
+         "if (false) {",
          "NativeRecordLifecycle.DeferredSubmissionRetainsRawBytesAndOriginalRequest"),
         ("separator", "src/modern/platform.cpp", "src/modern/platform.cpp",
          "record.request_separator(io_->line_output->before_output(native, inspection.identity));",
