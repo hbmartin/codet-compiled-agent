@@ -1331,6 +1331,108 @@ class CliTests(unittest.TestCase):
                         if process.poll() is None:process.kill();process.wait(timeout=5)
                         resources.close()
 
+    @contextlib.contextmanager
+    def pending_sequence(self,reservations=1):
+        with PtyProcess() as resources:
+            ready,release=threading.Event(),threading.Event()
+            self.server.signal_gate=(ready,release);self.server.releases.append(release)
+            before=len(self.server.requests)
+            master,slave=resources.openpty();arm,trigger=resources.pipe();notice,notify=resources.pipe()
+            helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+            process=resources.start([helper,'--codet-pending-sequence-helper',str(arm),str(notify),
+                str(reservations),'-C',str(self.workspace),'--ui','line','--color','never',
+                'fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,
+                pass_fds=(arm,notify),env=dict(self.env,TERM='xterm'))
+            received=bytearray();collect=partial(collect_pty,self,master,received)
+            def token(expected):
+                try:
+                    collect(lambda:bool(select.select([notice],[],[],0)[0]),seconds=5)
+                except AssertionError:
+                    self.fail("Pending sequence gate failed: " + repr(expected))
+                self.assertEqual(os.read(notice,1),expected)
+            try:
+                self.assertTrue(ready.wait(10))
+                yield process,master,trigger,received,collect,token,release,before
+            finally:
+                release.set()
+
+    def test_partial_pending_controls_never_stall_or_leak_into_messages(self):
+        for draft,finish_first in ((b'x',False),(b'ignored-overflow',True)):
+            with self.subTest(draft=draft),self.pending_sequence() as context:
+                process,master,trigger,received,collect,token,release,before=context
+                os.write(master,b'ab');collect(lambda received=received:b'ab' in received)
+                os.write(trigger,b'h');token(b'r')
+                os.write(master,b'c\n');token(b's')
+                os.write(master,draft+b'\x01');token(b'i')
+                os.write(trigger,b'g');token(b'd')
+                self.assertIn('codet> [default] abc','\n'.join(line_cells(received)))
+                if finish_first:
+                    release.set();token(b'c')
+                    collect(lambda received=received:bytes(received).count(b'fixture done')>=2)
+                # Ignored input keeps ownership of its tail across handoff and return to idle.
+                os.write(master,b'tail\n\x01');token(b'i')
+                expected=['abc']
+                if finish_first:
+                    os.write(master,b'fresh\n');expected.append('fresh')
+                else:
+                    release.set();token(b'c')
+                collect(lambda before=before,expected=expected:len(self.server.requests)>=before+1+len(expected))
+                collect(lambda received=received,expected=expected:bytes(received).count(b'fixture done')>=1+len(expected))
+                prompts=[request['body']['messages'][-1]['content'] for request in self.server.requests[before+1:]]
+                self.assertEqual(prompts,expected,'Extra pending input became a user message')
+                os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                self.assertEqual(process.returncode,0,received)
+
+    def test_partial_pending_quit_survives_the_original_line_handoff(self):
+        with self.pending_sequence() as context:
+            process,master,trigger,received,collect,token,release,before=context
+            os.write(trigger,b'h');token(b'r');os.write(master,b'abc\n');token(b's')
+            os.write(master,b'/qu\x01');token(b'i');os.write(trigger,b'g');token(b'd')
+            os.write(master,b'it\n')
+            collect(lambda process=process:process.poll() is not None)
+            self.assertEqual(len(self.server.requests),before+1)
+            self.assertIn(b'Pending message not sent',received)
+
+    def test_completed_turn_honors_frozen_quit_and_drops_earlier_followups(self):
+        for command in (b'/quit',b'/exit'):
+            with self.subTest(command=command),self.pending_sequence(2) as context:
+                process,master,trigger,received,collect,token,release,before=context
+                os.write(trigger,b'h');token(b'r');os.write(master,b'first\n');token(b's')
+                os.write(trigger,b'g');token(b'd')
+                os.write(trigger,b'h');token(b'r');os.write(master,command+b'\n');token(b's')
+                release.set();token(b'c') # work.get() has returned; presentation is still reserved.
+                os.write(trigger,b'g')
+                try:
+                    collect(lambda process=process:process.poll() is not None)
+                except AssertionError:
+                    self.fail("Frozen quit did not stop after completed turn: " + repr(received))
+                self.assertEqual(process.returncode,0,received)
+                self.assertEqual(len(self.server.requests),before+1)
+                self.assertIn(b'Pending message not sent: first',received)
+                import sqlite3
+                with sqlite3.connect(self.home/'state.sqlite3') as database:
+                    self.assertEqual(database.execute('SELECT status FROM sessions ORDER BY rowid DESC LIMIT 1').fetchone(),('complete',))
+
+    def test_held_and_pending_followups_keep_submission_order(self):
+        for later_pending in (False,True):
+            with self.subTest(later_pending=later_pending),self.pending_sequence(2 if later_pending else 1) as context:
+                process,master,trigger,received,collect,token,release,before=context
+                os.write(trigger,b'h');token(b'r');os.write(master,b'first\n');token(b's')
+                os.write(trigger,b'g');token(b'd')
+                if later_pending:
+                    os.write(trigger,b'h');token(b'r');os.write(master,b'second\n');token(b's')
+                else:
+                    os.write(master,b'second\n\x01');token(b'i')
+                release.set();token(b'c')
+                if later_pending:os.write(trigger,b'g')
+                collect(lambda before=before:len(self.server.requests)>=before+3)
+                prompts=[next(m.get('content','') for m in reversed(request['body']['messages']) if m['role']=='user')
+                         for request in self.server.requests[before+1:]]
+                self.assertEqual(prompts,['first','second'],'Held follow-ups reversed submission order')
+                collect(lambda received=received:bytes(received).count(b'fixture done')>=3)
+                os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                self.assertEqual(process.returncode,0,received)
+
     def test_frozen_submission_obeys_turn_outcome_and_services_controls(self):
         for outcome in self.pending_outcomes:
             with self.subTest(outcome=outcome),PtyProcess() as resources:
