@@ -605,7 +605,8 @@ public:
           say(message);
       }
     } catch (...) {
-      // This best-effort cleanup must not replace the operation's original exception.
+      // Keep an allocation-free explanation if formatting or the renderer failed.
+      (void)detail::immediate_stderr({"[Pending message not sent]\n"});
     }
   }
   std::optional<std::string> read(Cancellation &cancel) {
