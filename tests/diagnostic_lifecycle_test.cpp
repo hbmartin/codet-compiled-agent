@@ -804,3 +804,43 @@ TEST_F(NativeRecordLifecycle, FrozenSubmissionOwnsOriginAndDiscardCompletesExact
   EXPECT_FALSE(line->discard_pending());
   EXPECT_TRUE(input.input().empty());
 }
+
+TEST_F(NativeRecordLifecycle, InterruptedSubmissionRepaintsAfterItsSeparatorWasDeferred) {
+  capture([&] {
+    line->append('a');
+    line->append('b');
+  });
+  (void)read();
+  input.append('c'); // The new byte has not been displayed when Enter freezes the line.
+  DeliveryGate gate;
+  std::optional<detail::InputLine> submitted;
+  bool held = false;
+  capture([&] {
+    std::thread worker([&] {
+      if (!gate.wait_for_start())
+        return;
+      auto &metrics = test::native_io_metrics;
+      metrics.interrupt_fd = STDERR_FILENO;
+      metrics.before_output = DeliveryGate::output;
+      metrics.output_context = &gate;
+      (void)detail::immediate_stderr({"intervening diagnostic"});
+      metrics = {};
+    });
+    JoinDelivery join{gate, worker};
+    auto &metrics = test::native_io_metrics;
+    metrics.interrupt_fd = STDOUT_FILENO;
+    metrics.before_output = DeliveryGate::geometry;
+    metrics.output_context = &gate;
+    submitted = line->try_take();
+    held = !submitted && line->submission_pending();
+    metrics = {};
+    gate.release();
+    worker.join();
+    submitted = line->try_take();
+  });
+  ASSERT_TRUE(held);
+  ASSERT_TRUE(submitted);
+  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_THAT(read(), EndsWith("intervening diagnostic\r\ncodet> abc\r\n"));
+  EXPECT_FALSE(gate.timed_out);
+}

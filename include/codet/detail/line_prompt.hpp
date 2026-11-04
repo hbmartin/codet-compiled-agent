@@ -21,6 +21,7 @@ class LinePrompt final : public LineOutputObserver {
     bool tail_attempted = false, redraw = false;
     uint64_t boundary = 0;
     size_t columns = 0;
+    bool failed = false;
   };
   std::optional<PendingSubmission> pending_;
   std::optional<InputOrigin> origin_;
@@ -450,6 +451,11 @@ public:
       guidance_due_ = true;
       return geometry_result;
     }
+    if (pending_ && pending_->tail_attempted && !pending_->failed &&
+        (pending_->boundary != boundary_generation_ || pending_->columns != columns_)) {
+      pending_->tail_attempted = false;
+      pending_->redraw = true;
+    }
     if (!pending_) {
       if (owned_ && !columns_ && !input_.stale() && visible_ &&
           committed_ < input_.input().prepared().size()) {
@@ -469,9 +475,13 @@ public:
         const auto result = output_.present_result({text}, false, true);
         if (result == DiagnosticResult::deferred)
           return result;
+        pending_->failed = result == DiagnosticResult::failure;
+        visible_ = result == DiagnosticResult::success;
         dirty_ = true;
         boundaries().open(terminal_);
       }
+      pending_->boundary = boundary_generation_;
+      pending_->columns = columns_;
       pending_->tail_attempted = true;
     }
     const auto result = separate();
@@ -516,12 +526,13 @@ public:
                                          redraw, boundary_generation_, columns_});
       pending_->line.origin = std::move(origin);
     }
-    if (submitted() == DiagnosticResult::deferred) {
+    const auto submission_result = submitted();
+    if (!pending_)
+      throw Error("Pending input submission lost its owner");
+    if (submission_result == DiagnosticResult::deferred) {
       pending_->line.presentation_held = true;
       return {};
     }
-    if (!pending_)
-      throw Error("Pending input submission lost its owner");
     auto line = std::move(pending_->line);
     pending_.reset();
     return line;

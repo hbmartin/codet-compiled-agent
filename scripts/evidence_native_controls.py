@@ -39,9 +39,20 @@ def run_controls(root, folder, build, ninja):
         return link
     cases = [
         ("deferred", "tests/diagnostic_lifecycle_test.cpp", "include/codet/detail/line_prompt.hpp",
-         "if (submitted() == DiagnosticResult::deferred) {",
+         "if (submission_result == DiagnosticResult::deferred) {",
          "if (false) {",
          "NativeRecordLifecycle.DeferredSubmissionRetainsRawBytesAndOriginalRequest"),
+        ("pending-visible", "tests/diagnostic_lifecycle_test.cpp", "include/codet/detail/line_prompt.hpp",
+         "const auto &text = append ? pending_->tail : pending_->view;",
+         "const auto &text = pending_->tail; (void)append;",
+         "NativeRecordLifecycle.KnownWidthPendingLineIsVisible"),
+        ("pending-second", "tests/diagnostic_lifecycle_test.cpp", "include/codet/detail/line_prompt.hpp",
+         "    painted_ = previous_bytes_ = committed_ = 0;\n    guidance_due_ = due_ = true;",
+         "    painted_ = previous_bytes_ = 0;\n    guidance_due_ = due_ = true;",
+         "NativeRecordLifecycle.BasicSecondPendingLineIsVisible"),
+        ("pending-interruption", "tests/diagnostic_lifecycle_test.cpp", "include/codet/detail/line_prompt.hpp",
+         "pending_->tail_attempted = false;", "(void)pending_->tail_attempted;",
+         "NativeRecordLifecycle.InterruptedSubmissionRepaintsAfterItsSeparatorWasDeferred"),
         ("separator", "src/modern/platform.cpp", "src/modern/platform.cpp",
          "record.request_separator(io_->line_output->before_output(native, inspection.identity));",
          "(void)io_->line_output->before_output(native, inspection.identity);",
@@ -100,7 +111,8 @@ def run_controls(root, folder, build, ninja):
         if linked["exit"]:
             raise ValueError("Native mutant linking failed: " + repr(linked))
         mutant = _test(binary, target, directory)
-        markers = {"deferred": "deferred", "separator": 'read()', "printer": "Expected equality of these values", "pid-guard": "unexpected wait",
+        markers = {"deferred": "deferred", "pending-visible": "Frozen submitted line was not displayed",
+                   "pending-second": "Frozen submitted line was not displayed", "pending-interruption": "read()", "separator": 'read()', "printer": "Expected equality of these values", "pid-guard": "unexpected wait",
                    "refresh": "Refresh after failed drawing", "inspection": "handle->read",
                    "submission-allocation": "Allocation consumed a line without pending ownership"}
         if (mutant["exit"] != 1 or not mutant["assertions"] or

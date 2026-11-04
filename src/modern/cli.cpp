@@ -729,7 +729,7 @@ public:
       } else if (ready < 0 && !retry_input(errno, this))
         throw Error("Cannot wait for terminal input: " + std::string(std::strerror(errno)));
     }
-    if (submission_pending()) {
+    if (line_ && line_->submission_pending()) {
       // Read controls before attempting handoff, including when output remains reserved.
       if (closed || ch == bindings_["quit"] || ch == 4) {
         discard_pending();
