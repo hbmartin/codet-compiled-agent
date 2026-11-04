@@ -1016,6 +1016,137 @@ except KeyboardInterrupt as error:
                 if process.poll() is None:process.kill();process.wait(timeout=5)
                 process.stdout.close();process.stderr.close()
 
+
+class ReviewedCppcheckLocations(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name); self.old, self.new = root/'old', root/'new'
+        for tree in (self.old, self.new):
+            (tree/'src').mkdir(parents=True)
+        def contents(first, second):
+            lines = ['filler']*45
+            lines[first-1], lines[second-1] = 'first context', 'second context'
+            return '\n'.join(lines)+'\n'
+        (self.old/'src/a.cpp').write_text(contents(10,20))
+        (self.new/'src/a.cpp').write_text(contents(30,20))
+
+    def comparison(self, repeated=False):
+        from evidence_analysis import finding_key
+        def finding(first, second):
+            return dict(id='warning',msg='same diagnostic',locations=[
+                dict(file='src/a.cpp',line=first,column=1,info='first'),
+                dict(file='src/a.cpp',line=second,column=1,info='first' if repeated else 'second')])
+        def manifest(finding):
+            return dict(tool='cppcheck',expected_sources=['src/a.cpp'],completed_sources=['src/a.cpp'],
+                canaries=[dict(passed=True)],versions=[dict(stdout='same cppcheck',exit_code=0)],
+                results=[dict(status='findings',completed_sources=['src/a.cpp'],findings=[finding])],findings=1,passed=False)
+        old, new = finding(10,20), finding(30,20)
+        old_key, new_key = finding_key('cppcheck',old,self.old), finding_key('cppcheck',new,self.new)
+        mappings=[]
+        for previous in old_key[2]:
+            current=next(location for location in new_key[2] if location[1] == (30 if previous[1]==10 else 20))
+            mappings.append(dict(old=list(previous),new=list(current),context='first context' if previous[1]==10 else 'second context'))
+        return manifest(old),manifest(new),dict(old=old_key,new=new_key,rationale='reviewed same-location identities',location_contexts=mappings)
+
+    def compare(self, a, b, entry):
+        from evidence_analysis import compare_analysis
+        return compare_analysis(a,b,self.old,self.new,['src/a.cpp'],relocations=[entry])
+
+    def test_same_file_locations_can_reorder_without_changing_identity(self):
+        for repeated in (False,True):
+            with self.subTest(repeated=repeated):
+                a,b,entry=self.comparison(repeated)
+                try:
+                    result=self.compare(a,b,entry)
+                except ValueError as error:
+                    self.fail('Valid reordered Cppcheck relocation was rejected: '+str(error))
+                self.assertTrue(result['equal'])
+                self.assertEqual(result['reviewed_relocations'],1)
+
+    def test_every_location_requires_unique_same_identity_context(self):
+        import copy
+        a,b,entry=self.comparison()
+        for change in ('missing','duplicate','context','file','info','repeated'):
+            with self.subTest(change=change):
+                invalid=copy.deepcopy(entry)
+                if change=='missing':invalid['location_contexts'].pop()
+                elif change=='duplicate':invalid['location_contexts'][1]=copy.deepcopy(invalid['location_contexts'][0])
+                elif change=='context':invalid['location_contexts'][1]['context']='different'
+                elif change=='file':invalid['location_contexts'][1]['new'][0]='src/other.cpp'
+                elif change=='info':invalid['location_contexts'][1]['new'][3]='unrelated'
+                else:invalid['location_contexts'].append(copy.deepcopy(invalid['location_contexts'][0]))
+                with self.assertRaisesRegex(ValueError,'relocation'):
+                    self.compare(a,b,invalid)
+
+    def test_same_context_cannot_hide_message_or_location_multiplicity_changes(self):
+        import copy
+        a,b,entry=self.comparison()
+        for message in (True,False):
+            changed=copy.deepcopy(b)
+            if message:changed['results'][0]['findings'][0]['msg']='new diagnostic'
+            else:changed['results'][0]['findings'][0]['locations'].append(copy.deepcopy(changed['results'][0]['findings'][0]['locations'][0]))
+            with self.assertRaisesRegex(ValueError,'relocation'):
+                self.compare(a,changed,entry)
+
+
+class HashMetricScope(unittest.TestCase):
+    def payload(self):
+        from evidence_hash_experiment import METRIC_SCOPE, ROLES
+        rows, summary, profiles = [], [], []
+        for number in (1,2):
+            for role in ROLES:
+                for variant,value in (('baseline',2),('changed',1)):
+                    metrics=dict(milliseconds=value,files=1,peak_traced_bytes=20*value,
+                        retained_traced_bytes=10*value,retained_traced_blocks=value,
+                        explicit_stat_calls=value,direntry_is_file_calls=value,direntry_is_dir_calls=value)
+                    group=dict(set=number,workload=role,harness='hash-snapshot',variant=variant)
+                    summary.append(dict(group,**metrics))
+                    for sample in range(6):
+                        rows.append(dict(group,**metrics,sample=sample,warmup=sample==0,identity='same'))
+                        functions=[dict(name=name,calls=value) for name in
+                            ('<built-in method posix.stat>',"<method 'is_file' of 'posix.DirEntry' objects>","<method 'is_dir' of 'posix.DirEntry' objects>")]
+                        profiles.append(dict(set=number,sample=sample,variant=variant,role=role,functions=functions,
+                            positive_controls=dict(explicit_stat_calls=1,direntry_is_file_calls=1,direntry_is_dir_calls=1,live_traced_bytes=4096)))
+        return dict(metrics_version=2,metric_scope=METRIC_SCOPE,rows=rows,summary=summary,profiles=profiles,
+            code_hashes={v:{n:'0'*64 for n in ('evidence_inputs.py','verified_sources.py')} for v in ('baseline','changed')},latency_gate_passed=True)
+
+    def test_v2_labels_counters_without_claiming_total_allocation_work(self):
+        from evidence_hash_experiment import verify_experiment
+        payload=self.payload()
+        self.assertTrue(verify_experiment(payload))
+        self.assertNotIn('work_gate_passed',payload)
+        self.assertNotIn('allocations',payload['rows'][0])
+        self.assertNotIn('metadata_queries',payload['rows'][0])
+
+    def test_missing_versions_bad_controls_and_ambiguous_names_are_rejected(self):
+        import copy
+
+        from evidence_hash_experiment import verify_experiment
+        for change in ('missing-version','future-version','control','count','scope','old-claim'):
+            with self.subTest(change=change):
+                value=copy.deepcopy(self.payload())
+                if change=='missing-version':value.pop('metrics_version')
+                elif change=='future-version':value['metrics_version']=3
+                elif change=='control':value['profiles'][0]['positive_controls']['direntry_is_file_calls']=0
+                elif change=='count':value['profiles'][0]['functions'][0]['calls']=0
+                elif change=='scope':value['metric_scope']={}
+                else:value['work_gate_passed']=True
+                with self.assertRaisesRegex(ValueError,'[Hh]ash'):
+                    verify_experiment(value)
+
+    def test_production_program_observes_call_and_live_memory_controls(self):
+        from evidence_hash_experiment import PROGRAM
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'src').mkdir();(root/'src/a.cpp').write_text('source')
+            result=subprocess.run([sys.executable,'-c',PROGRAM,str(Path(__file__).resolve().parents[1]/'scripts'),str(root),'production'],
+                check=True,text=True,capture_output=True,timeout=10)
+            value=json.loads(result.stdout)
+            for name in ('explicit_stat_calls','direntry_is_file_calls','direntry_is_dir_calls'):
+                self.assertEqual(value['positive_controls'][name],1)
+            self.assertGreaterEqual(value['positive_controls']['live_traced_bytes'],4096)
+            self.assertGreaterEqual(value['peak_traced_bytes'],value['retained_traced_bytes'])
+            self.assertGreater(value['retained_traced_blocks'],0)
+
 if __name__ == "__main__":
     unittest.main()
 
