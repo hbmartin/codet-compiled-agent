@@ -1,0 +1,10 @@
+[
+  {
+    "artifact": "artifacts/benchmarks/measure.json",
+    "config": "/Volumes/Pro2T/codet-compiled-agent/build/pending-input-replay-20261103-run3/config.json",
+    "paths": [
+      "measurements/benchmarks/measure.json/samples.csv",
+      "measurements/benchmarks/measure.json/medians.csv"
+    ]
+  }
+]

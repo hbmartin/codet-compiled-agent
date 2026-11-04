@@ -34,3 +34,5 @@ build/lint-venv/bin/python scripts/validation_evidence.py verify-bundle \
 Optional `--python39 /absolute/python3.9` takes precedence over discovery. `--ca-bundle /absolute/certificates.pem` requires a real file and records its digest. `--ci-run RUN_ID` accepts only public CI matching the frozen source commit. The concrete manifest records resolved tools, environment, commands and paths; ambient credentials and compiler settings are not inherited.
 
 The bundle is an audit archive, not a relocatable executable distribution. Verification checks archived inputs, producer links, outcomes, inventories and measurements without rerunning binaries. Native Tiger coverage, unavailable container runtimes and known analyzer findings must be reported separately from passing checks. Blocking TTY delivery and best-effort emergency-output limitations remain unchanged. Historical reports, archived sources and samples are preserved.
+
+The captured outcomes, measurements and limitations are in [RESULTS.md](RESULTS.md). The immutable run is `20261104T073413Z-ab2fde3`; post-publication audits are adjacent sidecars.
