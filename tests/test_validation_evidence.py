@@ -154,7 +154,8 @@ class ProcessInspection(unittest.TestCase):
                      dict(executable="/usr/bin/python3", argv=["python3", "-c", "analyze-modern.py"]),
                      dict(executable="/usr/bin/ctest", argv=["ctest", "--test-dir", "build/host"]),
                      dict(executable="/usr/bin/python3", argv=["python3", "-u", "scripts/analyze-modern.py"]),
-                     dict(executable="build/host/codet_tests", argv=["codet_tests", "--gtest_filter=x"])]
+                     dict(executable="build/host/codet_tests", argv=["codet_tests", "--gtest_filter=x"]),
+                     dict(executable="/usr/bin/python3", argv=["python3", "-X", "utf8", "scripts/gtest_isolation.py", "--report", "result.json", "binary"])]
         self.assertEqual(evidence.blocking_processes(processes), processes[2:])
 
     def test_failed_or_empty_inspection_is_not_clean(self):

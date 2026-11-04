@@ -12,7 +12,7 @@ from pathlib import Path
 from process_supervision import system_ps
 
 NATIVE_BLOCKERS = {"ctest", "codet_tests", "codet_publication_fault_tests", "clang-tidy", "cppcheck", "ninja", "pytest"}
-SCRIPT_BLOCKERS = {"analyze-modern.py", "cli_integration.py", "test_validation_evidence.py"}
+SCRIPT_BLOCKERS = {"analyze-modern.py", "cli_integration.py", "test_validation_evidence.py", "gtest_isolation.py"}
 
 
 def matches_native(name):
