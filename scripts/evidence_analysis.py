@@ -119,9 +119,12 @@ def cppcheck_contexts_match(entry, before, after, baseline_root, changed_root):
         for location, root in ((previous, baseline_root), (current, changed_root)):
             try:
                 line = location[1]
-                if type(line) is not int or line <= 0 or (root / location[0]).read_text().splitlines()[line - 1] != context:
+                if not (type(line) is int or (type(line) is str and line.isdecimal())):
                     return False
-            except (OSError, IndexError, TypeError):
+                number = int(line)
+                if number <= 0 or (root / location[0]).read_text().splitlines()[number - 1] != context:
+                    return False
+            except (OSError, IndexError, TypeError, ValueError):
                 return False
         old.append(previous)
         new.append(current)

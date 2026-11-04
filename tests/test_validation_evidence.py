@@ -937,8 +937,11 @@ class ProcessCleanup(unittest.TestCase):
         with patch.object(supervisor, 'interruption', contextlib.nullcontext), \
              patch.object(supervisor.subprocess, 'Popen', return_value=Process()), \
              patch.object(supervisor, 'stop_group', side_effect=KeyboardInterrupt('restoring handlers')):
-            with self.assertRaises(subprocess.TimeoutExpired) as caught:
-                supervisor.run(['owned'], timeout=1)
+            try:
+                with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                    supervisor.run(['owned'], timeout=1)
+            except KeyboardInterrupt:
+                self.fail('Cleanup restoration replaced the original timeout')
         self.assertIs(caught.exception, original, 'Cleanup restoration replaced the original timeout')
         self.assertEqual(original.cleanup_failure, 'restoring handlers')
         self.assertTrue(original.process_cleanup['reaped'])
@@ -1030,12 +1033,12 @@ class ReviewedCppcheckLocations(unittest.TestCase):
         (self.old/'src/a.cpp').write_text(contents(10,20))
         (self.new/'src/a.cpp').write_text(contents(30,20))
 
-    def comparison(self, repeated=False):
+    def comparison(self, repeated=False, strings=False):
         from evidence_analysis import finding_key
         def finding(first, second):
             return dict(id='warning',msg='same diagnostic',locations=[
-                dict(file='src/a.cpp',line=first,column=1,info='first'),
-                dict(file='src/a.cpp',line=second,column=1,info='first' if repeated else 'second')])
+                dict(file='src/a.cpp',line=str(first) if strings else first,column='1' if strings else 1,info='first'),
+                dict(file='src/a.cpp',line=str(second) if strings else second,column='1' if strings else 1,info='first' if repeated else 'second')])
         def manifest(finding):
             return dict(tool='cppcheck',expected_sources=['src/a.cpp'],completed_sources=['src/a.cpp'],
                 canaries=[dict(passed=True)],versions=[dict(stdout='same cppcheck',exit_code=0)],
@@ -1044,8 +1047,8 @@ class ReviewedCppcheckLocations(unittest.TestCase):
         old_key, new_key = finding_key('cppcheck',old,self.old), finding_key('cppcheck',new,self.new)
         mappings=[]
         for previous in old_key[2]:
-            current=next(location for location in new_key[2] if location[1] == (30 if previous[1]==10 else 20))
-            mappings.append(dict(old=list(previous),new=list(current),context='first context' if previous[1]==10 else 'second context'))
+            current=next(location for location in new_key[2] if int(location[1]) == (30 if int(previous[1])==10 else 20))
+            mappings.append(dict(old=list(previous),new=list(current),context='first context' if int(previous[1])==10 else 'second context'))
         return manifest(old),manifest(new),dict(old=old_key,new=new_key,rationale='reviewed same-location identities',location_contexts=mappings)
 
     def compare(self, a, b, entry):
@@ -1053,9 +1056,9 @@ class ReviewedCppcheckLocations(unittest.TestCase):
         return compare_analysis(a,b,self.old,self.new,['src/a.cpp'],relocations=[entry])
 
     def test_same_file_locations_can_reorder_without_changing_identity(self):
-        for repeated in (False,True):
-            with self.subTest(repeated=repeated):
-                a,b,entry=self.comparison(repeated)
+        for repeated,strings in ((False,False),(True,False),(False,True),(True,True)):
+            with self.subTest(repeated=repeated,strings=strings):
+                a,b,entry=self.comparison(repeated,strings)
                 try:
                     result=self.compare(a,b,entry)
                 except ValueError as error:
