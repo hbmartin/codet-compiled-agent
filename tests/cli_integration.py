@@ -217,6 +217,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             for at in range(0,len(data),7):self.wfile.write(data[at:at+7]);self.wfile.flush()
 
 class CliTests(unittest.TestCase):
+    pending_outcomes=('complete','cancel','quit','ctrl-d','eof','term','failure')
     @classmethod
     def setUpClass(cls):
         cls.server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler)
@@ -1331,7 +1332,7 @@ class CliTests(unittest.TestCase):
                         resources.close()
 
     def test_frozen_submission_obeys_turn_outcome_and_services_controls(self):
-        for outcome in ('complete','cancel','quit','ctrl-d','eof','term','failure'):
+        for outcome in self.pending_outcomes:
             with self.subTest(outcome=outcome),PtyProcess() as resources:
                 ready,release=threading.Event(),threading.Event()
                 self.server.signal_gate=(ready,release);self.server.releases.append(release)
@@ -1345,7 +1346,10 @@ class CliTests(unittest.TestCase):
                 received=bytearray()
                 collect=partial(collect_pty,self,master,received)
                 def token(expected,notice=notice,collect=collect):
-                    collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
+                    try:
+                        collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]),seconds=5)
+                    except AssertionError:
+                        self.fail("Pending-input keyboard gate was not reached before diagnostic release: " + repr(expected))
                     self.assertEqual(os.read(notice,1),expected)
                 try:
                     self.assertTrue(ready.wait(10))
@@ -1362,9 +1366,9 @@ class CliTests(unittest.TestCase):
                     else:
                         if outcome=='cancel':process.send_signal(signal.SIGINT)
                         elif outcome=='term':process.send_signal(signal.SIGTERM)
-                        elif outcome=='quit':os.write(master,b'/quit\n');token(b's')
-                        elif outcome=='ctrl-d':os.write(master,b'\x04')
-                        elif outcome=='eof':os.write(master,b'\0')
+                        elif outcome=='quit':os.write(master,b'/quit\n');token(b'k')
+                        elif outcome=='ctrl-d':os.write(master,b'\x04');token(b'k')
+                        elif outcome=='eof':os.write(master,b'\0');token(b'k')
                         # Let cancellation reach the original provider before unblocking output.
                         release.set();os.write(trigger,b'g')
                         collect(lambda received=received,process=process:b'Error:' in received or process.poll() is not None)

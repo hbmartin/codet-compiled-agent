@@ -28,19 +28,27 @@ namespace {
 codet::Cancellation *pending_cancel = nullptr;
 thread_local int pending_notify = -1;
 thread_local bool pending_enter = false;
+thread_local bool pending_frozen = false;
 int pending_poll(pollfd *fds, nfds_t count, int timeout) {
   if (pending_enter) {
     pending_enter = false;
+    pending_frozen = true;
     (void)::write(pending_notify, "s", 1);
   }
   return ::poll(fds, count, timeout);
 }
 ssize_t pending_read(int fd, void *data, size_t size) {
   const auto count = ::read(fd, data, size);
+  if (count == 1 && (*static_cast<char *>(data) == '\0' || *static_cast<char *>(data) == 4))
+    (void)::write(pending_notify, "k", 1);
   if (count == 1 && *static_cast<char *>(data) == '\0')
     return 0; // Deterministic EOF at the raw-input seam, while the PTY remains inspectable.
-  if (count == 1 && (*static_cast<char *>(data) == '\n' || *static_cast<char *>(data) == '\r'))
-    pending_enter = true;
+  if (count == 1 && (*static_cast<char *>(data) == '\n' || *static_cast<char *>(data) == '\r')) {
+    if (pending_frozen)
+      (void)::write(pending_notify, "k", 1);
+    else
+      pending_enter = true;
+  }
   return count;
 }
 void pending_interrupt(int) {
@@ -143,7 +151,7 @@ int main(int argc, char **argv) {
       } signals{old_int, old_term};
       auto writer = std::async(std::launch::async, [=] {
         char token;
-        if (!codet::test::read_token(release, token))
+        if (!codet::test::read_token(release, token, std::chrono::seconds(30)))
           return false;
         struct Gate {
           int release, notify;
@@ -155,7 +163,7 @@ int main(int argc, char **argv) {
           auto &g = *static_cast<Gate *>(context);
           char byte;
           (void)::write(g.notify, "r", 1);
-          (void)codet::test::read_token(g.release, byte);
+          (void)codet::test::read_token(g.release, byte, std::chrono::seconds(30));
         };
         const bool delivered = codet::detail::immediate_stderr({"held diagnostic"});
         metrics = {};

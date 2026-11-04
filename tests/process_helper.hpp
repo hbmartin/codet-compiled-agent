@@ -28,8 +28,9 @@ inline pid_t start_helper(const std::vector<std::string> &arguments,
   }
   return child;
 }
-inline bool read_token(int fd, char &token) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+inline bool read_token(int fd, char &token,
+                       std::chrono::milliseconds timeout = std::chrono::seconds(10)) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (std::chrono::steady_clock::now() < deadline) {
     struct pollfd descriptor {
       fd, POLLIN, 0
