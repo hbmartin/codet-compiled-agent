@@ -33,6 +33,10 @@ def inventory(xml):
 
 
 def verify_payload(value, inputs=None):
+    if type(value.get("payload_version", 1)) is not int or value.get("payload_version", 1) not in (1, 2):
+        raise ValueError("Unsupported isolated GoogleTest payload version")
+    if value.get("payload_version") == 2 and value.get("failures") == 0 and value.get("complete") is not True:
+        raise ValueError("Incomplete isolated GoogleTest run cannot report success")
     if inputs is not None and (not isinstance(value.get('binary'), str) or
             not re.fullmatch(r'[0-9a-f]{64}', str(value.get('binary_sha256', ''))) or
             inputs.get(value.get('binary_input', value['binary'])) != value['binary_sha256']):

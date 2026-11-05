@@ -1106,11 +1106,11 @@ class ReviewedCppcheckLocations(unittest.TestCase):
                 self.compare(a,changed,entry)
 
     def test_duplicate_coordinate_occurrences_match_with_exact_multiplicity(self):
-        from evidence_analysis import finding_key, cppcheck_contexts_match
+        from evidence_analysis import cppcheck_contexts_match, finding_key
         old=dict(id='warning',msg='same',locations=[dict(file='src/a.cpp',line=10,column=1,info='same')]*2)
         new=dict(id='warning',msg='same',locations=[dict(file='src/a.cpp',line=30,column=1,info='same')]*2)
         a,b=finding_key('cppcheck',old,self.old),finding_key('cppcheck',new,self.new)
-        entry=dict(location_contexts=[dict(old=list(x),new=list(y),context='first context') for x,y in zip(a[2],b[2])])
+        entry=dict(location_contexts=[dict(old=list(x),new=list(y),context='first context') for x,y in [(a[2][i],b[2][i]) for i in range(len(a[2]))]])
         self.assertTrue(cppcheck_contexts_match(entry,a,b,self.old,self.new), 'Duplicate occurrences lost multiplicity')
         entry['location_contexts'].pop()
         self.assertFalse(cppcheck_contexts_match(entry,a,b,self.old,self.new))
@@ -1194,6 +1194,12 @@ class SanitizerIsolation(unittest.TestCase):
                 elif change=='command':result['argv'][1]='--gtest_filter=Suite.Other'
                 else:value['enabled']=2
                 with self.assertRaises(ValueError):verify_payload(value)
+
+    def test_incomplete_or_unknown_isolation_version_cannot_report_success(self):
+        from gtest_isolation import verify_payload
+        for version,complete,message in ((3,True,'Unsupported'),(2,False,'Incomplete')):
+            value=self.payload();value.update(payload_version=version,complete=complete)
+            with self.assertRaisesRegex(ValueError,message):verify_payload(value)
 
     def test_multiple_assertions_count_one_failed_case_and_process_exit_is_independent(self):
         from gtest_isolation import verify_payload
