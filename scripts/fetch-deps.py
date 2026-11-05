@@ -35,6 +35,14 @@ def main():
             raise SystemExit('Checksum mismatch: ' + dep['name'])
         extract_verified(archive, dep['sha256'], dest / (prefix + dep['name']))
         print(dep['name'], dep['version'], dep['sha256'])
+      if 'ca_bundle' in lock:
+        ca=lock['ca_bundle'];path=dest/'tiger-cacert.pem'
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest()!=ca['sha256']:
+          if args.offline:raise SystemExit('Missing or corrupt pinned Mozilla CA bundle: '+str(path))
+          data=urllib.request.urlopen(ca['url'],timeout=120).read()
+          if hashlib.sha256(data).hexdigest()!=ca['sha256']:raise SystemExit('Mozilla CA checksum mismatch')
+          path.write_bytes(data)
+        (dest/'tiger-cacert.pem.sha256').write_text(ca['sha256']+'  cacert.pem\n')
       for patch in lock.get('patches',[]):
         path=dest/'tiger-patches'/patch['name']/patch['path']
         if not path.exists() or hashlib.sha256(path.read_bytes()).hexdigest()!=patch['sha256']:

@@ -8,6 +8,7 @@ import pathlib
 import shutil
 import subprocess
 
+from tiger_distribution import dependency_root
 from verified_sources import extract_verified, file_hash, remove_tree, tree_hashes
 
 ROOT=pathlib.Path(__file__).resolve().parents[1]
@@ -37,11 +38,12 @@ def main():
     fcntl.flock(build_lock, fcntl.LOCK_EX)
     lock=json.loads((ROOT/'tiger-dependencies.lock.json').read_text())
     for dep in lock['dependencies']:
-      archive=ROOT/'.deps'/('tiger-'+dep['name']+'.tar')
+      archive=dependency_root(ROOT)/('tiger-'+dep['name']+'.tar')
       if not archive.exists() or hashlib.sha256(archive.read_bytes()).hexdigest()!=dep['sha256']:
         raise SystemExit('Fetch/verify dependencies first: '+dep['name'])
     fingerprint = hashlib.sha256((ROOT/'tiger-dependencies.lock.json').read_bytes() +
         pathlib.Path(__file__).read_bytes() + (ROOT/'scripts/verified_sources.py').read_bytes() +
+        (ROOT/'scripts/tiger_distribution.py').read_bytes() +
         PREFIX.encode() + FLAGS.encode() + os.environ.get('CODET_TOOLCHAIN_ID', '').encode() +
         file_hash(CC).encode()).hexdigest()
     final = STAGE
@@ -60,10 +62,10 @@ def main():
     source_trees={}
     for dep in lock['dependencies']:
       name=dep['name'];source=BUILD/name
-      extract_verified(ROOT/'.deps'/('tiger-'+name+'.tar'), dep['sha256'], source)
+      extract_verified(dependency_root(ROOT)/('tiger-'+name+'.tar'), dep['sha256'], source)
       for patch in lock['patches']:
         if patch['name']!=name:continue
-        p=ROOT/'.deps/tiger-patches'/name/patch['path']
+        p=dependency_root(ROOT)/'tiger-patches'/name/patch['path']
         if file_hash(p)!=patch['sha256']:raise SystemExit('Patch checksum mismatch')
         if patch.get('destination'):
           target=source/patch['destination'];target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(p,target);continue

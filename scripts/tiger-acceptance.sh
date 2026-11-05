@@ -26,7 +26,11 @@ binary=$bundle_dir/codet
 if [ -x "$bundle_dir/bin/codet" ]; then
   binary=$bundle_dir/bin/codet
 fi
-otool -L "$binary" >"$report_dir/dependencies.txt"
+if command -v otool >/dev/null 2>&1; then
+  otool -L "$binary" >"$report_dir/dependencies.txt"
+else
+  printf '%s\n' 'Dependency inspection unavailable: otool is not installed.' >"$report_dir/dependencies.txt"
+fi
 "$bundle_dir/codet_tests" --gtest_list_tests >"$report_dir/test-inventory.txt"
 "$bundle_dir/codet" doctor -C "$test_root/workspace" >"$report_dir/doctor.json"
 /usr/bin/time -l "$bundle_dir/codet" --version >"$report_dir/startup.txt" 2>"$report_dir/startup-resource.txt"
