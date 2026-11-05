@@ -22,8 +22,7 @@ struct TurnInputDisposition {
 };
 // Commands keep their submission-time policy even when display finishes after the worker.
 inline TurnInputDisposition classify_turn_input(const InputLine &line, const Json *pending,
-                                                const InputOrigin &origin, TurnInputPhase phase,
-                                                bool held) {
+                                                const InputOrigin &origin, TurnInputPhase phase) {
   const auto submission = line.classify(pending);
   if (submission.action == InputAction::quit)
     return {TurnInputAction::quit, {}, {}};
@@ -40,13 +39,12 @@ inline TurnInputDisposition classify_turn_input(const InputLine &line, const Jso
     return {TurnInputAction::new_session, {}, {}};
   if (command != LocalCommand::none)
     return {TurnInputAction::restricted, {}, "Use local commands after the active turn completes."};
-  if (!text.empty() && text.front() == '/')
+  if (!custom_command_name(text).empty())
     return {TurnInputAction::idle_command, {}, {}};
   if (text.empty())
     return {TurnInputAction::ignore, {}, {}};
-  return {phase == TurnInputPhase::completed || line.presentation_held || held
-              ? TurnInputAction::hold
-              : TurnInputAction::steer,
+  return {phase == TurnInputPhase::completed || line.presentation_held ? TurnInputAction::hold
+                                                                       : TurnInputAction::steer,
           {},
           {}};
 }

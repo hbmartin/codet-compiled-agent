@@ -2130,18 +2130,18 @@ TEST(TurnInput, CompletedInputKeepsActiveCommandPolicyAndRejectsWrongOrigins) {
     for (const std::string text :
          {"/model", "/model next", "/status", "/compact", "/permissions plan"}) {
       detail::InputLine line{text, {}, false, origin};
-      const auto decision = detail::classify_turn_input(line, nullptr, origin, phase, false);
+      const auto decision = detail::classify_turn_input(line, nullptr, origin, phase);
       EXPECT_EQ(decision.action, detail::TurnInputAction::restricted);
       EXPECT_FALSE(decision.guidance.empty());
     }
     detail::InputLine fresh{"/new", {}, false, origin};
-    EXPECT_EQ(detail::classify_turn_input(fresh, nullptr, origin, phase, false).action,
+    EXPECT_EQ(detail::classify_turn_input(fresh, nullptr, origin, phase).action,
               detail::TurnInputAction::new_session);
     for (auto wrong :
          {std::optional<detail::InputOrigin>{}, std::optional<detail::InputOrigin>{{"other", 7}},
           std::optional<detail::InputOrigin>{{"session", 6}}}) {
       detail::InputLine line{"/new", {}, false, wrong};
-      EXPECT_EQ(detail::classify_turn_input(line, nullptr, origin, phase, false).action,
+      EXPECT_EQ(detail::classify_turn_input(line, nullptr, origin, phase).action,
                 detail::TurnInputAction::reject_origin);
     }
   }
@@ -2149,21 +2149,21 @@ TEST(TurnInput, CompletedInputKeepsActiveCommandPolicyAndRejectsWrongOrigins) {
 TEST(TurnInput, ExpiredAnswersNeverBecomeMessagesAndHeldOrderPrecedesSteering) {
   const detail::InputOrigin origin{"session", 7};
   detail::InputLine expired{"yes", detail::ApprovalIdentity{"session", "old", 7}, false, origin};
-  const auto rejected = detail::classify_turn_input(expired, nullptr, origin,
-                                                    detail::TurnInputPhase::completed, false);
+  const auto rejected =
+      detail::classify_turn_input(expired, nullptr, origin, detail::TurnInputPhase::completed);
   EXPECT_EQ(rejected.action, detail::TurnInputAction::discard);
   EXPECT_EQ(rejected.rejection, detail::InputDiscard::expired);
   detail::InputLine next{"second", {}, false, origin};
-  EXPECT_EQ(detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::active, true)
-                .action,
-            detail::TurnInputAction::hold);
+  next.presentation_held = true;
   EXPECT_EQ(
-      detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::active, false)
-          .action,
+      detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::active).action,
+      detail::TurnInputAction::hold);
+  next.presentation_held = false;
+  EXPECT_EQ(
+      detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::active).action,
       detail::TurnInputAction::steer);
   EXPECT_EQ(
-      detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::completed, false)
-          .action,
+      detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::completed).action,
       detail::TurnInputAction::hold);
 }
 
@@ -2324,24 +2324,21 @@ TEST(TurnInput, CompleteLocalGrammarAndBoundAnswersShareOnePolicy) {
   for (const std::string text : {"/help", "/model next", "/compact", "/status", "/permissions plan",
                                  "/sessions", "/name changed", "/export", "/memory consolidate"}) {
     detail::InputLine ordinary{text, {}, false, origin};
-    EXPECT_EQ(detail::classify_turn_input(ordinary, nullptr, origin, detail::TurnInputPhase::active,
-                                          false)
+    EXPECT_EQ(detail::classify_turn_input(ordinary, nullptr, origin, detail::TurnInputPhase::active)
                   .action,
               detail::TurnInputAction::restricted)
         << text;
     detail::InputLine answer{text, detail::ApprovalIdentity{"session", "r", 7}, false, origin};
-    EXPECT_EQ(
-        detail::classify_turn_input(answer, &request, origin, detail::TurnInputPhase::active, false)
-            .action,
-        detail::TurnInputAction::answer)
+    EXPECT_EQ(detail::classify_turn_input(answer, &request, origin, detail::TurnInputPhase::active)
+                  .action,
+              detail::TurnInputAction::answer)
         << text;
   }
   for (const std::string text : {"/permissionsfoo", "/custom args", "/unknown"}) {
     detail::InputLine line{text, {}, false, origin};
-    EXPECT_EQ(
-        detail::classify_turn_input(line, nullptr, origin, detail::TurnInputPhase::completed, false)
-            .action,
-        detail::TurnInputAction::idle_command);
+    EXPECT_EQ(detail::classify_turn_input(line, nullptr, origin, detail::TurnInputPhase::completed)
+                  .action,
+              detail::TurnInputAction::idle_command);
   }
 }
 
@@ -2377,3 +2374,37 @@ TEST(SubmissionQueue, DeferredBarrierSurvivesStartingTheEarlierFollowup) {
   ASSERT_TRUE(later);
   EXPECT_EQ(later->text, "second");
 }
+
+TEST(SubmissionQueue, UnreadSteeringClosesIntoSeparateFollowupTurns) {
+  Interaction io;
+  io.begin_turn("s");
+  for (const std::string text : {"A", "B"}) {
+    const auto ticket = detail::SubmissionAccess::reserve(io);
+    detail::SubmissionAccess::commit(io, ticket, text, false);
+  }
+  io.end_turn();
+  auto first = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(first);
+  EXPECT_EQ(first->text, "A");
+  io.begin_turn("s");
+  EXPECT_TRUE(io.take_input().empty()) << "Unread steering crossed its originating turn";
+  io.end_turn();
+  auto second = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(second);
+  EXPECT_EQ(second->text, "B");
+}
+TEST(TurnInput, PathsAreProseButValidUnknownCommandsKeepTheirIdlePolicy) {
+  const detail::InputOrigin origin{"s", 1};
+  for (const std::string text : {"/tmp/build.log shows the crash", "/tmp.log", "/", "/a/b"}) {
+    detail::InputLine line{text, {}, false, origin};
+    EXPECT_EQ(
+        detail::classify_turn_input(line, nullptr, origin, detail::TurnInputPhase::active).action,
+        detail::TurnInputAction::steer)
+        << text;
+  }
+  detail::InputLine command{"/reveiw args", {}, false, origin};
+  EXPECT_EQ(
+      detail::classify_turn_input(command, nullptr, origin, detail::TurnInputPhase::active).action,
+      detail::TurnInputAction::idle_command);
+}
+

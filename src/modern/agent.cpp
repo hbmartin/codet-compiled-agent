@@ -348,6 +348,11 @@ RunResult Agent::compact(Session &session, const Cancellation &cancel) {
 RunResult Agent::run(Session &session, const std::string &prompt, const Cancellation &cancel,
                      const Json &schema, bool expand_command,
                      const std::vector<ImageArtifact> &images) {
+  return run_impl(session, prompt, cancel, schema, expand_command, images, nullptr);
+}
+RunResult Agent::run_impl(Session &session, const std::string &prompt, const Cancellation &cancel,
+                          const Json &schema, bool expand_command,
+                          const std::vector<ImageArtifact> &images, const std::string *prepared) {
   auto owner = state_.acquire(session.id);
   session = state_.load_id(session.id, false);
   RunResult out;
@@ -414,7 +419,9 @@ RunResult Agent::run(Session &session, const std::string &prompt, const Cancella
                                             cancel);
     if (submitted.blocked || submitted.stopped)
       throw Error("Prompt blocked by hook: " + submitted.reason);
-    const auto expanded = safe_text(expand_command ? tools_.expand_command(prompt) : prompt);
+    const auto expanded = safe_text(prepared         ? *prepared
+                                    : expand_command ? tools_.expand_command(prompt)
+                                                     : prompt);
     std::vector<Message> additions;
     additions.reserve(2);
     if (!submitted.additional_context.empty()) {

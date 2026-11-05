@@ -1513,6 +1513,68 @@ class CliTests(unittest.TestCase):
             os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
             self.assertEqual(process.returncode,0,received)
 
+    def test_path_prose_steers_without_custom_command_rejection(self):
+        with self.pending_sequence() as context:
+            process,master,trigger,received,collect,token,release,before=context
+            text=b'/tmp/build.log shows the crash'
+            os.write(master,text+b'\n\x01');token(b'i');release.set();token(b'c')
+            collect(lambda:len(self.server.requests)>=before+2)
+            users=[m['content'] for m in self.server.requests[-1]['body']['messages'] if m['role']=='user']
+            self.assertIn(text.decode(),users,'Path prose was lost as a custom command')
+            self.assertNotIn(b'Invalid custom command',received)
+            os.write(trigger,b'h');token(b'r');os.write(trigger,b'g')
+            collect(lambda:bytes(received).count(b'fixture done')>=1)
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+
+    def test_bad_deferred_command_preserves_later_messages_and_expands_once(self):
+        commands=self.home/'commands';commands.mkdir(parents=True,exist_ok=True)
+        target=commands/'review.md';target.write_text('fixture-recovered-output $ARGUMENTS')
+        log=self.workspace/'submitted.jsonl'
+        # Preparation precedes turn ownership; hooks still see the original slash input.
+        hook=self.workspace/'hook.py'
+        hook.write_text('import json,sys,pathlib\np=json.load(sys.stdin)\n'
+            +'with pathlib.Path('+repr(str(log))+').open("a") as f:f.write(json.dumps(p)+"\\n")\n'
+            +'if p.get("prompt","").startswith("/review "):pathlib.Path('+repr(str(target))+').write_text("must not expand twice")\n')
+        config=self.home/'config.toml'
+        config.write_text(config.read_text()+'\n[hooks]\nUserPromptSubmit=[{command='+json.dumps(sys.executable+' '+str(hook))+'}]\n')
+        with self.pending_sequence() as context:
+            process,master,trigger,received,collect,token,release,before=context
+            for text in (b'/reveiw',b'later',b'/review argument'):
+                os.write(master,text+b'\n\x01');token(b'i')
+            release.set();token(b'c')
+            collect(lambda:b'recovered reply' in received)
+            requests=self.server.requests[before:]
+            self.assertEqual(len(requests),3,'Bad command lost later queued input')
+            self.assertEqual([r['body']['messages'][-1]['content'] for r in requests[1:]],
+                ['later','fixture-recovered-output argument'])
+            self.assertIn(b'Unknown command: /reveiw',received)
+            self.assertNotIn(b'Pending message not sent: later',received)
+            submitted=[json.loads(line)['prompt'] for line in log.read_text().splitlines()]
+            self.assertEqual(submitted,['fixture-signal-wait','later','/review argument'])
+            os.write(trigger,b'h');token(b'r');os.write(trigger,b'g')
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,received)
+
+    def test_two_unread_steering_lines_become_separate_followup_turns(self):
+        marker=self.workspace/'separate-stop';stop_release=self.workspace/'separate-release'
+        hook='if test ! -f '+str(marker)+'; then touch '+str(marker)+'; while test ! -f '+str(stop_release)+'; do sleep .01; done; fi'
+        config=self.home/'config.toml'
+        config.write_text(config.read_text()+'\n[hooks]\nStop=[{command='+json.dumps(hook)+'}]\n')
+        self.addCleanup(lambda:stop_release.touch() if stop_release.parent.exists() else None)
+        with self.pending_sequence() as context:
+            process,master,trigger,received,collect,token,release,before=context
+            release.set();collect(marker.exists)
+            for text in (b'A',b'B'):
+                os.write(master,text+b'\n\x01');token(b'i')
+            stop_release.touch();token(b'c')
+            collect(lambda:len(self.server.requests)>=before+3)
+            users=[[m['content'] for m in r['body']['messages'] if m['role']=='user'] for r in self.server.requests[before+1:]]
+            self.assertEqual([u[-1] for u in users],['A','B'],'Unread steering merged followup turns')
+            self.assertNotIn('B',users[0])
+            collect(lambda:bytes(received).count(b'fixture done')>=3)
+            os.write(trigger,b'h');token(b'r');os.write(trigger,b'g')
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+
     def test_bound_question_keeps_slash_command_answer_bytes(self):
         with PtyProcess() as resources:
             master,slave=resources.openpty()

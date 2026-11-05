@@ -11,6 +11,7 @@
 #include "codet/detail/line_prompt.hpp"
 #include "codet/detail/native_terminal.hpp"
 #include "codet/detail/pending_control.hpp"
+#include "codet/detail/prepared_prompt.hpp"
 #include "codet/detail/request_input_controller.hpp"
 #include "codet/detail/submission_queue.hpp"
 #include "codet/detail/terminal_input.hpp"
@@ -1326,11 +1327,14 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
                                {"cached_input_tokens", result.usage.cached}}}})
                            .dump()});
   };
-  auto execute_agent = [&](const std::string &text, bool steering) -> int {
+  auto execute_agent = [&](const std::string &text, bool steering,
+                           const detail::PreparedPrompt *prepared) -> int {
     if (!terminal) {
-      const auto result = compacting
-                              ? agent.compact(session, cancel)
-                              : agent.run(session, text, cancel, schema, !steering, pending_images);
+      const auto result =
+          compacting ? agent.compact(session, cancel)
+          : prepared
+              ? detail::AgentAccess::run(agent, session, *prepared, cancel, schema, pending_images)
+              : agent.run(session, text, cancel, schema, !steering, pending_images);
       publish_result(result);
       return 0;
     }
@@ -1394,7 +1398,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     const auto dispatch = [&](detail::InputLine &line, detail::TurnInputPhase phase) {
       const auto action = detail::classify_turn_input(
           line, phase == detail::TurnInputPhase::active && pending ? &*pending : nullptr, origin,
-          phase, false);
+          phase);
       struct Release {
         Interaction &io;
         uint64_t sequence = 0;
@@ -1460,6 +1464,8 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       terminal->begin_active(cancel);
       work = std::async(std::launch::async, [&] {
         return compacting ? agent.compact(session, cancel)
+               : prepared ? detail::AgentAccess::run(agent, session, *prepared, cancel, schema,
+                                                     pending_images)
                           : agent.run(session, text, cancel, schema, !steering, pending_images);
       });
       while (work.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
@@ -1531,7 +1537,8 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       for (const auto &text : interaction->take_pending(session.id))
         terminal->pending_not_sent(text);
   };
-  auto run = [&](const std::string &text, bool steering = false) {
+  auto run = [&](const std::string &text, bool steering = false,
+                 const detail::PreparedPrompt *prepared = nullptr) {
     struct DeliverFiles {
       detail::CliDiagnostics &diagnostics;
       ~DeliverFiles() {
@@ -1547,7 +1554,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       }
     } clear_images{pending_images, !compacting};
     try {
-      const int status = execute_agent(text, steering);
+      const int status = execute_agent(text, steering, prepared);
       pending_input(status == 0 && !quit_requested);
       return status;
     } catch (const Error &e) {
@@ -1615,12 +1622,19 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   }
   while (!cancel.requested && !quit_requested) {
     std::optional<std::string> input;
+    std::optional<detail::PreparedPrompt> prepared;
     const auto queued = detail::SubmissionAccess::next(*interaction, session.id);
     if (queued) {
       input = queued->text;
       if (!queued->idle_command) {
         run(*input, true);
         continue;
+      }
+      try {
+        prepared = detail::PreparedPrompt{*input, tools.expand_command(*input)};
+      } catch (const Error &error) {
+        terminal->say(std::string("Error: ") + error.what());
+        continue; // A local command error owns this item, never the remaining queue.
       }
     } else if (new_requested) {
       input = "/new";
@@ -1758,7 +1772,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
                "consolidate files in " +
                (config.home / "memory").string() + "; report changes.";
     }
-    run(*input);
+    run(*input, false, prepared ? &*prepared : nullptr);
   }
   if (cancel.requested || quit_requested)
     detail::secondary_diagnostic([&] {
