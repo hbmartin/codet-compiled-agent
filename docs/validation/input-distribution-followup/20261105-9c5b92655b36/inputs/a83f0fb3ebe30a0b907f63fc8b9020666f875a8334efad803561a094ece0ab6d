@@ -1,0 +1,134 @@
+name: Modern checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: modern-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install lightweight check prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-venv python3-yaml shellcheck
+      - name: Test enforcement runners without building C++
+        run: make test-lint-runners test-modern-analysis-runner CHECK_PYTHON=python3
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: ${{ !cancelled() }}
+        with:
+          go-version-file: .go-version
+          check-latest: false
+          cache: false
+      - name: Provision pinned lint tools
+        id: tools
+        if: ${{ !cancelled() }}
+        run: make fetch-lint-tools LINT_PYTHON=python3.12
+      - name: Check formatting, Python, shell and workflows
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        run: make check-lint CHECK_PYTHON=python3
+      - name: Upload lint evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lint-ubuntu
+          retention-days: 14
+          path: build/lint/
+  semgrep:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install policy-check prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-venv
+      - name: Provision hash-locked Semgrep environment
+        run: make fetch-semgrep SEMGREP_PYTHON=python3.12
+      - name: Check production sources and headers
+        if: ${{ !cancelled() }}
+        run: make check-semgrep CHECK_PYTHON=python3
+      - name: Upload policy evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: semgrep-ubuntu
+          retention-days: 14
+          path: build/semgrep/
+  ubuntu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      MODERN_CC: clang-18
+      MODERN_CXX: clang++-18
+      CLANG_TIDY: clang-tidy-18
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install host tools and libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build python3 python3-yaml python3-venv ca-certificates \
+            clang-18 clang-tidy-18 libcurl4-openssl-dev libssl-dev openssl \
+            zlib1g-dev libsqlite3-dev libncurses-dev libedit-dev
+      - name: Fetch verified dependencies
+        run: make fetch-deps
+      - name: Fetch pinned analyzer sources
+        run: make fetch-analysis-tools
+      - name: Build pinned analyzer offline
+        run: make build-analysis-tools
+      - name: Configure and build with Clang
+        id: build
+        run: make modern-analysis-host
+      - name: Verify analyzer detection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: make analyze-modern-selftest
+      - name: Analyze all application sources
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: make analyze-modern
+      - name: Run unit, CLI and integration tests
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ctest --test-dir build/modern-checks --output-on-failure
+      - name: Upload analysis and test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: modern-checks-ubuntu
+          retention-days: 14
+          path: |
+            build/modern-checks/analysis/
+            build/modern-checks/Testing/Temporary/
+            build/modern-checks/CMakeFiles/CMakeConfigureLog.yaml
+  checks:
+    name: Required checks
+    needs: [lint, semgrep, ubuntu]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - name: Require every mandatory job to succeed
+        env:
+          LINT_RESULT: ${{ needs.lint.result }}
+          POLICY_RESULT: ${{ needs.semgrep.result }}
+          NATIVE_RESULT: ${{ needs.ubuntu.result }}
+        run: |
+          test "$LINT_RESULT" = success
+          test "$POLICY_RESULT" = success
+          test "$NATIVE_RESULT" = success

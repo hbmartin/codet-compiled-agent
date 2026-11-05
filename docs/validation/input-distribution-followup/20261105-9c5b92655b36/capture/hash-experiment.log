@@ -1,0 +1,15 @@
+Traceback (most recent call last):
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_campaign.py", line 558, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_campaign.py", line 554, in main
+    return produce(args.config, args.kind, output=args.output)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_campaign.py", line 517, in produce
+    payload = hash_measure(root, source, config["check_python"])
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_hash_experiment.py", line 138, in measure
+    require_quiet_processes()
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_processes.py", line 173, in require_quiet_processes
+    raise ValueError("Concurrent validation/build/analyzer processes: " + repr(blocked))
+ValueError: Concurrent validation/build/analyzer processes: [{'pid': '41900', 'executable': '/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/Resources/Python.app/Contents/MacOS/Python', 'argv': ['/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/Resources/Python.app/Contents/MacOS/Python', '-m', 'unittest', 'discover', '-s', 'scripts/tests']}]

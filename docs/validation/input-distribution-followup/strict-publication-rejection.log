@@ -1,0 +1,15 @@
+Traceback (most recent call last):
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/validation_evidence.py", line 406, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/validation_evidence.py", line 392, in main
+    publish_bundle(args.manifest, args.folder, args.output)
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/validation_evidence.py", line 366, in publish_bundle
+    return publish_audit_bundle(manifest_path, folder, destination)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_bundle.py", line 67, in publish_audit_bundle
+    value = validate_capture(manifest_path, folder)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/validation_evidence.py", line 299, in validate_capture
+    raise ValueError("Required check did not pass: " + check["id"])
+ValueError: Required check did not pass: hash-experiment

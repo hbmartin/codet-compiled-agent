@@ -1,0 +1,91 @@
+{
+  "binding": "post-publication-integrity-checks-not-campaign-acceptance",
+  "inventory_sha256": "af02d378317d06605f56581ba41a2ecad0b48c91fd9670c32cc4a11ef3cc0a77",
+  "results": [
+    {
+      "label": "published-attempt",
+      "argv": [
+        "/opt/homebrew/opt/python@3.12/bin/python3.12",
+        "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/docs/validation/input-distribution-followup/20261105-9c5b92655b36/verify-attempt.py",
+        "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/docs/validation/input-distribution-followup/20261105-9c5b92655b36"
+      ],
+      "cwd": "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/docs/validation/input-distribution-followup",
+      "exit": 0,
+      "expected_rejection": null,
+      "stdout": "{\n  \"integrity_verified\": true,\n  \"eligible_current\": false,\n  \"complete\": false,\n  \"checks\": 39,\n  \"unmet_required\": {\n    \"hash-experiment\": \"failed\",\n    \"benchmarks\": \"blocked\"\n  },\n  \"observations\": [\n    \"baseline-analysis\",\n    \"changed-analysis\"\n  ],\n  \"measurement_samples\": 0,\n  \"limitation\": \"This audits an incomplete attempt, not full campaign acceptance.\"\n}\n",
+      "stderr": ""
+    },
+    {
+      "label": "relocated-attempt",
+      "argv": [
+        "/opt/homebrew/opt/python@3.12/bin/python3.12",
+        "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva/bundle/verify-attempt.py",
+        "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva/bundle"
+      ],
+      "cwd": "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva",
+      "exit": 0,
+      "expected_rejection": null,
+      "stdout": "{\n  \"integrity_verified\": true,\n  \"eligible_current\": false,\n  \"complete\": false,\n  \"checks\": 39,\n  \"unmet_required\": {\n    \"hash-experiment\": \"failed\",\n    \"benchmarks\": \"blocked\"\n  },\n  \"observations\": [\n    \"baseline-analysis\",\n    \"changed-analysis\"\n  ],\n  \"measurement_samples\": 0,\n  \"limitation\": \"This audits an incomplete attempt, not full campaign acceptance.\"\n}\n",
+      "stderr": ""
+    },
+    {
+      "label": "corrupt-blob-inventory",
+      "argv": [
+        "/opt/homebrew/opt/python@3.12/bin/python3.12",
+        "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva/bundle/verify-attempt.py",
+        "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva/bundle"
+      ],
+      "cwd": "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva",
+      "exit": 1,
+      "expected_rejection": "Attempt inventory mismatch",
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva/bundle/verify-attempt.py\", line 130, in <module>\n    print(json.dumps(verify(Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).resolve().parent),indent=2))\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva/bundle/verify-attempt.py\", line 30, in verify\n    if actual!=inventory:raise ValueError('Attempt inventory mismatch')\n                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Attempt inventory mismatch\n"
+    },
+    {
+      "label": "coordinated-corrupt-blob",
+      "argv": [
+        "/opt/homebrew/opt/python@3.12/bin/python3.12",
+        "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva/bundle/verify-attempt.py",
+        "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva/bundle"
+      ],
+      "cwd": "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva",
+      "exit": 1,
+      "expected_rejection": "Archived input mismatch",
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva/bundle/verify-attempt.py\", line 130, in <module>\n    print(json.dumps(verify(Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).resolve().parent),indent=2))\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva/bundle/verify-attempt.py\", line 48, in verify\n    raise ValueError('Archived input mismatch')\nValueError: Archived input mismatch\n"
+    },
+    {
+      "label": "forged-required-outcome",
+      "argv": [
+        "/opt/homebrew/opt/python@3.12/bin/python3.12",
+        "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva/bundle/verify-attempt.py",
+        "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva/bundle"
+      ],
+      "cwd": "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva",
+      "exit": 1,
+      "expected_rejection": "Unexpected unmet required check: debug-ctest",
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva/bundle/verify-attempt.py\", line 130, in <module>\n    print(json.dumps(verify(Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).resolve().parent),indent=2))\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva/bundle/verify-attempt.py\", line 91, in verify\n    else:raise ValueError('Unexpected unmet required check: '+name)\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unexpected unmet required check: debug-ctest\n"
+    },
+    {
+      "label": "forged-source-identity",
+      "argv": [
+        "/opt/homebrew/opt/python@3.12/bin/python3.12",
+        "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva/bundle/verify-attempt.py",
+        "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva/bundle"
+      ],
+      "cwd": "/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva",
+      "exit": 1,
+      "expected_rejection": "Changed check fingerprints: debug-ctest",
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva/bundle/verify-attempt.py\", line 130, in <module>\n    print(json.dumps(verify(Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).resolve().parent),indent=2))\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/var/folders/zk/m1t80b0n64z5sphqvc6kkmzc0000gn/T/codet-relocated-audit-t3dvshva/bundle/verify-attempt.py\", line 72, in verify\n    raise ValueError('Changed check fingerprints: '+name)\nValueError: Changed check fingerprints: debug-ctest\n"
+    },
+    {
+      "label": "immutable-publication",
+      "exit": 1,
+      "expected_rejection": "Attempt destination already exists",
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/docs/validation/input-distribution-followup/20261105-9c5b92655b36/assemble-attempt.py\", line 15, in <module>\n    if destination.exists():raise ValueError('Attempt destination already exists')\n                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Attempt destination already exists\n"
+    }
+  ]
+}
