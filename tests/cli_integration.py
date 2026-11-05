@@ -260,6 +260,7 @@ class CliTests(unittest.TestCase):
         self.env.pop('CODET_CA_BUNDLE',None)
         denied=self.run_cli(*flags)
         self.assertNotEqual(denied.returncode,0,denied.stdout)
+        self.assertRegex(denied.stderr.lower(),r'certificate|trust anchor|ssl peer')
         self.assertEqual(server.requests,[])
         self.env['CODET_CA_BUNDLE']=str(server.certificate)
         accepted=self.run_cli(*flags)
@@ -271,6 +272,7 @@ class CliTests(unittest.TestCase):
         missing=self.run_cli(*flags)
         self.assertNotEqual(missing.returncode,0,missing.stdout)
         self.assertIn(str(missing_path),missing.stderr)
+        self.assertRegex(missing.stderr.lower(),r'certificate|trust anchor|ca file')
         self.assertEqual(len(server.requests),1)
     def test_explicit_ca_bundle_preserves_tls_verification(self):
         with tls_server(self.root) as server:

@@ -1,4 +1,5 @@
 #include "codet/core.hpp"
+#include "codet/detail/transport_error.hpp"
 #include "codet/prompt.hpp"
 #include "prompt_support.hpp"
 #include "temp.hpp"
@@ -218,6 +219,16 @@ TEST_F(Fixture, ExpiredCredentialsAndFailedRefreshLeaveStoredTokensIntact) {
   EXPECT_CALL(http, perform(_, _, _)).WillOnce(Return(HttpResponse{200, R"({"wrong":true})"}));
   EXPECT_THROW(creds.codex(http, cancel), Error);
   EXPECT_EQ(files.read(config.home / "auth.json"), before);
+}
+TEST_F(Fixture, PermanentTrustFailuresNeverRetryOrSleep) {
+  CredentialStore creds(config.home, files, clock);
+  ApiProvider provider(http, creds, clock);
+  EXPECT_CALL(http, perform(_, _, _))
+      .Times(1)
+      .WillOnce(Throw(detail::PermanentTransportError("certificate trust failed")));
+  EXPECT_THROW(provider.complete(config, "system", {}, Json::array(), cancel, {}),
+               detail::PermanentTransportError);
+  EXPECT_EQ(clock.slept, 0);
 }
 TEST_F(Fixture, TransportFailuresHaveBoundedRetriesAndCancellationPropagates) {
   CredentialStore creds(config.home, files, clock);

@@ -1,5 +1,6 @@
 #include "codet/core.hpp"
 #include "codet/detail/native_output.hpp"
+#include "codet/detail/transport_error.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/output.hpp"
 #include "codet/process_control.hpp"
@@ -1070,8 +1071,16 @@ HttpResponse CurlTransport::perform(const HttpRequest &r, const Cancellation &ca
   curl_easy_setopt(raw, CURLOPT_HTTPHEADER, headers);
   curl_easy_setopt(raw, CURLOPT_NOSIGNAL, 1L);
   if (const char *bundle = std::getenv("CODET_CA_BUNDLE"); bundle && *bundle) {
-    curl_easy_setopt(raw, CURLOPT_CAINFO, bundle);
-    curl_easy_setopt(raw, CURLOPT_PROXY_CAINFO, bundle);
+    const auto checked_trust = [&](CURLoption option, const char *value, const char *name) {
+      const auto status = curl_easy_setopt(raw, option, value);
+      if (status != CURLE_OK)
+        throw detail::PermanentTransportError(std::string("Cannot set TLS trust ") + name + ": " +
+                                              curl_easy_strerror(status));
+    };
+    checked_trust(CURLOPT_CAINFO, bundle, "CAINFO");
+    checked_trust(CURLOPT_PROXY_CAINFO, bundle, "PROXY_CAINFO");
+    checked_trust(CURLOPT_CAPATH, nullptr, "CAPATH");
+    checked_trust(CURLOPT_PROXY_CAPATH, nullptr, "PROXY_CAPATH");
   }
   curl_easy_setopt(raw, CURLOPT_CONNECTTIMEOUT, static_cast<long>(r.connect_timeout_seconds));
   curl_easy_setopt(raw, CURLOPT_TIMEOUT, static_cast<long>(r.timeout_seconds));
@@ -1098,10 +1107,16 @@ HttpResponse CurlTransport::perform(const HttpRequest &r, const Cancellation &ca
   cancel.check();
   if (c.callback_failure)
     std::rethrow_exception(c.callback_failure);
-  if (result != CURLE_OK)
-    throw Error(c.error.empty() ? std::string("HTTP transport: ") +
-                                      (error[0] ? error : curl_easy_strerror(result))
-                                : c.error);
+  if (result != CURLE_OK) {
+    const auto message = c.error.empty() ? std::string("HTTP transport: ") +
+                                               (error[0] ? error : curl_easy_strerror(result))
+                                         : c.error;
+    if (result == CURLE_PEER_FAILED_VERIFICATION || result == CURLE_SSL_CACERT_BADFILE ||
+        result == CURLE_SSL_ISSUER_ERROR || result == CURLE_SSL_CRL_BADFILE ||
+        result == CURLE_SSL_PINNEDPUBKEYNOTMATCH || result == CURLE_SSL_CERTPROBLEM)
+      throw detail::PermanentTransportError(message);
+    throw Error(message);
+  }
   long status = 0;
   curl_easy_getinfo(raw, CURLINFO_RESPONSE_CODE, &status);
   return {static_cast<int>(status), std::move(c.body)};
