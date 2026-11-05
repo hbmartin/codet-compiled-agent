@@ -1569,13 +1569,15 @@ class CliTests(unittest.TestCase):
             for text in (b'/'+b'x'*300,b'later'):
                 os.write(master,text+b'\n\x01');token(b'i')
             release.set();token(b'c')
+            # Release the helper's unused writer before observing CLI failure. Otherwise
+            # its future destructor delays process exit and masks the intended assertion.
+            os.write(trigger,b'h');token(b'r');os.write(trigger,b'g')
             collect(lambda:bytes(received).count(b'fixture done')>=2 or process.poll() is not None)
             self.assertIsNone(process.poll(),'Filesystem command error ended the interactive session')
             self.assertEqual(len(self.server.requests),before+2,'Filesystem command error lost queued input')
             self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'later')
             self.assertIn(b'Error:',received)
             self.assertNotIn(b'Pending message not sent: later',received)
-            os.write(trigger,b'h');token(b'r');os.write(trigger,b'g')
             os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
             self.assertEqual(process.returncode,0,received)
 
