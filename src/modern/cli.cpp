@@ -807,9 +807,9 @@ public:
           }
         }
       }
-      if (read_cancel_ && read_cancel_->requested)
-        return {};
-      return pending_line.submission_pending() ? admitted(pending_line.try_take()) : std::nullopt;
+      return pending_control_.handoff(read_cancel_ && read_cancel_->requested, [&] {
+        return pending_line.submission_pending() ? admitted(pending_line.try_take()) : std::nullopt;
+      });
     }
     if (ch == ERR)
       return {};
@@ -1445,7 +1445,11 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
                                            action.action == detail::TurnInputAction::hold,
                                            action.action == detail::TurnInputAction::idle_command);
         } catch (const Error &error) {
+          terminal->pending_not_sent(line.text);
           terminal->say(error.what());
+        } catch (...) {
+          terminal->pending_not_sent(line.text);
+          throw;
         }
         break;
       case detail::TurnInputAction::ignore:

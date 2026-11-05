@@ -38,6 +38,13 @@ public:
     else if (size_)
       --size_;
   }
+  // The ignored control draft owns its suffix, not the independently frozen submission.
+  template <class Advance>
+  auto handoff(bool cancelled, Advance advance) const -> decltype(advance()) {
+    if (cancelled)
+      return {};
+    return advance();
+  }
   bool submit() noexcept {
     const std::string_view text(prefix_.data(), size_);
     const bool quit = !overflow_ && !saturated_ && is_quit_command(text);

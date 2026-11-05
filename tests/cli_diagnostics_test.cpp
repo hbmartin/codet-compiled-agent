@@ -2344,3 +2344,36 @@ TEST(TurnInput, CompleteLocalGrammarAndBoundAnswersShareOnePolicy) {
         detail::TurnInputAction::idle_command);
   }
 }
+
+TEST(PendingControl, PartialPrefixNeverGatesIndependentHandoff) {
+  detail::PendingControl<> control;
+  for (char byte : std::string("/qu"))
+    control.append(byte);
+  unsigned attempts = 0;
+  const auto next = [&]() -> std::optional<std::string> {
+    ++attempts;
+    return "frozen";
+  };
+  EXPECT_EQ(control.handoff(false, next), std::optional<std::string>{"frozen"})
+      << "Partial control gated an independent handoff";
+  EXPECT_EQ(attempts, 1u);
+  EXPECT_TRUE(control.started());
+  EXPECT_FALSE(control.handoff(true, next));
+  EXPECT_EQ(attempts, 1u);
+}
+TEST(SubmissionQueue, DeferredBarrierSurvivesStartingTheEarlierFollowup) {
+  Interaction io;
+  io.begin_turn("s");
+  const auto first = detail::SubmissionAccess::reserve(io);
+  detail::SubmissionAccess::commit(io, first, "first", true);
+  const auto second = detail::SubmissionAccess::reserve(io);
+  detail::SubmissionAccess::commit(io, second, "second", false);
+  io.end_turn();
+  ASSERT_TRUE(detail::SubmissionAccess::next(io, "s"));
+  io.begin_turn("s");
+  EXPECT_TRUE(io.take_input().empty()) << "Deferred barrier became steering input";
+  io.end_turn();
+  auto later = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(later);
+  EXPECT_EQ(later->text, "second");
+}
