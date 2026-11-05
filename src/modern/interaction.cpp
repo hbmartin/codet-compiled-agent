@@ -1,5 +1,6 @@
 #include "codet/interaction.hpp"
 #include "codet/detail/diagnostic_stream.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <iterator>
 
@@ -112,7 +113,10 @@ void Interaction::submit(const std::string &text) {
   std::lock_guard<std::mutex> lock(mutex_);
   if (input_.size() >= 100 || text.size() > 65536)
     throw Error("Pending user input limit exceeded");
-  input_.push_back({session_, safe_text(text), turn_});
+  const bool held = std::any_of(input_.begin(), input_.end(),
+                                [](const auto &line) { return line.kind != InputKind::steering; });
+  input_.push_back({session_, safe_text(text), turn_, ++next_input_,
+                    held ? InputKind::followup : InputKind::steering});
   changed_.notify_all();
 }
 std::vector<std::string> Interaction::take_input() {
@@ -121,12 +125,13 @@ std::vector<std::string> Interaction::take_input() {
     return {};
   std::vector<std::string> out;
   out.reserve(input_.size());
-  for (const auto &input : input_) {
-    if (input.session != session_ || input.turn > turn_)
+  auto end = input_.begin();
+  for (; end != input_.end() && end->kind == InputKind::steering; ++end) {
+    if (end->session != session_ || end->turn > turn_)
       throw Error("Queued input belongs to another session or turn");
-    out.push_back(input.text);
+    out.push_back(end->text);
   }
-  input_.clear();
+  input_.erase(input_.begin(), end);
   return out;
 }
 void Interaction::begin_turn(const std::string &session) {
@@ -160,12 +165,13 @@ std::vector<std::string> Interaction::take_pending(const std::string &session) {
 bool Interaction::sleep(int64_t milliseconds, const Cancellation &cancel) {
   const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
   std::unique_lock<std::mutex> lock(mutex_);
-  while (input_.empty() && std::chrono::steady_clock::now() < until) {
+  const auto ready = [&] { return !input_.empty() && input_.front().kind == InputKind::steering; };
+  while (!ready() && std::chrono::steady_clock::now() < until) {
     cancel.check();
     changed_.wait_until(
         lock, std::min(until, std::chrono::steady_clock::now() + std::chrono::milliseconds(50)));
   }
   cancel.check();
-  return !input_.empty();
+  return ready();
 }
 } // namespace codet

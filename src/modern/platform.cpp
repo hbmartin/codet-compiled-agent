@@ -340,7 +340,7 @@ class StreamRecord {
   uint64_t epoch_ = 0, serial_ = 0;
 
 public:
-  bool pending = false, available = true;
+  bool pending = false, available = true, fragment = false;
   StreamRecord(std::ostream &output, detail::DiagnosticState &local, bool presentation) noexcept
       : local_(local), shared_(&output == &std::cerr   ? &stderr_stream_state
                                : &output == &std::cout ? &stdout_stream_state
@@ -348,7 +348,8 @@ public:
         buffer_(output.rdbuf()) {
     if (!shared_) {
       local_.bind(buffer_);
-      pending = local_.pending || (presentation && local_.fragment);
+      fragment = local_.fragment;
+      pending = local_.pending || (presentation && fragment);
       return;
     }
     NativeMetadataGuard guard;
@@ -362,7 +363,8 @@ public:
     }
     epoch_ = shared_->epoch;
     serial_ = ++shared_->serial;
-    pending = shared_->state.pending || (presentation && shared_->state.fragment);
+    fragment = shared_->state.fragment;
+    pending = shared_->state.pending || (presentation && fragment);
     shared_->state.pending = true;
   }
   void finish(bool complete, bool attempted, bool fragment) noexcept {
@@ -446,6 +448,12 @@ std::string FileNotice::text() const {
 }
 namespace {
 // Ordinary diagnostics and streamed notices use the same record boundaries and attempt.
+bool record_has_text(std::initializer_list<std::string_view> parts) noexcept {
+  for (auto part : parts)
+    if (!part.empty())
+      return true;
+  return false;
+}
 bool record_ends_line(std::initializer_list<std::string_view> parts, bool newline) noexcept {
   if (newline)
     return true;
@@ -533,6 +541,8 @@ NativeDiagnosticRecord immediate_record(detail::OutputAttempt &attempt) noexcept
 } // namespace
 bool detail::immediate_stderr(std::initializer_list<std::string_view> parts,
                               bool newline) noexcept {
+  if (!newline && !record_has_text(parts))
+    return true;
   OutputAttempt attempt(nullptr, OutputMode::immediate);
   auto record = immediate_record(attempt);
   return record.finish(parts, newline);
@@ -646,6 +656,8 @@ detail::DiagnosticWriter::write_receipt(std::initializer_list<std::string_view> 
   OutputAttempt attempt(io_ ? io_->cancel : nullptr, mode);
   const int native = destination().descriptor;
   if (native >= 0) {
+    if (!presentation && !newline && !record_has_text(parts))
+      return {DiagnosticResult::success, {}};
     const auto inspection = inspect_native(native, attempt);
     {
       NativeMetadataGuard guard;
@@ -690,7 +702,10 @@ detail::DiagnosticWriter::write_receipt(std::initializer_list<std::string_view> 
       if (!complete)
         recover_diagnostic_stream(stream);
     }
-  } recovery{output_, record, !presentation && !record_ends_line(parts, newline)};
+  } recovery{output_, record,
+             !newline && !record_has_text(parts)
+                 ? record.fragment
+                 : !presentation && !record_ends_line(parts, newline)};
   if ((!output_ || (file_ && std::ferror(file_))) && !recover_diagnostic_stream(output_))
     output_.clear(output_.rdstate()); // Preserve configured exception-mask behavior.
   if (record.pending) {

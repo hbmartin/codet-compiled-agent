@@ -1,5 +1,6 @@
 #pragma once
 #include "codet/detail/approval_identity.hpp"
+#include "codet/detail/local_command.hpp"
 namespace codet::detail {
 enum class InputDiscard : uint8_t { unfinished, expired };
 inline std::string_view discard_message(InputDiscard reason) noexcept {
@@ -21,12 +22,13 @@ struct InputLine {
   bool discarded = false;
   std::optional<InputOrigin> origin;
   bool presentation_held = false;
+  uint64_t admission = 0;
   InputLine(std::string bytes, std::optional<ApprovalIdentity> identity = {}, bool stale = false,
             std::optional<InputOrigin> source = {})
       : text(std::move(bytes)), request(std::move(identity)), discarded(stale),
         origin(std::move(source)) {}
   InputSubmission classify(const Json *pending = nullptr) const {
-    if (text == "/quit" || text == "/exit")
+    if (is_quit_command(text))
       return {InputAction::quit, {}};
     if (discarded)
       return {InputAction::discard, InputDiscard::unfinished};

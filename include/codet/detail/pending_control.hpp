@@ -1,4 +1,5 @@
 #pragma once
+#include "codet/detail/local_command.hpp"
 #include <array>
 #include <limits>
 #include <string_view>
@@ -39,7 +40,7 @@ public:
   }
   bool submit() noexcept {
     const std::string_view text(prefix_.data(), size_);
-    const bool quit = !overflow_ && !saturated_ && (text == "/quit" || text == "/exit");
+    const bool quit = !overflow_ && !saturated_ && is_quit_command(text);
     clear();
     return quit;
   }

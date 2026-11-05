@@ -1047,3 +1047,56 @@ TEST_F(NativeRecordLifecycle, PartialSubmissionFailureStillSeparatesRecovery) {
   EXPECT_EQ(submitted->text, std::string("abc\x1b"));
   EXPECT_EQ(read(), "\\x\r\ncodet> abc\\x1B\r\n");
 }
+
+TEST_F(NativeRecordLifecycle, EmptyFrozenLineRefreshesItsReceiptAfterDestinationReplacement) {
+  capture([&] {
+    line->append('x');
+    (void)line->take();
+  });
+  int other_master = -1, other_slave = -1;
+  struct winsize geometry {};
+  geometry.ws_row = 24;
+  ASSERT_EQ(::openpty(&other_master, &other_slave, nullptr, nullptr, &geometry), 0);
+  struct Close {
+    int a, b;
+    ~Close() {
+      ::close(a);
+      ::close(b);
+    }
+  } close{other_master, other_slave};
+  DeliveryGate gate;
+  bool initially_deferred = false, completed = false;
+  capture([&] {
+    std::thread worker([&] {
+      if (!gate.wait_for_start())
+        return;
+      auto &metrics = test::native_io_metrics;
+      metrics.interrupt_fd = STDERR_FILENO;
+      metrics.before_output = DeliveryGate::output;
+      metrics.output_context = &gate;
+      (void)detail::immediate_stderr({"held"});
+      metrics = {};
+    });
+    JoinDelivery join{gate, worker};
+    gate.begin();
+    initially_deferred = !line->try_take();
+    if (::dup2(other_slave, STDOUT_FILENO) < 0)
+      throw Error("Replacement failed");
+    gate.release();
+    worker.join();
+    completed = bool(line->try_take());
+  });
+  EXPECT_TRUE(initially_deferred);
+  EXPECT_TRUE(completed) << "Empty frozen line retained its old presentation receipt";
+  EXPECT_FALSE(line->submission_pending());
+  EXPECT_FALSE(gate.timed_out);
+}
+TEST_F(NativeRecordLifecycle, EmptySuccessfulDiagnosticDoesNotOpenAFragment) {
+  capture([&] {
+    detail::DiagnosticWriter errors(std::cerr, &io);
+    (void)errors.write({}, false, true);
+    (void)detail::immediate_stderr({}, false);
+    line->append('a');
+  });
+  EXPECT_EQ(read(), "codet> a");
+}

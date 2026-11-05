@@ -515,6 +515,10 @@ public:
       const auto text = !display ? std::string_view{}
                         : append ? std::string_view(submission.tail)
                                  : frozen_view(submission);
+      // Empty lines have no paint that could refresh a receipt after rebinding.
+      // Their boundary is admitted against the current observed destination instead.
+      if (!display)
+        submission.receipt = boundary_token_;
       if (!text.empty()) {
         if (!append && !columns_ && dirty_) {
           const auto separation = separate();
