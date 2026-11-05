@@ -1,4 +1,5 @@
 #pragma once
+#include "codet/detail/local_command.hpp"
 #include "codet/detail/transport_error.hpp"
 #include <curl/curl.h>
 #include <string_view>
@@ -12,13 +13,13 @@ struct TrustCapabilities {
 inline DirectoryTrust directory_trust(std::string_view backend) noexcept {
   for (const std::string_view name :
        {"OpenSSL/", "LibreSSL/", "BoringSSL", "AWS-LC/", "GnuTLS/", "mbedTLS/", "wolfSSL/"})
-    if (backend.substr(0, name.size()) == name &&
+    if (command_prefix(backend, name) &&
         (name.back() == '/' || backend.size() == name.size() || backend[name.size()] == ' ' ||
          backend[name.size()] == '/'))
       return DirectoryTrust::present;
   for (const std::string_view name :
        {"SecureTransport", "Secure Transport", "Schannel", "rustls/", "Rustls/"})
-    if (backend.substr(0, name.size()) == name &&
+    if (command_prefix(backend, name) &&
         (name.back() == '/' || backend.size() == name.size() || backend[name.size()] == ' ' ||
          backend[name.size()] == '/'))
       return DirectoryTrust::absent;

@@ -171,7 +171,7 @@ def run_controls(root, folder, build, ninja):
          "DiagnosticWriter.EmptyInjectedSeparationClosesTheFragmentExactlyOnce"),
         ("queue-barrier", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_queue.hpp",
          "held || barrier || !io.active_", "held || (barrier && false) || !io.active_",
-         "SubmissionQueue.DeferredBarrierSurvivesStartingTheEarlierFollowup"),
+         "SubmissionQueue.ReservedBarrierSurvivesRejectionOfItsPredecessor"),
     ]
     results = []
     for name, entry_name, source_name, before, after, target in cases:
@@ -193,7 +193,7 @@ def run_controls(root, folder, build, ninja):
                    "receipt-admission": "Value of:", "control-overflow": "Value of:",
                    "origin-owner": "Expected equality", "held-fifo": "Expected equality",
                    "pending-progress": "Partial control gated an independent handoff",
-                   "queue-barrier": "Deferred barrier became steering input",
+                   "queue-barrier": "Rejected prefix lost its reserved barrier",
                    "unread-turn": "Unread steering crossed its originating turn",
                    "empty-fragment": "Empty separator kept a stale fragment",
                    "path-prose": "Expected equality", "tls-capability": "Actual:"}

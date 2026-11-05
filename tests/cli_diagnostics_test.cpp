@@ -2388,7 +2388,9 @@ TEST(SubmissionQueue, UnreadSteeringClosesIntoSeparateFollowupTurns) {
   ASSERT_TRUE(first);
   EXPECT_EQ(first->text, "A");
   io.begin_turn("s");
-  EXPECT_TRUE(io.take_input().empty()) << "Unread steering crossed its originating turn";
+  std::vector<std::string> incoming;
+  EXPECT_NO_THROW(incoming = io.take_input()) << "Unread steering crossed its originating turn";
+  EXPECT_TRUE(incoming.empty()) << "Unread steering crossed its originating turn";
   io.end_turn();
   auto second = detail::SubmissionAccess::next(io, "s");
   ASSERT_TRUE(second);
@@ -2456,4 +2458,18 @@ TEST(DiagnosticWriter, EmptyInjectedSeparationClosesTheFragmentExactlyOnce) {
   EXPECT_EQ(writer.write_receipt({"prompt"}, false, true, true).result,
             detail::DiagnosticResult::success);
   EXPECT_EQ(output.str(), "fragment\nprompt") << "Empty separator kept a stale fragment";
+}
+
+TEST(SubmissionQueue, ReservedBarrierSurvivesRejectionOfItsPredecessor) {
+  Interaction io;
+  io.begin_turn("s");
+  const auto first = detail::SubmissionAccess::reserve(io);
+  const auto later = detail::SubmissionAccess::reserve(io);
+  detail::SubmissionAccess::commit(io, later, "later", false);
+  detail::SubmissionAccess::abandon(io, first);
+  EXPECT_TRUE(io.take_input().empty()) << "Rejected prefix lost its reserved barrier";
+  io.end_turn();
+  auto pending = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(pending);
+  EXPECT_EQ(pending->text, "later");
 }

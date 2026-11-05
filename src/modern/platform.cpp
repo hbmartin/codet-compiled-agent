@@ -1077,7 +1077,8 @@ HttpResponse CurlTransport::perform(const HttpRequest &r, const Cancellation &ca
   if (const char *bundle = std::getenv("CODET_CA_BUNDLE"); bundle && *bundle) {
     const auto *version = curl_version_info(CURLVERSION_NOW);
     const detail::TrustCapabilities capabilities{
-        version && (version->features & CURL_VERSION_HTTPS_PROXY) != 0,
+        version && (static_cast<unsigned int>(version->features) &
+                    static_cast<unsigned int>(CURL_VERSION_HTTPS_PROXY)) != 0,
         detail::directory_trust(version && version->ssl_version ? version->ssl_version : "")};
     detail::configure_tls_trust(bundle, capabilities, [&](CURLoption option, const char *value) {
       return curl_easy_setopt(raw, option, value);
