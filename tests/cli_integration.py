@@ -1414,6 +1414,7 @@ class CliTests(unittest.TestCase):
                 collect(lambda received=received,expected=expected:bytes(received).count(b'fixture done')>=1+len(expected))
                 prompts=[request['body']['messages'][-1]['content'] for request in self.server.requests[before+1:]]
                 self.assertEqual(prompts,expected,'Extra pending input became a user message')
+                self.assertIn(b'Additional typing discarded',received)
                 os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
                 self.assertEqual(process.returncode,0,received)
 

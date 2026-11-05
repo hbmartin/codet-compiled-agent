@@ -1233,10 +1233,12 @@ class SanitizerIsolation(unittest.TestCase):
             self.assertEqual(isolated.verify_payload(result)['failures'],2)
 
     def test_standalone_report_roots_allow_repeat_runs_without_replacement(self):
+        import os
+
         import gtest_isolation as isolated
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);binary=root/'binary';binary.write_bytes(b'identity')
-            with patch.object(isolated,'run',side_effect=lambda *args:self.payload()):
+            with patch.dict(os.environ, {k:v for k,v in os.environ.items() if k != 'CODET_EVIDENCE_CONTEXT'}, clear=True), patch.object(isolated,'run',side_effect=lambda *args:self.payload()):
                 for _ in range(2):
                     with patch.object(sys,'argv',['launcher','--report-root',str(root/'reports'),str(binary)]):
                         self.assertEqual(isolated.main(),0)

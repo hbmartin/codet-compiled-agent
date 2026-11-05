@@ -626,6 +626,36 @@ class TigerLauncher(DistributionFixture):
         )
 
 
+class TigerAcceptancePrerequisites(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "darwin", "Uses Darwin time -l; host fixture only")
+    def test_stock_system_without_otool_still_records_acceptance_results(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bundle = root / "bundle"
+            bundle.mkdir()
+            commands = root / "commands"
+            commands.mkdir()
+            shutil.copyfile(SCRIPTS / "tiger-acceptance.sh", bundle / "tiger-acceptance.sh")
+            for name in ("dirname", "mkdir", "mktemp", "uname", "rm"):
+                (commands / name).symlink_to(shutil.which(name))
+            for name in ("codet", "codet_tests", "codet_persistence_bench"):
+                executable = bundle / name
+                executable.write_text("#!/bin/sh\nexit 0\n")
+                executable.chmod(0o755)
+            report = root / "reports"
+            result = subprocess.run(
+                ["/bin/sh", str(bundle / "tiger-acceptance.sh")],
+                cwd=root,
+                env=dict(os.environ, PATH=str(commands), CODET_ACCEPTANCE_REPORT=str(report)),
+                text=True,
+                capture_output=True,
+                timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("otool is not installed", (report / "dependencies.txt").read_text())
+            self.assertTrue((report / "tests.txt").exists())
+
+
 class OpenSSLPrerequisite(unittest.TestCase):
     def test_configured_absolute_executable_generates_certificates_without_path(self):
         executable = openssl_executable()

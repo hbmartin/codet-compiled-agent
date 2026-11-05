@@ -187,7 +187,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     def configured_outputs(build):
         return [dict(path=rel(Path(build) / n)) for n in ("CMakeCache.txt", "compile_commands.json", "build.ninja", "generated/prompts.hpp", "generated/core_contract.hpp")]
     add("provision-offline", [python, "scripts/fetch-deps.py", "--offline"])
-    focused = "--gtest_filter=NativeRecordLifecycle.*:DiagnosticFixture.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.*"
+    focused = "--gtest_filter=NativeRecordLifecycle.*:DiagnosticFixture.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.*:PendingControl.*:SubmissionQueue.*:TurnInput.*:InteractionWarnings.*"
     for mode in ("debug", "asan", "tsan"):
         build = Path(builds[mode])
         args = configure(root, build, "Debug")

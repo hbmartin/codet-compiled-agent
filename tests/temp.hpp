@@ -4,8 +4,8 @@
 
 struct TempDirectory {
   codet::fs::path root;
-  TempDirectory() {
-    auto pattern = (codet::fs::temp_directory_path() / "codet-test-XXXXXX").string();
+  explicit TempDirectory(codet::fs::path parent = codet::fs::temp_directory_path()) {
+    auto pattern = (parent / "codet-test-XXXXXX").string();
     std::vector<char> name(pattern.begin(), pattern.end());
     name.push_back(0);
     const auto *path = ::mkdtemp(name.data());
