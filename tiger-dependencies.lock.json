@@ -107,5 +107,11 @@
       "local_file": "cmake/patches/libedit-size-max.patch",
       "sha256": "aac931bf8b90321711c3ca362909235b6bb2eafd2aa4d2a731a27a3e3b8383b7"
     }
-  ]
+  ],
+  "ca_bundle": {
+    "version": "2026-10-20",
+    "url": "https://curl.se/ca/cacert-2026-10-20.pem",
+    "sha256": "796f1389bfea13c0ed78f663b765baaff54a508e5483786bd6ece73c5e3e3cbe",
+    "license": "MPL-2.0"
+  }
 }

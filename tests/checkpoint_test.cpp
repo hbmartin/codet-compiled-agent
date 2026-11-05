@@ -395,6 +395,11 @@ TEST_F(Checkpoint, FailedLexicalAnchorsDoNotConsumeAdmissionOrShadowAUsableSkill
 }
 
 TEST_F(Checkpoint, SkillAdmissionStillStopsAtOneHundredValidAnchors) {
+  // Exercise the count limit independently of the catalog byte budget and TMPDIR length.
+  TempDirectory catalog("/tmp");
+  config.cwd = catalog.root / "work";
+  config.roots = {config.cwd};
+  fs::create_directory(config.cwd);
   fs::create_directory(config.cwd / ".git");
   for (int i = 1000; i <= 1100; ++i) {
     const auto name = "s" + std::to_string(i);

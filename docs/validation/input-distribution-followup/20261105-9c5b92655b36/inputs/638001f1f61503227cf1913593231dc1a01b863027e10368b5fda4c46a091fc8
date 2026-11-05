@@ -1,0 +1,7 @@
+Test project /Volumes/Pro2T/codet-compiled-agent/build/input-distribution-recovery/campaign-20261105-04/asan
+      Start  1: codet.publication-faults
+      Start  2: codet.unit
+ 1/11 Test  #1: codet.publication-faults .........   Passed    7.00 sec
+      Start  3: codet.cli
+ 2/11 Test  #3: codet.cli ........................   Passed    0.21 sec
+      Start  4: codet.integration

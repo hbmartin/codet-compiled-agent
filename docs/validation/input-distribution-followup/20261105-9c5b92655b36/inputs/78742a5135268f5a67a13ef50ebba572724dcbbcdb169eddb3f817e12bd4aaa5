@@ -1,0 +1,57 @@
+Test project /Volumes/Pro2T/codet-compiled-agent/build/input-distribution-recovery/campaign-20261105-04/debug
+      Start  1: codet.publication-faults
+      Start  2: codet.unit
+ 1/11 Test  #1: codet.publication-faults .........   Passed    4.45 sec
+      Start  3: codet.cli
+ 2/11 Test  #3: codet.cli ........................   Passed    0.11 sec
+      Start  4: codet.integration
+ 3/11 Test  #2: codet.unit .......................   Passed   57.12 sec
+      Start  5: codet.prompts
+ 4/11 Test  #5: codet.prompts ....................   Passed    0.42 sec
+      Start  6: codet.build-integrity
+ 5/11 Test  #6: codet.build-integrity ............   Passed    0.14 sec
+      Start  7: codet.tiger-packaging
+ 6/11 Test  #7: codet.tiger-packaging ............   Passed    3.65 sec
+      Start  8: codet.semgrep-report
+ 7/11 Test  #8: codet.semgrep-report .............***Failed    0.60 sec
+test_environment_records_relative_interpreter_and_installed_version (test_semgrep_report.SemgrepReports.test_environment_records_relative_interpreter_and_installed_version) ... FAIL
+test_external_interpreter_does_not_publish_its_parent_directories (test_semgrep_report.SemgrepReports.test_external_interpreter_does_not_publish_its_parent_directories) ... ok
+test_failure_pretty_prints_json_without_changing_report (test_semgrep_report.SemgrepReports.test_failure_pretty_prints_json_without_changing_report) ... ok
+test_interpreter_symlink_keeps_its_venv_path (test_semgrep_report.SemgrepReports.test_interpreter_symlink_keeps_its_venv_path) ... ok
+test_invalid_report_is_diagnostic_and_remains_available (test_semgrep_report.SemgrepReports.test_invalid_report_is_diagnostic_and_remains_available) ... ok
+test_make_preserves_scan_evidence_and_original_failure_status (test_semgrep_report.SemgrepReports.test_make_preserves_scan_evidence_and_original_failure_status) ... ok
+test_make_success_retains_report_and_removes_obsolete_evidence (test_semgrep_report.SemgrepReports.test_make_success_retains_report_and_removes_obsolete_evidence) ... ok
+test_missing_report_is_diagnostic (test_semgrep_report.SemgrepReports.test_missing_report_is_diagnostic) ... ok
+test_missing_summary_interpreter_keeps_findings_and_scan_failure (test_semgrep_report.SemgrepReports.test_missing_summary_interpreter_keeps_findings_and_scan_failure) ... ok
+
+======================================================================
+FAIL: test_environment_records_relative_interpreter_and_installed_version (test_semgrep_report.SemgrepReports.test_environment_records_relative_interpreter_and_installed_version)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/tests/test_semgrep_report.py", line 36, in test_environment_records_relative_interpreter_and_installed_version
+    self.assertEqual(data["executable"], "build/semgrep-venv/bin/python")
+AssertionError: '<external>/python' != 'build/semgrep-venv/bin/python'
+- <external>/python
++ build/semgrep-venv/bin/python
+
+
+----------------------------------------------------------------------
+Ran 9 tests in 0.483s
+
+FAILED (failures=1)
+
+      Start  9: codet.lint-runner
+ 8/11 Test  #9: codet.lint-runner ................   Passed    1.57 sec
+      Start 10: codet.validation-evidence
+ 9/11 Test #10: codet.validation-evidence ........   Passed   11.74 sec
+      Start 11: codet.hermetic
+10/11 Test  #4: codet.integration ................   Passed   71.36 sec
+11/11 Test #11: codet.hermetic ...................   Passed    1.08 sec
+
+91% tests passed, 1 tests failed out of 11
+
+Total Test time (real) =  76.30 sec
+
+The following tests FAILED:
+	  8 - codet.semgrep-report (Failed)
+Errors while running CTest

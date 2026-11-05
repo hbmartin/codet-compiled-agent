@@ -128,8 +128,8 @@ def cppcheck_contexts_match(entry, before, after, baseline_root, changed_root):
                 return False
         old.append(previous)
         new.append(current)
-    return (len(set(old)) == len(old) and len(set(new)) == len(new) and
-            Counter(old) == Counter(before[2]) and Counter(new) == Counter(after[2]))
+    # Locations are occurrences, not a set: Cppcheck may repeat the same coordinate.
+    return Counter(old) == Counter(before[2]) and Counter(new) == Counter(after[2])
 
 
 def compare_analysis(baseline, changed, baseline_root, changed_root, expected, changed_expected=None, relocations=()):

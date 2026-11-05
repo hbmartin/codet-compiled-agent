@@ -10,13 +10,13 @@ Choose the instructions matching your archive:
   `./codet`, `./codet_tests`, and `./codet_persistence_bench` launchers. They select
   the bundled terminal data and TLS trust. `CODET_CA_BUNDLE` can select another
   PEM file for origin and HTTPS-proxy trust. Inspect the Mach-O executable with
-  `otool -L ./bin/codet`.
+  `otool -L ./bin/codet` when Developer Tools are installed. The acceptance script records unavailable dependency inspection and continues when `otool` is absent.
 - **TigerPorts:** extract `codet-tiger-ppc.tar.gz` and enter `codet-tiger`. Install
   dependencies matching `sysroot-manifest.json`: curl with OpenSSL, openssl3,
   zlib, sqlite3, ncurses, libedit, legacy-support, and curl-ca-bundle. This variant
   contains no bundled runtime dylibs. The default prefix is `/opt/tigr`; a
   different prefix requires a matching cross-build. Inspect dependencies with
-  `otool -L ./codet`.
+  `otool -L ./codet` when available.
 
 Both variants require `/usr/bin/grep`. From the extracted directory, run:
 

@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/build/lint-venv/bin/python",
+    "scripts/validation_evidence.py",
+    "bundle",
+    "/Volumes/Pro2T/codet-compiled-agent/build/input-distribution-recovery/campaign-20261105-05/manifest.json",
+    "/Volumes/Pro2T/codet-compiled-agent/build/input-distribution-recovery/campaign-20261105-05/capture",
+    "--output",
+    "/Volumes/Pro2T/codet-compiled-agent/build/input-distribution-recovery/strict-acceptance-rejected"
+  ],
+  "cwd": "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent",
+  "exit": 1,
+  "expected": "Required check did not pass: hash-experiment"
+}

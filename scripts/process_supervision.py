@@ -82,7 +82,7 @@ def cleanup_interruptions(observation):
 def stop_group(process, grace=2.0):
     if process.pid <= 0:
         raise ValueError('Cannot supervise a non-positive process group')
-    observation = dict(group=process.pid, signals=[], reaped=False, interruptions=[], failures=[])
+    observation = dict(group=process.pid, signals=[], reaped=False, interruptions=[], failures=[], inspections=[])
     process.group_cleanup = observation
     started = time.monotonic()
     term_deadline = started + max(0, grace)
@@ -101,12 +101,19 @@ def stop_group(process, grace=2.0):
         return False, None
 
     def inspect(deadline):
-        success, result = attempt(lambda remaining: group_inactive(
-            process.pid, timeout=min(.2, remaining)), deadline)
-        if success:
-            inactive, members = result
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        try:
+            inactive, members = group_inactive(process.pid, timeout=min(.2, remaining))
             observation['group_states'] = members
             return inactive
+        except KeyboardInterrupt as error:
+            observation['interruptions'].append(dict(exception=type(error).__name__))
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            # A later positive observation may establish inactivity. Keep inspection
+            # failures explanatory until the bounded verification phase finishes.
+            observation['inspections'].append(str(error))
         return False
 
     def send(action, deadline):
@@ -134,9 +141,19 @@ def stop_group(process, grace=2.0):
             if not inactive:
                 attempt(lambda remaining: time.sleep(min(.05, remaining)), term_deadline)
         if not inactive:
-            killed, _ = send(signal.SIGKILL, reap_deadline)
+            killed, absent = send(signal.SIGKILL, reap_deadline)
+            inactive = bool(killed and absent)
             if not killed:
                 attempt(lambda remaining: process.kill(), reap_deadline)
+        # Preserve the unreaped leader while verifying the group, reserving half a second
+        # of the existing cleanup budget for final reaping.
+        verification_deadline = reap_deadline - .5
+        while not inactive and time.monotonic() < verification_deadline:
+            inactive = inspect(verification_deadline)
+            if not inactive:
+                attempt(lambda remaining: time.sleep(min(.05, remaining)), verification_deadline)
+        if not inactive:
+            observation['failures'].append('Owned process-group inactivity could not be verified')
         # No further group signal follows this point. Reaping now permits PID reuse safely.
         while time.monotonic() < reap_deadline:
             try:

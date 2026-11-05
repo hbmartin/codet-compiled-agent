@@ -1,6 +1,7 @@
 #include "codet/artifacts.hpp"
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
+#include "codet/detail/transport_error.hpp"
 #include "codet/output.hpp"
 #include "codet/support.hpp"
 #include "codet/tool_registry.hpp"
@@ -1147,7 +1148,7 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
       cancel.check();
       if (consumer_failure)
         std::rethrow_exception(consumer_failure);
-      if (saw || attempt == 3)
+      if (dynamic_cast<const detail::PermanentTransportError *>(&e) || saw || attempt == 3)
         throw;
       clock_.sleep_ms(250 * (1 << attempt), cancel);
       continue;

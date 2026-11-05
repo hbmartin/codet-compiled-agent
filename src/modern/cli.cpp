@@ -12,6 +12,7 @@
 #include "codet/detail/native_terminal.hpp"
 #include "codet/detail/pending_control.hpp"
 #include "codet/detail/request_input_controller.hpp"
+#include "codet/detail/submission_queue.hpp"
 #include "codet/detail/terminal_input.hpp"
 #include "codet/detail/turn_input.hpp"
 #include "codet/detail/ui_history.hpp"
@@ -578,7 +579,29 @@ public:
     transcript_.add(text);
   }
   detail::PendingControl<> pending_control_;
-  bool pending_quit_ = false;
+  bool pending_quit_ = false, control_explained_ = false;
+  Interaction *input_queue_ = nullptr;
+  uint64_t admission_ = 0;
+  void reserve_submission() {
+    if (input_queue_ && !admission_ && input_.ordinary_draft() && !input_.input().empty() &&
+        detail::local_command(input_.input().raw()) == detail::LocalCommand::none)
+      try {
+        admission_ = detail::SubmissionAccess::reserve(*input_queue_);
+      } catch (const Error &error) {
+        say(error.what());
+      }
+  }
+  std::optional<detail::InputLine> admitted(std::optional<detail::InputLine> line) {
+    if (line)
+      line->admission = std::exchange(admission_, 0);
+    return line;
+  }
+  void input_queue(Interaction *queue) noexcept {
+    if (input_queue_)
+      detail::SubmissionAccess::abandon(*input_queue_, admission_);
+    admission_ = 0;
+    input_queue_ = queue;
+  }
   std::optional<detail::InputOrigin> input_origin_;
   bool take_quit() noexcept {
     return std::exchange(pending_quit_, false);
@@ -596,6 +619,9 @@ public:
       return;
     auto line = line_->discard_pending();
     pending_control_.clear();
+    control_explained_ = false;
+    if (input_queue_)
+      detail::SubmissionAccess::abandon(*input_queue_, std::exchange(admission_, 0));
     if (line)
       pending_not_sent(line->text, immediate);
   }
@@ -644,7 +670,9 @@ public:
         if (line) {
           if (const auto submission = line->classify(); submission.rejection) {
             discarded_line(*submission.rejection);
-            break; // The stale idle line ended; hand the empty prompt back to libedit.
+            if (pending_control_.started())
+              continue;
+            break; // Hand libedit ownership only after every stale/control line ended.
           }
           if (resources_.entries())
             history(resources_.entries(), &history_event_, H_ENTER, line->text.c_str());
@@ -761,6 +789,7 @@ public:
         ++input_events_;
         if (ch == bindings_["submit"] || ch == KEY_ENTER || ch == '\r') {
           const bool quit = pending_control_.submit();
+          control_explained_ = false;
           if (quit) {
             pending_quit_ = true;
             closed = true;
@@ -768,12 +797,19 @@ public:
           }
         } else if (ch == bindings_["backspace"] || ch == KEY_BACKSPACE || ch == 8) {
           pending_control_.erase();
-        } else if (ch >= 32 && ch <= 255)
+        } else if (ch >= 32 && ch <= 255) {
           pending_control_.append(static_cast<char>(ch));
+          if (!control_explained_) {
+            control_explained_ = true;
+            detail::secondary_diagnostic([&] {
+              say("[Additional typing discarded; /quit or /exit then Enter still stops.]");
+            });
+          }
+        }
       }
-      if (read_cancel_ && read_cancel_->requested)
-        return {};
-      return pending_line.submission_pending() ? pending_line.try_take() : std::nullopt;
+      return pending_control_.handoff(read_cancel_ && read_cancel_->requested, [&] {
+        return pending_line.submission_pending() ? admitted(pending_line.try_take()) : std::nullopt;
+      });
     }
     if (ch == ERR)
       return {};
@@ -797,8 +833,10 @@ public:
       return {};
     }
     if (ch == bindings_["submit"] || ch == KEY_ENTER || ch == '\r') {
+      reserve_submission();
       auto origin = line_ ? std::optional<detail::InputOrigin>{} : input_origin_;
-      auto ready = line_ ? line_->try_take() : std::optional<detail::InputLine>(input_.take());
+      auto ready =
+          admitted(line_ ? line_->try_take() : std::optional<detail::InputLine>(input_.take()));
       if (ready && !line_)
         ready->origin = std::move(origin);
       if (!ready) {
@@ -1266,7 +1304,6 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   bool quit_requested = false;
   bool new_requested = false, compacting = false;
   std::optional<Usage> last_usage;
-  std::deque<std::string> followups;
   uint64_t input_turn = 0;
   const auto publish_result = [&](const RunResult &result) {
     if (!compacting)
@@ -1301,15 +1338,13 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     terminal->input_origin(session.id, ++input_turn);
     std::future<RunResult> work;
     std::optional<Json> pending;
-    std::vector<detail::InputLine> held_followups;
-    const auto hold_followup = [&](detail::InputLine &line) {
-      try {
-        held_followups.push_back(std::move(line));
-      } catch (...) {
-        terminal->pending_not_sent(line.text);
-        throw;
+    terminal->input_queue(interaction.get());
+    struct ReleaseAdmission {
+      Terminal &terminal;
+      ~ReleaseAdmission() {
+        terminal.input_queue(nullptr);
       }
-    };
+    } release_admission{*terminal};
     const auto drain_warnings = [&](bool retry = true) {
       interaction->drain_warnings(
           [&](std::string_view text) {
@@ -1359,7 +1394,14 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     const auto dispatch = [&](detail::InputLine &line, detail::TurnInputPhase phase) {
       const auto action = detail::classify_turn_input(
           line, phase == detail::TurnInputPhase::active && pending ? &*pending : nullptr, origin,
-          phase, !held_followups.empty());
+          phase, false);
+      struct Release {
+        Interaction &io;
+        uint64_t sequence = 0;
+        ~Release() {
+          detail::SubmissionAccess::abandon(io, sequence);
+        }
+      } release{*interaction, line.admission};
       switch (action.action) {
       case detail::TurnInputAction::quit:
         quit_requested = true;
@@ -1392,13 +1434,22 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
         break;
       }
       case detail::TurnInputAction::hold:
-        hold_followup(line);
-        break;
+      case detail::TurnInputAction::idle_command:
       case detail::TurnInputAction::steer:
+        if (!line.admission) {
+          terminal->pending_not_sent(line.text);
+          break;
+        }
         try {
-          interaction->submit(line.text);
+          detail::SubmissionAccess::commit(*interaction, line.admission, line.text,
+                                           action.action == detail::TurnInputAction::hold,
+                                           action.action == detail::TurnInputAction::idle_command);
         } catch (const Error &error) {
+          terminal->pending_not_sent(line.text);
           terminal->say(error.what());
+        } catch (...) {
+          terminal->pending_not_sent(line.text);
+          throw;
         }
         break;
       case detail::TurnInputAction::ignore:
@@ -1456,13 +1507,6 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
           dispatch(*line, detail::TurnInputPhase::completed);
       }
       const bool late_cancel = cancel.requested;
-      for (auto &line : held_followups) {
-        if (line.origin && line.origin->session == session.id && line.origin->turn == input_turn &&
-            !line.text.empty() && !cancel.requested && !quit_requested)
-          followups.push_back(std::move(line.text));
-        else
-          terminal->pending_not_sent(line.text);
-      }
       terminal->end_active();
       if (late_cancel && !quit_requested)
         cancel.requested = false;
@@ -1472,9 +1516,6 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
           std::current_exception(), cancel, quit_requested, work,
           [&] {
             terminal->discard_pending();
-            for (const auto &line : held_followups)
-              if (!line.text.empty())
-                terminal->pending_not_sent(line.text);
             pending.reset();
             terminal->end_active();
           },
@@ -1486,17 +1527,9 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       return;
     // Agent closes admission before its future becomes ready; close also covers early errors.
     interaction->end_turn();
-    if (!resume) {
-      for (const auto &text : followups)
+    if (!resume || quit_requested)
+      for (const auto &text : interaction->take_pending(session.id))
         terminal->pending_not_sent(text);
-      followups.clear();
-    }
-    for (const auto &text : interaction->take_pending(session.id)) {
-      if (resume && !quit_requested)
-        followups.push_back(text);
-      else
-        terminal->pending_not_sent(text);
-    }
   };
   auto run = [&](const std::string &text, bool steering = false) {
     struct DeliverFiles {
@@ -1582,11 +1615,13 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   }
   while (!cancel.requested && !quit_requested) {
     std::optional<std::string> input;
-    if (!followups.empty()) {
-      input = followups.front();
-      followups.pop_front();
-      run(*input, true);
-      continue;
+    const auto queued = detail::SubmissionAccess::next(*interaction, session.id);
+    if (queued) {
+      input = queued->text;
+      if (!queued->idle_command) {
+        run(*input, true);
+        continue;
+      }
     } else if (new_requested) {
       input = "/new";
       new_requested = false;
@@ -1596,16 +1631,17 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       break;
     if (input->empty())
       continue;
-    if (*input == "/quit" || *input == "/exit")
+    const auto local = detail::local_command(*input);
+    if (local == detail::LocalCommand::quit)
       break;
-    if (*input == "/help") {
+    if (local == detail::LocalCommand::help) {
       terminal->say("/help /quit /model [MODEL [EFFORT]] /status /compact /permissions [MODE] "
                     "/sessions /new /name TEXT /export /memory "
                     "consolidate; custom "
                     "commands from commands/*.md");
       continue;
     }
-    if (*input == "/model" || input->rfind("/model ", 0) == 0) {
+    if (local == detail::LocalCommand::model) {
       if (*input == "/model") {
         terminal->say("Current: " + config.provider + "/" + config.model +
                       "; effort: " + (config.effort.empty() ? "provider default" : config.effort));
@@ -1651,7 +1687,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       }
       continue;
     }
-    if (*input == "/status") {
+    if (local == detail::LocalCommand::status) {
       Json status = {{"session_id", session.id},
                      {"provider", config.provider},
                      {"durability", config.durability},
@@ -1671,13 +1707,13 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       terminal->say(status.dump(2));
       continue;
     }
-    if (*input == "/compact") {
+    if (local == detail::LocalCommand::compact) {
       compacting = true;
       run("");
       compacting = false;
       continue;
     }
-    if (*input == "/permissions" || input->rfind("/permissions ", 0) == 0) {
+    if (local == detail::LocalCommand::permissions) {
       if (*input != "/permissions") {
         const auto mode = input->substr(13);
         if (mode != "default" && mode != "plan" && mode != "accept-edits" && mode != "bypass") {
@@ -1690,11 +1726,11 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       terminal->say("Permissions: " + config.permission_mode);
       continue;
     }
-    if (*input == "/sessions") {
+    if (local == detail::LocalCommand::sessions) {
       terminal->say(state.list().dump(2));
       continue;
     }
-    if (*input == "/new") {
+    if (local == detail::LocalCommand::new_session) {
       auto fresh = state.create();
       auto fresh_owner = state.acquire(fresh.id);
       fresh.provider = config.provider;
@@ -1707,16 +1743,16 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       terminal->say_literal("Started " + session.id);
       continue;
     }
-    if (input->rfind("/name ", 0) == 0) {
+    if (local == detail::LocalCommand::name) {
       session.name = input->substr(6);
       state.update_metadata(session);
       continue;
     }
-    if (*input == "/export") {
+    if (local == detail::LocalCommand::export_session) {
       terminal->say(Json(session.messages).dump(2));
       continue;
     }
-    if (*input == "/memory consolidate") {
+    if (local == detail::LocalCommand::memory) {
       config.roots.push_back(config.home / "memory");
       *input = "Explicit memory consolidation: use the included memory preview and apply_patch to "
                "consolidate files in " +

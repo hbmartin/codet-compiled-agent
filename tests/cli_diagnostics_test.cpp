@@ -8,6 +8,7 @@
 #include "codet/detail/pending_control.hpp"
 #include "codet/detail/request_input.hpp"
 #include "codet/detail/request_input_controller.hpp"
+#include "codet/detail/submission_queue.hpp"
 #include "codet/detail/terminal_input.hpp"
 #include "codet/detail/turn_input.hpp"
 #include "codet/detail/ui_history.hpp"
@@ -2256,4 +2257,123 @@ TEST(DiagnosticWriter, ExplicitTrailingNewlineClosesAnInjectedFragment) {
   const auto receipt = writer.write_receipt({"prompt"}, false, true, true);
   EXPECT_EQ(receipt.result, detail::DiagnosticResult::success);
   EXPECT_EQ(stream.str(), "fragment ends\nprompt");
+}
+
+TEST(SubmissionQueue, UnreadSteeringPrecedesHeldInputAndLaterMessages) {
+  for (bool consumed : {false, true}) {
+    Interaction io;
+    io.begin_turn("s");
+    io.submit("A");
+    const auto ticket = detail::SubmissionAccess::reserve(io);
+    detail::SubmissionAccess::commit(io, ticket, "B", true);
+    io.submit("C");
+    if (consumed)
+      EXPECT_EQ(io.take_input(), std::vector<std::string>{"A"});
+    io.end_turn();
+    std::vector<std::string> actual;
+    while (auto next = detail::SubmissionAccess::next(io, "s"))
+      actual.push_back(next->text);
+    EXPECT_EQ(actual, consumed ? (std::vector<std::string>{"B", "C"})
+                               : (std::vector<std::string>{"A", "B", "C"}));
+  }
+}
+TEST(SubmissionQueue, FrozenReservationsCountTowardTheSharedLimit) {
+  Interaction io;
+  io.begin_turn("s");
+  std::vector<uint64_t> reservations;
+  for (unsigned i = 0; i != 100; ++i)
+    reservations.push_back(detail::SubmissionAccess::reserve(io));
+  EXPECT_THROW(detail::SubmissionAccess::reserve(io), Error);
+  EXPECT_THROW(io.submit("extra"), Error);
+  EXPECT_TRUE(io.take_input().empty());
+  detail::SubmissionAccess::abandon(io, reservations.back());
+  reservations.pop_back();
+  const auto command = detail::SubmissionAccess::reserve(io);
+  EXPECT_THROW(detail::SubmissionAccess::commit(io, command, std::string(65537, 'x'), false),
+               Error);
+  detail::SubmissionAccess::commit(io, command, "/custom argument", false, true);
+  for (auto sequence : reservations)
+    detail::SubmissionAccess::abandon(io, sequence);
+  io.end_turn();
+  auto next = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(next);
+  EXPECT_TRUE(next->idle_command);
+  EXPECT_EQ(next->text, "/custom argument");
+  EXPECT_FALSE(detail::SubmissionAccess::next(io, "s"));
+}
+TEST(SubmissionQueue, ReservedPrefixCannotBeOvertakenAndKeepsItsRawCommand) {
+  Interaction io;
+  io.begin_turn("s");
+  const auto first = detail::SubmissionAccess::reserve(io);
+  io.submit("later");
+  EXPECT_TRUE(io.take_input().empty());
+  detail::SubmissionAccess::commit(io, first, "/unknown", false, true);
+  EXPECT_TRUE(io.take_input().empty());
+  io.end_turn();
+  auto a = detail::SubmissionAccess::next(io, "s");
+  auto b = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(a);
+  ASSERT_TRUE(b);
+  EXPECT_TRUE(a->idle_command);
+  EXPECT_EQ(a->text, "/unknown");
+  EXPECT_EQ(b->text, "later");
+}
+TEST(TurnInput, CompleteLocalGrammarAndBoundAnswersShareOnePolicy) {
+  const detail::InputOrigin origin{"session", 7};
+  const Json request = {{"request_id", "r"}, {"codet_session_id", "session"}, {"codet_turn", 7}};
+  for (const std::string text : {"/help", "/model next", "/compact", "/status", "/permissions plan",
+                                 "/sessions", "/name changed", "/export", "/memory consolidate"}) {
+    detail::InputLine ordinary{text, {}, false, origin};
+    EXPECT_EQ(detail::classify_turn_input(ordinary, nullptr, origin, detail::TurnInputPhase::active,
+                                          false)
+                  .action,
+              detail::TurnInputAction::restricted)
+        << text;
+    detail::InputLine answer{text, detail::ApprovalIdentity{"session", "r", 7}, false, origin};
+    EXPECT_EQ(
+        detail::classify_turn_input(answer, &request, origin, detail::TurnInputPhase::active, false)
+            .action,
+        detail::TurnInputAction::answer)
+        << text;
+  }
+  for (const std::string text : {"/permissionsfoo", "/custom args", "/unknown"}) {
+    detail::InputLine line{text, {}, false, origin};
+    EXPECT_EQ(
+        detail::classify_turn_input(line, nullptr, origin, detail::TurnInputPhase::completed, false)
+            .action,
+        detail::TurnInputAction::idle_command);
+  }
+}
+
+TEST(PendingControl, PartialPrefixNeverGatesIndependentHandoff) {
+  detail::PendingControl<> control;
+  for (char byte : std::string("/qu"))
+    control.append(byte);
+  unsigned attempts = 0;
+  const auto next = [&]() -> std::optional<std::string> {
+    ++attempts;
+    return "frozen";
+  };
+  EXPECT_EQ(control.handoff(false, next), std::optional<std::string>{"frozen"})
+      << "Partial control gated an independent handoff";
+  EXPECT_EQ(attempts, 1u);
+  EXPECT_TRUE(control.started());
+  EXPECT_FALSE(control.handoff(true, next));
+  EXPECT_EQ(attempts, 1u);
+}
+TEST(SubmissionQueue, DeferredBarrierSurvivesStartingTheEarlierFollowup) {
+  Interaction io;
+  io.begin_turn("s");
+  const auto first = detail::SubmissionAccess::reserve(io);
+  detail::SubmissionAccess::commit(io, first, "first", true);
+  const auto second = detail::SubmissionAccess::reserve(io);
+  detail::SubmissionAccess::commit(io, second, "second", false);
+  io.end_turn();
+  ASSERT_TRUE(detail::SubmissionAccess::next(io, "s"));
+  io.begin_turn("s");
+  EXPECT_TRUE(io.take_input().empty()) << "Deferred barrier became steering input";
+  io.end_turn();
+  auto later = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(later);
+  EXPECT_EQ(later->text, "second");
 }

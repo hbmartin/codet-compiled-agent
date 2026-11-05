@@ -22,7 +22,7 @@ certificates. Install the OpenSSL command-line package (for example, `apt instal
 openssl`), or configure `-DCODET_OPENSSL_EXECUTABLE=/absolute/path/to/openssl`.
 CTest passes this executable to the integration suite. For direct Python test
 runs, set `CODET_TEST_OPENSSL` to an absolute path or make `openssl` available on
-`PATH`. Cross builds do not require a host OpenSSL executable.
+`PATH`. Configuring and building the application does not require the OpenSSL CLI; executing TLS fixtures does. Cross builds do not require a host OpenSSL executable. Host unit isolation uses an explicit Python test command compatible with CMake 3.20; `-DCODET_UNIT_ISOLATION=ON` creates a fresh report for every invocation.
 
 The Tiger build uses the existing pinned GCC 14.2/10.4u SDK image, with build utilities added in `cmake/Dockerfile.tiger`:
 
@@ -39,30 +39,44 @@ Runtime libraries use the logical `/opt/tigr` prefix. Set `TIGERPORTS_PREFIX` co
 
 Runtime sources and patches are locked to the TigerPorts revision in `tiger-dependencies.lock.json`. The sysroot manifest records versions, hashes, flags, installation prefix, and the recipe hash. OpenSSL uses statically linked GCC atomic support for 64-bit operations on PPC32. Curl uses the staged modern zlib, not Tiger's old system zlib. Builds record development-image package versions; target runtime verification is separate from reproducible cross-linking.
 
-For a portable distribution, obtain and verify a PEM trust bundle separately,
-then run this command on the host from the repository root:
+Tiger builds use a fresh `build/tiger-builds/<build-id>/native` directory. The
+`build/tiger-current.json` pointer is published only after a successful build.
+Verification and both packaging variants require this source-bound record;
+legacy binaries must be rebuilt. It binds before/after source, dependency and
+sysroot identities, cached compilers, configuration, and executable digests.
+Packages carry the frozen documentation, patch, notices and source/configuration
+blobs from that build, even when packaging runs at a later checkout revision.
+
+For a portable distribution, explicitly fetch the pinned Mozilla CA data with
+`make fetch-tiger-deps`, then run from the repository root:
 
 ```sh
+python3 scripts/tiger.py package-portable
+# An identical copy of the pinned bundle may be selected explicitly:
 python3 scripts/tiger.py package-portable --ca-bundle "/path with spaces/cacert.pem"
-# Optional additional distribution notices, repeatable:
-python3 scripts/tiger.py package-portable --ca-bundle "/path with spaces/cacert.pem" \
-  --extra-license "/path with spaces/toolchain-runtime-NOTICE.txt"
+# Optional additional notices supplement the required notices:
+python3 scripts/tiger.py package-portable --extra-license "/path/toolchain-NOTICE.txt"
 ```
 
-The helper runs static verification and then starts a fresh packaging container
-using the configured toolchain image. It mounts the repository read-only, the
-build directory writable, and each selected certificate or notice file read-only
-at a container-visible path. No running verification container is needed. It writes
-`build/dist/codet-tiger-ppc-portable.tar.gz` and a SHA-256 sidecar. This archive includes
-the runtime libraries with executable-relative install names, terminal data, and the
-supplied PEM trust bundle. Extract the folder and use its `./codet` launcher; keep
-the folder together. TigerPorts installation is not required for this variant.
-The launcher preserves the working directory and sets `CODET_CA_BUNDLE` and
-`TERMINFO`. An explicitly supplied `CODET_CA_BUNDLE` overrides the bundled trust
-file for both origin and HTTPS-proxy trust; certificate and hostname verification
-remain enabled. The packaging step is offline and records the supplied
-certificate file's digest. Portable packaging still does not establish
-Tiger runtime acceptance.
+The helper validates inputs before static verification and offline packaging.
+It resolves external dependency directories explicitly, including symlinked
+`.deps` in Git worktrees. Source and selected external files are mounted
+read-only. Both variants fail if required notices are missing or empty; the
+portable distribution includes the MPL-2.0 text, GCC GPL text and Runtime Library
+Exception. Custom distribution CA bundles are rejected: the selected Mozilla
+bundle must match its lock digest and every certificate must parse.
+
+The output is `build/dist/codet-tiger-ppc-portable.tar.gz` plus a SHA-256 sidecar.
+Archive timestamps and ownership are normalized to the producing source commit.
+The archive includes executable-relative runtime libraries and terminal data.
+Extract the folder and use `./codet`; keep it together. The launcher follows
+symlinks, preserves the working directory, and preserves explicit `TERMINFO` and
+`CODET_CA_BUNDLE` settings. An explicit runtime CA bundle replaces default origin
+and HTTPS-proxy trust directories; certificate and hostname verification remain
+enabled. No TigerPorts or Developer Tools installation is required by the
+portable launcher. Acceptance records dependency inspection as unavailable when
+`otool` is absent. Cross-build/static verification and owner-run Tiger acceptance
+remain separate requirements; host fixture tests do not establish target support.
 
 ## Command contract
 

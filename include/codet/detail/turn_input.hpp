@@ -12,6 +12,7 @@ enum class TurnInputAction : uint8_t {
   new_session,
   answer,
   hold,
+  idle_command,
   steer
 };
 struct TurnInputDisposition {
@@ -31,18 +32,16 @@ inline TurnInputDisposition classify_turn_input(const InputLine &line, const Jso
   if (!line.origin || line.origin->session != origin.session || line.origin->turn != origin.turn)
     return {TurnInputAction::reject_origin, {}, {}};
   const auto &text = line.text;
-  if (text == "/model" || text.rfind("/model ", 0) == 0 || text == "/status" || text == "/compact")
-    return {TurnInputAction::restricted,
-            {},
-            "Use /model, /status and /compact after the active turn completes."};
+  // A bound answer keeps its bytes and identity; only quit is global.
   if (submission.action == InputAction::answer)
     return {TurnInputAction::answer, {}, {}};
-  if (text.rfind("/permissions", 0) == 0)
-    return {TurnInputAction::restricted,
-            {},
-            "Change permission modes after the active turn completes."};
-  if (text == "/new")
+  const auto command = local_command(text);
+  if (command == LocalCommand::new_session)
     return {TurnInputAction::new_session, {}, {}};
+  if (command != LocalCommand::none)
+    return {TurnInputAction::restricted, {}, "Use local commands after the active turn completes."};
+  if (!text.empty() && text.front() == '/')
+    return {TurnInputAction::idle_command, {}, {}};
   if (text.empty())
     return {TurnInputAction::ignore, {}, {}};
   return {phase == TurnInputPhase::completed || line.presentation_held || held

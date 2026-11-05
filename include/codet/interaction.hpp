@@ -6,16 +6,23 @@
 #include <mutex>
 
 namespace codet {
+namespace detail {
+struct SubmissionAccess;
+}
 // Terminal APIs stay on the main thread; the agent owns persistence and tool execution.
 class Interaction {
   std::atomic<unsigned> warnings_{0};
   std::mutex mutex_;
   std::condition_variable changed_;
   std::deque<Json> events_;
+  friend struct detail::SubmissionAccess;
+  enum class InputKind : uint8_t { reserved, steering, followup, idle_command };
   struct Input {
     std::string session, text;
-    uint64_t turn = 0;
+    uint64_t turn = 0, sequence = 0;
+    InputKind kind = InputKind::steering;
   };
+  uint64_t next_input_ = 0;
   std::deque<Input> input_;
   std::string session_;
   uint64_t turn_ = 0;

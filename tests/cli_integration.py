@@ -260,6 +260,7 @@ class CliTests(unittest.TestCase):
         self.env.pop('CODET_CA_BUNDLE',None)
         denied=self.run_cli(*flags)
         self.assertNotEqual(denied.returncode,0,denied.stdout)
+        self.assertRegex(denied.stderr.lower(),r'certificate|trust anchor|ssl peer')
         self.assertEqual(server.requests,[])
         self.env['CODET_CA_BUNDLE']=str(server.certificate)
         accepted=self.run_cli(*flags)
@@ -271,6 +272,7 @@ class CliTests(unittest.TestCase):
         missing=self.run_cli(*flags)
         self.assertNotEqual(missing.returncode,0,missing.stdout)
         self.assertIn(str(missing_path),missing.stderr)
+        self.assertRegex(missing.stderr.lower(),r'certificate|trust anchor|ca file')
         self.assertEqual(len(server.requests),1)
     def test_explicit_ca_bundle_preserves_tls_verification(self):
         with tls_server(self.root) as server:
@@ -1412,6 +1414,7 @@ class CliTests(unittest.TestCase):
                 collect(lambda received=received,expected=expected:bytes(received).count(b'fixture done')>=1+len(expected))
                 prompts=[request['body']['messages'][-1]['content'] for request in self.server.requests[before+1:]]
                 self.assertEqual(prompts,expected,'Extra pending input became a user message')
+                self.assertIn(b'Additional typing discarded',received)
                 os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
                 self.assertEqual(process.returncode,0,received)
 
@@ -1458,12 +1461,72 @@ class CliTests(unittest.TestCase):
                 release.set();token(b'c')
                 if later_pending:os.write(trigger,b'g')
                 collect(lambda before=before:len(self.server.requests)>=before+3)
-                prompts=[next(m.get('content','') for m in reversed(request['body']['messages']) if m['role']=='user')
-                         for request in self.server.requests[before+1:]]
+                prompts=[]
+                for request in self.server.requests[before+1:]:
+                    users=[m.get('content','') for m in request['body']['messages'] if m['role']=='user']
+                    self.assertTrue(users,'Expected a user message in the queued provider request')
+                    prompts.append(users[-1])
                 self.assertEqual(prompts,['first','second'],'Held follow-ups reversed submission order')
                 collect(lambda received=received:bytes(received).count(b'fixture done')>=3)
                 os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
                 self.assertEqual(process.returncode,0,received)
+
+    def test_unread_steering_precedes_a_later_held_line(self):
+        marker=self.workspace/'fifo-stop';stop_release=self.workspace/'fifo-release'
+        hook='if test ! -f '+str(marker)+'; then touch '+str(marker)+'; while test ! -f '+str(stop_release)+'; do sleep .01; done; fi'
+        config=self.home/'config.toml'
+        config.write_text(config.read_text()+'\n[hooks]\nStop=[{command='+json.dumps(hook)+'}]\n')
+        self.addCleanup(lambda:stop_release.touch() if stop_release.parent.exists() else None)
+        with self.pending_sequence() as context:
+            process,master,trigger,received,collect,token,release,before=context
+            release.set();collect(marker.exists) # Agent has passed its last steering-input read.
+            os.write(master,b'older\n\x01');token(b'i')
+            os.write(trigger,b'h');token(b'r');os.write(master,b'later\n');token(b's')
+            stop_release.touch();token(b'c');os.write(trigger,b'g')
+            collect(lambda:len(self.server.requests)>=before+3)
+            prompts=[]
+            for request in self.server.requests[before+1:]:
+                users=[m.get('content','') for m in request['body']['messages'] if m['role']=='user']
+                self.assertTrue(users,'Expected user input in FIFO request')
+                prompts.append(users[-1])
+            self.assertEqual(prompts,['older','later'],'Unread steering reversed held input')
+            collect(lambda:bytes(received).count(b'fixture done')>=3)
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,received)
+
+    def test_ordinary_local_commands_use_guidance_and_custom_commands_wait_for_idle(self):
+        commands=self.home/'commands';commands.mkdir(parents=True,exist_ok=True)
+        (commands/'review.md').write_text('fixture-recovered-output $ARGUMENTS')
+        with self.pending_sequence() as context:
+            process,master,trigger,received,collect,token,release,before=context
+            for command in (b'/help',b'/name changed',b'/sessions',b'/export'):
+                os.write(master,command+b'\n\x01');token(b'i')
+            self.assertEqual(len(self.server.requests),before+1)
+            os.write(master,b'/review argument\n\x01');token(b'i')
+            release.set();token(b'c')
+            collect(lambda:len(self.server.requests)>=before+2)
+            collect(lambda:b'recovered reply' in received)
+            users=[m.get('content','') for m in self.server.requests[-1]['body']['messages'] if m['role']=='user']
+            self.assertEqual(users[-1],'fixture-recovered-output argument')
+            # Retire the unused diagnostic writer gate before closing this helper.
+            os.write(trigger,b'h');token(b'r');os.write(trigger,b'g')
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,received)
+
+    def test_bound_question_keeps_slash_command_answer_bytes(self):
+        with PtyProcess() as resources:
+            master,slave=resources.openpty()
+            process=resources.start([BIN,'-C',str(self.workspace),'--ui','line','--permission-mode','plan','fixture-question'],
+                stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+            received=bytearray();collect=partial(collect_pty,self,master,received)
+            collect(lambda:b'Enter a choice number' in received)
+            os.write(master,b'/status\n')
+            collect(lambda:b'answer missing' in received)
+            tools=[m['content'] for m in self.server.requests[-1]['body']['messages'] if m['role']=='tool']
+            self.assertTrue(tools,'Question result missing from provider request')
+            self.assertIn('/status',tools[-1])
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,received)
 
     def test_completed_result_is_saved_and_displayed_before_late_close(self):
         for close in getattr(self,'completed_closes',(b'/quit\n',b'/exit\n',b'\x04',b'\0',b'\x05')):
@@ -2986,7 +3049,7 @@ for failure in ('pipe','spawn'):
                 if p.poll() is None:p.kill();p.wait(timeout=5)
                 os.close(master);os.close(slave)
 
-    def test_late_slash_steering_runs_before_a_deferred_new_session(self):
+    def test_late_builtin_guidance_preserves_a_deferred_new_session(self):
         import pty
         import select
         config=self.home/'config.toml';base=config.read_text()
@@ -3012,9 +3075,8 @@ for failure in ('pipe','spawn'):
                 os.write(master,b'/memory consolidate\n/new\n')
                 wait_for(b'Starting a new session after pending messages are handled.')
                 release.touch();wait_for(b'Started ')
-                self.assertEqual(len(self.server.requests),2)
-                users=[m['content'] for m in self.server.requests[1]['body']['messages'] if m['role']=='user']
-                self.assertEqual(users,['first prompt','/memory consolidate'])
+                self.assertEqual(len(self.server.requests),1,'Active built-in reached the provider')
+                self.assertIn(b'Use local commands after the active turn completes.',received)
                 received=b'';os.write(master,b'fresh session prompt\n');wait_for(b'fixture done')
                 users=[m['content'] for m in self.server.requests[-1]['body']['messages'] if m['role']=='user']
                 self.assertEqual(users,['fresh session prompt'])

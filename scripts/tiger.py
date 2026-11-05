@@ -1,74 +1,197 @@
 #!/usr/bin/env python3
-"""Build/verify/package the modern PPC agent without executing it."""
+"""Build, verify and package the modern PPC agent without executing it."""
+
 import argparse
 import csv
 import io
+import json
 import os
-import pathlib
 import subprocess
-import tarfile
+import tempfile
+from pathlib import Path
 
-ROOT=pathlib.Path(__file__).resolve().parents[1]
-IMAGE=os.environ.get('CODET_TOOLCHAIN_IMAGE','codet-tiger-build:gcc14')
+import tiger_provenance
+from tiger_distribution import (
+    dependency_root,
+    deterministic_archive,
+    extra_notices,
+    publish_archive,
+    validate_ca,
+    write_inputs,
+)
+from validation_evidence import atomic_json
+from verified_sources import file_hash
+
+ROOT = Path(__file__).resolve().parents[1]
+IMAGE = os.environ.get("CODET_TOOLCHAIN_IMAGE", "codet-tiger-build:gcc14")
+
 
 def bind_mount(source, target, readonly=False):
-    fields=['type=bind','src='+str(source),'dst='+target]
-    if readonly:fields.append('readonly')
-    stream=io.StringIO()
-    csv.writer(stream,lineterminator='').writerow(fields)
+    fields = ["type=bind", "src=" + str(source), "dst=" + target]
+    if readonly:
+        fields.append("readonly")
+    stream = io.StringIO()
+    csv.writer(stream, lineterminator="").writerow(fields)
     return stream.getvalue()
 
-def docker(args, mounts=()):
-    image_id=subprocess.check_output(['docker','image','inspect',IMAGE,'--format','{{.Id}}'],text=True).strip()
-    command=['docker','run','--rm','--pull=never','--platform','linux/amd64','--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--tmpfs','/tmp:rw,noexec,nosuid,size=256m','--mount',bind_mount(ROOT,'/project',True),'--mount',bind_mount(ROOT/'build','/project/build')]
-    for source,target in mounts:command+=['--mount',bind_mount(source,target,True)]
-    command+=['--workdir','/project','--entrypoint',args[0],IMAGE,*args[1:]]
-    for key in ['TIGERPORTS_PREFIX','JOBS']:
-        if key in os.environ:command[2:2]=['--env',key+'='+os.environ[key]]
-    command[2:2]=["--env","CODET_TOOLCHAIN_ID="+image_id]
-    subprocess.run(command,check=True)
+
+def image_identity():
+    return subprocess.check_output(
+        ["docker", "image", "inspect", IMAGE, "--format", "{{.Id}}"], text=True, timeout=30
+    ).strip()
+
+
+def docker(args, mounts=(), image=None):
+    identity = image or image_identity()
+    command = [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "--platform",
+        "linux/amd64",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--tmpfs",
+        "/tmp:rw,noexec,nosuid,size=256m",
+        "--mount",
+        bind_mount(ROOT, "/project", True),
+        "--mount",
+        bind_mount(ROOT / "build", "/project/build"),
+        "--mount",
+        bind_mount(dependency_root(ROOT), "/codet-deps", True),
+        "--env",
+        "CODET_DEPENDENCY_ROOT=/codet-deps",
+        "--env",
+        "CODET_TOOLCHAIN_ID=" + identity,
+    ]
+    for source, target in mounts:
+        command += ["--mount", bind_mount(source, target, True)]
+    for key in ("TIGERPORTS_PREFIX", "JOBS"):
+        if key in os.environ:
+            command += ["--env", key + "=" + os.environ[key]]
+    command += ["--workdir", "/project", "--entrypoint", args[0], identity, *args[1:]]
+    subprocess.run(command, check=True)
+
+
+def selected_file(parser, path):
+    try:
+        source = path.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        parser.error("Cannot read packaging file: " + str(path) + ": " + str(error))
+    if not source.is_file() or not os.access(source, os.R_OK):
+        parser.error("Packaging file is not readable: " + str(path))
+    return source
+
 
 def main():
-    parser=argparse.ArgumentParser(__doc__)
-    parser.add_argument('action',choices=['image','sysroot','build','verify','package','package-portable'])
-    parser.add_argument('--ca-bundle',type=pathlib.Path)
-    parser.add_argument('--extra-license',action='append',default=[],type=pathlib.Path)
-    args=parser.parse_args()
-    if args.action=='package-portable':
-        if args.ca_bundle is None:parser.error('package-portable requires --ca-bundle')
-        mounts=[]
-        command=['/usr/bin/python3','scripts/package-tiger-portable.py','--ca-bundle','/run/codet-packaging/ca.pem']
-        for index,path in enumerate([args.ca_bundle,*args.extra_license]):
-            try:source=path.resolve(strict=True)
-            except OSError as error:parser.error('Cannot read packaging file: '+str(path)+': '+str(error))
-            if not source.is_file() or not os.access(source,os.R_OK):parser.error('Packaging file is not readable: '+str(path))
-            target='/run/codet-packaging/ca.pem' if index==0 else '/run/codet-packaging/licenses/'+str(index)+'/'+path.name
-            mounts.append((source,target))
-            if index:command+=['--extra-license',target]
-        (ROOT/'build').mkdir(exist_ok=True)
-        docker(['/usr/bin/python3','scripts/verify-tiger.py'])
-        docker(command,mounts)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "action", choices=["image", "sysroot", "build", "verify", "package", "package-portable"]
+    )
+    parser.add_argument("--ca-bundle", type=Path)
+    parser.add_argument("--extra-license", action="append", default=[], type=Path)
+    args = parser.parse_args()
+    if args.action != "package-portable" and (args.ca_bundle is not None or args.extra_license):
+        parser.error("Packaging file options require package-portable")
+    (ROOT / "build").mkdir(exist_ok=True)
+    if args.action == "image":
+        subprocess.run(
+            [
+                "docker",
+                "build",
+                "--platform",
+                "linux/amd64",
+                "-t",
+                IMAGE,
+                "-f",
+                str(ROOT / "cmake/Dockerfile.tiger"),
+                str(ROOT / "cmake"),
+            ],
+            check=True,
+        )
         return
-    if args.ca_bundle is not None or args.extra_license:parser.error('Packaging file options require package-portable')
-    (ROOT/'build').mkdir(exist_ok=True)
-    if args.action=='image':
-        subprocess.run(['docker','build','--platform','linux/amd64','-t',IMAGE,'-f',str(ROOT/'cmake/Dockerfile.tiger'),str(ROOT/'cmake')],check=True);return
-    if args.action=='sysroot':docker(['/usr/bin/python3','scripts/build-tiger-sysroot.py']);return
-    if args.action=='build':
-        configure=['/usr/bin/cmake','-S','.','-B','build/tiger','-DCMAKE_BUILD_TYPE=Release','-DCODET_TIGERPORTS_PREFIX='+os.environ.get('TIGERPORTS_PREFIX','/opt/tigr')]
-        if not (ROOT/'build/tiger/CMakeCache.txt').exists():configure.append('-DCMAKE_TOOLCHAIN_FILE=cmake/tiger.cmake')
-        docker(configure)
-        docker(['/usr/bin/cmake','--build','build/tiger','-j4','--target','codet','codet_tests','codet_persistence_bench']);return
-    if args.action=='verify':docker(['/usr/bin/python3','scripts/verify-tiger.py']);return
-    docker(['/usr/bin/python3','scripts/verify-tiger.py'])
-    dist=ROOT/'build/dist';dist.mkdir(exist_ok=True)
-    with tarfile.open(dist/'codet-tiger-ppc.tar.gz','w:gz') as bundle:
-        bundle.add(ROOT/'docs/PROMPTS.md',arcname='codet-tiger/PROMPTS.md')
-        for source,target in [('build/tiger/codet','codet'),('build/tiger/codet_tests','codet_tests'),('build/tiger/codet_persistence_bench','codet_persistence_bench'),('docs/RELIABILITY-MODERNIZATION.md','RELIABILITY-MODERNIZATION.md'),('scripts/tiger-acceptance.sh','tiger-acceptance.sh'),('docs/TIGER-ACCEPTANCE.md','TIGER-ACCEPTANCE.md'),('docs/MODERN-AGENT.md','MODERN-AGENT.md'),('docs/FEATURE-PORT.md','FEATURE-PORT.md'),('docs/CODEX-TOOLS.md','CODEX-TOOLS.md'),('docs/REVIEW-FOLLOWUP.md','REVIEW-FOLLOWUP.md'),('docs/validation/followup-analysis.json','validation/followup-analysis.json'),('docs/validation/remaining-review.json','validation/remaining-review.json'),('docs/validation/output-capture.json','validation/output-capture.json'),('docs/validation/process-permissions.json','validation/process-permissions.json'),('tests/fixtures/events-v1.jsonl','tests/fixtures/events-v1.jsonl'),('dependencies.lock.json','dependencies.lock.json'),('tiger-dependencies.lock.json','tiger-dependencies.lock.json'),('build/tiger-sysroot/manifest.json','sysroot-manifest.json'),('build/tiger-verification.json','static-verification.json'),('LICENSE.md','LICENSE.md'),('licenses/codex-APACHE-2.0.txt','licenses/codex-APACHE-2.0.txt'),('licenses/codex-NOTICE.txt','licenses/codex-NOTICE.txt')]:
-            bundle.add(ROOT/source,arcname='codet-tiger/'+target)
-        for name,path in [('googletest','LICENSE'),('json','LICENSE.MIT'),('tomlplusplus','LICENSE'),('json-schema-validator','LICENSE')]:
-            p=ROOT/'.deps'/name/path
-            if p.exists():bundle.add(p,arcname='codet-tiger/licenses/'+name+'.txt')
-    print(dist/'codet-tiger-ppc.tar.gz')
+    if args.action == "sysroot":
+        docker(["/usr/bin/python3", "scripts/build-tiger-sysroot.py"])
+        return
+    if args.action == "build":
+        identity = image_identity()
+        folder = tiger_provenance.prepare(ROOT, dependency_root(ROOT), identity)
+        docker(
+            [
+                "/usr/bin/python3",
+                "scripts/tiger_provenance.py",
+                "build",
+                str(folder.relative_to(ROOT)),
+            ],
+            image=identity,
+        )
+        record = json.loads((folder / "provenance.json").read_text())
+        if record["status"] != "built":
+            raise ValueError("Tiger build did not finish")
+        atomic_json(
+            ROOT / "build/tiger-current.json",
+            dict(build_id=folder.name, sha256=file_hash(folder / "provenance.json")),
+        )
+        print(folder / "native")
+        return
+    try:
+        folder, record = tiger_provenance.load(ROOT)
+        inputs = tiger_provenance.archived_inputs(ROOT)
+        mounts = []
+        command = []
+        if args.action == "package-portable":
+            certificate = selected_file(
+                parser, args.ca_bundle or dependency_root(ROOT) / "tiger-cacert.pem"
+            )
+            validate_ca(
+                ROOT, certificate, json.loads(inputs["tiger-dependencies.lock.json"])["ca_bundle"]
+            )
+            extras = [selected_file(parser, path) for path in args.extra_license]
+            extra_notices(extras, inputs)
+            mounts = [(certificate, "/run/codet-packaging/ca.pem")]
+            command = [
+                "/usr/bin/python3",
+                "scripts/package-tiger-portable.py",
+                "--ca-bundle",
+                "/run/codet-packaging/ca.pem",
+            ]
+            for index, path in enumerate(extras):
+                target = "/run/codet-packaging/licenses/" + str(index) + "/" + path.name
+                mounts.append((path, target))
+                command += ["--extra-license", target]
+    except (OSError, ValueError, KeyError) as error:
+        parser.error(str(error))
+    docker(["/usr/bin/python3", "scripts/verify-tiger.py"], image=record["toolchain_image"])
+    if args.action == "verify":
+        return
+    if args.action == "package-portable":
+        docker(command, mounts, image=record["toolchain_image"])
+        return
+    dist = ROOT / "build/dist"
+    dist.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="tigerports-", dir=dist) as temporary:
+        package = Path(temporary) / "codet-tiger"
+        package.mkdir()
+        write_inputs(package, inputs)
+        import shutil
 
-if __name__=='__main__':main()
+        for name in tiger_provenance.BINARIES:
+            shutil.copy2(folder / "native" / name, package / name)
+        shutil.copy2(ROOT / "build/tiger-verification.json", package / "static-verification.json")
+        shutil.copy2(ROOT / "build/tiger-sysroot/manifest.json", package / "sysroot-manifest.json")
+        tiger_provenance.copy_audit_inputs(ROOT, package)
+        staged = Path(temporary) / "codet-tiger-ppc.tar.gz"
+        deterministic_archive(package, staged, record["source_epoch"])
+        final = dist / staged.name
+        publish_archive(staged, final)
+        print(final)
+
+
+if __name__ == "__main__":
+    main()

@@ -52,25 +52,36 @@ def tls_server(root):
             self.wfile.write(data)
 
     class SecureServer(http.server.ThreadingHTTPServer):
-        def get_request(self):
-            connection, address = super().get_request()
-            connection.settimeout(5)
+        def process_request_thread(self, connection, address):
+            connection.settimeout(2)
+            wrapped = None
             try:
-                return context.wrap_socket(connection, server_side=True), address
-            except BaseException:
+                wrapped = context.wrap_socket(connection, server_side=True)
+                super().process_request_thread(wrapped, address)
+            except (ssl.SSLError, OSError):
                 connection.close()
-                raise
+            finally:
+                if wrapped is not None:
+                    wrapped.close()
 
     server = SecureServer(('127.0.0.1', 0), SecureHandler)
     server.certificate = certificate
     server.requests = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    primary = None
     try:
         yield server
+    except BaseException as error:
+        primary = error
+        raise
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
-        if thread.is_alive():
-            raise RuntimeError('TLS fixture did not stop')
+        try:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+            if thread.is_alive():
+                raise RuntimeError('TLS fixture did not stop')
+        except BaseException:
+            if primary is None:
+                raise

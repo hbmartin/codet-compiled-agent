@@ -153,6 +153,12 @@ def run_controls(root, folder, build, ninja):
          'if (!line.origin || line.origin->session != origin.session || line.origin->turn != origin.turn)',
          'if (false && (!line.origin || line.origin->session != origin.session || line.origin->turn != origin.turn))',
          "TurnInput.CompletedInputKeepsActiveCommandPolicyAndRejectsWrongOrigins"),
+        ("pending-progress", "tests/cli_diagnostics_test.cpp", "include/codet/detail/pending_control.hpp",
+         "if (cancelled)", "if (cancelled || started_)",
+         "PendingControl.PartialPrefixNeverGatesIndependentHandoff"),
+        ("queue-barrier", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_queue.hpp",
+         "held || barrier || !io.active_", "held || (barrier && false) || !io.active_",
+         "SubmissionQueue.DeferredBarrierSurvivesStartingTheEarlierFollowup"),
     ]
     results = []
     for name, entry_name, source_name, before, after, target in cases:
@@ -172,7 +178,9 @@ def run_controls(root, folder, build, ninja):
                    "fragment-boundary": "Unterminated diagnostic hid frozen input",
                    "newline-ack": "Frozen completed line was deferred after its newline",
                    "receipt-admission": "Value of:", "control-overflow": "Value of:",
-                   "origin-owner": "Expected equality", "held-fifo": "Expected equality"}
+                   "origin-owner": "Expected equality", "held-fifo": "Expected equality",
+                   "pending-progress": "Partial control gated an independent handoff",
+                   "queue-barrier": "Deferred barrier became steering input"}
         if (mutant["exit"] != 1 or not mutant["assertions"] or
                 any("C++ exception" in message or "unknown file" in message for message in mutant["assertions"]) or
                 not any(markers[name] in message for message in mutant["assertions"])):
@@ -197,10 +205,6 @@ def run_controls(root, folder, build, ninja):
         ("pending-control-owner", "CliTests.test_partial_pending_controls_never_stall_or_leak_into_messages",
          '    if (line_ && (line_->submission_pending() || pending_control_.started())) {',
          '    if (line_ && line_->submission_pending()) {', "Extra pending input became a user message"),
-        ("pending-control-progress", "CliTests.test_partial_pending_controls_never_stall_or_leak_into_messages",
-         "      if (read_cancel_ && read_cancel_->requested)\n        return {};",
-         "      if ((read_cancel_ && read_cancel_->requested) || pending_control_.started())\n        return {};",
-         "Pending sequence gate failed: b'd'"),
         ("completed-quit", "CliTests.test_completed_turn_honors_frozen_quit_and_drops_earlier_followups",
          '        quit_requested = true;\n        if (phase == detail::TurnInputPhase::active)',
          '        quit_requested = phase == detail::TurnInputPhase::active;\n        if (phase == detail::TurnInputPhase::active)',

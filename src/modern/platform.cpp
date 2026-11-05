@@ -1,5 +1,6 @@
 #include "codet/core.hpp"
 #include "codet/detail/native_output.hpp"
+#include "codet/detail/transport_error.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/output.hpp"
 #include "codet/process_control.hpp"
@@ -340,7 +341,7 @@ class StreamRecord {
   uint64_t epoch_ = 0, serial_ = 0;
 
 public:
-  bool pending = false, available = true;
+  bool pending = false, available = true, fragment = false;
   StreamRecord(std::ostream &output, detail::DiagnosticState &local, bool presentation) noexcept
       : local_(local), shared_(&output == &std::cerr   ? &stderr_stream_state
                                : &output == &std::cout ? &stdout_stream_state
@@ -348,7 +349,8 @@ public:
         buffer_(output.rdbuf()) {
     if (!shared_) {
       local_.bind(buffer_);
-      pending = local_.pending || (presentation && local_.fragment);
+      fragment = local_.fragment;
+      pending = local_.pending || (presentation && fragment);
       return;
     }
     NativeMetadataGuard guard;
@@ -362,7 +364,8 @@ public:
     }
     epoch_ = shared_->epoch;
     serial_ = ++shared_->serial;
-    pending = shared_->state.pending || (presentation && shared_->state.fragment);
+    fragment = shared_->state.fragment;
+    pending = shared_->state.pending || (presentation && fragment);
     shared_->state.pending = true;
   }
   void finish(bool complete, bool attempted, bool fragment) noexcept {
@@ -446,6 +449,12 @@ std::string FileNotice::text() const {
 }
 namespace {
 // Ordinary diagnostics and streamed notices use the same record boundaries and attempt.
+bool record_has_text(std::initializer_list<std::string_view> parts) noexcept {
+  for (auto part : parts)
+    if (!part.empty())
+      return true;
+  return false;
+}
 bool record_ends_line(std::initializer_list<std::string_view> parts, bool newline) noexcept {
   if (newline)
     return true;
@@ -533,6 +542,8 @@ NativeDiagnosticRecord immediate_record(detail::OutputAttempt &attempt) noexcept
 } // namespace
 bool detail::immediate_stderr(std::initializer_list<std::string_view> parts,
                               bool newline) noexcept {
+  if (!newline && !record_has_text(parts))
+    return true;
   OutputAttempt attempt(nullptr, OutputMode::immediate);
   auto record = immediate_record(attempt);
   return record.finish(parts, newline);
@@ -646,6 +657,8 @@ detail::DiagnosticWriter::write_receipt(std::initializer_list<std::string_view> 
   OutputAttempt attempt(io_ ? io_->cancel : nullptr, mode);
   const int native = destination().descriptor;
   if (native >= 0) {
+    if (!presentation && !newline && !record_has_text(parts))
+      return {DiagnosticResult::success, {}};
     const auto inspection = inspect_native(native, attempt);
     {
       NativeMetadataGuard guard;
@@ -690,7 +703,10 @@ detail::DiagnosticWriter::write_receipt(std::initializer_list<std::string_view> 
       if (!complete)
         recover_diagnostic_stream(stream);
     }
-  } recovery{output_, record, !presentation && !record_ends_line(parts, newline)};
+  } recovery{output_, record,
+             !newline && !record_has_text(parts)
+                 ? record.fragment
+                 : !presentation && !record_ends_line(parts, newline)};
   if ((!output_ || (file_ && std::ferror(file_))) && !recover_diagnostic_stream(output_))
     output_.clear(output_.rdstate()); // Preserve configured exception-mask behavior.
   if (record.pending) {
@@ -1055,8 +1071,16 @@ HttpResponse CurlTransport::perform(const HttpRequest &r, const Cancellation &ca
   curl_easy_setopt(raw, CURLOPT_HTTPHEADER, headers);
   curl_easy_setopt(raw, CURLOPT_NOSIGNAL, 1L);
   if (const char *bundle = std::getenv("CODET_CA_BUNDLE"); bundle && *bundle) {
-    curl_easy_setopt(raw, CURLOPT_CAINFO, bundle);
-    curl_easy_setopt(raw, CURLOPT_PROXY_CAINFO, bundle);
+    const auto checked_trust = [&](CURLoption option, const char *value, const char *name) {
+      const auto status = curl_easy_setopt(raw, option, value);
+      if (status != CURLE_OK)
+        throw detail::PermanentTransportError(std::string("Cannot set TLS trust ") + name + ": " +
+                                              curl_easy_strerror(status));
+    };
+    checked_trust(CURLOPT_CAINFO, bundle, "CAINFO");
+    checked_trust(CURLOPT_PROXY_CAINFO, bundle, "PROXY_CAINFO");
+    checked_trust(CURLOPT_CAPATH, nullptr, "CAPATH");
+    checked_trust(CURLOPT_PROXY_CAPATH, nullptr, "PROXY_CAPATH");
   }
   curl_easy_setopt(raw, CURLOPT_CONNECTTIMEOUT, static_cast<long>(r.connect_timeout_seconds));
   curl_easy_setopt(raw, CURLOPT_TIMEOUT, static_cast<long>(r.timeout_seconds));
@@ -1083,10 +1107,16 @@ HttpResponse CurlTransport::perform(const HttpRequest &r, const Cancellation &ca
   cancel.check();
   if (c.callback_failure)
     std::rethrow_exception(c.callback_failure);
-  if (result != CURLE_OK)
-    throw Error(c.error.empty() ? std::string("HTTP transport: ") +
-                                      (error[0] ? error : curl_easy_strerror(result))
-                                : c.error);
+  if (result != CURLE_OK) {
+    const auto message = c.error.empty() ? std::string("HTTP transport: ") +
+                                               (error[0] ? error : curl_easy_strerror(result))
+                                         : c.error;
+    if (result == CURLE_PEER_FAILED_VERIFICATION || result == CURLE_SSL_CACERT_BADFILE ||
+        result == CURLE_SSL_ISSUER_ERROR || result == CURLE_SSL_CRL_BADFILE ||
+        result == CURLE_SSL_PINNEDPUBKEYNOTMATCH || result == CURLE_SSL_CERTPROBLEM)
+      throw detail::PermanentTransportError(message);
+    throw Error(message);
+  }
   long status = 0;
   curl_easy_getinfo(raw, CURLINFO_RESPONSE_CODE, &status);
   return {static_cast<int>(status), std::move(c.body)};
