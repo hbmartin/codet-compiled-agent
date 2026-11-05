@@ -1397,7 +1397,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
           phase, false);
       struct Release {
         Interaction &io;
-        uint64_t sequence;
+        uint64_t sequence = 0;
         ~Release() {
           detail::SubmissionAccess::abandon(io, sequence);
         }
