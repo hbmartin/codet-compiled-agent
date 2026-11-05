@@ -1715,7 +1715,8 @@ class CliTests(unittest.TestCase):
                 before=len(self.server.requests)
                 master,slave=resources.openpty();arm,trigger=resources.pipe();notice,notify=resources.pipe()
                 helper=str(pathlib.Path(BIN).with_name('codet_tests'))
-                process=resources.start([helper,'--codet-pending-input-helper',str(arm),str(notify),
+                helper_mode='--codet-pending-input-signal-helper' if outcome in ('cancel','term') else '--codet-pending-input-helper'
+                process=resources.start([helper,helper_mode,str(arm),str(notify),
                     '-C',str(self.workspace),'--ui','line','--color','never',
                     'fixture-signal-wait fixture-error' if outcome=='failure' else 'fixture-signal-wait'],
                     stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=dict(self.env,TERM='xterm'))
@@ -1745,7 +1746,9 @@ class CliTests(unittest.TestCase):
                         elif outcome=='quit':os.write(master,b'/quit\n');token(b'k')
                         elif outcome=='ctrl-d':os.write(master,b'\x04');token(b'k')
                         elif outcome=='eof':os.write(master,b'\0');token(b'k')
-                        # Let cancellation reach the original provider before unblocking output.
+                        # A successful kill() only queues the signal. Hold the provider until
+                        # the handler has published cancellation, excluding the valid late-stop path.
+                        if outcome in ('cancel','term'):token(b'z')
                         release.set();os.write(trigger,b'g')
                         collect(lambda received=received,process=process:b'Error:' in received or process.poll() is not None)
                         if process.poll() is None:
