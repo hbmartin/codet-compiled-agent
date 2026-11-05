@@ -78,9 +78,11 @@ ImageData encode_image(CGImageRef image, const std::string &detail) {
     throw Error("Invalid image data");
   size_t width = CGImageGetWidth(image), height = CGImageGetHeight(image);
   dimensions(width, height);
-  const double scale = detail == "original" ? 1.0 : std::min(1.0, 1280.0 / std::max(width, height));
-  const size_t w = std::max(size_t{1}, static_cast<size_t>(width * scale)),
-               h = std::max(size_t{1}, static_cast<size_t>(height * scale));
+  const double scale = detail == "original"
+                           ? 1.0
+                           : std::min(1.0, 1280.0 / static_cast<double>(std::max(width, height)));
+  const size_t w = std::max(size_t{1}, static_cast<size_t>(static_cast<double>(width) * scale)),
+               h = std::max(size_t{1}, static_cast<size_t>(static_cast<double>(height) * scale));
   CF<CGColorSpaceRef> colors(CGColorSpaceCreateDeviceRGB());
   std::vector<unsigned char> pixels(w * h * 4);
   CF<CGContextRef> context(

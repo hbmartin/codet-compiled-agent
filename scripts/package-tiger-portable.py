@@ -28,6 +28,38 @@ def dependencies(path):
             for line in output(TOOLS + "otool", "-L", path).splitlines()[1:]]
 
 
+def required_notices():
+    """Read every required notice before a distribution can be published."""
+    paths = {}
+    for name, relative in [("googletest", "LICENSE"), ("json", "LICENSE.MIT"),
+                           ("tomlplusplus", "LICENSE"), ("json-schema-validator", "LICENSE")]:
+        paths[name + ".txt"] = ROOT / ".deps" / name / relative
+    for name, relative in [("legacy-support", "LICENSE"), ("zlib", "LICENSE"),
+                           ("openssl", "LICENSE.txt"), ("curl", "COPYING"),
+                           ("ncurses", "COPYING"), ("libedit", "COPYING")]:
+        paths[name + "-" + relative] = ROOT / ".deps" / ("tiger-" + name) / relative
+    notices = {}
+    for name, path in paths.items():
+        try:
+            data = path.read_bytes()
+        except OSError as error:
+            raise SystemExit("Cannot read required dependency notice: " + str(path)) from error
+        if not data.strip():
+            raise SystemExit("Empty required dependency notice: " + str(path))
+        notices[name] = data
+    sqlite = ROOT / ".deps/tiger-sqlite/sqlite3.h"
+    try:
+        with sqlite.open("rb") as source:
+            header = source.read(65536).lstrip()
+    except OSError as error:
+        raise SystemExit("Cannot read SQLite notice: " + str(sqlite)) from error
+    end = header.find(b"*/")
+    if not header.startswith(b"/*") or end == -1 or b"The author disclaims copyright" not in header[:end]:
+        raise SystemExit("Missing SQLite copyright disclaimer: " + str(sqlite))
+    notices["sqlite-NOTICE.txt"] = header[:end + 2] + b"\n"
+    return notices
+
+
 def main():
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument("--ca-bundle", required=True, type=pathlib.Path)
@@ -36,6 +68,7 @@ def main():
     certificate = args.ca_bundle.resolve()
     if b"-----BEGIN CERTIFICATE-----" not in certificate.read_bytes():
         raise SystemExit("CA bundle contains no PEM certificates")
+    notices = required_notices()
     original = json.loads((ROOT / "build/tiger-verification.json").read_text())
     sysroot = ROOT / "build/tiger-sysroot"
     manifest = json.loads((sysroot / "manifest.json").read_text())
@@ -159,24 +192,11 @@ def main():
             if target.exists():
                 raise SystemExit("License basename collision: " + license_file.name)
             shutil.copy2(license_file, target)
-        for name, relative in [("googletest", "LICENSE"), ("json", "LICENSE.MIT"),
-                               ("tomlplusplus", "LICENSE"),
-                               ("json-schema-validator", "LICENSE")]:
-            shutil.copy2(ROOT / ".deps" / name / relative, package / "licenses" / (name + ".txt"))
-        for name, patterns in {
-            "legacy-support": ["LICENSE"],
-            "zlib": ["LICENSE"],
-            "openssl": ["LICENSE.txt"],
-            "curl": ["COPYING"],
-            "sqlite": ["LICENSE.md"],
-            "ncurses": ["COPYING"],
-            "libedit": ["COPYING"],
-        }.items():
-            source = ROOT / ".deps" / ("tiger-" + name)
-            for pattern in patterns:
-                path = source / pattern
-                if path.is_file():
-                    shutil.copy2(path, package / "licenses" / (name + "-" + path.name))
+        for name, data in notices.items():
+            target = package / "licenses" / name
+            if target.exists():
+                raise SystemExit("License basename collision: " + name)
+            target.write_bytes(data)
         for name in ["dependencies.lock.json", "tiger-dependencies.lock.json"]:
             shutil.copy2(ROOT / name, package / name)
         shutil.copy2(sysroot / "manifest.json", package / "sysroot-manifest.json")
@@ -200,7 +220,7 @@ def main():
             "TLS verification stays enabled. CODET_CA_BUNDLE can select another PEM trust bundle.\n\n"
             "This is a cross-built candidate. PPC execution and live-provider acceptance\n"
             "have not been verified. Run sh ./tiger-acceptance.sh on the Tiger Mac.\n"
-            "The bundled libraries replace the TigerPorts prerequisites in TIGER-ACCEPTANCE.md.\n\n"
+            "See the portable package instructions in TIGER-ACCEPTANCE.md.\n\n"
             "Source: https://github.com/hbmartin/codet-compiled-agent\n"
             "Commit: " + report["source_commit"] + "\n"
             "SOURCE.patch records tracked source changes used for this build.\n"

@@ -1,6 +1,6 @@
 FROM codet-tiger-build:gcc14
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libcurl4-openssl-dev libssl-dev libsqlite3-dev libncurses-dev libedit-dev \
+    libcurl4-openssl-dev libssl-dev openssl libsqlite3-dev libncurses-dev libedit-dev \
     clang-format-18 clang-18 clang-tidy-18 ninja-build python3-yaml && \
     rm -rf /var/lib/apt/lists/*
 COPY analysis-tools.lock.json /opt/codet-analysis/analysis-tools.lock.json

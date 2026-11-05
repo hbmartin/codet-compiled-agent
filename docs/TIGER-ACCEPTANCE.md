@@ -2,9 +2,23 @@
 
 Run these checks on the G4 with 512 MB RAM. The build host never executes the PPC application or test executable.
 
-Install the TigerPorts dependencies matching `sysroot-manifest.json`: curl with OpenSSL, openssl3, zlib, sqlite3, ncurses, libedit, legacy-support, and curl-ca-bundle. The package contains no bundled runtime dylibs. The default target prefix is `/opt/tigr`; a different TigerPorts prefix requires a matching cross-build. `otool -L ./codet` lists direct runtime dependencies.
+Choose the instructions matching your archive:
 
-Extract `codet-tiger-ppc.tar.gz`, enter its directory, then run:
+- **Portable:** extract `codet-tiger-ppc-portable.tar.gz` and enter `codet-tiger`.
+  Runtime dylibs, terminal data, and a PEM CA bundle are included; TigerPorts
+  installation is not required. Keep the folder together and use the top-level
+  `./codet`, `./codet_tests`, and `./codet_persistence_bench` launchers. They select
+  the bundled terminal data and TLS trust. `CODET_CA_BUNDLE` can select another
+  PEM file for origin and HTTPS-proxy trust. Inspect the Mach-O executable with
+  `otool -L ./bin/codet`.
+- **TigerPorts:** extract `codet-tiger-ppc.tar.gz` and enter `codet-tiger`. Install
+  dependencies matching `sysroot-manifest.json`: curl with OpenSSL, openssl3,
+  zlib, sqlite3, ncurses, libedit, legacy-support, and curl-ca-bundle. This variant
+  contains no bundled runtime dylibs. The default prefix is `/opt/tigr`; a
+  different prefix requires a matching cross-build. Inspect dependencies with
+  `otool -L ./codet`.
+
+Both variants require `/usr/bin/grep`. From the extracted directory, run:
 
 ```sh
 sh ./tiger-acceptance.sh

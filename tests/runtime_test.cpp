@@ -521,7 +521,7 @@ TEST_F(Runtime, WorkerDeliveryRetainsRemainingEventsOnUiFailureAndExpiresApprova
   input.post({{"type", "codet.diagnostic"}, {"text", "recovery diagnostic"}});
   EXPECT_THROW(input.deliver([](const Json &) { throw Error("UI failed"); }), Error);
   input.end_turn();
-  EXPECT_THROW(work.get(), Error);
+  EXPECT_THROW(static_cast<void>(work.get()), Error);
   ASSERT_FALSE(staged.empty());
   ASSERT_FALSE(request.empty());
   EXPECT_FALSE(input.answer(request, "yes"));
