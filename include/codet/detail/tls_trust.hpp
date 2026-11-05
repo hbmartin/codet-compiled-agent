@@ -7,8 +7,12 @@
 namespace codet::detail {
 enum class DirectoryTrust : uint8_t { present, absent, unknown };
 // curl's public macro uses a signed shift. Keep an unsigned mask, checking its
-// API value at compile time, including when analysis uses modeled curl headers.
+// Validate the native API without expanding its signed-shift macro into C++.
+// Modeled analyzer headers may omit it; the assertion still rejects a missing
+// or mismatched constant in a real compiler.
+#if CURL_VERSION_HTTPS_PROXY != (1U << 21U)
 static_assert(CURL_VERSION_HTTPS_PROXY == (1U << 21U), "Unsupported curl HTTPS proxy feature bit");
+#endif
 inline bool https_proxy_supported(unsigned int features) noexcept {
   return (features & (1U << 21U)) != 0;
 }
