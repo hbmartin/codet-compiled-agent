@@ -16,6 +16,10 @@ from validation_evidence import production_hashes
 
 def measure(root, ref, workload, repository=None):
     calls = git_calls = process_inspections = 0
+    context = None
+    if workload == "build-context":
+        from evidence_tiger_context_bench import ContextWorkload
+        context = ContextWorkload()
     native = subprocess.check_output
     def counted(*args, **kwargs):
         nonlocal calls, git_calls, process_inspections
@@ -32,6 +36,8 @@ def measure(root, ref, workload, repository=None):
         raise ValueError("Python allocation observation positive control failed")
     del control
     tracemalloc.reset_peak()
+    if context:
+        context.start()
     start = time.perf_counter()
     try:
         if workload == "git-inspection":
@@ -49,6 +55,8 @@ def measure(root, ref, workload, repository=None):
                     hashes[str(number)] = error.process_cleanup["reaped"]
                 else:
                     raise ValueError("Supervision positive control did not time out")
+        elif workload == "build-context":
+            hashes = context.perform()
         else:
             raise ValueError("Unknown tooling workload: " + workload)
         elapsed = (time.perf_counter() - start) * 1000
@@ -57,9 +65,11 @@ def measure(root, ref, workload, repository=None):
     finally:
         subprocess.check_output = native
         tracemalloc.stop()
+        if context:
+            context.close()
     if not hashes or (workload == "git-inspection" and calls < 3):
         raise ValueError("Hash/Git work counter positive control failed")
-    return dict(case=workload, milliseconds=elapsed, files=0 if workload == "supervision" else len(hashes),
+    return dict(**(dict(context_metric_version=1, **context.counts) if context else {}), case=workload, milliseconds=elapsed, files=0 if workload == "supervision" else len(hashes),
                 owned_processes=len(hashes) if workload == "supervision" else 0,
                 check_output_calls=calls, git_commands=git_calls,
                 process_inspection_commands=process_inspections,

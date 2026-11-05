@@ -146,5 +146,20 @@ class DependencyInputs(DistributionFixture):
         self.assertNotEqual(key(),original)
 
 
+class ContextMeasurement(unittest.TestCase):
+    def test_scoped_context_counters_have_an_observed_positive_control(self):
+        import evidence_tool_bench
+        from evidence_benchmarks import verify_tooling_metrics
+        row=evidence_tool_bench.measure(ROOT,"HEAD","build-context")
+        row.update(harness="tooling",workload="build-context")
+        self.assertEqual(row["context_resolutions"],1)
+        self.assertEqual(row["sysroot_snapshots"],2)
+        self.assertEqual(row["path_stat_positive"],1)
+        verify_tooling_metrics(row)
+        row["path_stat_positive"]=0
+        with self.assertRaisesRegex(ValueError,"scoped counters"):
+            verify_tooling_metrics(row)
+
+
 if __name__ == "__main__":
     unittest.main()

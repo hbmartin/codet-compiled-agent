@@ -44,6 +44,12 @@ def verify_tooling_metrics(row):
         raise ValueError('Supervision must record five owned processes, no files or Git commands')
     if row.get('workload') in ('hashing', 'git-inspection') and row['owned_processes']:
         raise ValueError('Hash/Git workloads cannot claim owned processes')
+    if row.get('workload') == 'build-context':
+        if (row.get('context_metric_version') != 1 or row['owned_processes'] or
+                row.get('context_resolutions') not in (1, 3) or row.get('sysroot_snapshots') not in (2, 3) or
+                row.get('path_stat_positive') != 1 or
+                any(type(row.get(key)) is not int or row[key] < 0 for key in ('direct_file_hash_calls','path_stat_calls'))):
+            raise ValueError('Build-context scoped counters or controls are invalid')
 
 
 def verify_samples(rows, summary, workloads, *, sets=2, measured=5):

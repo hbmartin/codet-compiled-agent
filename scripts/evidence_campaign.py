@@ -25,13 +25,13 @@ from validation_evidence import atomic_json, digest, require_quiet_processes, wr
 CASES = {
     "line": ["allocation-positive", "geometry-positive", "busy", "native-busy", "editing", "editing-basic",
              "native-editing", "deletion", "unchanged", "deferred-tail", "native-boundary", "native-flush-boundary", "native-unchanged", "pending-submission", "native-pending-submission", "native-pending-fragment"],
-    "tooling": ["hashing", "git-inspection", "supervision"],
+    "tooling": ["hashing", "git-inspection", "supervision", "build-context"],
     "output": ["write-positive", "stat-positive", "flags-positive", "bounds-positive", "diagnostics-amplified",
                "diagnostics-standalone-amplified", "diagnostics-pipe-amplified"],
     "export": ["small", "large"],
 }
 HARNESS_FILES = ["tests/line_input_bench.cpp", "tests/output_bench.cpp", "tests/export_bench.cpp",
-                 "tests/descriptor_bench_metrics.hpp", "tests/native_stat_interposer.hpp", "tests/native_symbol.hpp", "tests/temp.hpp", "scripts/evidence_tool_bench.py"]
+                 "tests/descriptor_bench_metrics.hpp", "tests/native_stat_interposer.hpp", "tests/native_symbol.hpp", "tests/temp.hpp", "scripts/evidence_tool_bench.py", "scripts/evidence_tiger_context_bench.py"]
 TOOLS = ("clang-tidy", "cppcheck", "clang-analyzer")
 
 
@@ -184,10 +184,13 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
             argv += ["-DCMAKE_OSX_SYSROOT=" + config["sdk"]["path"], "-DCMAKE_OSX_ARCHITECTURES=" + platform.machine(),
                      "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"]
         return argv
-    def configured_outputs(build):
-        return [dict(path=rel(Path(build) / n)) for n in ("CMakeCache.txt", "compile_commands.json", "build.ninja", "generated/prompts.hpp", "generated/core_contract.hpp")]
+    def configured_outputs(build, compiler_metadata=True):
+        names = ["CMakeCache.txt", "compile_commands.json", "build.ninja", "generated/prompts.hpp", "generated/core_contract.hpp"]
+        if compiler_metadata:
+            names.append("codet-compiler-identity.json")
+        return [dict(path=rel(Path(build) / n)) for n in names]
     add("provision-offline", [python, "scripts/fetch-deps.py", "--offline"])
-    focused = "--gtest_filter=NativeRecordLifecycle.*:DiagnosticFixture.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.*:PendingControl.*:SubmissionQueue.*:TurnInput.*:InteractionWarnings.*"
+    focused = "--gtest_filter=NativeRecordLifecycle.*:DiagnosticFixture.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.*:PendingControl.*:SubmissionQueue.*:TurnInput.*:TlsTrust.*:InteractionWarnings.*"
     for mode in ("debug", "asan", "tsan"):
         build = Path(builds[mode])
         args = configure(root, build, "Debug")
@@ -237,15 +240,15 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
         build = folder / (variant + "-release")
         specs = [dict(path=rel(source), git_ref=baseline, git=native["git"])] if variant == "baseline" else [dict(path=".")]
         add(variant + "-configure", configure(source, build, "Release"), ["baseline-source", "provision-offline"] if variant == "baseline" else ["provision-offline"],
-            outputs=configured_outputs(build), source_inputs=specs)
+            outputs=configured_outputs(build, variant == "changed"), source_inputs=specs)
         add(variant + "-build", [native["cmake"], "--build", build, "--target", "codet_line_input_bench", "codet_output_bench", "codet_export_bench", "-j4"],
             [variant + "-configure"], source_inputs=specs,
-            outputs=configured_outputs(build) + [dict(path=rel(build / n), archive=False) for n in ("codet_line_input_bench", "codet_output_bench", "codet_export_bench", "libcodet_core.a", "deps/schema/libnlohmann_json_schema_validator.a")])
+            outputs=configured_outputs(build, variant == "changed") + [dict(path=rel(build / n), archive=False) for n in ("codet_line_input_bench", "codet_output_bench", "codet_export_bench", "libcodet_core.a", "deps/schema/libnlohmann_json_schema_validator.a")])
         probe = rel(build / "analysis/selftest/selftest.json")
         add(variant + "-selftest", [analysis_python, source / "scripts/analyze-modern.py", "--build-dir", build, "--selftest", "--jobs", "4"],
-            [variant + "-configure"], env=analyzer_env, source_inputs=specs, file_inputs=configured_outputs(build), outputs=[dict(path=probe)])
+            [variant + "-configure"], env=analyzer_env, source_inputs=specs, file_inputs=configured_outputs(build, variant == "changed"), outputs=[dict(path=probe)])
         add(variant + "-analysis", [python, "scripts/evidence_campaign.py", "produce", config_path, "analysis-" + variant],
-            [variant + "-selftest"], policy="observation", timeout=1800, env=analyzer_env, source_inputs=specs, file_inputs=configured_outputs(build),
+            [variant + "-selftest"], policy="observation", timeout=1800, env=analyzer_env, source_inputs=specs, file_inputs=configured_outputs(build, variant == "changed"),
             artifacts=[dict(path=rel(folder / ("analysis-" + variant + ".json")), kind="analysis-" + variant, inputs=[rel(config_path), probe])])
     producer("static-comparison", "analysis", ["baseline-analysis", "changed-analysis"], [rel(folder / ("analysis-" + v + ".json")) for v in ("baseline", "changed")] + ["checks/analyzer-relocations.json"])
     producer("semgrep-controls", "semgrep-controls", ["semgrep"], timeout=300)
