@@ -4,6 +4,7 @@ import json
 import os
 import re
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
@@ -65,13 +66,15 @@ def verify_payload(value, inputs=None):
                 cases[0].get('status') != 'run'):
             raise ValueError('Isolated GoogleTest did not run exactly the requested test')
         failed_nodes, errors = cases[0].findall('failure'), cases[0].findall('error')
-        if (int(root.get('failures', '0')) != len(failed_nodes) or
-                int(root.get('errors', '0')) != len(errors)):
+        if (int(root.get('failures', '0')) != int(bool(failed_nodes)) or
+                int(root.get('errors', '0')) != int(bool(errors))):
             raise ValueError('Isolated GoogleTest XML outcome count mismatch')
         failed = bool(failed_nodes or errors)
-        if record['exit'] != int(failed):
+        if value.get('payload_version', 1) == 1 and record['exit'] != int(failed):
             raise ValueError('Isolated GoogleTest exit/result mismatch')
-        failures += failed
+        if type(record.get('exit')) is not int or (failed and record['exit'] == 0):
+            raise ValueError('Isolated GoogleTest exit/result mismatch')
+        failures += bool(failed or record['exit'])
         if cases[0].find('skipped') is not None:
             skipped.append(record['test'])
     if value['skipped'] != skipped or value['failures'] != failures:
@@ -79,13 +82,14 @@ def verify_payload(value, inputs=None):
     return dict(tests=len(expected), disabled=len(disabled), skipped=len(skipped), failures=failures)
 
 
-def run(binary):
+def run(binary, checkpoint=None, suite_timeout=850):
     if any(os.environ.get(name) for name in ('GTEST_FILTER', 'GTEST_TOTAL_SHARDS', 'GTEST_SHARD_INDEX',
                                            'GTEST_REPEAT', 'GTEST_ALSO_RUN_DISABLED_TESTS')):
         raise ValueError('Isolation requires an unfiltered, unsharded GoogleTest environment')
     before = digest(binary)
     results, skipped = [], []
     failures = 0
+    deadline = time.monotonic() + suite_timeout
     with tempfile.TemporaryDirectory(prefix='codet-isolated-gtest-') as temporary:
         report = Path(temporary)/'result.xml'
         command = [str(binary), '--gtest_list_tests', '--gtest_output=xml:'+str(report)]
@@ -93,46 +97,71 @@ def run(binary):
         raw = report.read_text()
         names, disabled = inventory(raw)
         enabled = [name for name in names if name not in disabled]
+        value = dict(payload_version=2, binary=str(binary), binary_sha256=before,
+                     inventory_argv=listed.args, inventory_xml=raw, enabled=len(enabled),
+                     disabled=disabled, skipped=skipped, failures=0, results=results, complete=False)
         for number, name in enumerate(enabled):
             report.unlink(missing_ok=True)
             command = [str(binary), '--gtest_filter='+name, '--gtest_output=xml:'+str(report)]
-            record = dict(test=name, argv=command)
+            record = dict(test=name, argv=command, exit=None)
             try:
-                completed = supervised_run(command, capture_output=True, text=True, timeout=30)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError('Isolated suite deadline exhausted before launch')
+                completed = supervised_run(command, capture_output=True, text=True, timeout=min(30, remaining))
                 record.update(exit=completed.returncode, stdout=completed.stdout, stderr=completed.stderr)
                 record['xml'] = report.read_text()
                 root = parsed_xml(record['xml'])
                 if list(root.iter('skipped')):
                     skipped.append(name)
-                if completed.returncode:
+                failed = bool(list(root.iter('failure')) or list(root.iter('error')))
+                if failed and not completed.returncode:
+                    raise ValueError('Failed assertions with successful process exit')
+                if failed or completed.returncode:
                     failures += 1
                     print(completed.stdout+completed.stderr, flush=True)
             except Exception as error:
                 failures += 1
-                record.update(exit=getattr(error, 'returncode', None), error=str(error),
-                              cleanup=getattr(error, 'process_cleanup', {}))
+                # XML/file/parser failures must not erase a return code already observed.
+                if record['exit'] is None:
+                    record['exit'] = getattr(error, 'returncode', None)
+                record.update(error=str(error), cleanup=getattr(error, 'process_cleanup', {}))
                 print('Isolated test failed: '+name+': '+str(error), flush=True)
             results.append(record)
+            value['failures'] = failures
+            if checkpoint:
+                checkpoint(value)
             if (number+1) % 50 == 0:
                 print('Isolated GoogleTest coverage:', number+1, '/', len(enabled), flush=True)
     if digest(binary) != before:
         raise ValueError('Isolated GoogleTest executable changed')
-    value = dict(binary=str(binary), binary_sha256=before, inventory_argv=listed.args,
-                 inventory_xml=raw, enabled=len(enabled), disabled=disabled,
-                 skipped=skipped, failures=failures, results=results)
+    value['complete'] = not any('error' in record for record in results)
     verify_payload(value)
     return value
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--report', type=Path, required=True)
+    outputs = parser.add_mutually_exclusive_group(required=True)
+    outputs.add_argument('--report', type=Path)
+    outputs.add_argument('--report-root', type=Path)
     parser.add_argument('--inputs', type=json.loads, default=[])
     parser.add_argument('binary', type=Path)
     args = parser.parse_args()
+    if args.report_root:
+        args.report_root.mkdir(parents=True, exist_ok=True)
+        args.report = Path(tempfile.mkdtemp(prefix='run-', dir=args.report_root))/'report.json'
+        if 'CODET_EVIDENCE_CONTEXT' in os.environ:
+            context = json.loads(os.environ['CODET_EVIDENCE_CONTEXT'])
+            selected = [item for item in context['declared_artifacts'] if item['kind'] == 'gtest-isolation']
+            if len(selected) != 1:
+                raise ValueError('Isolation capture must declare exactly one report')
+            args.report = Path(context['root'])/selected[0]['path']
     if args.report.exists():
         raise ValueError('Isolated report already exists; select a fresh output')
-    value = run(args.binary.resolve())
+    from validation_evidence import atomic_json
+    progress = args.report.with_suffix('.progress.json')
+    value = run(args.binary.resolve(), lambda current:atomic_json(progress, current))
     if 'CODET_EVIDENCE_CONTEXT' in os.environ:
         from validation_evidence import write_artifact
         root = Path(json.loads(os.environ['CODET_EVIDENCE_CONTEXT'])['root'])
@@ -142,7 +171,8 @@ def main():
         value['binary_input'] = candidates[0]
         write_artifact(args.report, 'gtest-isolation', value, args.inputs)
     else:
-        args.report.write_text(json.dumps(dict(binding='standalone-unbound', payload=value), indent=2)+'\n')
+        atomic_json(args.report, dict(binding='standalone-unbound', payload=value))
+    progress.unlink(missing_ok=True)
     print('Isolated GoogleTest result:', verify_payload(value), flush=True)
     return int(value['failures'] != 0)
 

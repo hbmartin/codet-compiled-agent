@@ -1020,6 +1020,19 @@ except KeyboardInterrupt as error:
                 if process.poll() is None:process.kill();process.wait(timeout=5)
                 process.stdout.close();process.stderr.close()
 
+    def test_transient_inspection_failure_can_be_followed_by_confirmed_cleanup(self):
+        import process_supervision as supervisor
+        class Process:
+            pid=123456
+            def wait(self, **kwargs):return 0
+        process=Process()
+        with patch.object(supervisor.os,'killpg'),patch.object(supervisor,'group_inactive',
+                side_effect=[subprocess.TimeoutExpired(['ps'],.01),(True,[])]):
+            self.assertEqual(supervisor.stop_group(process,grace=.2),0)
+        self.assertTrue(process.group_cleanup['reaped'])
+        self.assertEqual(process.group_cleanup['failures'],[])
+        self.assertEqual(len(process.group_cleanup['inspections']),1)
+
 
 class ReviewedCppcheckLocations(unittest.TestCase):
     def setUp(self):
@@ -1091,6 +1104,16 @@ class ReviewedCppcheckLocations(unittest.TestCase):
             else:changed['results'][0]['findings'][0]['locations'].append(copy.deepcopy(changed['results'][0]['findings'][0]['locations'][0]))
             with self.assertRaisesRegex(ValueError,'relocation'):
                 self.compare(a,changed,entry)
+
+    def test_duplicate_coordinate_occurrences_match_with_exact_multiplicity(self):
+        from evidence_analysis import finding_key, cppcheck_contexts_match
+        old=dict(id='warning',msg='same',locations=[dict(file='src/a.cpp',line=10,column=1,info='same')]*2)
+        new=dict(id='warning',msg='same',locations=[dict(file='src/a.cpp',line=30,column=1,info='same')]*2)
+        a,b=finding_key('cppcheck',old,self.old),finding_key('cppcheck',new,self.new)
+        entry=dict(location_contexts=[dict(old=list(x),new=list(y),context='first context') for x,y in zip(a[2],b[2])])
+        self.assertTrue(cppcheck_contexts_match(entry,a,b,self.old,self.new), 'Duplicate occurrences lost multiplicity')
+        entry['location_contexts'].pop()
+        self.assertFalse(cppcheck_contexts_match(entry,a,b,self.old,self.new))
 
 
 class SanitizerIsolation(unittest.TestCase):
@@ -1171,6 +1194,47 @@ class SanitizerIsolation(unittest.TestCase):
                 elif change=='command':result['argv'][1]='--gtest_filter=Suite.Other'
                 else:value['enabled']=2
                 with self.assertRaises(ValueError):verify_payload(value)
+
+    def test_multiple_assertions_count_one_failed_case_and_process_exit_is_independent(self):
+        from gtest_isolation import verify_payload
+        value=self.payload();value.update(payload_version=2,failures=1)
+        record=value['results'][0];record['exit']=1
+        record['xml']='<testsuites tests="1" failures="1"><testsuite name="Suite"><testcase classname="Suite" name="A" status="run"><failure/><failure/></testcase></testsuite></testsuites>'
+        self.assertEqual(verify_payload(value)['failures'],1)
+        record['xml']=self.payload()['results'][0]['xml'];record['exit']=23
+        self.assertEqual(verify_payload(value)['failures'],1)
+
+    def test_missing_xml_preserves_exit_and_later_cases_are_checkpointed(self):
+        import gtest_isolation as isolated
+        with tempfile.TemporaryDirectory() as folder:
+            binary=Path(folder)/'binary';binary.write_bytes(b'identity')
+            checkpoints=[]
+            def perform(argv, **kwargs):
+                xml=Path(argv[-1].split('xml:',1)[1])
+                if '--gtest_list_tests' in argv:
+                    xml.write_text('<testsuites tests="2"><testsuite name="Suite"><testcase name="A"/><testcase name="B"/></testsuite></testsuites>')
+                    return subprocess.CompletedProcess(argv,0,'','')
+                if '--gtest_filter=Suite.A' in argv:
+                    return subprocess.CompletedProcess(argv,7,'process output','process error')
+                xml.write_text('<testsuites tests="1"><testsuite name="Suite"><testcase classname="Suite" name="B" status="run"/></testsuite></testsuites>')
+                return subprocess.CompletedProcess(argv,23,'leak output','leak details')
+            with patch.object(isolated,'supervised_run',side_effect=perform):
+                result=isolated.run(binary,lambda value:checkpoints.append(len(value['results'])))
+            self.assertEqual(checkpoints,[1,2])
+            self.assertEqual([r['exit'] for r in result['results']],[7,23])
+            self.assertEqual(result['failures'],2)
+            self.assertIn('error',result['results'][0])
+            self.assertEqual(isolated.verify_payload(result)['failures'],2)
+
+    def test_standalone_report_roots_allow_repeat_runs_without_replacement(self):
+        import gtest_isolation as isolated
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);binary=root/'binary';binary.write_bytes(b'identity')
+            with patch.object(isolated,'run',side_effect=lambda *args:self.payload()):
+                for _ in range(2):
+                    with patch.object(sys,'argv',['launcher','--report-root',str(root/'reports'),str(binary)]):
+                        self.assertEqual(isolated.main(),0)
+            self.assertEqual(len(list((root/'reports').glob('run-*/report.json'))),2)
 
 
 class HashMetricScope(unittest.TestCase):
