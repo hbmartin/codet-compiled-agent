@@ -82,6 +82,29 @@ class PinnedPackaging(DistributionFixture):
                 self.package()
         self.assertEqual(self.archive.read_bytes(),b"previous")
 
+    def test_each_copied_sysroot_input_is_checked_even_if_source_is_restored(self):
+        original=shutil.copy2
+        def copy(source,destination,*args,**kwargs):
+            result=original(source,destination,*args,**kwargs)
+            if Path(source)==self.root/"build/tiger-sysroot/manifest.json":
+                Path(destination).write_text("transient wrong manifest")
+            return result
+        self.archive.write_bytes(b"previous")
+        with patch.object(shutil,"copy2",side_effect=copy):
+            with self.assertRaisesRegex(ValueError,"input changed while copying"):
+                self.package()
+        self.assertEqual(self.archive.read_bytes(),b"previous")
+        tree=shutil.copytree
+        def copy_tree(source,destination,*args,**kwargs):
+            result=tree(source,destination,*args,**kwargs)
+            if Path(source)==self.root/"build/tiger-sysroot/opt/tigr/share/terminfo":
+                (Path(destination)/"d/dumb").write_text("transient wrong terminal data")
+            return result
+        with patch.object(shutil,"copytree",side_effect=copy_tree):
+            with self.assertRaisesRegex(ValueError,"copied sysroot tree differs"):
+                self.package()
+        self.assertEqual(self.archive.read_bytes(),b"previous")
+
     def test_same_frozen_build_packages_identically(self):
         self.package();before=self.archive.read_bytes()
         self.package();self.assertEqual(self.archive.read_bytes(),before)

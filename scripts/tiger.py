@@ -97,8 +97,10 @@ def main():
     parser.add_argument("--ca-bundle", type=Path)
     parser.add_argument("--extra-license", action="append", default=[], type=Path)
     parser.add_argument("--build-timeout", type=tiger_provenance.positive_seconds,
-                        default=tiger_provenance.BUILD_TIMEOUT)
+                        default=None)
     args = parser.parse_args()
+    if args.action != "build" and args.build_timeout is not None:
+        parser.error("--build-timeout requires build")
     if args.action != "package-portable" and (args.ca_bundle is not None or args.extra_license):
         parser.error("Packaging file options require package-portable")
     (ROOT / "build").mkdir(exist_ok=True)
@@ -130,7 +132,7 @@ def main():
                 "scripts/tiger_provenance.py",
                 "build",
                 str(folder.relative_to(ROOT)),
-                "--build-timeout", str(args.build_timeout),
+                "--build-timeout", str(args.build_timeout or tiger_provenance.BUILD_TIMEOUT),
             ],
             image=identity,
         )
@@ -185,13 +187,12 @@ def main():
         package = Path(temporary) / "codet-tiger"
         package.mkdir()
         write_inputs(package, inputs)
-        import shutil
 
         for name in tiger_provenance.BINARIES:
             tiger_provenance.copy_checked(folder / "native" / name, package / name,
                                            record["outputs"][name])
         atomic_json(package / "static-verification.json", context.verified_report())
-        shutil.copy2(ROOT / "build/tiger-sysroot/manifest.json", package / "sysroot-manifest.json")
+        context.copy_sysroot_file("manifest.json", package / "sysroot-manifest.json")
         tiger_provenance.copy_audit_inputs(ROOT, package, context)
         staged = Path(temporary) / "codet-tiger-ppc.tar.gz"
         deterministic_archive(package, staged, record["source_epoch"])

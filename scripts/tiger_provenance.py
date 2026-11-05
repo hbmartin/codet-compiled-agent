@@ -164,7 +164,7 @@ def build(root, folder, build_timeout=BUILD_TIMEOUT):
                 command.update(exit=getattr(error, "returncode", None),
                                outcome="timeout" if isinstance(error, subprocess.TimeoutExpired)
                                else "interrupted" if isinstance(error, KeyboardInterrupt)
-                               else "failed", error=str(error))
+                               else "failed", error=str(error), cleanup=getattr(error, "process_cleanup", None))
                 raise
         after = snapshots(root, deps)
         if (after != record["before"]
@@ -289,6 +289,17 @@ class BuildContext:
     def verify_sysroot(self):
         if tree_hashes(self.root / "build/tiger-sysroot") != self.record["before"]["sysroot"]:
             raise ValueError("Tiger sysroot changed since build")
+
+    def copy_sysroot_file(self, relative, destination):
+        expected = self.record["before"]["sysroot"][relative]
+        copy_checked(self.root / "build/tiger-sysroot" / relative, destination, expected)
+
+    def verify_copied_tree(self, relative, destination):
+        prefix = relative.rstrip("/") + "/"
+        expected = {name[len(prefix):]: digest for name, digest in
+                    self.record["before"]["sysroot"].items() if name.startswith(prefix)}
+        if not expected or tree_hashes(destination) != expected:
+            raise ValueError("Tiger copied sysroot tree differs from build: " + relative)
 
     @property
     def verification(self):

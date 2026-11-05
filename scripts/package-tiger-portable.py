@@ -173,6 +173,7 @@ def main():
         if not terminfo.is_dir():
             raise SystemExit("Missing bundled terminfo")
         shutil.copytree(terminfo, package / "share/terminfo", symlinks=True)
+        context.verify_copied_tree(prefix.lstrip("/") + "/share/terminfo", package / "share/terminfo")
         terminal_root = (package / "share/terminfo").resolve()
         report["excluded_terminfo_aliases"] = []
         for path in terminal_root.rglob("*"):
@@ -219,7 +220,7 @@ def main():
             launcher.chmod(0o755)
         write_inputs(package, inputs)
         write_inputs(package, extras)
-        shutil.copy2(sysroot / "manifest.json", package / "sysroot-manifest.json")
+        context.copy_sysroot_file("manifest.json", package / "sysroot-manifest.json")
         tiger_provenance.copy_audit_inputs(ROOT, package, context)
         report["source_commit"] = provenance["source_commit"]
         (package / "README.txt").write_text(

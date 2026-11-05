@@ -101,6 +101,9 @@ def run_controls(root, folder):
          '        value = json.loads((output / "codet-compiler-identity.json").read_text())',
          '        next(line for line in (output / "CMakeCache.txt").read_text().splitlines() if line.startswith("CMAKE_C_COMPILER:"))\n        value = json.loads((output / "codet-compiler-identity.json").read_text())',
          "test_tiger_recovery.CompilerIdentity.test_real_configure_with_toolchain_variables_and_spaces"),
+        ("tiger-copied-input", "tiger_provenance",
+         "    if file_hash(destination) != digest:", "    if False:",
+         "test_tiger_recovery.PinnedPackaging.test_each_copied_sysroot_input_is_checked_even_if_source_is_restored"),
         ("tiger-pinned-context", "tiger_provenance",
          "def archived_inputs(root, context=None):\n    context = context or resolve(root)",
          "def archived_inputs(root, context=None):\n    context = resolve(root)",
@@ -137,7 +140,8 @@ def run_controls(root, folder):
                    "hash-version": "ValueError not raised", "tooling-counts": "ValueError not raised", "isolated-coverage": "ValueError not raised",
                    "isolated-protocol": "Protocol error lost its failed report",
                    "tiger-compiler-metadata": "Valid configure metadata was rejected",
-                   "tiger-pinned-context": "Packaging reloaded its mutable build pointer"}
+                   "tiger-pinned-context": "Packaging reloaded its mutable build pointer",
+                   "tiger-copied-input": "ValueError not raised"}
         if name in markers and not any(markers[name] in text for text in runs[1]["failure_details"]):
             raise ValueError("Control missed its intended assertion: " + name)
         results.append(dict(name=name, test=target, baseline=runs[0], mutant=runs[1]))

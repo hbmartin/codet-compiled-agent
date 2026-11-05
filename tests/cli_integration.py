@@ -1552,6 +1552,12 @@ class CliTests(unittest.TestCase):
             self.assertNotIn(b'Pending message not sent: later',received)
             submitted=[json.loads(line)['prompt'] for line in log.read_text().splitlines()]
             self.assertEqual(submitted,['fixture-signal-wait','later','/review argument'])
+            import sqlite3
+            with sqlite3.connect(self.home/'state.sqlite3') as database:
+                self.assertEqual(database.execute('SELECT status FROM sessions ORDER BY rowid DESC LIMIT 1').fetchone(),('complete',))
+                persisted=[json.loads(row[0]) for row in database.execute('SELECT payload FROM session_messages ORDER BY position')]
+            self.assertEqual([m['text'] for m in persisted if m['role']=='user'],
+                ['fixture-signal-wait','later','fixture-recovered-output argument'])
             os.write(trigger,b'h');token(b'r');os.write(trigger,b'g')
             os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
             self.assertEqual(process.returncode,0,received)
