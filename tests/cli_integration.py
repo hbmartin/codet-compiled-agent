@@ -1542,7 +1542,8 @@ class CliTests(unittest.TestCase):
             for text in (b'/reveiw',b'later',b'/review argument'):
                 os.write(master,text+b'\n\x01');token(b'i')
             release.set();token(b'c')
-            collect(lambda:b'recovered reply' in received)
+            collect(lambda:b'recovered reply' in received or b'Pending message not sent: later' in received)
+            self.assertNotIn(b'Pending message not sent: later',received,'Local command error discarded later admitted input')
             requests=self.server.requests[before:]
             self.assertEqual(len(requests),3,'Bad command lost later queued input')
             self.assertEqual([r['body']['messages'][-1]['content'] for r in requests[1:]],
@@ -1567,6 +1568,9 @@ class CliTests(unittest.TestCase):
             for text in (b'A',b'B'):
                 os.write(master,text+b'\n\x01');token(b'i')
             stop_release.touch();token(b'c')
+            collect(lambda:len(self.server.requests)>=before+2)
+            first=[m['content'] for m in self.server.requests[before+1]['body']['messages'] if m['role']=='user']
+            self.assertNotIn('B',first,'Unread steering merged followup turns')
             collect(lambda:len(self.server.requests)>=before+3)
             users=[[m['content'] for m in r['body']['messages'] if m['role']=='user'] for r in self.server.requests[before+1:]]
             self.assertEqual([u[-1] for u in users],['A','B'],'Unread steering merged followup turns')

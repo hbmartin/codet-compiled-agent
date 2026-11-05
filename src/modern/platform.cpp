@@ -711,10 +711,13 @@ detail::DiagnosticWriter::write_receipt(std::initializer_list<std::string_view> 
   if ((!output_ || (file_ && std::ferror(file_))) && !recover_diagnostic_stream(output_))
     output_.clear(output_.rdstate()); // Preserve configured exception-mask behavior.
   if (record.pending) {
+    recovery.attempted = true;
     output_.put('\n');
     if (!output_)
       return {DiagnosticResult::failure, {}};
     record.pending = false;
+    if (!record_has_text(parts))
+      recovery.fragment = false; // The empty record delivered a real line boundary.
   }
   for (auto part : parts) {
     while (!part.empty() && output_) {

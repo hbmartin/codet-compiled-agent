@@ -2445,4 +2445,15 @@ TEST(TlsTrust, RealTrustFailuresNeverFallBackToDefaults) {
   EXPECT_EQ(detail::directory_trust("rustls/0.23"), detail::DirectoryTrust::absent);
   EXPECT_EQ(detail::directory_trust("OpenSSL/3.0"), detail::DirectoryTrust::present);
   EXPECT_EQ(detail::directory_trust("future-backend"), detail::DirectoryTrust::unknown);
+  EXPECT_EQ(detail::directory_trust("SchannelFuture"), detail::DirectoryTrust::unknown);
+}
+
+TEST(DiagnosticWriter, EmptyInjectedSeparationClosesTheFragmentExactlyOnce) {
+  std::ostringstream output;
+  detail::DiagnosticWriter writer(output);
+  ASSERT_TRUE(writer.write({"fragment"}, false));
+  EXPECT_EQ(writer.write_receipt({}, false, true, true).result, detail::DiagnosticResult::success);
+  EXPECT_EQ(writer.write_receipt({"prompt"}, false, true, true).result,
+            detail::DiagnosticResult::success);
+  EXPECT_EQ(output.str(), "fragment\nprompt") << "Empty separator kept a stale fragment";
 }

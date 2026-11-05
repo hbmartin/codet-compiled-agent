@@ -1232,6 +1232,33 @@ class SanitizerIsolation(unittest.TestCase):
             self.assertIn('error',result['results'][0])
             self.assertEqual(isolated.verify_payload(result)['failures'],2)
 
+    def test_failed_and_skipped_cases_preserve_reports_with_inconsistent_zero_exit(self):
+        import gtest_isolation as isolated
+        for exit_code in (0,1):
+            with self.subTest(exit_code=exit_code), tempfile.TemporaryDirectory() as folder:
+                binary=Path(folder)/'binary';binary.write_bytes(b'identity');checkpoints=[]
+                def perform(argv, exit_code=exit_code, **kwargs):
+                    xml=Path(argv[-1].split('xml:',1)[1])
+                    if '--gtest_list_tests' in argv:
+                        xml.write_text('<testsuites tests="2"><testsuite name="Suite"><testcase name="A"/><testcase name="B"/></testsuite></testsuites>')
+                        return subprocess.CompletedProcess(argv,0,'','')
+                    if '--gtest_filter=Suite.A' in argv:
+                        xml.write_text('<testsuites tests="1" failures="1"><testsuite name="Suite"><testcase classname="Suite" name="A" status="run"><failure message="intended failure"/><skipped/></testcase></testsuite></testsuites>')
+                        return subprocess.CompletedProcess(argv,exit_code,'failure details','')
+                    xml.write_text('<testsuites tests="1"><testsuite name="Suite"><testcase classname="Suite" name="B" status="run"/></testsuite></testsuites>')
+                    return subprocess.CompletedProcess(argv,0,'','')
+                with patch.object(isolated,'supervised_run',side_effect=perform):
+                    try:
+                        value=isolated.run(binary,lambda current, checkpoints=checkpoints:checkpoints.append(len(current['results'])))
+                    except ValueError as error:
+                        self.fail('Protocol error lost its failed report: '+str(error))
+                self.assertEqual(checkpoints,[1,2])
+                self.assertEqual(value['failures'],1,'Protocol error lost its failed report')
+                self.assertEqual(value['results'][0]['exit'],exit_code)
+                self.assertIn('failure',value['results'][0]['xml'])
+                self.assertEqual(value['skipped'],[] if exit_code==0 else ['Suite.A'])
+                self.assertEqual(isolated.verify_payload(value)['failures'],1)
+
     def test_standalone_report_roots_allow_repeat_runs_without_replacement(self):
         import os
 

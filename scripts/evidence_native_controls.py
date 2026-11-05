@@ -146,8 +146,8 @@ def run_controls(root, folder, build, ninja):
         ("control-overflow", "tests/cli_diagnostics_test.cpp", "include/codet/detail/pending_control.hpp",
          '--overflow_;', 'overflow_ = 0;', "PendingControl.BackspaceConsumesOverflowBeforeTheRetainedPrefix"),
         ("held-fifo", "tests/cli_diagnostics_test.cpp", "include/codet/detail/turn_input.hpp",
-         'phase == TurnInputPhase::completed || line.presentation_held || held',
-         'phase == TurnInputPhase::completed || line.presentation_held || (held && false)',
+         'phase == TurnInputPhase::completed || line.presentation_held',
+         'phase == TurnInputPhase::completed || (line.presentation_held && false)',
          "TurnInput.ExpiredAnswersNeverBecomeMessagesAndHeldOrderPrecedesSteering"),
         ("origin-owner", "tests/cli_diagnostics_test.cpp", "include/codet/detail/turn_input.hpp",
          'if (!line.origin || line.origin->session != origin.session || line.origin->turn != origin.turn)',
@@ -156,6 +156,19 @@ def run_controls(root, folder, build, ninja):
         ("pending-progress", "tests/cli_diagnostics_test.cpp", "include/codet/detail/pending_control.hpp",
          "if (cancelled)", "if (cancelled || started_)",
          "PendingControl.PartialPrefixNeverGatesIndependentHandoff"),
+        ("path-prose", "tests/cli_diagnostics_test.cpp", "include/codet/detail/turn_input.hpp",
+         "if (!custom_command_name(text).empty())", "if (!text.empty() && text.front() == '/')",
+         "TurnInput.PathsAreProseButValidUnknownCommandsKeepTheirIdlePolicy"),
+        ("tls-capability", "tests/cli_diagnostics_test.cpp", "include/codet/detail/tls_trust.hpp",
+         "capabilities.directories == DirectoryTrust::absent", "capabilities.directories == DirectoryTrust::present",
+         "TlsTrust.UnsupportedDirectoryStoresAreAcceptedOnlyForKnownAbsentCapabilities"),
+        ("unread-turn", "src/modern/interaction.cpp", "src/modern/interaction.cpp",
+         "      line.kind = InputKind::followup;", "      line.kind = InputKind::steering;",
+         "SubmissionQueue.UnreadSteeringClosesIntoSeparateFollowupTurns"),
+        ("empty-fragment", "src/modern/platform.cpp", "src/modern/platform.cpp",
+         "recovery.fragment = false; // The empty record delivered a real line boundary.",
+         "recovery.fragment = record.fragment; // Mutant retains the old fragment.",
+         "DiagnosticWriter.EmptyInjectedSeparationClosesTheFragmentExactlyOnce"),
         ("queue-barrier", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_queue.hpp",
          "held || barrier || !io.active_", "held || (barrier && false) || !io.active_",
          "SubmissionQueue.DeferredBarrierSurvivesStartingTheEarlierFollowup"),
@@ -180,7 +193,10 @@ def run_controls(root, folder, build, ninja):
                    "receipt-admission": "Value of:", "control-overflow": "Value of:",
                    "origin-owner": "Expected equality", "held-fifo": "Expected equality",
                    "pending-progress": "Partial control gated an independent handoff",
-                   "queue-barrier": "Deferred barrier became steering input"}
+                   "queue-barrier": "Deferred barrier became steering input",
+                   "unread-turn": "Unread steering crossed its originating turn",
+                   "empty-fragment": "Empty separator kept a stale fragment",
+                   "path-prose": "Expected equality", "tls-capability": "Actual:"}
         if (mutant["exit"] != 1 or not mutant["assertions"] or
                 any("C++ exception" in message or "unknown file" in message for message in mutant["assertions"]) or
                 not any(markers[name] in message for message in mutant["assertions"])):
@@ -202,6 +218,10 @@ def run_controls(root, folder, build, ninja):
         raise ValueError("Pending keyboard mutant did not fail its intended assertion: " + repr(mutant))
     results.append(dict(name="pending-keyboard", target="CliTests.test_frozen_submission_obeys_turn_outcome_and_services_controls", mutation=dict(before=before, after=after, original_sha256=digest(root / "src/modern/cli.cpp"), mutant_sha256=digest(source)), binary_sha256=digest(binary), baseline=baseline, compile=compiled, link=linked, mutant=mutant))
     review_controls = [
+        ("command-isolation", "CliTests.test_bad_deferred_command_preserves_later_messages_and_expands_once",
+         "continue; // A local command error owns this item, never the remaining queue.",
+         "pending_input(false); continue; // Mutant discards unrelated input.",
+         "Local command error discarded later admitted input"),
         ("pending-control-owner", "CliTests.test_partial_pending_controls_never_stall_or_leak_into_messages",
          '    if (line_ && (line_->submission_pending() || pending_control_.started())) {',
          '    if (line_ && line_->submission_pending()) {', "Extra pending input became a user message"),

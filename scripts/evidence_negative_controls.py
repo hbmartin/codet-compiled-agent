@@ -93,6 +93,18 @@ def run_controls(root, folder):
          'if False:', "HashMetricScope.test_tooling_commands_and_memory_have_distinct_verified_scopes"),
         ("isolated-coverage", "gtest_isolation", 'if Counter(actual) != Counter(expected):',
          'if False:', "SanitizerIsolation.test_missing_duplicate_and_substituted_tests_are_rejected"),
+        ("isolated-protocol", "gtest_isolation",
+         "                failed = bool(list(root.iter('failure')) or list(root.iter('error')))\n                if failed and not completed.returncode:\n                    raise ValueError('Failed assertions with successful process exit')\n                if list(root.iter('skipped')):\n                    skipped.append(name)",
+         "                if list(root.iter('skipped')):\n                    skipped.append(name)\n                failed = bool(list(root.iter('failure')) or list(root.iter('error')))\n                if failed and not completed.returncode:\n                    raise ValueError('Failed assertions with successful process exit')",
+         "SanitizerIsolation.test_failed_and_skipped_cases_preserve_reports_with_inconsistent_zero_exit"),
+        ("tiger-compiler-metadata", "tiger_provenance",
+         '        value = json.loads((output / "codet-compiler-identity.json").read_text())',
+         '        next(line for line in (output / "CMakeCache.txt").read_text().splitlines() if line.startswith("CMAKE_C_COMPILER:"))\n        value = json.loads((output / "codet-compiler-identity.json").read_text())',
+         "test_tiger_recovery.CompilerIdentity.test_real_configure_with_toolchain_variables_and_spaces"),
+        ("tiger-pinned-context", "tiger_provenance",
+         "def archived_inputs(root, context=None):\n    context = context or resolve(root)",
+         "def archived_inputs(root, context=None):\n    context = resolve(root)",
+         "test_tiger_recovery.PinnedPackaging.test_current_pointer_can_change_between_copy_stages_without_mixing_builds"),
     ]
     results = []
     for name, module, before, after, target in cases:
@@ -107,7 +119,7 @@ def run_controls(root, folder):
             output = directory / (label + ".json")
             output.unlink(missing_ok=True)
             argv = [sys.executable, "-c", RUNNER, str(root), str(path), module,
-                    "test_validation_evidence." + target, str(output)]
+                    target if target.startswith("test_") else "test_validation_evidence." + target, str(output)]
             process = supervised_run(argv, capture_output=True, text=True, timeout=30, cleanup_grace=4)
             value = json.loads(output.read_text())
             if value["exit"] != process.returncode:
@@ -122,7 +134,10 @@ def run_controls(root, folder):
                    "cleanup-escalation": "Repeated interruption skipped escalation",
                    "cleanup-inactive": "Leader was reaped before group ownership ended",
                    "cppcheck-order": "Valid reordered Cppcheck relocation was rejected",
-                   "hash-version": "ValueError not raised", "tooling-counts": "ValueError not raised", "isolated-coverage": "ValueError not raised"}
+                   "hash-version": "ValueError not raised", "tooling-counts": "ValueError not raised", "isolated-coverage": "ValueError not raised",
+                   "isolated-protocol": "Protocol error lost its failed report",
+                   "tiger-compiler-metadata": "Valid configure metadata was rejected",
+                   "tiger-pinned-context": "Packaging reloaded its mutable build pointer"}
         if name in markers and not any(markers[name] in text for text in runs[1]["failure_details"]):
             raise ValueError("Control missed its intended assertion: " + name)
         results.append(dict(name=name, test=target, baseline=runs[0], mutant=runs[1]))
