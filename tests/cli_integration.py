@@ -17,6 +17,7 @@ from functools import partial
 
 from pty_process import PtyProcess, line_cells
 from pty_process import collect as collect_pty
+from tls_fixture import tls_server
 
 BIN=str(pathlib.Path(sys.argv.pop(1)).resolve())
 FIXTURES=pathlib.Path(__file__).resolve().parent/'fixtures'
@@ -255,52 +256,37 @@ class CliTests(unittest.TestCase):
             self.tmp.cleanup()
     def run_cli(self,*args,input=''):
         return subprocess.run([BIN,'-C',str(self.workspace),*args],input=input,text=True,capture_output=True,env=self.env,timeout=15)
+    def assert_selected_tls_trust(self,server,flags):
+        self.env.pop('CODET_CA_BUNDLE',None)
+        denied=self.run_cli(*flags)
+        self.assertNotEqual(denied.returncode,0,denied.stdout)
+        self.assertEqual(server.requests,[])
+        self.env['CODET_CA_BUNDLE']=str(server.certificate)
+        accepted=self.run_cli(*flags)
+        self.assertEqual(accepted.returncode,0,accepted.stderr)
+        self.assertIn('trusted TLS fixture',accepted.stdout)
+        self.assertEqual(len(server.requests),1)
+        missing_path=self.root/'missing.pem'
+        self.env['CODET_CA_BUNDLE']=str(missing_path)
+        missing=self.run_cli(*flags)
+        self.assertNotEqual(missing.returncode,0,missing.stdout)
+        self.assertIn(str(missing_path),missing.stderr)
+        self.assertEqual(len(server.requests),1)
     def test_explicit_ca_bundle_preserves_tls_verification(self):
-        import ssl
-        certificate=self.root/'localhost.pem'
-        key=self.root/'localhost.key'
-        config=self.root/'certificate.cnf'
-        config.write_text('[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n'
-                          '[dn]\nCN=localhost\n[ext]\nsubjectAltName=IP:127.0.0.1\n'
-                          'basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,digitalSignature,keyEncipherment\n')
-        subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1',
-                        '-config',str(config),'-keyout',str(key),'-out',str(certificate)],
-                       check=True,capture_output=True,timeout=15)
-        class SecureHandler(http.server.BaseHTTPRequestHandler):
-            def log_message(self,*args):pass
-            def do_POST(self):
-                self.rfile.read(int(self.headers['Content-Length']))
-                data=(b'data: {"choices":[{"delta":{"content":"trusted TLS fixture"},"finish_reason":null}]}\n\n'
-                      b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')
-                self.send_response(200)
-                self.send_header('Content-Type','text/event-stream')
-                self.send_header('Content-Length',str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-        server=http.server.ThreadingHTTPServer(('127.0.0.1',0),SecureHandler)
-        context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(certificate,key)
-        server.socket=context.wrap_socket(server.socket,server_side=True)
-        thread=threading.Thread(target=server.serve_forever,daemon=True)
-        thread.start()
-        try:
+        with tls_server(self.root) as server:
             flags=['exec','--ephemeral','-c',
                    f'providers.openai.base_url="https://127.0.0.1:{server.server_port}/v1"','hello']
-            # The private CA is untrusted without an explicit override.
-            denied=self.run_cli(*flags)
-            self.assertNotEqual(denied.returncode,0,denied.stdout)
-            self.env['CODET_CA_BUNDLE']=str(certificate)
-            accepted=self.run_cli(*flags)
-            self.assertEqual(accepted.returncode,0,accepted.stderr)
-            self.assertIn('trusted TLS fixture',accepted.stdout)
-            # A missing explicitly selected trust file must fail closed.
-            self.env['CODET_CA_BUNDLE']=str(self.root/'missing.pem')
-            missing=self.run_cli(*flags)
-            self.assertNotEqual(missing.returncode,0,missing.stdout)
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=5)
+            self.assert_selected_tls_trust(server,flags)
+    def test_explicit_ca_bundle_applies_to_https_proxy(self):
+        with tls_server(self.root) as server:
+            # An HTTP origin keeps the fixture focused on the proxy TLS handshake.
+            # libcurl sends an absolute HTTP request to this loopback HTTPS proxy;
+            # it never resolves or connects to provider.invalid.
+            self.env.update(http_proxy=f'https://127.0.0.1:{server.server_port}',NO_PROXY='')
+            flags=['exec','--ephemeral','-c',
+                   'providers.openai.base_url="http://provider.invalid/v1"','hello']
+            self.assert_selected_tls_trust(server,flags)
+            self.assertTrue(server.requests[0].startswith('http://provider.invalid/'))
     def terminal_startup(self,mode,binary=BIN):
         temporary=self.root/'terminal-tmp';temporary.mkdir()
         helper=pathlib.Path(__file__).with_name('terminal_cli_helper.py')
