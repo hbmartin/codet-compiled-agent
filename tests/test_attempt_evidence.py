@@ -46,6 +46,11 @@ class AttemptPublication(unittest.TestCase):
         result=subprocess.run([sys.executable,str(moved/"verify-attempt.py"),str(moved)],
             cwd=moved.parent,env={"PATH":os.defpath},capture_output=True,text=True,timeout=30)
         self.assertEqual(result.returncode,0,result.stderr)
+        replay=subprocess.run([sys.executable,str(moved/"assemble-attempt.py"),"--help"],
+            cwd=moved.parent,env={"PATH":os.defpath},capture_output=True,text=True,timeout=30)
+        self.assertEqual(replay.returncode,0,replay.stderr)
+        self.assertIn("--campaign",replay.stdout)
+        self.assertNotIn("another Python unittest",(moved/"README.md").read_text())
         report=json.loads((moved/"report.json").read_text())
         self.assertEqual(set(report["assembly_inputs"]),{"evidence_attempt.py","evidence_attempt_audit.py"})
         self.assertNotIn('/private/tmp/codet-',(moved/"evidence_attempt.py").read_text())
