@@ -169,7 +169,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
                            timeout_seconds=timeout, artifacts=list(artifacts),
                            directory_inputs=(config["dependency_roots"] if
                                name.endswith(("-configure", "-build", "-selftest", "-analysis")) or
-                               name in ("benchmark-harness", "native-negative-controls") else []),
+                               name in ("benchmark-harness", "native-negative-controls") else []) + extra.pop("directory_inputs", []),
                            file_inputs=([dict(path=str(ca_bundle))] if ca_bundle else []) + extra.pop("file_inputs", []), **extra))
     def producer(name, action, requires=(), inputs=(), timeout=600, **extra):
         names = [rel(config_path)] + list(inputs)
@@ -210,7 +210,9 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
         if mode != "tsan":
             add(mode + "-ctest", [native["ctest"], "--test-dir", build, "--output-on-failure", "-j2"], [mode + "-build"], timeout=1200,
                 artifacts=[isolation] if isolation else [],
-                file_inputs=([dict(path=name, archive=not name.endswith("/codet_tests")) for name in isolation_inputs] if isolation else []))
+                file_inputs=([dict(path=name, archive=not name.endswith("/codet_tests")) for name in isolation_inputs] if isolation else []) +
+                    [dict(path=rel(path)) for path in sorted((root / "licenses").glob("*")) if path.is_file()],
+                directory_inputs=["licenses"])
         else:
             add("tsan-20", [build / "codet_tests", focused, "--gtest_repeat=20"], [mode + "-build"])
     debug = Path(builds["debug"])
