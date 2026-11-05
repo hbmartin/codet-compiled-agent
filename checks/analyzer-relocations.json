@@ -188,7 +188,7 @@
     "src/modern/agent.cpp": "2a87744e08b988f8f995d04ac1ff90eecb057099b9d6a479e4215a4f6abba5b0",
     "src/modern/artifacts.cpp": "6bd6b5576aa7167b2fba7a085efe17ab381a689c3a9f8fdfd00a4cf9a2fe145c",
     "src/modern/capture_catalog.cpp": "2d34912ab50f692309883726bb9cb1bc1b31c5ce5e92aca8d564511b0bb3db1c",
-    "src/modern/cli.cpp": "64578b9d6b4b70e089c922d246bc2972f9df3e9b6ee70c976aae01f5b26ddda5",
+    "src/modern/cli.cpp": "3c6036c84f7ce2eaec4ab17894942f175c961be49891309de013e4736baac9af",
     "src/modern/computer.cpp": "280112859a870db9deaa3d51cc1311f5fcdefa3eaec4ee7f3daac68145172ff9",
     "src/modern/config.cpp": "6ef1d1b7829a83339e773843cbeff09db275db4a3dd8499e7c0fa0dad0d802ca",
     "src/modern/context.cpp": "30ef96299db52a88a0904e30461f945da4e13b20ff7d5e15969534ed2de10825",

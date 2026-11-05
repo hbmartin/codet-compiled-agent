@@ -218,6 +218,10 @@ def run_controls(root, folder, build, ninja):
         raise ValueError("Pending keyboard mutant did not fail its intended assertion: " + repr(mutant))
     results.append(dict(name="pending-keyboard", target="CliTests.test_frozen_submission_obeys_turn_outcome_and_services_controls", mutation=dict(before=before, after=after, original_sha256=digest(root / "src/modern/cli.cpp"), mutant_sha256=digest(source)), binary_sha256=digest(binary), baseline=baseline, compile=compiled, link=linked, mutant=mutant))
     review_controls = [
+        ("command-filesystem", "CliTests.test_filesystem_command_preparation_error_preserves_later_input",
+         "prepared = detail::PreparedPrompt{*input, tools.expand_command(*input)};\n      } catch (const std::bad_alloc &) {\n        throw;\n      } catch (const std::exception &error) {",
+         "prepared = detail::PreparedPrompt{*input, tools.expand_command(*input)};\n      } catch (const std::bad_alloc &) {\n        throw;\n      } catch (const Error &error) {",
+         "Filesystem command error ended the interactive session"),
         ("command-isolation", "CliTests.test_bad_deferred_command_preserves_later_messages_and_expands_once",
          "continue; // A local command error owns this item, never the remaining queue.",
          "pending_input(false); continue; // Mutant discards unrelated input.",

@@ -1562,6 +1562,23 @@ class CliTests(unittest.TestCase):
             os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
             self.assertEqual(process.returncode,0,received)
 
+    def test_filesystem_command_preparation_error_preserves_later_input(self):
+        (self.home/'commands').mkdir(parents=True,exist_ok=True)
+        with self.pending_sequence() as context:
+            process,master,trigger,received,collect,token,release,before=context
+            for text in (b'/'+b'x'*300,b'later'):
+                os.write(master,text+b'\n\x01');token(b'i')
+            release.set();token(b'c')
+            collect(lambda:bytes(received).count(b'fixture done')>=2 or process.poll() is not None)
+            self.assertIsNone(process.poll(),'Filesystem command error ended the interactive session')
+            self.assertEqual(len(self.server.requests),before+2,'Filesystem command error lost queued input')
+            self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'later')
+            self.assertIn(b'Error:',received)
+            self.assertNotIn(b'Pending message not sent: later',received)
+            os.write(trigger,b'h');token(b'r');os.write(trigger,b'g')
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,received)
+
     def test_two_unread_steering_lines_become_separate_followup_turns(self):
         marker=self.workspace/'separate-stop';stop_release=self.workspace/'separate-release'
         hook='if test ! -f '+str(marker)+'; then touch '+str(marker)+'; while test ! -f '+str(stop_release)+'; do sleep .01; done; fi'

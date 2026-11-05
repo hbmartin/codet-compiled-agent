@@ -1632,7 +1632,9 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       }
       try {
         prepared = detail::PreparedPrompt{*input, tools.expand_command(*input)};
-      } catch (const Error &error) {
+      } catch (const std::bad_alloc &) {
+        throw;
+      } catch (const std::exception &error) {
         terminal->say(std::string("Error: ") + error.what());
         continue; // A local command error owns this item, never the remaining queue.
       }
