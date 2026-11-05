@@ -125,7 +125,7 @@ class DistributionFixture(unittest.TestCase):
         for name in provenance.BINARIES:
             (self.folder / "native" / name).write_bytes(struct.pack(">IIII", 0xFEEDFACE, 18, 9, 2))
         configuration = {}
-        for name in ("CMakeCache.txt", "compile_commands.json", "Makefile"):
+        for name in sorted(provenance.CONFIGURATION):
             path = self.folder / "native" / name
             path.write_text(name + " frozen")
             configuration[name] = provenance.store(self.folder, path.read_bytes())
@@ -135,13 +135,14 @@ class DistributionFixture(unittest.TestCase):
         }
         record.update(
             status="built",
+            build_timeout=1800,
             after=record["before"],
             configuration=configuration,
             compilers={name: tools[name] for name in ("gcc", "g++")},
             build_tools={name: tools[name] for name in ("cmake", "make")},
             commands=[
-                dict(argv=["cmake", "configure"], exit=0),
-                dict(argv=["cmake", "build"], exit=0),
+                dict(argv=["cmake", "configure"], exit=0, outcome="passed", timeout=600),
+                dict(argv=["cmake", "build"], exit=0, outcome="passed", timeout=1800),
             ],
             outputs={
                 name: file_hash(self.folder / "native" / name) for name in provenance.BINARIES
@@ -159,6 +160,7 @@ class DistributionFixture(unittest.TestCase):
             binaries=[dict(name=name, sha256=digest) for name, digest in record["outputs"].items()],
             runtime_libraries=[],
         )
+        (self.folder / "verification.json").write_text(json.dumps(self.verification))
         self.write("build/tiger-verification.json", json.dumps(self.verification))
         (self.root / "build/dist").mkdir()
         self.archive = self.root / "build/dist/codet-tiger-ppc-portable.tar.gz"
@@ -444,7 +446,7 @@ class TigerBuildProvenance(DistributionFixture):
             with self.assertRaises(subprocess.CalledProcessError):
                 provenance.build(self.root, folder)
             self.assertEqual(run.call_args.kwargs["timeout"], 600)
-        self.assertEqual(json.loads((folder / "provenance.json").read_text())["status"], "prepared")
+        self.assertEqual(json.loads((folder / "provenance.json").read_text())["status"], "failed")
         self.assertEqual((self.root / "build/tiger-current.json").read_bytes(), previous)
         self.assertEqual(provenance.load(self.root)[0], self.folder)
 
@@ -465,10 +467,16 @@ class TigerBuildProvenance(DistributionFixture):
                         (output / "CMakeCache.txt").write_text(
                             "CMAKE_HOME_DIRECTORY:INTERNAL="
                             + str(self.root)
-                            + "\nCMAKE_C_COMPILER:FILEPATH=/usr/local/bin/powerpc-apple-darwin8-gcc\nCMAKE_CXX_COMPILER:FILEPATH=/usr/local/bin/powerpc-apple-darwin8-g++\n"
+                            + "\n"
                         )
                         for name in ("compile_commands.json", "Makefile"):
                             (output / name).write_text("configured")
+                        (output / "codet-compiler-identity.json").write_text(json.dumps(dict(
+                            format=1, source=str(self.root), binary=str(output),
+                            generator="Unix Makefiles", build_type="Release", compilers={
+                                lang:dict(path="/usr/local/bin/powerpc-apple-darwin8-"+name,
+                                          id="GNU", version="14.2.0")
+                                for lang,name in (("C","gcc"),("CXX","g++"))})))
                     else:
                         for name in provenance.BINARIES:
                             (output / name).write_bytes(b"new binary")
@@ -486,7 +494,7 @@ class TigerBuildProvenance(DistributionFixture):
                                 provenance.build(self.root, folder)
                             self.assertEqual(
                                 json.loads((folder / "provenance.json").read_text())["status"],
-                                "prepared",
+                                "failed",
                             )
                         else:
                             provenance.build(self.root, folder)

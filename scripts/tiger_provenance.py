@@ -6,15 +6,46 @@ import json
 import re
 import subprocess
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
+from dependency_paths import dependency_root
 from evidence_inputs import role_hashes
 from process_supervision import run
-from tiger_distribution import dependency_root, distribution_inputs
+from tiger_distribution import distribution_inputs
 from validation_evidence import atomic_json
 from verified_sources import file_hash, tree_hashes
 
 BINARIES = ("codet", "codet_tests", "codet_persistence_bench")
+CONFIGURATION = {"CMakeCache.txt", "compile_commands.json", "Makefile", "codet-compiler-identity.json"}
+BUILD_FORMAT = 2
+BUILD_TIMEOUT = 1800
+
+
+def positive_seconds(value):
+    result = int(value)
+    if result <= 0:
+        raise ValueError("Build timeout must be positive")
+    return result
+
+
+def configured_compilers(root, output, tools):
+    try:
+        value = json.loads((output / "codet-compiler-identity.json").read_text())
+        if (value["format"] != 1 or Path(value["source"]).resolve() != root.resolve()
+                or Path(value["binary"]).resolve() != output.resolve()
+                or value["build_type"] != "Release" or value["generator"] != "Unix Makefiles"
+                or set(value["compilers"]) != {"C", "CXX"}):
+            raise ValueError("Tiger configured source/build identity mismatch")
+        for language, name in (("C", "gcc"), ("CXX", "g++")):
+            entry = value["compilers"][language]
+            if (not entry["id"] or not entry["version"] or not Path(entry["path"]).is_absolute()
+                    or compiler(Path(entry["path"])) != tools[name]):
+                raise ValueError("Tiger configured compiler identity mismatch")
+    except (OSError, KeyError, TypeError) as error:
+        raise ValueError("Missing or invalid Tiger compiler identity artifact") from error
+    return value
+
 
 
 def snapshots(root, deps):
@@ -62,7 +93,7 @@ def prepare(root, deps, image):
     index = {name: store(folder, data) for name, data in inputs.items()}
     source_index = {name: store(folder, (root / name).read_bytes()) for name in before["sources"]}
     record = dict(
-        format=1,
+        format=BUILD_FORMAT,
         status="prepared",
         build_id=folder.name,
         source_commit=commit,
@@ -88,11 +119,12 @@ def compiler(path):
     )
 
 
-def build(root, folder):
+def build(root, folder, build_timeout=BUILD_TIMEOUT):
+    build_timeout = positive_seconds(build_timeout)
     deps = dependency_root(root)
     record = json.loads((folder / "provenance.json").read_text())
     if (
-        record.get("format") != 1
+        record.get("format") != BUILD_FORMAT
         or record.get("status") != "prepared"
         or (folder / "native").exists()
     ):
@@ -121,30 +153,35 @@ def build(root, folder):
 
     args.append("-DCODET_TIGERPORTS_PREFIX=" + os.environ.get("TIGERPORTS_PREFIX", "/opt/tigr"))
     commands = []
-    for argv in (args, ["/usr/bin/cmake", "--build", str(output), "-j4", "--target", *BINARIES]):
-        result = run(argv, cwd=root, timeout=600, check=True)
-        commands.append(dict(argv=argv, exit=result.returncode))
-    after = snapshots(root, deps)
-    if (
-        after != record["before"]
-        or tools != {name: compiler(Path(prefix + name)) for name in tools}
-        or build_tools != {name: compiler(Path("/usr/bin") / name) for name in build_tools}
-    ):
-        raise ValueError("Tiger source, dependency, sysroot or compiler changed during build")
-    cache = (output / "CMakeCache.txt").read_text()
-
-    def cached(key):
-        return next(
-            line.split("=", 1)[1] for line in cache.splitlines() if line.startswith(key + ":")
-        )
-
-    if Path(cached("CMAKE_HOME_DIRECTORY")).resolve() != root.resolve():
-        raise ValueError("Tiger build used another source tree")
-    for key, name in (("CMAKE_C_COMPILER", "gcc"), ("CMAKE_CXX_COMPILER", "g++")):
-        if compiler(Path(cached(key))) != tools[name]:
-            raise ValueError("Tiger cached compiler identity mismatch")
+    try:
+        for argv, budget in ((args, 600), (["/usr/bin/cmake", "--build", str(output), "-j4", "--target", *BINARIES], build_timeout)):
+            command = dict(argv=argv, timeout=budget)
+            commands.append(command)
+            try:
+                result = run(argv, cwd=root, timeout=budget, check=True)
+                command.update(exit=result.returncode, outcome="passed")
+            except BaseException as error:
+                command.update(exit=getattr(error, "returncode", None),
+                               outcome="timeout" if isinstance(error, subprocess.TimeoutExpired)
+                               else "interrupted" if isinstance(error, KeyboardInterrupt)
+                               else "failed", error=str(error))
+                raise
+        after = snapshots(root, deps)
+        if (after != record["before"]
+                or tools != {name: compiler(Path(prefix + name)) for name in tools}
+                or build_tools != {name: compiler(Path("/usr/bin") / name) for name in build_tools}):
+            raise ValueError("Tiger source, dependency, sysroot or compiler changed during build")
+        configured_compilers(root, output, tools)
+    except BaseException:
+        record.update(status="failed", commands=commands, build_timeout=build_timeout)
+        try:
+            atomic_json(folder / "provenance.json", record)
+        except OSError:
+            pass # Preserve the original configure/build failure.
+        raise
     record.update(
         status="built",
+        build_timeout=build_timeout,
         after=after,
         compilers=tools,
         build_tools=build_tools,
@@ -152,15 +189,16 @@ def build(root, folder):
         outputs={name: file_hash(output / name) for name in BINARIES},
         configuration={
             name: store(folder, (output / name).read_bytes())
-            for name in ("CMakeCache.txt", "compile_commands.json", "Makefile")
+            for name in sorted(CONFIGURATION)
         },
     )
     atomic_json(folder / "provenance.json", record)
 
 
-def load(root):
+def _load(root, build_id=None, provenance_sha256=None):
     try:
-        pointer = json.loads((root / "build/tiger-current.json").read_text())
+        pointer = (dict(build_id=build_id, sha256=provenance_sha256) if build_id is not None
+                   else json.loads((root / "build/tiger-current.json").read_text()))
     except FileNotFoundError as error:
         raise ValueError(
             "A new source-bound Tiger build is required; run scripts/tiger.py build"
@@ -170,11 +208,12 @@ def load(root):
         raise ValueError("Invalid Tiger build identity")
     folder = root / "build/tiger-builds" / identifier
     path = folder / "provenance.json"
-    if file_hash(path) != pointer.get("sha256"):
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != pointer.get("sha256"):
         raise ValueError("Tiger build provenance changed")
-    record = json.loads(path.read_text())
+    record = json.loads(data)
     if (
-        record.get("format") != 1
+        record.get("format") != BUILD_FORMAT
         or record.get("status") != "built"
         or record.get("build_id") != identifier
     ):
@@ -183,11 +222,14 @@ def load(root):
         raise ValueError("Incomplete Tiger build provenance")
     if (
         set(record.get("configuration", {}))
-        != {"CMakeCache.txt", "compile_commands.json", "Makefile"}
+        != CONFIGURATION
         or set(record.get("compilers", {})) != {"gcc", "g++"}
         or set(record.get("build_tools", {})) != {"cmake", "make"}
         or len(record.get("commands", [])) != 2
-        or any(command.get("exit") != 0 for command in record["commands"])
+        or any(command.get("exit") != 0 or command.get("outcome") != "passed"
+               or type(command.get("timeout")) is not int or command["timeout"] <= 0
+               for command in record["commands"])
+        or type(record.get("build_timeout")) is not int or record["build_timeout"] <= 0
     ):
         raise ValueError("Incomplete Tiger configuration, tool or command provenance")
     for tool in [*record["compilers"].values(), *record["build_tools"].values()]:
@@ -230,39 +272,86 @@ def load(root):
         name: digest for name, digest in record["distribution"].items() if name != "SOURCE.patch"
     } != record["before"]["distribution"]:
         raise ValueError("Tiger distribution snapshot identity mismatch")
-    current_sysroot = tree_hashes(root / "build/tiger-sysroot")
-    if current_sysroot != record["before"]["sysroot"]:
-        raise ValueError("Tiger sysroot changed since build")
-    return folder, record
+    return folder, record, pointer["sha256"], data
 
 
-def archived_inputs(root):
-    folder, record = load(root)
-    return {
-        name: (folder / "inputs" / digest).read_bytes()
-        for name, digest in record["distribution"].items()
-    }
+@dataclass(frozen=True)
+class BuildContext:
+    root: Path
+    folder: Path
+    provenance_sha256: str
+    _record: bytes
+
+    @property
+    def record(self):
+        return json.loads(self._record) # Callers cannot mutate the pinned snapshot.
+
+    def verify_sysroot(self):
+        if tree_hashes(self.root / "build/tiger-sysroot") != self.record["before"]["sysroot"]:
+            raise ValueError("Tiger sysroot changed since build")
+
+    @property
+    def verification(self):
+        return self.folder / "verification.json"
+
+    def verified_report(self):
+        report = json.loads(self.verification.read_text())
+        if (report.get("build_id") != self.folder.name
+                or report.get("build_provenance_sha256") != self.provenance_sha256
+                or {item["name"]: item["sha256"] for item in report["binaries"]} != self.record["outputs"]):
+            raise ValueError("Static verification belongs to another Tiger build")
+        return report
 
 
-def copy_audit_inputs(root, destination):
+def resolve(root, build_id=None, provenance_sha256=None):
+    if (build_id is None) != (provenance_sha256 is None):
+        raise ValueError("Both Tiger build ID and provenance digest are required")
+    folder, record, digest, data = _load(root, build_id, provenance_sha256)
+    context = BuildContext(root, folder, digest, data)
+    context.verify_sysroot()
+    return context
+
+
+def load(root):
+    context = resolve(root)
+    return context.folder, context.record
+
+
+def archived_inputs(root, context=None):
+    context = context or resolve(root)
+    return {name: checked_bytes(context.folder / "inputs" / digest, digest)
+            for name, digest in context.record["distribution"].items()}
+
+
+def checked_bytes(path, digest):
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != digest:
+        raise ValueError("Tiger input changed while copying: " + str(path))
+    return data
+
+
+def copy_checked(source, destination, digest):
     import shutil
+    shutil.copy2(source, destination)
+    if file_hash(destination) != digest:
+        raise ValueError("Tiger input changed while copying: " + str(source))
 
-    folder, record = load(root)
+
+def copy_audit_inputs(root, destination, context=None):
+    context = context or resolve(root)
+    record = context.record
     data = destination / "build-inputs"
     data.mkdir()
-    for digest in set().union(
-        *(
-            set(record[name].values())
-            for name in ("distribution", "source_snapshot", "configuration")
-        )
-    ):
-        shutil.copy2(folder / "inputs" / digest, data / digest)
-    atomic_json(destination / "build-provenance.json", record)
+    for digest in set().union(*(set(record[name].values())
+                               for name in ("distribution", "source_snapshot", "configuration"))):
+        copy_checked(context.folder / "inputs" / digest, data / digest, digest)
+    (destination / "build-provenance.json").write_bytes(context._record)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["build"])
     parser.add_argument("folder", type=Path)
+    parser.add_argument("--build-timeout", type=positive_seconds, default=BUILD_TIMEOUT)
     args = parser.parse_args()
-    build(Path(__file__).resolve().parents[1], args.folder)
+    build(Path(__file__).resolve().parents[1], args.folder, args.build_timeout)
