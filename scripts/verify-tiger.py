@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import hashlib
 import json
 import pathlib
@@ -6,7 +7,7 @@ import subprocess
 
 import tiger_provenance
 from tiger_macho import MachO
-from verified_sources import file_hash
+from validation_evidence import atomic_json
 
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 PREFIX='/usr/local/bin/powerpc-apple-darwin8-'
@@ -50,13 +51,18 @@ def runtime_libraries(stage, prefix, system_root=None, inspection=None):
     return sorted(report,key=lambda item:item['name'])
 
 def main():
-    folder,provenance=tiger_provenance.load(ROOT)
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--build-id')
+    parser.add_argument('--provenance-sha256')
+    args=parser.parse_args()
+    context=tiger_provenance.resolve(ROOT,args.build_id,args.provenance_sha256)
+    folder,provenance=context.folder,context.record
     inspection=MachO(output,PREFIX)
     for name in ("gcc","g++"):
         if tiger_provenance.compiler(pathlib.Path(PREFIX+name)) != provenance["compilers"][name]:
             raise ValueError("Verification compiler differs from producing build")
     manifest=json.loads((ROOT/'build/tiger-sysroot/manifest.json').read_text());prefix=manifest['prefix']
-    report={'build_provenance_sha256':file_hash(folder/'provenance.json'),'build_id':folder.name,'target_runtime_verified':False,'compiler':output(PREFIX+'gcc','-dumpfullversion').strip(),'binaries':[]}
+    report={'build_provenance_sha256':context.provenance_sha256,'build_id':folder.name,'target_runtime_verified':False,'compiler':output(PREFIX+'gcc','-dumpfullversion').strip(),'binaries':[]}
     if report['compiler']!='14.2.0':raise SystemExit('Wrong compiler')
     macros=output(PREFIX+'gcc','-m32','-mcpu=750','-mmacosx-version-min=10.4','-dM','-E','-x','c','/dev/null')
     for required in ['#define __SIZEOF_POINTER__ 4','#define __BIG_ENDIAN__ 1','#define __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ 1040']:
@@ -75,6 +81,7 @@ def main():
         imports=output(PREFIX+'nm','-u',str(p))
         report['binaries'].append({'name':name,'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest(),'dependencies':dependencies,'imports':imports})
     report['runtime_libraries']=runtime_libraries(ROOT/'build/tiger-sysroot',prefix,'/usr/local/MacOSX10.4u.sdk',inspection)
-    (ROOT/'build/tiger-verification.json').write_text(json.dumps(report,indent=2)+'\n');print('Verified GCC 14.2, PPC32 big-endian/G3 Mach-O, target dependency paths, no LC_RPATH. PPC code was not executed.')
+    context.verify_sysroot()
+    atomic_json(context.verification,report);print('Verified GCC 14.2, PPC32 big-endian/G3 Mach-O, target dependency paths, no LC_RPATH. PPC code was not executed.')
 
 if __name__=='__main__':main()

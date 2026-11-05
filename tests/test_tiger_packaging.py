@@ -161,7 +161,6 @@ class DistributionFixture(unittest.TestCase):
             runtime_libraries=[],
         )
         (self.folder / "verification.json").write_text(json.dumps(self.verification))
-        self.write("build/tiger-verification.json", json.dumps(self.verification))
         (self.root / "build/dist").mkdir()
         self.archive = self.root / "build/dist/codet-tiger-ppc-portable.tar.gz"
         self.checksum = self.archive.with_name(self.archive.name + ".sha256")

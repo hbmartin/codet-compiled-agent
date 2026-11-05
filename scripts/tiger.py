@@ -96,6 +96,8 @@ def main():
     )
     parser.add_argument("--ca-bundle", type=Path)
     parser.add_argument("--extra-license", action="append", default=[], type=Path)
+    parser.add_argument("--build-timeout", type=tiger_provenance.positive_seconds,
+                        default=tiger_provenance.BUILD_TIMEOUT)
     args = parser.parse_args()
     if args.action != "package-portable" and (args.ca_bundle is not None or args.extra_license):
         parser.error("Packaging file options require package-portable")
@@ -128,6 +130,7 @@ def main():
                 "scripts/tiger_provenance.py",
                 "build",
                 str(folder.relative_to(ROOT)),
+                "--build-timeout", str(args.build_timeout),
             ],
             image=identity,
         )
@@ -141,8 +144,10 @@ def main():
         print(folder / "native")
         return
     try:
-        folder, record = tiger_provenance.load(ROOT)
-        inputs = tiger_provenance.archived_inputs(ROOT)
+        context = tiger_provenance.resolve(ROOT)
+        folder, record = context.folder, context.record
+        selected = ["--build-id", folder.name, "--provenance-sha256", context.provenance_sha256]
+        inputs = tiger_provenance.archived_inputs(ROOT, context)
         mounts = []
         command = []
         if args.action == "package-portable":
@@ -158,6 +163,7 @@ def main():
             command = [
                 "/usr/bin/python3",
                 "scripts/package-tiger-portable.py",
+                *selected,
                 "--ca-bundle",
                 "/run/codet-packaging/ca.pem",
             ]
@@ -167,7 +173,7 @@ def main():
                 command += ["--extra-license", target]
     except (OSError, ValueError, KeyError) as error:
         parser.error(str(error))
-    docker(["/usr/bin/python3", "scripts/verify-tiger.py"], image=record["toolchain_image"])
+    docker(["/usr/bin/python3", "scripts/verify-tiger.py", *selected], image=record["toolchain_image"])
     if args.action == "verify":
         return
     if args.action == "package-portable":
@@ -182,13 +188,15 @@ def main():
         import shutil
 
         for name in tiger_provenance.BINARIES:
-            shutil.copy2(folder / "native" / name, package / name)
-        shutil.copy2(ROOT / "build/tiger-verification.json", package / "static-verification.json")
+            tiger_provenance.copy_checked(folder / "native" / name, package / name,
+                                           record["outputs"][name])
+        atomic_json(package / "static-verification.json", context.verified_report())
         shutil.copy2(ROOT / "build/tiger-sysroot/manifest.json", package / "sysroot-manifest.json")
-        tiger_provenance.copy_audit_inputs(ROOT, package)
+        tiger_provenance.copy_audit_inputs(ROOT, package, context)
         staged = Path(temporary) / "codet-tiger-ppc.tar.gz"
         deterministic_archive(package, staged, record["source_epoch"])
         final = dist / staged.name
+        context.verify_sysroot()
         publish_archive(staged, final)
         print(final)
 
