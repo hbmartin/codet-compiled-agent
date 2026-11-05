@@ -10,6 +10,7 @@
 #include "codet/detail/request_input_controller.hpp"
 #include "codet/detail/submission_queue.hpp"
 #include "codet/detail/terminal_input.hpp"
+#include "codet/detail/tls_trust.hpp"
 #include "codet/detail/turn_input.hpp"
 #include "codet/detail/ui_history.hpp"
 #include "codet/interaction.hpp"
@@ -2408,3 +2409,40 @@ TEST(TurnInput, PathsAreProseButValidUnknownCommandsKeepTheirIdlePolicy) {
       detail::TurnInputAction::idle_command);
 }
 
+TEST(TlsTrust, UnsupportedDirectoryStoresAreAcceptedOnlyForKnownAbsentCapabilities) {
+  for (bool proxy : {false, true})
+    for (auto backend : {detail::DirectoryTrust::present, detail::DirectoryTrust::absent,
+                         detail::DirectoryTrust::unknown}) {
+      std::vector<CURLoption> options;
+      const auto configure = [&] {
+        detail::configure_tls_trust(
+            "selected.pem", {proxy, backend}, [&](CURLoption option, const char *value) {
+              options.push_back(option);
+              if (option == CURLOPT_CAINFO || option == CURLOPT_PROXY_CAINFO) {
+                EXPECT_STREQ(value, "selected.pem");
+                return CURLE_OK;
+              }
+              EXPECT_EQ(value, nullptr);
+              return CURLE_NOT_BUILT_IN;
+            });
+      };
+      if (backend == detail::DirectoryTrust::absent)
+        EXPECT_NO_THROW(configure());
+      else
+        EXPECT_THROW(configure(), detail::PermanentTransportError);
+      EXPECT_EQ(std::count(options.begin(), options.end(), CURLOPT_PROXY_CAINFO), proxy ? 1 : 0);
+    }
+}
+TEST(TlsTrust, RealTrustFailuresNeverFallBackToDefaults) {
+  for (auto failure : {CURLOPT_CAINFO, CURLOPT_PROXY_CAINFO, CURLOPT_CAPATH, CURLOPT_PROXY_CAPATH})
+    EXPECT_THROW(detail::configure_tls_trust("selected.pem", {true, detail::DirectoryTrust::absent},
+                                             [&](CURLoption option, const char *) {
+                                               return option == failure ? CURLE_OUT_OF_MEMORY
+                                                                        : CURLE_OK;
+                                             }),
+                 detail::PermanentTransportError);
+  EXPECT_EQ(detail::directory_trust("Schannel"), detail::DirectoryTrust::absent);
+  EXPECT_EQ(detail::directory_trust("rustls/0.23"), detail::DirectoryTrust::absent);
+  EXPECT_EQ(detail::directory_trust("OpenSSL/3.0"), detail::DirectoryTrust::present);
+  EXPECT_EQ(detail::directory_trust("future-backend"), detail::DirectoryTrust::unknown);
+}

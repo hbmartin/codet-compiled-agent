@@ -1,5 +1,6 @@
 #include "codet/core.hpp"
 #include "codet/detail/native_output.hpp"
+#include "codet/detail/tls_trust.hpp"
 #include "codet/detail/transport_error.hpp"
 #include "codet/diagnostics.hpp"
 #include "codet/output.hpp"
@@ -1071,16 +1072,13 @@ HttpResponse CurlTransport::perform(const HttpRequest &r, const Cancellation &ca
   curl_easy_setopt(raw, CURLOPT_HTTPHEADER, headers);
   curl_easy_setopt(raw, CURLOPT_NOSIGNAL, 1L);
   if (const char *bundle = std::getenv("CODET_CA_BUNDLE"); bundle && *bundle) {
-    const auto checked_trust = [&](CURLoption option, const char *value, const char *name) {
-      const auto status = curl_easy_setopt(raw, option, value);
-      if (status != CURLE_OK)
-        throw detail::PermanentTransportError(std::string("Cannot set TLS trust ") + name + ": " +
-                                              curl_easy_strerror(status));
-    };
-    checked_trust(CURLOPT_CAINFO, bundle, "CAINFO");
-    checked_trust(CURLOPT_PROXY_CAINFO, bundle, "PROXY_CAINFO");
-    checked_trust(CURLOPT_CAPATH, nullptr, "CAPATH");
-    checked_trust(CURLOPT_PROXY_CAPATH, nullptr, "PROXY_CAPATH");
+    const auto *version = curl_version_info(CURLVERSION_NOW);
+    const detail::TrustCapabilities capabilities{
+        version && (version->features & CURL_VERSION_HTTPS_PROXY) != 0,
+        detail::directory_trust(version && version->ssl_version ? version->ssl_version : "")};
+    detail::configure_tls_trust(bundle, capabilities, [&](CURLoption option, const char *value) {
+      return curl_easy_setopt(raw, option, value);
+    });
   }
   curl_easy_setopt(raw, CURLOPT_CONNECTTIMEOUT, static_cast<long>(r.connect_timeout_seconds));
   curl_easy_setopt(raw, CURLOPT_TIMEOUT, static_cast<long>(r.timeout_seconds));
