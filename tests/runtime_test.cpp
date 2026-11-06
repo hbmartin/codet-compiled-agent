@@ -1,6 +1,7 @@
 #include "codet/artifacts.hpp"
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
+#include "codet/detail/prepared_prompt.hpp"
 #include "codet/interaction.hpp"
 #include "codet/output.hpp"
 #include "codet/process_control.hpp"
@@ -930,4 +931,27 @@ TEST(InteractionWarnings, CoalescesWorkerFailuresAndRetriesOnMainThreadOnly) {
     return true;
   });
   EXPECT_EQ(attempts, 1u);
+}
+
+TEST_F(Runtime, InteractivePreparationKeepsMissingNamesAsProseAndSnapshotsEligibleCommands) {
+  for (const std::string input :
+       {"/tmp/build.log shows the crash", "/tmp is full", "/etc", "/reveiw args", "/help"})
+    EXPECT_FALSE(detail::prepare_interactive_prompt(config, files, input)) << input;
+  Tools strict(config, files, processes, http, clock);
+  EXPECT_THROW(strict.expand_command("/reveiw args"), Error);
+  EXPECT_THROW(strict.expand_command("/tmp/build.log"), Error);
+  const auto command = config.home / "commands/review.md";
+  fs::create_directories(command.parent_path());
+  files.atomic_write(command, "frozen $ARGUMENTS");
+  auto prepared = detail::prepare_interactive_prompt(config, files, "/review argument");
+  ASSERT_TRUE(prepared);
+  EXPECT_EQ(prepared->original, "/review argument");
+  EXPECT_EQ(prepared->expanded, "frozen argument");
+  files.remove(command);
+  EXPECT_EQ(prepared->expanded, "frozen argument");
+  EXPECT_FALSE(detail::prepare_interactive_prompt(config, files, "/review argument"));
+  files.atomic_write(config.cwd / "outside.md", "outside");
+  fs::create_symlink(config.cwd / "outside.md", command);
+  EXPECT_THAT([&] { detail::prepare_interactive_prompt(config, files, "/review argument"); },
+              ThrowsMessage<Error>(HasSubstr("Unsafe custom command path")));
 }

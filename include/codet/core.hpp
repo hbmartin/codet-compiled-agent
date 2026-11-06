@@ -16,7 +16,8 @@
 namespace codet {
 namespace detail {
 struct AgentAccess;
-}
+struct PreparedPrompt;
+} // namespace detail
 struct ReferenceObservation;
 struct ExecutionObservation;
 struct RecoveryCandidate;

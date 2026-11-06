@@ -21,6 +21,7 @@ class Interaction {
     std::string session, text;
     uint64_t turn = 0, sequence = 0;
     InputKind kind = InputKind::steering;
+    std::shared_ptr<const detail::PreparedPrompt> prepared = {};
   };
   bool input_barrier(std::deque<Input>::const_iterator end) const noexcept;
   uint64_t next_input_ = 0;

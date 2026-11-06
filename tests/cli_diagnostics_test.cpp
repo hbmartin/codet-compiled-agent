@@ -2339,7 +2339,7 @@ TEST(TurnInput, CompleteLocalGrammarAndBoundAnswersShareOnePolicy) {
     detail::InputLine line{text, {}, false, origin};
     EXPECT_EQ(detail::classify_turn_input(line, nullptr, origin, detail::TurnInputPhase::completed)
                   .action,
-              detail::TurnInputAction::idle_command);
+              detail::TurnInputAction::hold);
   }
 }
 
@@ -2396,7 +2396,7 @@ TEST(SubmissionQueue, UnreadSteeringClosesIntoSeparateFollowupTurns) {
   ASSERT_TRUE(second);
   EXPECT_EQ(second->text, "B");
 }
-TEST(TurnInput, PathsAreProseButValidUnknownCommandsKeepTheirIdlePolicy) {
+TEST(TurnInput, SlashIdentifiersNeedResolvedCommandsBeforeDeferral) {
   const detail::InputOrigin origin{"s", 1};
   for (const std::string text : {"/tmp/build.log shows the crash", "/tmp.log", "/", "/a/b"}) {
     detail::InputLine line{text, {}, false, origin};
@@ -2408,7 +2408,7 @@ TEST(TurnInput, PathsAreProseButValidUnknownCommandsKeepTheirIdlePolicy) {
   detail::InputLine command{"/reveiw args", {}, false, origin};
   EXPECT_EQ(
       detail::classify_turn_input(command, nullptr, origin, detail::TurnInputPhase::active).action,
-      detail::TurnInputAction::idle_command);
+      detail::TurnInputAction::steer);
 }
 
 TEST(TlsTrust, UnsupportedDirectoryStoresAreAcceptedOnlyForKnownAbsentCapabilities) {
@@ -2488,4 +2488,17 @@ TEST(TlsTrust, ActualBackendVersionsRetainDelimiterAwareCapabilities) {
   }
   for (const std::string backend : {"BearSSLFuture", "SchannelFuture", "rustls-ffi", "crustls"})
     EXPECT_EQ(detail::directory_trust(backend), detail::DirectoryTrust::unknown) << backend;
+}
+TEST(SubmissionQueue, InactiveCompatibilityInputCannotBecomeOldTurnSteering) {
+  Interaction io;
+  io.begin_turn("s");
+  io.end_turn();
+  io.submit("between turns");
+  io.begin_turn("s");
+  EXPECT_TRUE(io.take_input().empty());
+  io.end_turn();
+  const auto queued = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(queued);
+  EXPECT_EQ(queued->text, "between turns");
+  EXPECT_FALSE(detail::SubmissionAccess::next(io, "s"));
 }

@@ -945,6 +945,9 @@ class CliTests(unittest.TestCase):
         import struct
         import termios
         config=self.home/'config.toml';base=config.read_text()
+        commands=self.home/'commands';commands.mkdir(parents=True)
+        outside=self.workspace/'unsafe-command.md';outside.write_text('unsafe')
+        (commands/'unknown.md').symlink_to(outside)
         for mode in ['line','curses']:
             config.write_text(base+'\n[hooks]\nUserPromptSubmit=[{command="printf prompt-context"}]\nPreToolUse=[{matcher="Bash",command="printf hook-visible >&2"}]\n')
             master,slave=pty.openpty()
@@ -1526,9 +1529,11 @@ class CliTests(unittest.TestCase):
             collect(lambda:bytes(received).count(b'fixture done')>=1)
             os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
 
-    def test_bad_deferred_command_preserves_later_messages_and_expands_once(self):
+    def test_unsafe_command_preserves_later_messages_and_expands_once(self):
         commands=self.home/'commands';commands.mkdir(parents=True,exist_ok=True)
         target=commands/'review.md';target.write_text('fixture-recovered-output $ARGUMENTS')
+        outside=self.workspace/'outside-command.md';outside.write_text('unsafe command')
+        (commands/'unsafe.md').symlink_to(outside)
         log=self.workspace/'submitted.jsonl'
         # Preparation precedes turn ownership; hooks still see the original slash input.
         hook=self.workspace/'hook.py'
@@ -1539,7 +1544,7 @@ class CliTests(unittest.TestCase):
         config.write_text(config.read_text()+'\n[hooks]\nUserPromptSubmit=[{command='+json.dumps(sys.executable+' '+str(hook))+'}]\n')
         with self.pending_sequence() as context:
             process,master,trigger,received,collect,token,release,before=context
-            for text in (b'/reveiw',b'later',b'/review argument'):
+            for text in (b'/unsafe',b'later',b'/review argument'):
                 os.write(master,text+b'\n\x01');token(b'i')
             release.set();token(b'c')
             collect(lambda:b'recovered reply' in received or b'Pending message not sent: later' in received)
@@ -1548,10 +1553,10 @@ class CliTests(unittest.TestCase):
             self.assertEqual(len(requests),3,'Bad command lost later queued input')
             self.assertEqual([r['body']['messages'][-1]['content'] for r in requests[1:]],
                 ['later','fixture-recovered-output argument'])
-            self.assertIn(b'Unknown command: /reveiw',received)
+            self.assertIn(b'Unsafe custom command path: /unsafe',received)
             self.assertNotIn(b'Pending message not sent: later',received)
             submitted=[json.loads(line)['prompt'] for line in log.read_text().splitlines()]
-            self.assertEqual(submitted,['fixture-signal-wait','later','/review argument'])
+            self.assertEqual(submitted,['fixture-signal-wait','/review argument'])
             import sqlite3
             with sqlite3.connect(self.home/'state.sqlite3') as database:
                 self.assertEqual(database.execute('SELECT status FROM sessions ORDER BY rowid DESC LIMIT 1').fetchone(),('complete',))
@@ -1559,6 +1564,78 @@ class CliTests(unittest.TestCase):
             self.assertEqual([m['text'] for m in persisted if m['role']=='user'],
                 ['fixture-signal-wait','later','fixture-recovered-output argument'])
             os.write(trigger,b'h');token(b'r');os.write(trigger,b'g')
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,received)
+
+    def test_idle_unknown_slashes_are_prose_and_known_commands_prepare_before_hooks(self):
+        commands=self.home/'commands';commands.mkdir(parents=True)
+        command=commands/'review.md';command.write_text('fixture-recovered-output $ARGUMENTS')
+        log=self.workspace/'idle-hooks.jsonl';hook=self.workspace/'idle-hook.py'
+        hook.write_text('import json,sys,pathlib\np=json.load(sys.stdin)\n'
+            +'with pathlib.Path('+repr(str(log))+').open("a") as f:f.write(json.dumps(p)+"\\n")\n'
+            +'if p.get("prompt","").startswith("/review "):pathlib.Path('+repr(str(command))+').write_text("changed by hook")\n')
+        config=self.home/'config.toml'
+        config.write_text(config.read_text()+'\n[hooks]\nUserPromptSubmit=[{command='+json.dumps(sys.executable+' '+str(hook))+'}]\n')
+        with PtyProcess() as resources:
+            master,slave=resources.openpty()
+            process=resources.start([BIN,'-C',str(self.workspace),'--ui','line'],stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+            received=bytearray();collect=partial(collect_pty,self,master,received)
+            collect(lambda:b'codet>' in received)
+            prompts=['/tmp/build.log shows the crash','/tmp is full','/etc','/reveiw args','/review argument']
+            for number,text in enumerate(prompts,1):
+                os.write(master,text.encode()+b'\n')
+                collect(lambda number=number:len(self.server.requests)>=number)
+                marker=b'recovered reply' if number==len(prompts) else b'fixture done'
+                collect(lambda number=number,marker=marker:marker in received and (number==len(prompts) or bytes(received).count(marker)>=number))
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,received)
+            self.assertEqual([r['body']['messages'][-1]['content'] for r in self.server.requests],prompts[:-1]+['fixture-recovered-output argument'])
+            self.assertEqual([json.loads(x)['prompt'] for x in log.read_text().splitlines()],prompts)
+            self.assertNotIn(b'Invalid custom command name',received)
+
+    def test_initial_resume_and_fork_interactive_paths_use_the_prose_policy(self):
+        first=self.run_cli('exec','--output-format','json','simple')
+        self.assertEqual(first.returncode,0,first.stderr);sid=json.loads(first.stdout)['session_id']
+        for command in ([],['resume',sid],['fork',sid]):
+            with self.subTest(command=command),PtyProcess() as resources:
+                before=len(self.server.requests);master,slave=resources.openpty()
+                process=resources.start([BIN,'-C',str(self.workspace),'--ui','line',*command,'/tmp/build.log'],
+                    stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+                received=bytearray();collect=partial(collect_pty,self,master,received)
+                collect(lambda:b'fixture done' in received or process.poll() is not None)
+                self.assertIsNone(process.poll(),'Interactive preflight rejected path prose')
+                self.assertEqual(len(self.server.requests),before+1)
+                self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'/tmp/build.log')
+                os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+                self.assertEqual(process.returncode,0,received)
+
+    def test_known_command_content_is_frozen_before_deferred_presentation(self):
+        commands=self.home/'commands';commands.mkdir(parents=True)
+        command=commands/'review.md';command.write_text('fixture-recovered-output $ARGUMENTS')
+        with self.pending_sequence() as context:
+            process,master,trigger,received,collect,token,release,before=context
+            os.write(trigger,b'h');token(b'r')
+            os.write(master,b'/review frozen\n');token(b's')
+            command.unlink() # Enter already owns the command bytes while output is reserved.
+            os.write(trigger,b'g');token(b'd');release.set();token(b'c')
+            collect(lambda:len(self.server.requests)>=before+2)
+            self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'fixture-recovered-output frozen',
+                             'Frozen command content changed before handoff')
+            collect(lambda:b'recovered reply' in received)
+            self.assertEqual(len(self.server.requests),before+2)
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,received)
+
+    def test_unknown_command_stays_prose_if_created_after_enter(self):
+        commands=self.home/'commands';commands.mkdir(parents=True)
+        with self.pending_sequence() as context:
+            process,master,trigger,received,collect,token,release,before=context
+            os.write(trigger,b'h');token(b'r');os.write(master,b'/later argument\n');token(b's')
+            (commands/'later.md').write_text('must not replace submitted prose')
+            os.write(trigger,b'g');token(b'd');release.set();token(b'c')
+            collect(lambda:len(self.server.requests)>=before+2)
+            collect(lambda:bytes(received).count(b'fixture done')>=2)
+            self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'/later argument')
             os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
             self.assertEqual(process.returncode,0,received)
 
@@ -1572,7 +1649,7 @@ class CliTests(unittest.TestCase):
             # Release the helper's unused writer before observing CLI failure. Otherwise
             # its future destructor delays process exit and masks the intended assertion.
             os.write(trigger,b'h');token(b'r');os.write(trigger,b'g')
-            collect(lambda:bytes(received).count(b'fixture done')>=2 or process.poll() is not None)
+            collect(lambda:b'fixture done' in received or process.poll() is not None)
             self.assertIsNone(process.poll(),'Filesystem command error ended the interactive session')
             self.assertEqual(len(self.server.requests),before+2,'Filesystem command error lost queued input')
             self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'later')

@@ -117,7 +117,7 @@ void Interaction::submit(const std::string &text) {
   std::lock_guard<std::mutex> lock(mutex_);
   if (input_.size() >= 100 || text.size() > 65536)
     throw Error("Pending user input limit exceeded");
-  const bool held = input_barrier(input_.cend());
+  const bool held = !active_ || input_barrier(input_.cend());
   input_.push_back({session_, safe_text(text), turn_, ++next_input_,
                     held ? InputKind::followup : InputKind::steering});
   changed_.notify_all();

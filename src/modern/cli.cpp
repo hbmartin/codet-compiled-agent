@@ -582,6 +582,10 @@ public:
   detail::PendingControl<> pending_control_;
   bool pending_quit_ = false, control_explained_ = false;
   Interaction *input_queue_ = nullptr;
+  std::function<void(detail::InputLine &)> prepare_submission_;
+  void submission_preparer(std::function<void(detail::InputLine &)> prepare) {
+    prepare_submission_ = std::move(prepare);
+  }
   uint64_t admission_ = 0;
   void reserve_submission() {
     if (input_queue_ && !admission_ && input_.ordinary_draft() && !input_.input().empty() &&
@@ -640,7 +644,7 @@ public:
       (void)detail::immediate_stderr({"[Pending message not sent]\n"});
     }
   }
-  std::optional<std::string> read(Cancellation &cancel) {
+  std::optional<detail::InputLine> read(Cancellation &cancel) {
     if (!curses_ && (submission_pending() || pending_control_.started() || input_.stale() ||
                      (input_.ordinary_draft() && !input_.input().empty()))) {
       begin_active(cancel);
@@ -677,7 +681,7 @@ public:
           }
           if (resources_.entries())
             history(resources_.entries(), &history_event_, H_ENTER, line->text.c_str());
-          return std::move(line->text);
+          return line;
         }
         if (discarding_controls && !pending_control_.started() && !submission_pending())
           break; // The ignored extra line ended; return the empty idle prompt to libedit.
@@ -705,7 +709,7 @@ public:
         discarded_line();
         return read(cancel);
       }
-      return submitted.text;
+      return submitted;
     }
     if (!input_.ordinary_draft())
       clear_review_input();
@@ -729,7 +733,7 @@ public:
           continue;
         }
         say("you> " + submitted.text);
-        return submitted.text;
+        return submitted;
       }
       if (ch == bindings_["backspace"] || ch == KEY_BACKSPACE || ch == 8) {
         if (!input_.input().empty()) {
@@ -809,7 +813,9 @@ public:
         }
       }
       return pending_control_.handoff(read_cancel_ && read_cancel_->requested, [&] {
-        return pending_line.submission_pending() ? admitted(pending_line.try_take()) : std::nullopt;
+        return pending_line.submission_pending()
+                   ? admitted(pending_line.try_take(prepare_submission_))
+                   : std::nullopt;
       });
     }
     if (ch == ERR)
@@ -836,10 +842,13 @@ public:
     if (ch == bindings_["submit"] || ch == KEY_ENTER || ch == '\r') {
       reserve_submission();
       auto origin = line_ ? std::optional<detail::InputOrigin>{} : input_origin_;
-      auto ready =
-          admitted(line_ ? line_->try_take() : std::optional<detail::InputLine>(input_.take()));
-      if (ready && !line_)
+      auto ready = admitted(line_ ? line_->try_take(prepare_submission_)
+                                  : std::optional<detail::InputLine>(input_.take()));
+      if (ready && !line_) {
         ready->origin = std::move(origin);
+        if (prepare_submission_)
+          prepare_submission_(*ready);
+      }
       if (!ready) {
         // Keep servicing the existing UI loop without spinning while a diagnostic owns output.
         (void)detail::retry_terminal_input(EAGAIN,
@@ -1107,7 +1116,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     throw Error("Headless mode requires a prompt, stdin or an image", 2);
   const auto provider_preflight = [&] {
     Tools preflight(config, files, processes, http, clock);
-    if (!prompt.empty())
+    if (headless && !prompt.empty())
       (void)preflight.expand_command(prompt);
     ApiProvider check(http, credentials, clock);
     Json auth = Json::object();
@@ -1327,6 +1336,31 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
                                {"cached_input_tokens", result.usage.cached}}}})
                            .dump()});
   };
+  const auto prepare_line = [&](detail::InputLine &line) {
+    if (line.prepared || line.discarded || line.request ||
+        detail::local_command(line.text) != detail::LocalCommand::none)
+      return;
+    try {
+      cancel.check();
+      auto snapshot = detail::prepare_interactive_prompt(config, files, line.text);
+      cancel.check();
+      if (snapshot)
+        line.expansion = std::make_shared<const detail::PreparedPrompt>(std::move(*snapshot));
+      line.prepared = true;
+    } catch (const std::bad_alloc &) {
+      throw;
+    } catch (const Error &error) {
+      if (cancel.requested || error.code == 130)
+        throw;
+      line.preparation_error = std::current_exception();
+      line.prepared = true;
+    } catch (const std::exception &) {
+      line.preparation_error = std::current_exception();
+      line.prepared = true;
+    }
+  };
+  if (terminal)
+    terminal->submission_preparer(prepare_line);
   auto execute_agent = [&](const std::string &text, bool steering,
                            const detail::PreparedPrompt *prepared) -> int {
     if (!terminal) {
@@ -1396,7 +1430,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     };
     const detail::InputOrigin origin{session.id, input_turn};
     const auto dispatch = [&](detail::InputLine &line, detail::TurnInputPhase phase) {
-      const auto action = detail::classify_turn_input(
+      auto action = detail::classify_turn_input(
           line, phase == detail::TurnInputPhase::active && pending ? &*pending : nullptr, origin,
           phase);
       struct Release {
@@ -1406,6 +1440,28 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
           detail::SubmissionAccess::abandon(io, sequence);
         }
       } release{*interaction, line.admission};
+      std::shared_ptr<const detail::PreparedPrompt> expansion;
+      if (action.action == detail::TurnInputAction::steer ||
+          action.action == detail::TurnInputAction::hold) {
+        try {
+          prepare_line(line);
+          if (line.preparation_error)
+            std::rethrow_exception(line.preparation_error);
+          expansion = line.expansion;
+          if (expansion)
+            action.action = detail::TurnInputAction::idle_command;
+        } catch (const std::bad_alloc &) {
+          throw;
+        } catch (const Error &error) {
+          if (cancel.requested || error.code == 130)
+            throw;
+          terminal->say(std::string("Error: ") + error.what());
+          return;
+        } catch (const std::exception &error) {
+          terminal->say(std::string("Error: ") + error.what());
+          return;
+        }
+      }
       switch (action.action) {
       case detail::TurnInputAction::quit:
         quit_requested = true;
@@ -1447,7 +1503,8 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
         try {
           detail::SubmissionAccess::commit(*interaction, line.admission, line.text,
                                            action.action == detail::TurnInputAction::hold,
-                                           action.action == detail::TurnInputAction::idle_command);
+                                           action.action == detail::TurnInputAction::idle_command,
+                                           std::move(expansion));
         } catch (const Error &error) {
           terminal->pending_not_sent(line.text);
           terminal->say(error.what());
@@ -1601,6 +1658,25 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     if (!consolidation_input.empty())
       prompt += "\n\nAdditional consolidation instructions:\n" + consolidation_input;
   }
+  const auto interactive_run = [&](const std::string &text, detail::InputLine *frozen = nullptr) {
+    auto line = frozen ? std::move(*frozen) : detail::InputLine{text};
+    try {
+      prepare_line(line);
+      if (line.preparation_error)
+        std::rethrow_exception(line.preparation_error);
+    } catch (const std::bad_alloc &) {
+      throw;
+    } catch (const Error &error) {
+      if (cancel.requested || error.code == 130)
+        throw;
+      terminal->say(std::string("Error: ") + error.what());
+      return;
+    } catch (const std::exception &error) {
+      terminal->say(std::string("Error: ") + error.what());
+      return;
+    }
+    run(text, true, line.expansion.get());
+  };
   if (!interactive) {
 
     if (prompt.empty() && pending_images.empty() && o.command == "fork") {
@@ -1612,7 +1688,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     return run(prompt);
   }
   if (!prompt.empty() || !pending_images.empty())
-    run(prompt);
+    interactive_run(prompt);
   if (quit_requested) {
     detail::secondary_diagnostic([&] {
       terminal->discard_pending();
@@ -1622,27 +1698,20 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   }
   while (!cancel.requested && !quit_requested) {
     std::optional<std::string> input;
-    std::optional<detail::PreparedPrompt> prepared;
+    std::optional<detail::InputLine> idle_line;
     const auto queued = detail::SubmissionAccess::next(*interaction, session.id);
     if (queued) {
       input = queued->text;
-      if (!queued->idle_command) {
-        run(*input, true);
-        continue;
-      }
-      try {
-        prepared = detail::PreparedPrompt{*input, tools.expand_command(*input)};
-      } catch (const std::bad_alloc &) {
-        throw;
-      } catch (const std::exception &error) {
-        terminal->say(std::string("Error: ") + error.what());
-        continue; // A local command error owns this item, never the remaining queue.
-      }
+      run(*input, true, queued->prepared.get());
+      continue; // Classification and custom content were frozen at submission.
     } else if (new_requested) {
       input = "/new";
       new_requested = false;
-    } else
-      input = terminal->read(cancel);
+    } else {
+      idle_line = terminal->read(cancel);
+      if (idle_line)
+        input = idle_line->text;
+    }
     if (!input)
       break;
     if (input->empty())
@@ -1774,7 +1843,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
                "consolidate files in " +
                (config.home / "memory").string() + "; report changes.";
     }
-    run(*input, false, prepared ? &*prepared : nullptr);
+    interactive_run(*input, idle_line ? &*idle_line : nullptr);
   }
   if (cancel.requested || quit_requested)
     detail::secondary_diagnostic([&] {

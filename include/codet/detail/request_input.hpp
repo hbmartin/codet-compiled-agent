@@ -23,6 +23,9 @@ struct InputLine {
   std::optional<InputOrigin> origin;
   bool presentation_held = false;
   uint64_t admission = 0;
+  bool prepared = false;
+  std::shared_ptr<const PreparedPrompt> expansion;
+  std::exception_ptr preparation_error;
   InputLine(std::string bytes, std::optional<ApprovalIdentity> identity = {}, bool stale = false,
             std::optional<InputOrigin> source = {})
       : text(std::move(bytes)), request(std::move(identity)), discarded(stale),

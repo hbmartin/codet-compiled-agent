@@ -4,6 +4,7 @@
 #include "codet/core.hpp"
 #include "codet/detail/diagnostic_stream.hpp"
 #include "codet/detail/local_command.hpp"
+#include "codet/detail/prepared_prompt.hpp"
 #include "codet/interaction.hpp"
 #include "codet/output.hpp"
 #include "codet/patch.hpp"
@@ -2019,28 +2020,54 @@ void Tools::use_session(const std::string &id) {
     }
   }
 }
+namespace {
+std::optional<std::string> custom_expansion(const Config &config, FileSystem &files,
+                                            const std::string &input, bool strict) {
+  const auto name = detail::custom_command_name(input);
+  if (name.empty()) {
+    if (strict)
+      throw Error("Invalid custom command name");
+    return {};
+  }
+  const auto space = input.find(' ');
+  for (const auto &dir : std::vector<fs::path>{config.trust_project ? config.cwd / ".codet/commands"
+                                                                    : config.home / "commands",
+                                               config.home / "commands"}) {
+    const auto p = dir / (std::string(name) + ".md");
+    if (!fs::exists(p))
+      continue;
+    if (!within(files.canonical(p), files.canonical(dir))) {
+      if (strict)
+        continue;
+      throw Error("Unsafe custom command path: /" + std::string(name));
+    }
+    auto text = files.read(p, 65536);
+    const auto args = space == std::string::npos ? "" : input.substr(space + 1);
+    size_t at = 0;
+    while ((at = text.find("$ARGUMENTS", at)) != std::string::npos) {
+      text.replace(at, 10, args);
+      at += args.size();
+    }
+    return text;
+  }
+  if (strict)
+    throw Error("Unknown command: /" + std::string(name));
+  return {};
+}
+} // namespace
+std::optional<detail::PreparedPrompt> detail::prepare_interactive_prompt(const Config &config,
+                                                                         FileSystem &files,
+                                                                         const std::string &input) {
+  if (local_command(input) != LocalCommand::none)
+    return {};
+  const auto expanded = custom_expansion(config, files, input, false);
+  if (!expanded)
+    return {};
+  return PreparedPrompt{input, *expanded};
+}
 std::string Tools::expand_command(const std::string &input) const {
   if (input.empty() || input[0] != '/')
     return input;
-  const auto space = input.find(' ');
-  const auto name = input.substr(1, space == std::string::npos ? std::string::npos : space - 1);
-  if (detail::custom_command_name(input).empty())
-    throw Error("Invalid custom command name");
-  for (const auto &dir : std::vector<fs::path>{
-           config_.trust_project ? config_.cwd / ".codet/commands" : config_.home / "commands",
-           config_.home / "commands"}) {
-    const auto p = dir / (name + ".md");
-    if (fs::exists(p) && within(files_.canonical(p), files_.canonical(dir))) {
-      auto text = files_.read(p, 65536);
-      const auto args = space == std::string::npos ? "" : input.substr(space + 1);
-      size_t at = 0;
-      while ((at = text.find("$ARGUMENTS", at)) != std::string::npos) {
-        text.replace(at, 10, args);
-        at += args.size();
-      }
-      return text;
-    }
-  }
-  throw Error("Unknown command: /" + name);
+  return *custom_expansion(config_, files_, input, true);
 }
 } // namespace codet

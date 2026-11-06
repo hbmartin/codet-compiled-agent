@@ -572,7 +572,7 @@ public:
   bool submission_pending() const noexcept {
     return pending_.has_value();
   }
-  std::optional<InputLine> try_take() {
+  std::optional<InputLine> try_take(const std::function<void(InputLine &)> &prepare = {}) {
     if (!pending_) {
       std::string tail;
       bool redraw = !visible_ || painted_revision_ != input_.revision();
@@ -593,6 +593,8 @@ public:
                                          std::move(label), kind, omitted, false, redraw,
                                          boundary_generation_, columns_});
       pending_->line.origin = std::move(origin);
+      if (prepare)
+        prepare(pending_->line);
       pending_->receipt = boundary_token_;
     }
     const auto submission_result = submitted();

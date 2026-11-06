@@ -5,6 +5,8 @@ namespace codet::detail {
 struct PreparedPrompt {
   std::string original, expanded;
 };
+std::optional<PreparedPrompt> prepare_interactive_prompt(const Config &, FileSystem &,
+                                                         const std::string &);
 struct AgentAccess {
   static RunResult run(Agent &agent, Session &session, const PreparedPrompt &prompt,
                        const Cancellation &cancel, const Json &schema,
