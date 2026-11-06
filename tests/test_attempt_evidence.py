@@ -55,6 +55,40 @@ class AttemptPublication(unittest.TestCase):
         self.assertEqual(set(report["assembly_inputs"]),{"evidence_attempt.py","evidence_attempt_audit.py"})
         self.assertNotIn('/private/tmp/codet-',(moved/"evidence_attempt.py").read_text())
 
+    def refresh_inventory(self):
+        evidence.atomic_json(self.output/'inventory.json',{
+            str(p.relative_to(self.output)):audit.digest(p) for p in self.output.rglob('*')
+            if p.is_file() and p.name!='inventory.json'})
+
+    def test_successful_check_audits_on_the_running_supported_interpreter(self):
+        manifest_path=self.campaign/'manifest.json'
+        manifest=json.loads(manifest_path.read_text())
+        manifest['checks'].insert(0,dict(id='successful',argv=[sys.executable,'-c','print("success")']))
+        manifest_path.write_text(json.dumps(manifest));shutil.rmtree(self.campaign/'capture')
+        evidence.capture(manifest_path,self.campaign/'capture')
+        self.assemble()
+        result=subprocess.run([sys.executable,str(self.output/'verify-attempt.py'),str(self.output)],
+            capture_output=True,text=True,timeout=30,env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1'))
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(json.loads(result.stdout)['checks'],3)
+
+    def test_measurements_and_reported_counts_must_both_be_empty(self):
+        self.assemble();report_path=self.output/'report.json';original=json.loads(report_path.read_text())
+        for samples,count in (([{'unbound':'sample'}],0),([],17),([],False),({},0)):
+            with self.subTest(samples=samples,count=count):
+                (self.output/'measurements.json').write_text(json.dumps(samples))
+                evidence.atomic_json(report_path,dict(original,measurement_samples=count));self.refresh_inventory()
+                with self.assertRaisesRegex(ValueError,'empty measurement list and zero samples'):
+                    audit.verify(self.output)
+        (self.output/'measurements.json').write_text('broken JSON');self.refresh_inventory()
+        with self.assertRaisesRegex(ValueError,'malformed attempt measurements'):
+            audit.verify(self.output)
+
+    def test_unexpected_files_are_rejected_with_identifying_details(self):
+        self.assemble();(self.output/'.DS_Store').write_text('Finder metadata')
+        with self.assertRaisesRegex(ValueError,r'extra=.*\.DS_Store'):
+            audit.verify(self.output)
+
     def test_missing_helpers_and_existing_outputs_never_replace_artifacts(self):
         helper=self.root/"scripts/evidence_attempt_audit.py"
         helper.unlink()
