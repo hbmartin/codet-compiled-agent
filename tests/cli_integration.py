@@ -1486,6 +1486,22 @@ class CliTests(unittest.TestCase):
             finally:
                 release.set()
 
+    def test_empty_frozen_submission_cancellation_never_reports_an_empty_notice(self):
+        with self.pending_sequence() as context:
+            process,master,trigger,received,collect,token,release,before=context
+            os.write(trigger,b'h');token(b'r')
+            os.write(master,b'\n');token(b's')
+            os.write(master,b'\x04')
+            os.write(trigger,b'g');release.set()
+            collect(lambda:b'Error: Interrupted' in received or process.poll() is not None)
+            self.assertNotIn(b'Pending message not sent: ]',received,'Empty frozen input emitted an empty pending notice')
+            self.assertIsNone(process.poll())
+            os.write(master,b'fixture-recovered-output\n')
+            collect(lambda:b'recovered reply' in received)
+            self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'fixture-recovered-output')
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,received)
+
     def test_partial_pending_controls_never_stall_or_leak_into_messages(self):
         for draft,finish_first in ((b'x',False),(b'ignored-overflow',True)):
             with self.subTest(draft=draft),self.pending_sequence() as context:

@@ -248,6 +248,10 @@ def run_controls(root, folder, build, ninja):
         raise ValueError("Pending keyboard mutant did not fail its intended assertion: " + repr(mutant))
     results.append(dict(name="pending-keyboard", target="CliTests.test_frozen_submission_obeys_turn_outcome_and_services_controls", mutation=dict(before=before, after=after, original_sha256=digest(root / "src/modern/cli.cpp"), mutant_sha256=digest(source)), binary_sha256=digest(binary), baseline=baseline, compile=compiled, link=linked, mutant=mutant))
     review_controls = [
+        ("empty-rejection", "CliTests.test_empty_frozen_submission_cancellation_never_reports_an_empty_notice",
+         '    if (text.empty())\n      return;\n    try {\n      std::string message = "[Pending message not sent: ";',
+         '    try {\n      std::string message = "[Pending message not sent: ";',
+         "Empty frozen input emitted an empty pending notice"),
         ("command-isolation", "CliTests.test_unsafe_command_preserves_later_messages_and_expands_once",
          '    if (line.preparation.state == detail::PreparationState::failed) {',
          '    if (false && line.preparation.state == detail::PreparationState::failed) {',

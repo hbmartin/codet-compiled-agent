@@ -637,6 +637,8 @@ public:
       pending_not_sent(line->text, immediate);
   }
   void pending_not_sent(std::string_view text, bool immediate = false) noexcept {
+    if (text.empty())
+      return;
     try {
       std::string message = "[Pending message not sent: ";
       message.append(text);
@@ -1605,6 +1607,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   auto run = [&](const std::string &text, bool verbatim = false,
                  const detail::PreparedPrompt *prepared = nullptr,
                  std::vector<ImageArtifact> images = {}) {
+    const auto owned_images = std::move(images);
     struct DeliverFiles {
       detail::CliDiagnostics &diagnostics;
       ~DeliverFiles() {
@@ -1612,7 +1615,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       }
     } deliver_files{*diagnostics};
     try {
-      const int status = execute_agent(text, verbatim, prepared, images);
+      const int status = execute_agent(text, verbatim, prepared, owned_images);
       pending_input(status == 0 && !quit_requested);
       return status;
     } catch (const Error &e) {
@@ -1695,7 +1698,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     if (initial_pending) {
       initial_pending = false;
       input = prompt;
-      images = std::move(initial_images);
+      images.swap(initial_images);
     } else if (queued) {
       input = queued->text;
       run(*input, true, queued->prepared.get());
