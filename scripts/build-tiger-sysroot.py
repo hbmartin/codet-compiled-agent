@@ -8,7 +8,7 @@ import pathlib
 import shutil
 import subprocess
 
-from tiger_distribution import dependency_root
+from dependency_paths import dependency_root
 from verified_sources import extract_verified, file_hash, remove_tree, tree_hashes
 
 ROOT=pathlib.Path(__file__).resolve().parents[1]
@@ -29,6 +29,15 @@ def run(args,cwd,env=None):
       print('\n'.join(LOG.read_text(errors='replace').splitlines()[-65:]),flush=True)
       raise SystemExit(result.returncode)
 
+def sysroot_fingerprint(root, lock, prefix, flags, toolchain, compiler_digest):
+    # Distribution-only CA/document/archive policy never changes compiled dependencies.
+    payload = json.dumps({key: lock.get(key, []) for key in ('dependencies', 'patches')}, sort_keys=True).encode()
+    for name in ('build-tiger-sysroot.py', 'verified_sources.py', 'dependency_paths.py'):
+        payload += (root / 'scripts' / name).read_bytes()
+    payload += prefix.encode() + flags.encode() + toolchain.encode() + compiler_digest.encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
 def main():
     global STAGE
     if not PREFIX.startswith('/') or '..' in pathlib.Path(PREFIX).parts:
@@ -41,11 +50,8 @@ def main():
       archive=dependency_root(ROOT)/('tiger-'+dep['name']+'.tar')
       if not archive.exists() or hashlib.sha256(archive.read_bytes()).hexdigest()!=dep['sha256']:
         raise SystemExit('Fetch/verify dependencies first: '+dep['name'])
-    fingerprint = hashlib.sha256((ROOT/'tiger-dependencies.lock.json').read_bytes() +
-        pathlib.Path(__file__).read_bytes() + (ROOT/'scripts/verified_sources.py').read_bytes() +
-        (ROOT/'scripts/tiger_distribution.py').read_bytes() +
-        PREFIX.encode() + FLAGS.encode() + os.environ.get('CODET_TOOLCHAIN_ID', '').encode() +
-        file_hash(CC).encode()).hexdigest()
+    fingerprint = sysroot_fingerprint(ROOT, lock, PREFIX, FLAGS,
+        os.environ.get('CODET_TOOLCHAIN_ID', ''), file_hash(CC))
     final = STAGE
     if (final/'manifest.json').is_file():
         prior = json.loads((final/'manifest.json').read_text())

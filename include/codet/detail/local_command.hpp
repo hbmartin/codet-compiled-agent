@@ -24,6 +24,19 @@ inline bool command_prefix(std::string_view text, std::string_view prefix) noexc
   return text.size() >= prefix.size() &&
          std::memcmp(text.data(), prefix.data(), prefix.size()) == 0;
 }
+// A slash alone or a path is prose, not a syntactic custom command.
+inline std::string_view custom_command_name(std::string_view text) noexcept {
+  if (text.empty() || text.front() != '/')
+    return {};
+  const auto end = text.find(' ');
+  const std::string_view name(text.data() + 1,
+                              end == std::string_view::npos ? text.size() - 1 : end - 1);
+  for (char c : name)
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' ||
+          c == '_'))
+      return {};
+  return name;
+}
 inline LocalCommand local_command(std::string_view text) noexcept {
   if (is_quit_command(text))
     return LocalCommand::quit;

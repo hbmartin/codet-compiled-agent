@@ -37,9 +37,7 @@ struct SubmissionAccess {
                                     [&](const auto &line) { return line.sequence == sequence; });
     if (entry == io.input_.end() || entry->kind != Interaction::InputKind::reserved)
       throw Error("Pending submission lost its admission");
-    const bool barrier = std::any_of(io.input_.begin(), entry, [](const auto &line) {
-      return line.kind != Interaction::InputKind::steering;
-    });
+    const bool barrier = io.input_barrier(entry);
     entry->text = std::move(prepared);
     entry->kind = command                          ? Interaction::InputKind::idle_command
                   : held || barrier || !io.active_ ? Interaction::InputKind::followup

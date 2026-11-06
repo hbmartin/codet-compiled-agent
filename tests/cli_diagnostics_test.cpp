@@ -10,6 +10,7 @@
 #include "codet/detail/request_input_controller.hpp"
 #include "codet/detail/submission_queue.hpp"
 #include "codet/detail/terminal_input.hpp"
+#include "codet/detail/tls_trust.hpp"
 #include "codet/detail/turn_input.hpp"
 #include "codet/detail/ui_history.hpp"
 #include "codet/interaction.hpp"
@@ -2130,18 +2131,18 @@ TEST(TurnInput, CompletedInputKeepsActiveCommandPolicyAndRejectsWrongOrigins) {
     for (const std::string text :
          {"/model", "/model next", "/status", "/compact", "/permissions plan"}) {
       detail::InputLine line{text, {}, false, origin};
-      const auto decision = detail::classify_turn_input(line, nullptr, origin, phase, false);
+      const auto decision = detail::classify_turn_input(line, nullptr, origin, phase);
       EXPECT_EQ(decision.action, detail::TurnInputAction::restricted);
       EXPECT_FALSE(decision.guidance.empty());
     }
     detail::InputLine fresh{"/new", {}, false, origin};
-    EXPECT_EQ(detail::classify_turn_input(fresh, nullptr, origin, phase, false).action,
+    EXPECT_EQ(detail::classify_turn_input(fresh, nullptr, origin, phase).action,
               detail::TurnInputAction::new_session);
     for (auto wrong :
          {std::optional<detail::InputOrigin>{}, std::optional<detail::InputOrigin>{{"other", 7}},
           std::optional<detail::InputOrigin>{{"session", 6}}}) {
       detail::InputLine line{"/new", {}, false, wrong};
-      EXPECT_EQ(detail::classify_turn_input(line, nullptr, origin, phase, false).action,
+      EXPECT_EQ(detail::classify_turn_input(line, nullptr, origin, phase).action,
                 detail::TurnInputAction::reject_origin);
     }
   }
@@ -2149,21 +2150,21 @@ TEST(TurnInput, CompletedInputKeepsActiveCommandPolicyAndRejectsWrongOrigins) {
 TEST(TurnInput, ExpiredAnswersNeverBecomeMessagesAndHeldOrderPrecedesSteering) {
   const detail::InputOrigin origin{"session", 7};
   detail::InputLine expired{"yes", detail::ApprovalIdentity{"session", "old", 7}, false, origin};
-  const auto rejected = detail::classify_turn_input(expired, nullptr, origin,
-                                                    detail::TurnInputPhase::completed, false);
+  const auto rejected =
+      detail::classify_turn_input(expired, nullptr, origin, detail::TurnInputPhase::completed);
   EXPECT_EQ(rejected.action, detail::TurnInputAction::discard);
   EXPECT_EQ(rejected.rejection, detail::InputDiscard::expired);
   detail::InputLine next{"second", {}, false, origin};
-  EXPECT_EQ(detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::active, true)
-                .action,
-            detail::TurnInputAction::hold);
+  next.presentation_held = true;
   EXPECT_EQ(
-      detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::active, false)
-          .action,
+      detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::active).action,
+      detail::TurnInputAction::hold);
+  next.presentation_held = false;
+  EXPECT_EQ(
+      detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::active).action,
       detail::TurnInputAction::steer);
   EXPECT_EQ(
-      detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::completed, false)
-          .action,
+      detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::completed).action,
       detail::TurnInputAction::hold);
 }
 
@@ -2324,24 +2325,21 @@ TEST(TurnInput, CompleteLocalGrammarAndBoundAnswersShareOnePolicy) {
   for (const std::string text : {"/help", "/model next", "/compact", "/status", "/permissions plan",
                                  "/sessions", "/name changed", "/export", "/memory consolidate"}) {
     detail::InputLine ordinary{text, {}, false, origin};
-    EXPECT_EQ(detail::classify_turn_input(ordinary, nullptr, origin, detail::TurnInputPhase::active,
-                                          false)
+    EXPECT_EQ(detail::classify_turn_input(ordinary, nullptr, origin, detail::TurnInputPhase::active)
                   .action,
               detail::TurnInputAction::restricted)
         << text;
     detail::InputLine answer{text, detail::ApprovalIdentity{"session", "r", 7}, false, origin};
-    EXPECT_EQ(
-        detail::classify_turn_input(answer, &request, origin, detail::TurnInputPhase::active, false)
-            .action,
-        detail::TurnInputAction::answer)
+    EXPECT_EQ(detail::classify_turn_input(answer, &request, origin, detail::TurnInputPhase::active)
+                  .action,
+              detail::TurnInputAction::answer)
         << text;
   }
   for (const std::string text : {"/permissionsfoo", "/custom args", "/unknown"}) {
     detail::InputLine line{text, {}, false, origin};
-    EXPECT_EQ(
-        detail::classify_turn_input(line, nullptr, origin, detail::TurnInputPhase::completed, false)
-            .action,
-        detail::TurnInputAction::idle_command);
+    EXPECT_EQ(detail::classify_turn_input(line, nullptr, origin, detail::TurnInputPhase::completed)
+                  .action,
+              detail::TurnInputAction::idle_command);
   }
 }
 
@@ -2376,4 +2374,102 @@ TEST(SubmissionQueue, DeferredBarrierSurvivesStartingTheEarlierFollowup) {
   auto later = detail::SubmissionAccess::next(io, "s");
   ASSERT_TRUE(later);
   EXPECT_EQ(later->text, "second");
+}
+
+TEST(SubmissionQueue, UnreadSteeringClosesIntoSeparateFollowupTurns) {
+  Interaction io;
+  io.begin_turn("s");
+  for (const std::string text : {"A", "B"}) {
+    const auto ticket = detail::SubmissionAccess::reserve(io);
+    detail::SubmissionAccess::commit(io, ticket, text, false);
+  }
+  io.end_turn();
+  auto first = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(first);
+  EXPECT_EQ(first->text, "A");
+  io.begin_turn("s");
+  std::vector<std::string> incoming;
+  EXPECT_NO_THROW(incoming = io.take_input()) << "Unread steering crossed its originating turn";
+  EXPECT_TRUE(incoming.empty()) << "Unread steering crossed its originating turn";
+  io.end_turn();
+  auto second = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(second);
+  EXPECT_EQ(second->text, "B");
+}
+TEST(TurnInput, PathsAreProseButValidUnknownCommandsKeepTheirIdlePolicy) {
+  const detail::InputOrigin origin{"s", 1};
+  for (const std::string text : {"/tmp/build.log shows the crash", "/tmp.log", "/", "/a/b"}) {
+    detail::InputLine line{text, {}, false, origin};
+    EXPECT_EQ(
+        detail::classify_turn_input(line, nullptr, origin, detail::TurnInputPhase::active).action,
+        detail::TurnInputAction::steer)
+        << text;
+  }
+  detail::InputLine command{"/reveiw args", {}, false, origin};
+  EXPECT_EQ(
+      detail::classify_turn_input(command, nullptr, origin, detail::TurnInputPhase::active).action,
+      detail::TurnInputAction::idle_command);
+}
+
+TEST(TlsTrust, UnsupportedDirectoryStoresAreAcceptedOnlyForKnownAbsentCapabilities) {
+  for (bool proxy : {false, true})
+    for (auto backend : {detail::DirectoryTrust::present, detail::DirectoryTrust::absent,
+                         detail::DirectoryTrust::unknown}) {
+      std::vector<CURLoption> options;
+      const auto configure = [&] {
+        detail::configure_tls_trust(
+            "selected.pem", {proxy, backend}, [&](CURLoption option, const char *value) {
+              options.push_back(option);
+              if (option == CURLOPT_CAINFO || option == CURLOPT_PROXY_CAINFO) {
+                EXPECT_STREQ(value, "selected.pem");
+                return CURLE_OK;
+              }
+              EXPECT_EQ(value, nullptr);
+              return CURLE_NOT_BUILT_IN;
+            });
+      };
+      if (backend == detail::DirectoryTrust::absent)
+        EXPECT_NO_THROW(configure());
+      else
+        EXPECT_THROW(configure(), detail::PermanentTransportError);
+      EXPECT_EQ(std::count(options.begin(), options.end(), CURLOPT_PROXY_CAINFO), proxy ? 1 : 0);
+    }
+}
+TEST(TlsTrust, RealTrustFailuresNeverFallBackToDefaults) {
+  for (auto failure : {CURLOPT_CAINFO, CURLOPT_PROXY_CAINFO, CURLOPT_CAPATH, CURLOPT_PROXY_CAPATH})
+    EXPECT_THROW(detail::configure_tls_trust("selected.pem", {true, detail::DirectoryTrust::absent},
+                                             [&](CURLoption option, const char *) {
+                                               return option == failure ? CURLE_OUT_OF_MEMORY
+                                                                        : CURLE_OK;
+                                             }),
+                 detail::PermanentTransportError);
+  EXPECT_EQ(detail::directory_trust("Schannel"), detail::DirectoryTrust::absent);
+  EXPECT_EQ(detail::directory_trust("rustls/0.23"), detail::DirectoryTrust::absent);
+  EXPECT_EQ(detail::directory_trust("OpenSSL/3.0"), detail::DirectoryTrust::present);
+  EXPECT_EQ(detail::directory_trust("future-backend"), detail::DirectoryTrust::unknown);
+  EXPECT_EQ(detail::directory_trust("SchannelFuture"), detail::DirectoryTrust::unknown);
+}
+
+TEST(DiagnosticWriter, EmptyInjectedSeparationClosesTheFragmentExactlyOnce) {
+  std::ostringstream output;
+  detail::DiagnosticWriter writer(output);
+  ASSERT_TRUE(writer.write({"fragment"}, false));
+  EXPECT_EQ(writer.write_receipt({}, false, true, true).result, detail::DiagnosticResult::success);
+  EXPECT_EQ(writer.write_receipt({"prompt"}, false, true, true).result,
+            detail::DiagnosticResult::success);
+  EXPECT_EQ(output.str(), "fragment\nprompt") << "Empty separator kept a stale fragment";
+}
+
+TEST(SubmissionQueue, ReservedBarrierSurvivesRejectionOfItsPredecessor) {
+  Interaction io;
+  io.begin_turn("s");
+  const auto first = detail::SubmissionAccess::reserve(io);
+  const auto later = detail::SubmissionAccess::reserve(io);
+  detail::SubmissionAccess::commit(io, later, "later", false);
+  detail::SubmissionAccess::abandon(io, first);
+  EXPECT_TRUE(io.take_input().empty()) << "Rejected prefix lost its reserved barrier";
+  io.end_turn();
+  auto pending = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(pending);
+  EXPECT_EQ(pending->text, "later");
 }

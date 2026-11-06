@@ -42,10 +42,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ca-bundle", type=pathlib.Path)
     parser.add_argument("--extra-license", action="append", default=[], type=pathlib.Path)
+    parser.add_argument("--build-id")
+    parser.add_argument("--provenance-sha256")
     args = parser.parse_args()
     inspection = MachO(output, TOOLS)
-    build_folder, provenance = tiger_provenance.load(ROOT)
-    inputs = tiger_provenance.archived_inputs(ROOT)
+    context = tiger_provenance.resolve(ROOT, args.build_id, args.provenance_sha256)
+    build_folder, provenance = context.folder, context.record
+    inputs = tiger_provenance.archived_inputs(ROOT, context)
     certificate = (args.ca_bundle or dependency_root(ROOT) / "tiger-cacert.pem").resolve(
         strict=True
     )
@@ -56,11 +59,7 @@ def main():
         with_bytes=True,
     )
     extras = extra_notices(args.extra_license, inputs)
-    original = json.loads((ROOT / "build/tiger-verification.json").read_text())
-    if original.get("build_id") != provenance["build_id"] or original.get(
-        "build_provenance_sha256"
-    ) != digest(build_folder / "provenance.json"):
-        raise ValueError("Static verification belongs to another Tiger build")
+    original = context.verified_report()
     sysroot = ROOT / "build/tiger-sysroot"
     manifest = json.loads((sysroot / "manifest.json").read_text())
     prefix = manifest["prefix"]
@@ -78,7 +77,7 @@ def main():
             if digest(source) != record["sha256"]:
                 raise SystemExit("Binary changed since verification: " + str(source))
             target = package / "bin" / source.name
-            shutil.copy2(source, target)
+            tiger_provenance.copy_checked(source, target, record["sha256"])
             binaries.append(target)
         verified_libraries = {
             (sysroot / record["name"]).resolve(): record for record in original["runtime_libraries"]
@@ -102,7 +101,7 @@ def main():
             target = package / "lib" / source.name
             if target.exists():
                 raise SystemExit("Runtime library basename collision: " + source.name)
-            shutil.copy2(source, target)
+            tiger_provenance.copy_checked(source, target, record["sha256"])
             libraries[source] = target
             pending.extend(
                 (sysroot / dependency.lstrip("/")).resolve()
@@ -174,6 +173,7 @@ def main():
         if not terminfo.is_dir():
             raise SystemExit("Missing bundled terminfo")
         shutil.copytree(terminfo, package / "share/terminfo", symlinks=True)
+        context.verify_copied_tree(prefix.lstrip("/") + "/share/terminfo", package / "share/terminfo")
         terminal_root = (package / "share/terminfo").resolve()
         report["excluded_terminfo_aliases"] = []
         for path in terminal_root.rglob("*"):
@@ -220,8 +220,8 @@ def main():
             launcher.chmod(0o755)
         write_inputs(package, inputs)
         write_inputs(package, extras)
-        shutil.copy2(sysroot / "manifest.json", package / "sysroot-manifest.json")
-        tiger_provenance.copy_audit_inputs(ROOT, package)
+        context.copy_sysroot_file("manifest.json", package / "sysroot-manifest.json")
+        tiger_provenance.copy_audit_inputs(ROOT, package, context)
         report["source_commit"] = provenance["source_commit"]
         (package / "README.txt").write_text(
             "Codet for Mac OS X 10.4 PowerPC (32-bit, G3/G4/G5)\n\n"
@@ -243,6 +243,7 @@ def main():
         archive = pathlib.Path(temporary) / "codet-tiger-ppc-portable.tar.gz"
         deterministic_archive(package, archive, provenance["source_epoch"])
         final = dist / archive.name
+        context.verify_sysroot()
         publish_archive(archive, final)
         print(final)
 

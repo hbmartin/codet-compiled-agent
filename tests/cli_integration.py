@@ -1513,6 +1513,97 @@ class CliTests(unittest.TestCase):
             os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
             self.assertEqual(process.returncode,0,received)
 
+    def test_path_prose_steers_without_custom_command_rejection(self):
+        with self.pending_sequence() as context:
+            process,master,trigger,received,collect,token,release,before=context
+            text=b'/tmp/build.log shows the crash'
+            os.write(master,text+b'\n\x01');token(b'i');release.set();token(b'c')
+            collect(lambda:len(self.server.requests)>=before+2)
+            users=[m['content'] for m in self.server.requests[-1]['body']['messages'] if m['role']=='user']
+            self.assertIn(text.decode(),users,'Path prose was lost as a custom command')
+            self.assertNotIn(b'Invalid custom command',received)
+            os.write(trigger,b'h');token(b'r');os.write(trigger,b'g')
+            collect(lambda:bytes(received).count(b'fixture done')>=1)
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+
+    def test_bad_deferred_command_preserves_later_messages_and_expands_once(self):
+        commands=self.home/'commands';commands.mkdir(parents=True,exist_ok=True)
+        target=commands/'review.md';target.write_text('fixture-recovered-output $ARGUMENTS')
+        log=self.workspace/'submitted.jsonl'
+        # Preparation precedes turn ownership; hooks still see the original slash input.
+        hook=self.workspace/'hook.py'
+        hook.write_text('import json,sys,pathlib\np=json.load(sys.stdin)\n'
+            +'with pathlib.Path('+repr(str(log))+').open("a") as f:f.write(json.dumps(p)+"\\n")\n'
+            +'if p.get("prompt","").startswith("/review "):pathlib.Path('+repr(str(target))+').write_text("must not expand twice")\n')
+        config=self.home/'config.toml'
+        config.write_text(config.read_text()+'\n[hooks]\nUserPromptSubmit=[{command='+json.dumps(sys.executable+' '+str(hook))+'}]\n')
+        with self.pending_sequence() as context:
+            process,master,trigger,received,collect,token,release,before=context
+            for text in (b'/reveiw',b'later',b'/review argument'):
+                os.write(master,text+b'\n\x01');token(b'i')
+            release.set();token(b'c')
+            collect(lambda:b'recovered reply' in received or b'Pending message not sent: later' in received)
+            self.assertNotIn(b'Pending message not sent: later',received,'Local command error discarded later admitted input')
+            requests=self.server.requests[before:]
+            self.assertEqual(len(requests),3,'Bad command lost later queued input')
+            self.assertEqual([r['body']['messages'][-1]['content'] for r in requests[1:]],
+                ['later','fixture-recovered-output argument'])
+            self.assertIn(b'Unknown command: /reveiw',received)
+            self.assertNotIn(b'Pending message not sent: later',received)
+            submitted=[json.loads(line)['prompt'] for line in log.read_text().splitlines()]
+            self.assertEqual(submitted,['fixture-signal-wait','later','/review argument'])
+            import sqlite3
+            with sqlite3.connect(self.home/'state.sqlite3') as database:
+                self.assertEqual(database.execute('SELECT status FROM sessions ORDER BY rowid DESC LIMIT 1').fetchone(),('complete',))
+                persisted=[json.loads(row[0]) for row in database.execute('SELECT payload FROM session_messages ORDER BY position')]
+            self.assertEqual([m['text'] for m in persisted if m['role']=='user'],
+                ['fixture-signal-wait','later','fixture-recovered-output argument'])
+            os.write(trigger,b'h');token(b'r');os.write(trigger,b'g')
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,received)
+
+    def test_filesystem_command_preparation_error_preserves_later_input(self):
+        (self.home/'commands').mkdir(parents=True,exist_ok=True)
+        with self.pending_sequence() as context:
+            process,master,trigger,received,collect,token,release,before=context
+            for text in (b'/'+b'x'*300,b'later'):
+                os.write(master,text+b'\n\x01');token(b'i')
+            release.set();token(b'c')
+            # Release the helper's unused writer before observing CLI failure. Otherwise
+            # its future destructor delays process exit and masks the intended assertion.
+            os.write(trigger,b'h');token(b'r');os.write(trigger,b'g')
+            collect(lambda:bytes(received).count(b'fixture done')>=2 or process.poll() is not None)
+            self.assertIsNone(process.poll(),'Filesystem command error ended the interactive session')
+            self.assertEqual(len(self.server.requests),before+2,'Filesystem command error lost queued input')
+            self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'later')
+            self.assertIn(b'Error:',received)
+            self.assertNotIn(b'Pending message not sent: later',received)
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,received)
+
+    def test_two_unread_steering_lines_become_separate_followup_turns(self):
+        marker=self.workspace/'separate-stop';stop_release=self.workspace/'separate-release'
+        hook='if test ! -f '+str(marker)+'; then touch '+str(marker)+'; while test ! -f '+str(stop_release)+'; do sleep .01; done; fi'
+        config=self.home/'config.toml'
+        config.write_text(config.read_text()+'\n[hooks]\nStop=[{command='+json.dumps(hook)+'}]\n')
+        self.addCleanup(lambda:stop_release.touch() if stop_release.parent.exists() else None)
+        with self.pending_sequence() as context:
+            process,master,trigger,received,collect,token,release,before=context
+            release.set();collect(marker.exists)
+            for text in (b'A',b'B'):
+                os.write(master,text+b'\n\x01');token(b'i')
+            stop_release.touch();token(b'c')
+            collect(lambda:len(self.server.requests)>=before+2)
+            first=[m['content'] for m in self.server.requests[before+1]['body']['messages'] if m['role']=='user']
+            self.assertNotIn('B',first,'Unread steering merged followup turns')
+            collect(lambda:len(self.server.requests)>=before+3)
+            users=[[m['content'] for m in r['body']['messages'] if m['role']=='user'] for r in self.server.requests[before+1:]]
+            self.assertEqual([u[-1] for u in users],['A','B'],'Unread steering merged followup turns')
+            self.assertNotIn('B',users[0])
+            collect(lambda:bytes(received).count(b'fixture done')>=3)
+            os.write(trigger,b'h');token(b'r');os.write(trigger,b'g')
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+
     def test_bound_question_keeps_slash_command_answer_bytes(self):
         with PtyProcess() as resources:
             master,slave=resources.openpty()
@@ -1626,7 +1717,8 @@ class CliTests(unittest.TestCase):
                 before=len(self.server.requests)
                 master,slave=resources.openpty();arm,trigger=resources.pipe();notice,notify=resources.pipe()
                 helper=str(pathlib.Path(BIN).with_name('codet_tests'))
-                process=resources.start([helper,'--codet-pending-input-helper',str(arm),str(notify),
+                helper_mode='--codet-pending-input-signal-helper' if outcome in ('cancel','term') else '--codet-pending-input-helper'
+                process=resources.start([helper,helper_mode,str(arm),str(notify),
                     '-C',str(self.workspace),'--ui','line','--color','never',
                     'fixture-signal-wait fixture-error' if outcome=='failure' else 'fixture-signal-wait'],
                     stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=dict(self.env,TERM='xterm'))
@@ -1656,7 +1748,9 @@ class CliTests(unittest.TestCase):
                         elif outcome=='quit':os.write(master,b'/quit\n');token(b'k')
                         elif outcome=='ctrl-d':os.write(master,b'\x04');token(b'k')
                         elif outcome=='eof':os.write(master,b'\0');token(b'k')
-                        # Let cancellation reach the original provider before unblocking output.
+                        # A successful kill() only queues the signal. Hold the provider until
+                        # the handler has published cancellation, excluding the valid late-stop path.
+                        if outcome in ('cancel','term'):token(b'z')
                         release.set();os.write(trigger,b'g')
                         collect(lambda received=received,process=process:b'Error:' in received or process.poll() is not None)
                         if process.poll() is None:

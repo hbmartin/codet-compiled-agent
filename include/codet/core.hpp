@@ -14,6 +14,9 @@
 #include <vector>
 
 namespace codet {
+namespace detail {
+struct AgentAccess;
+}
 struct ReferenceObservation;
 struct ExecutionObservation;
 struct RecoveryCandidate;
@@ -673,6 +676,7 @@ struct RunResult {
   Json structured;
 };
 class Agent {
+  friend struct detail::AgentAccess;
   const Config &config_;
   Provider &provider_;
   Tools &tools_;
@@ -687,6 +691,8 @@ public:
         diagnostics_(std::move(diagnostics)) {}
 
 private:
+  RunResult run_impl(Session &, const std::string &, const Cancellation &, const Json &, bool,
+                     const std::vector<ImageArtifact> &, const std::string *);
   struct CompactionCycle {
     bool hook_called = false, checkpoint = false;
     unsigned summaries = 0;

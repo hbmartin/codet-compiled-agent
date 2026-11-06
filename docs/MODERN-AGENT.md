@@ -43,9 +43,27 @@ Tiger builds use a fresh `build/tiger-builds/<build-id>/native` directory. The
 `build/tiger-current.json` pointer is published only after a successful build.
 Verification and both packaging variants require this source-bound record;
 legacy binaries must be rebuilt. It binds before/after source, dependency and
-sysroot identities, cached compilers, configuration, and executable digests.
+sysroot identities, effective compilers from configure-time metadata, configuration,
+and executable digests. The compiler artifact works with normal toolchain variables
+as well as cache variables. Older provenance formats require a fresh build.
 Packages carry the frozen documentation, patch, notices and source/configuration
 blobs from that build, even when packaging runs at a later checkout revision.
+
+Compile/link supervision defaults to 1,800 seconds; configure retains a 600-second
+limit. Select a positive recorded build budget with
+`python3 scripts/tiger.py build --build-timeout 3600`. A timeout or interruption
+records the outcome, cleans up the owned process group, and leaves the previous
+current-build pointer unchanged. Fresh build trees are retained; they are not
+reused or automatically pruned. While all Tiger build/verification/package
+operations are stopped, unused noncurrent trees may be removed manually. Retain
+the current tree and any trees needed by archived provenance.
+
+Each verification/package invocation pins one build ID and provenance digest.
+Static verification is stored inside that build's directory; another build
+publishing a new current pointer cannot change an operation already in progress.
+Sysroot identity is checked at admission and before publication, and copied
+inputs are checked against their pinned digests. `CODET_DEPENDENCY_ROOT` selects
+the same location for explicit dependency fetching and all Tiger consumers.
 
 For a portable distribution, explicitly fetch the pinned Mozilla CA data with
 `make fetch-tiger-deps`, then run from the repository root:
@@ -68,12 +86,19 @@ bundle must match its lock digest and every certificate must parse.
 
 The output is `build/dist/codet-tiger-ppc-portable.tar.gz` plus a SHA-256 sidecar.
 Archive timestamps and ownership are normalized to the producing source commit.
+Repeated packaging of the same frozen verified build is deterministic. Complete
+audit material includes original checkout paths, build IDs and configuration;
+archives and rebuilt binaries are not claimed byte-identical across different
+checkout locations or independent builds.
 The archive includes executable-relative runtime libraries and terminal data.
 Extract the folder and use `./codet`; keep it together. The launcher follows
 symlinks, preserves the working directory, and preserves explicit `TERMINFO` and
 `CODET_CA_BUNDLE` settings. An explicit runtime CA bundle replaces default origin
-and HTTPS-proxy trust directories; certificate and hostname verification remain
-enabled. No TigerPorts or Developer Tools installation is required by the
+and supported HTTPS-proxy trust directories; certificate and hostname verification
+remain enabled. Known backends without a directory trust facility need no such
+store disabled; unknown/ambiguous capabilities and real trust-setting failures
+produce an explicit permanent error. Proxy trust options are skipped when HTTPS
+proxy support is unavailable. No TigerPorts or Developer Tools installation is required by the
 portable launcher. Acceptance records dependency inspection as unavailable when
 `otool` is absent. Cross-build/static verification and owner-run Tiger acceptance
 remain separate requirements; host fixture tests do not establish target support.

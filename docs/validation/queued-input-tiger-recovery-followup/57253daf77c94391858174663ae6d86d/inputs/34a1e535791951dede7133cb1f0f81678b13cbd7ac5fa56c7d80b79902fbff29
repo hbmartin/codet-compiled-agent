@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_campaign.py", line 561, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_campaign.py", line 557, in main
+    return produce(args.config, args.kind, output=args.output)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_campaign.py", line 449, in produce
+    raise ValueError("Analyzer findings differ: " + repr(value))
+ValueError: Analyzer findings differ: {'tool': 'clang-tidy', 'equal': False, 'baseline_findings': 147, 'changed_findings': 148, 'baseline_passed': False, 'changed_passed': False, 'completed_sources': 25, 'reviewed_relocations': 49, 'removed': [], 'added': [{'identity': ['bugprone-signed-bitwise', 'include/codet/detail/tls_trust.hpp', 413, 'use of a signed integer operand with a binary bitwise operator', 'src/modern/platform.cpp'], 'count': 1}]}

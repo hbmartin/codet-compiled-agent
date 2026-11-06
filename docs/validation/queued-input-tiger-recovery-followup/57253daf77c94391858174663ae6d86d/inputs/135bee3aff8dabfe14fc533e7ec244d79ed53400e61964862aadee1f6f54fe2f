@@ -1,0 +1,9 @@
+/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/build/lint-venv/bin/python scripts/lint.py all
+include/codet/detail/tls_trust.hpp:11:55: error: code should be clang-formatted [-Wclang-format-violations]
+static_assert(CURL_VERSION_HTTPS_PROXY == (1U << 21U),
+                                                      ^
+All checks passed!
+No findings to report. Good job! (3 suppressed)
+ INFO zizmor: 🌈 zizmor v1.30.1
+ INFO audit: zizmor: 🌈 completed .github/workflows/modern-checks.yml
+make: *** [check-lint] Error 1

@@ -26,6 +26,7 @@ std::string codet::test::executable;
 #ifdef CODET_NATIVE_TERMINAL_METRICS
 namespace {
 codet::Cancellation *pending_cancel = nullptr;
+volatile std::sig_atomic_t pending_signal_notify = -1;
 thread_local int pending_notify = -1;
 thread_local bool pending_enter = false;
 thread_local bool pending_frozen = false;
@@ -74,6 +75,8 @@ ssize_t pending_read(int fd, void *data, size_t size) {
 void pending_interrupt(int) {
   if (pending_cancel)
     pending_cancel->requested = true;
+  if (pending_signal_notify >= 0)
+    (void)::write(static_cast<int>(pending_signal_notify), "z", 1);
 }
 } // namespace
 #endif
@@ -156,13 +159,17 @@ int main(int argc, char **argv) {
   try {
 #ifdef CODET_NATIVE_TERMINAL_METRICS
     const bool sequence = argc > 5 && std::string(argv[1]) == "--codet-pending-sequence-helper";
-    if (sequence || (argc > 4 && std::string(argv[1]) == "--codet-pending-input-helper")) {
+    const bool signal_gate =
+        argc > 4 && std::string(argv[1]) == "--codet-pending-input-signal-helper";
+    if (sequence || signal_gate ||
+        (argc > 4 && std::string(argv[1]) == "--codet-pending-input-helper")) {
       const int release = std::stoi(argv[2]), notify = std::stoi(argv[3]);
       const int rounds = sequence ? std::stoi(argv[4]) : 1;
       if (rounds < 1 || rounds > 2)
         throw codet::Error("Pending sequence helper requires one or two reservations", 2);
       codet::Cancellation cancel;
       pending_cancel = &cancel;
+      pending_signal_notify = signal_gate ? notify : -1;
       const auto old_int = std::signal(SIGINT, pending_interrupt);
       const auto old_term = std::signal(SIGTERM, pending_interrupt);
       struct RestoreSignals {
@@ -171,6 +178,7 @@ int main(int argc, char **argv) {
           std::signal(SIGINT, interrupt);
           std::signal(SIGTERM, terminate);
           pending_cancel = nullptr;
+          pending_signal_notify = -1;
         }
       } signals{old_int, old_term};
       auto writer = std::async(std::launch::async, [=] {

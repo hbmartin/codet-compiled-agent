@@ -9,6 +9,7 @@ import ssl
 import tarfile
 from pathlib import Path
 
+from dependency_paths import dependency_root
 from verified_sources import file_hash
 
 CPP_NOTICES = (
@@ -34,10 +35,6 @@ DOCUMENTS = (
     "FEATURE-PORT.md",
     "REVIEW-FOLLOWUP.md",
 )
-
-
-def dependency_root(root):
-    return Path(os.environ.get("CODET_DEPENDENCY_ROOT", root / ".deps")).resolve()
 
 
 def required_bytes(path):

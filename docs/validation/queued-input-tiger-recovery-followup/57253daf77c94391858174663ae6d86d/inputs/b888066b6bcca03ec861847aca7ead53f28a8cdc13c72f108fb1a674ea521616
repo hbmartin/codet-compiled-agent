@@ -1,0 +1,29 @@
+Test project /Volumes/Pro2T/codet-compiled-agent/build/queued-input-tiger-recovery/campaign-20261105-04/asan
+      Start  1: codet.publication-faults
+      Start  2: codet.unit
+ 1/12 Test  #1: codet.publication-faults .........   Passed    7.18 sec
+      Start  3: codet.cli
+ 2/12 Test  #3: codet.cli ........................   Passed    0.22 sec
+      Start  4: codet.integration
+ 3/12 Test  #4: codet.integration ................   Passed   85.97 sec
+      Start  5: codet.prompts
+ 4/12 Test  #5: codet.prompts ....................   Passed    0.50 sec
+      Start  6: codet.build-integrity
+ 5/12 Test  #6: codet.build-integrity ............   Passed    0.15 sec
+      Start  7: codet.attempt-evidence
+ 6/12 Test  #7: codet.attempt-evidence ...........   Passed    0.58 sec
+      Start  8: codet.tiger-packaging
+ 7/12 Test  #8: codet.tiger-packaging ............   Passed    6.63 sec
+      Start  9: codet.semgrep-report
+ 8/12 Test  #9: codet.semgrep-report .............   Passed    0.64 sec
+      Start 10: codet.lint-runner
+ 9/12 Test #10: codet.lint-runner ................   Passed    1.64 sec
+      Start 11: codet.validation-evidence
+10/12 Test #11: codet.validation-evidence ........   Passed   10.33 sec
+      Start 12: codet.hermetic
+11/12 Test #12: codet.hermetic ...................   Passed    0.16 sec
+12/12 Test  #2: codet.unit .......................   Passed  166.22 sec
+
+100% tests passed out of 12
+
+Total Test time (real) = 166.23 sec

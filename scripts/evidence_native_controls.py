@@ -102,6 +102,9 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native mutant linking failed: " + repr(linked))
         return source, binary, compiled, linked
     cases = [
+        ("pty-final-drain", "tests/terminal_resources_test.cpp", "tests/terminal_resources_test.cpp",
+         "else if (finished)\n      break;", "else if (done)\n      break;",
+         "TerminalResources.CompletionAfterTimedOutPollStillDrainsFinalOutput"),
         ("deferred", "tests/diagnostic_lifecycle_test.cpp", "include/codet/detail/line_prompt.hpp",
          "if (submission_result == DiagnosticResult::deferred) {",
          "if (((void)submission_result, false)) {",
@@ -146,8 +149,8 @@ def run_controls(root, folder, build, ninja):
         ("control-overflow", "tests/cli_diagnostics_test.cpp", "include/codet/detail/pending_control.hpp",
          '--overflow_;', 'overflow_ = 0;', "PendingControl.BackspaceConsumesOverflowBeforeTheRetainedPrefix"),
         ("held-fifo", "tests/cli_diagnostics_test.cpp", "include/codet/detail/turn_input.hpp",
-         'phase == TurnInputPhase::completed || line.presentation_held || held',
-         'phase == TurnInputPhase::completed || line.presentation_held || (held && false)',
+         'phase == TurnInputPhase::completed || line.presentation_held',
+         'phase == TurnInputPhase::completed || (line.presentation_held && false)',
          "TurnInput.ExpiredAnswersNeverBecomeMessagesAndHeldOrderPrecedesSteering"),
         ("origin-owner", "tests/cli_diagnostics_test.cpp", "include/codet/detail/turn_input.hpp",
          'if (!line.origin || line.origin->session != origin.session || line.origin->turn != origin.turn)',
@@ -156,9 +159,22 @@ def run_controls(root, folder, build, ninja):
         ("pending-progress", "tests/cli_diagnostics_test.cpp", "include/codet/detail/pending_control.hpp",
          "if (cancelled)", "if (cancelled || started_)",
          "PendingControl.PartialPrefixNeverGatesIndependentHandoff"),
+        ("path-prose", "tests/cli_diagnostics_test.cpp", "include/codet/detail/turn_input.hpp",
+         "if (!custom_command_name(text).empty())", "if (!text.empty() && text.front() == '/')",
+         "TurnInput.PathsAreProseButValidUnknownCommandsKeepTheirIdlePolicy"),
+        ("tls-capability", "tests/cli_diagnostics_test.cpp", "include/codet/detail/tls_trust.hpp",
+         "capabilities.directories == DirectoryTrust::absent", "capabilities.directories == DirectoryTrust::present",
+         "TlsTrust.UnsupportedDirectoryStoresAreAcceptedOnlyForKnownAbsentCapabilities"),
+        ("unread-turn", "src/modern/interaction.cpp", "src/modern/interaction.cpp",
+         "      line.kind = InputKind::followup;", "      line.kind = InputKind::steering;",
+         "SubmissionQueue.UnreadSteeringClosesIntoSeparateFollowupTurns"),
+        ("empty-fragment", "src/modern/platform.cpp", "src/modern/platform.cpp",
+         "recovery.fragment = false; // The empty record delivered a real line boundary.",
+         "recovery.fragment = record.fragment; // Mutant retains the old fragment.",
+         "DiagnosticWriter.EmptyInjectedSeparationClosesTheFragmentExactlyOnce"),
         ("queue-barrier", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_queue.hpp",
          "held || barrier || !io.active_", "held || (barrier && false) || !io.active_",
-         "SubmissionQueue.DeferredBarrierSurvivesStartingTheEarlierFollowup"),
+         "SubmissionQueue.ReservedBarrierSurvivesRejectionOfItsPredecessor"),
     ]
     results = []
     for name, entry_name, source_name, before, after, target in cases:
@@ -171,7 +187,7 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native control baseline failed: " + target)
         source, binary, compiled, linked = compile_mutant(directory, binary_target, "control-tests", entry_name, source_name, before, after)
         mutant = _test(binary, target, directory)
-        markers = {"deferred": "deferred", "pending-visible": "Frozen submitted line was not displayed",
+        markers = {"pty-final-drain": "Final helper bytes were lost after completion", "deferred": "deferred", "pending-visible": "Frozen submitted line was not displayed",
                    "pending-interruption": "Value of: submitted", "separator": 'read()', "printer": "Expected equality of these values", "pid-guard": "unexpected wait",
                    "refresh": "Refresh after failed drawing", "inspection": "handle->read",
                    "submission-allocation": "Allocation consumed a line without pending ownership",
@@ -180,7 +196,10 @@ def run_controls(root, folder, build, ninja):
                    "receipt-admission": "Value of:", "control-overflow": "Value of:",
                    "origin-owner": "Expected equality", "held-fifo": "Expected equality",
                    "pending-progress": "Partial control gated an independent handoff",
-                   "queue-barrier": "Deferred barrier became steering input"}
+                   "queue-barrier": "Rejected prefix lost its reserved barrier",
+                   "unread-turn": "Unread steering crossed its originating turn",
+                   "empty-fragment": "Empty separator kept a stale fragment",
+                   "path-prose": "Expected equality", "tls-capability": "Actual:"}
         if (mutant["exit"] != 1 or not mutant["assertions"] or
                 any("C++ exception" in message or "unknown file" in message for message in mutant["assertions"]) or
                 not any(markers[name] in message for message in mutant["assertions"])):
@@ -202,6 +221,14 @@ def run_controls(root, folder, build, ninja):
         raise ValueError("Pending keyboard mutant did not fail its intended assertion: " + repr(mutant))
     results.append(dict(name="pending-keyboard", target="CliTests.test_frozen_submission_obeys_turn_outcome_and_services_controls", mutation=dict(before=before, after=after, original_sha256=digest(root / "src/modern/cli.cpp"), mutant_sha256=digest(source)), binary_sha256=digest(binary), baseline=baseline, compile=compiled, link=linked, mutant=mutant))
     review_controls = [
+        ("command-filesystem", "CliTests.test_filesystem_command_preparation_error_preserves_later_input",
+         "prepared = detail::PreparedPrompt{*input, tools.expand_command(*input)};\n      } catch (const std::bad_alloc &) {\n        throw;\n      } catch (const std::exception &error) {",
+         "prepared = detail::PreparedPrompt{*input, tools.expand_command(*input)};\n      } catch (const std::bad_alloc &) {\n        throw;\n      } catch (const Error &error) {",
+         "Filesystem command error ended the interactive session"),
+        ("command-isolation", "CliTests.test_bad_deferred_command_preserves_later_messages_and_expands_once",
+         "continue; // A local command error owns this item, never the remaining queue.",
+         "pending_input(false); continue; // Mutant discards unrelated input.",
+         "Local command error discarded later admitted input"),
         ("pending-control-owner", "CliTests.test_partial_pending_controls_never_stall_or_leak_into_messages",
          '    if (line_ && (line_->submission_pending() || pending_control_.started())) {',
          '    if (line_ && line_->submission_pending()) {', "Extra pending input became a user message"),

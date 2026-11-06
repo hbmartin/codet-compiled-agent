@@ -22,6 +22,7 @@ class Interaction {
     uint64_t turn = 0, sequence = 0;
     InputKind kind = InputKind::steering;
   };
+  bool input_barrier(std::deque<Input>::const_iterator end) const noexcept;
   uint64_t next_input_ = 0;
   std::deque<Input> input_;
   std::string session_;

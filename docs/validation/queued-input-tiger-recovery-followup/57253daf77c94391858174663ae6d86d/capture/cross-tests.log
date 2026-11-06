@@ -1,0 +1,77 @@
+Note: Google Test filter = LinePrompt.*:InteractionWarnings.*:CursesInput.*
+[==========] Running 31 tests from 3 test suites.
+[----------] Global test environment set-up.
+[----------] 9 tests from InteractionWarnings
+[ RUN      ] InteractionWarnings.RegistryRequiresDistinctSingleNonzeroBits
+[       OK ] InteractionWarnings.RegistryRequiresDistinctSingleNonzeroBits (0 ms)
+[ RUN      ] InteractionWarnings.FourthKindCannotAliasAnExistingRetry
+[       OK ] InteractionWarnings.FourthKindCannotAliasAnExistingRetry (0 ms)
+[ RUN      ] InteractionWarnings.RetainedWarningsAreNotReadmittedAfterRefreshThrows
+[       OK ] InteractionWarnings.RetainedWarningsAreNotReadmittedAfterRefreshThrows (0 ms)
+[ RUN      ] InteractionWarnings.FailedAdmissionRemainsPendingWithoutReplacingTheOperationException
+[       OK ] InteractionWarnings.FailedAdmissionRemainsPendingWithoutReplacingTheOperationException (0 ms)
+[ RUN      ] InteractionWarnings.NewOccurrencesGetOneIdleAttemptAndFailuresWaitForRealEvents
+[       OK ] InteractionWarnings.NewOccurrencesGetOneIdleAttemptAndFailuresWaitForRealEvents (0 ms)
+[ RUN      ] InteractionWarnings.ConcurrentOccurrenceDuringFailedAdmissionKeepsItsFirstAttempt
+[       OK ] InteractionWarnings.ConcurrentOccurrenceDuringFailedAdmissionKeepsItsFirstAttempt (0 ms)
+[ RUN      ] InteractionWarnings.ThrowingDeliveryStillDrainsNewWarningsWithoutReplacingItsException
+[       OK ] InteractionWarnings.ThrowingDeliveryStillDrainsNewWarningsWithoutReplacingItsException (0 ms)
+[ RUN      ] InteractionWarnings.SurfacesMustSpecifyAdmissionAndRetainedHistorySurvivesRefreshFailure
+[       OK ] InteractionWarnings.SurfacesMustSpecifyAdmissionAndRetainedHistorySurvivesRefreshFailure (0 ms)
+[ RUN      ] InteractionWarnings.CoalescesWorkerFailuresAndRetriesOnMainThreadOnly
+[       OK ] InteractionWarnings.CoalescesWorkerFailuresAndRetriesOnMainThreadOnly (0 ms)
+[----------] 9 tests from InteractionWarnings (0 ms total)
+
+[----------] 3 tests from CursesInput
+[ RUN      ] CursesInput.IncrementalPreparationPreservesRawBytesAndHasLinearWork
+[       OK ] CursesInput.IncrementalPreparationPreservesRawBytesAndHasLinearWork (63 ms)
+[ RUN      ] CursesInput.CharacterEraseUsesValidatedRawBoundariesAndUpdatesTailOnce
+[       OK ] CursesInput.CharacterEraseUsesValidatedRawBoundariesAndUpdatesTailOnce (0 ms)
+[ RUN      ] CursesInput.SharedDecoderDistinguishesIncompleteAndMalformedTrailingPrefixes
+[       OK ] CursesInput.SharedDecoderDistinguishesIncompleteAndMalformedTrailingPrefixes (0 ms)
+[----------] 3 tests from CursesInput (64 ms total)
+
+[----------] 19 tests from LinePrompt
+[ RUN      ] LinePrompt.RestoresTheSafeDraftAndDeletionMatchesSubmittedBytes
+[       OK ] LinePrompt.RestoresTheSafeDraftAndDeletionMatchesSubmittedBytes (0 ms)
+[ RUN      ] LinePrompt.SafeAppendsUseOnlyTheNewPreparedBytes
+[       OK ] LinePrompt.SafeAppendsUseOnlyTheNewPreparedBytes (0 ms)
+[ RUN      ] LinePrompt.UnknownWidthHoldsIncompleteUtf8AndKeepsSnapshotsBounded
+[       OK ] LinePrompt.UnknownWidthHoldsIncompleteUtf8AndKeepsSnapshotsBounded (0 ms)
+[ RUN      ] LinePrompt.BasicEmptyDraftEndsItsRowAndSubmissionExposesDeferredBytes
+[       OK ] LinePrompt.BasicEmptyDraftEndsItsRowAndSubmissionExposesDeferredBytes (0 ms)
+[ RUN      ] LinePrompt.MultipleMutationsAndOwnershipGapsCannotUseTheBasicAppendShortcut
+[       OK ] LinePrompt.MultipleMutationsAndOwnershipGapsCannotUseTheBasicAppendShortcut (0 ms)
+[ RUN      ] LinePrompt.CachedTokensReplaceRawEchoAndOneColumnBackspace
+[       OK ] LinePrompt.CachedTokensReplaceRawEchoAndOneColumnBackspace (0 ms)
+[ RUN      ] LinePrompt.ApprovalAndQuestionDraftsSurviveOutputWithoutDuplicatedAnswers
+[       OK ] LinePrompt.ApprovalAndQuestionDraftsSurviveOutputWithoutDuplicatedAnswers (0 ms)
+[ RUN      ] LinePrompt.RedirectedOutputAndReleasedRecoveryNeverRepaintAnotherPrompt
+[       OK ] LinePrompt.RedirectedOutputAndReleasedRecoveryNeverRepaintAnotherPrompt (0 ms)
+[ RUN      ] LinePrompt.ControllerMutationsInvalidatePresentationWithoutNotifications
+[       OK ] LinePrompt.ControllerMutationsInvalidatePresentationWithoutNotifications (0 ms)
+[ RUN      ] LinePrompt.OldDestinationKeepsOnlyASeparatorAndCannotRepaintTheNewRow
+[       OK ] LinePrompt.OldDestinationKeepsOnlyASeparatorAndCannotRepaintTheNewRow (0 ms)
+[ RUN      ] LinePrompt.MultipleStdoutChangesPreserveTheReachableStderrBoundaryAndGuidance
+[       OK ] LinePrompt.MultipleStdoutChangesPreserveTheReachableStderrBoundaryAndGuidance (0 ms)
+[ RUN      ] LinePrompt.FailedRowsAndGuidanceUseTheSharedRecoveryNewline
+[       OK ] LinePrompt.FailedRowsAndGuidanceUseTheSharedRecoveryNewline (3 ms)
+[ RUN      ] LinePrompt.ErasingTheFinalCharacterRemovesTheActiveOrdinaryPrompt
+[       OK ] LinePrompt.ErasingTheFinalCharacterRemovesTheActiveOrdinaryPrompt (0 ms)
+[ RUN      ] LinePrompt.DraftTrafficIsBoundedAndUnknownGeometryUsesSnapshots
+[       OK ] LinePrompt.DraftTrafficIsBoundedAndUnknownGeometryUsesSnapshots (19 ms)
+[ RUN      ] LinePrompt.FailedConfiguredSinkUsesTheInvocationGate
+[       OK ] LinePrompt.FailedConfiguredSinkUsesTheInvocationGate (0 ms)
+[ RUN      ] LinePrompt.InstructionDeliveryIsIndependentOfPromptDelivery
+[       OK ] LinePrompt.InstructionDeliveryIsIndependentOfPromptDelivery (0 ms)
+[ RUN      ] LinePrompt.KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure
+[       OK ] LinePrompt.KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure (0 ms)
+[ RUN      ] LinePrompt.FailedPromptIsSeparatedAndOnlyRetriedOnAnotherEvent
+[       OK ] LinePrompt.FailedPromptIsSeparatedAndOnlyRetriedOnAnotherEvent (0 ms)
+[ RUN      ] LinePrompt.InjectedFragmentEndsBeforeFrozenPresentation
+[       OK ] LinePrompt.InjectedFragmentEndsBeforeFrozenPresentation (0 ms)
+[----------] 19 tests from LinePrompt (24 ms total)
+
+[----------] Global test environment tear-down
+[==========] 31 tests from 3 test suites ran. (88 ms total)
+[  PASSED  ] 31 tests.

@@ -116,11 +116,11 @@ def run(binary, checkpoint=None, suite_timeout=850):
                 record.update(exit=completed.returncode, stdout=completed.stdout, stderr=completed.stderr)
                 record['xml'] = report.read_text()
                 root = parsed_xml(record['xml'])
-                if list(root.iter('skipped')):
-                    skipped.append(name)
                 failed = bool(list(root.iter('failure')) or list(root.iter('error')))
                 if failed and not completed.returncode:
                     raise ValueError('Failed assertions with successful process exit')
+                if list(root.iter('skipped')):
+                    skipped.append(name)
                 if failed or completed.returncode:
                     failures += 1
                     print(completed.stdout+completed.stderr, flush=True)

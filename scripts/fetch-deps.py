@@ -6,6 +6,7 @@ import json
 import pathlib
 import urllib.request
 
+from dependency_paths import dependency_root
 from verified_sources import extract_verified
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -15,8 +16,8 @@ def main():
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--tiger', action='store_true', help='Also fetch cross-build dependencies and TigerPorts patches')
     args = parser.parse_args()
-    dest = ROOT / '.deps'
-    dest.mkdir(exist_ok=True)
+    dest = dependency_root(ROOT)
+    dest.mkdir(parents=True, exist_ok=True)
     locks=[(json.loads((ROOT / 'dependencies.lock.json').read_text()), '')]
     if args.tiger:
         locks.append((json.loads((ROOT / 'tiger-dependencies.lock.json').read_text()), 'tiger-'))
@@ -42,7 +43,7 @@ def main():
           data=urllib.request.urlopen(ca['url'],timeout=120).read()
           if hashlib.sha256(data).hexdigest()!=ca['sha256']:raise SystemExit('Mozilla CA checksum mismatch')
           path.write_bytes(data)
-        (dest/'tiger-cacert.pem.sha256').write_text(ca['sha256']+'  cacert.pem\n')
+        (dest/'tiger-cacert.pem.sha256').write_text(ca['sha256']+'  tiger-cacert.pem\n')
       for patch in lock.get('patches',[]):
         path=dest/'tiger-patches'/patch['name']/patch['path']
         if not path.exists() or hashlib.sha256(path.read_bytes()).hexdigest()!=patch['sha256']:

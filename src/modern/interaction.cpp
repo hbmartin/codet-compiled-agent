@@ -107,14 +107,17 @@ bool Interaction::current_event(const Json &event) {
          (event.value("codet_turn", uint64_t{0}) == turn_ &&
           event.value("codet_session_id", "") == session_);
 }
+bool Interaction::input_barrier(std::deque<Input>::const_iterator end) const noexcept {
+  return std::any_of(input_.cbegin(), end,
+                     [](const auto &line) { return line.kind != InputKind::steering; });
+}
 void Interaction::submit(const std::string &text) {
   if (text.empty())
     return;
   std::lock_guard<std::mutex> lock(mutex_);
   if (input_.size() >= 100 || text.size() > 65536)
     throw Error("Pending user input limit exceeded");
-  const bool held = std::any_of(input_.begin(), input_.end(),
-                                [](const auto &line) { return line.kind != InputKind::steering; });
+  const bool held = input_barrier(input_.cend());
   input_.push_back({session_, safe_text(text), turn_, ++next_input_,
                     held ? InputKind::followup : InputKind::steering});
   changed_.notify_all();
@@ -127,7 +130,7 @@ std::vector<std::string> Interaction::take_input() {
   out.reserve(input_.size());
   auto end = input_.begin();
   for (; end != input_.end() && end->kind == InputKind::steering; ++end) {
-    if (end->session != session_ || end->turn > turn_)
+    if (end->session != session_ || end->turn != turn_)
       throw Error("Queued input belongs to another session or turn");
     out.push_back(end->text);
   }
@@ -146,6 +149,10 @@ void Interaction::begin_turn(const std::string &session) {
 }
 void Interaction::end_turn() {
   std::lock_guard<std::mutex> lock(mutex_);
+  // Unread input belongs to a separate follow-up, never the next worker's steering window.
+  for (auto &line : input_)
+    if (line.kind == InputKind::steering)
+      line.kind = InputKind::followup;
   active_ = false;
   answers_.clear();
   requests_.clear();

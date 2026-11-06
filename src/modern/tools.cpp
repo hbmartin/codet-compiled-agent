@@ -3,6 +3,7 @@
 #include "codet/context.hpp"
 #include "codet/core.hpp"
 #include "codet/detail/diagnostic_stream.hpp"
+#include "codet/detail/local_command.hpp"
 #include "codet/interaction.hpp"
 #include "codet/output.hpp"
 #include "codet/patch.hpp"
@@ -2023,9 +2024,7 @@ std::string Tools::expand_command(const std::string &input) const {
     return input;
   const auto space = input.find(' ');
   const auto name = input.substr(1, space == std::string::npos ? std::string::npos : space - 1);
-  if (name.empty() ||
-      name.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") !=
-          std::string::npos)
+  if (detail::custom_command_name(input).empty())
     throw Error("Invalid custom command name");
   for (const auto &dir : std::vector<fs::path>{
            config_.trust_project ? config_.cwd / ".codet/commands" : config_.home / "commands",
