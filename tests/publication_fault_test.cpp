@@ -6,6 +6,7 @@
 #include "codet/detail/cli_output.hpp"
 #include "codet/detail/curses_input.hpp"
 #include "codet/detail/line_prompt.hpp"
+#include "codet/detail/submission_queue.hpp"
 #include "codet/detail/terminal_resources.hpp"
 #include "codet/detail/ui_history.hpp"
 #include "codet/diagnostics.hpp"
@@ -2398,4 +2399,48 @@ TEST(LineSubmissionFault, AllocationFailureCannotConsumeAnUnownedLine) {
     ASSERT_TRUE(submitted);
     EXPECT_EQ(submitted->text, raw);
   }
+}
+
+TEST(PreparationFault, AllocationFailureReleasesReservedChargesAndPreservesLaterInput) {
+  unsigned failures = 0, successes = 0;
+  for (int skipped = 0; skipped != 12; ++skipped) {
+    Interaction io;
+    io.begin_turn("s");
+    const auto ticket = detail::SubmissionAccess::reserve(io);
+    io.submit("later");
+    bool failed = false;
+    {
+      detail::InputLine line{"/review"};
+      line.admission = ticket;
+      line.reservation = detail::SubmissionLease(&io, ticket);
+      Cancellation cancel;
+      fault::countdown = skipped;
+      try {
+        line.preparation = detail::prepare_submission(cancel, [&] {
+          detail::SubmissionAccess::charge(io, ticket, 262144);
+          return std::optional<detail::PreparedPrompt>{{"/review", std::string(262144, 'x')}};
+        });
+      } catch (const std::bad_alloc &) {
+        failed = true;
+      }
+      fault::disable();
+    }
+    io.end_turn();
+    const auto next = detail::SubmissionAccess::next(io, "s");
+    ASSERT_TRUE(next) << "Allocation failure leaked an admitted reservation";
+    EXPECT_EQ(next->text, "later");
+    EXPECT_TRUE(io.take_pending("s").empty());
+    if (failed)
+      ++failures;
+    else
+      ++successes;
+    // A full effective budget remains reusable after each unwinding path.
+    for (unsigned i = 0; i != 32; ++i) {
+      const auto reserved = detail::SubmissionAccess::reserve(io);
+      detail::SubmissionAccess::charge(io, reserved, 262144);
+    }
+    (void)io.take_pending("s");
+  }
+  EXPECT_GT(failures, 0u);
+  EXPECT_GT(successes, 0u);
 }

@@ -2298,7 +2298,6 @@ TEST(SubmissionQueue, FrozenReservationsCountTowardTheSharedLimit) {
   io.end_turn();
   auto next = detail::SubmissionAccess::next(io, "s");
   ASSERT_TRUE(next);
-  EXPECT_TRUE(next->idle_command);
   EXPECT_EQ(next->text, "/custom argument");
   EXPECT_FALSE(detail::SubmissionAccess::next(io, "s"));
 }
@@ -2315,7 +2314,6 @@ TEST(SubmissionQueue, ReservedPrefixCannotBeOvertakenAndKeepsItsRawCommand) {
   auto b = detail::SubmissionAccess::next(io, "s");
   ASSERT_TRUE(a);
   ASSERT_TRUE(b);
-  EXPECT_TRUE(a->idle_command);
   EXPECT_EQ(a->text, "/unknown");
   EXPECT_EQ(b->text, "later");
 }
@@ -2577,4 +2575,75 @@ TEST(SubmissionQueue, MovingOrUnwindingALineReleasesItsReservedEntryExactlyOnce)
   EXPECT_EQ(next->text, "later");
   EXPECT_TRUE(io.take_pending("s").empty())
       << "Reservation cleanup emitted an empty pending notice";
+}
+
+TEST(InputPreparation, NormalizationIsBoundedBeforeAllocatingRepairedContent) {
+  const std::string malformed(65536, static_cast<char>(0x80));
+  EXPECT_EQ(detail::normalized_input_size(malformed, 196608), 196608u);
+  EXPECT_THROW(detail::normalized_input_size(malformed, 196607), Error);
+  EXPECT_EQ(detail::normalized_input(malformed, 196608).size(), 196608u);
+  EXPECT_EQ(detail::normalized_input("literal \\x80", 12), "literal \\x80");
+  EXPECT_THROW(detail::normalized_input_size(std::string(262145, 'x'), 262144), Error);
+}
+TEST(SubmissionQueue, EffectiveBudgetCountsReservedAndCommittedContentExactlyOnce) {
+  Interaction io;
+  io.begin_turn("s");
+  std::vector<uint64_t> tickets;
+  auto expanded = std::make_shared<const detail::PreparedPrompt>(
+      detail::PreparedPrompt{"/review", std::string(detail::expanded_input_limit, 'x')});
+  for (unsigned i = 0; i != 32; ++i) {
+    const auto ticket = detail::SubmissionAccess::reserve(io);
+    tickets.push_back(ticket);
+    detail::SubmissionAccess::charge(io, ticket, expanded->expanded.size());
+    if (i % 2 == 0)
+      detail::SubmissionAccess::commit(io, ticket, "/review", true, true, expanded);
+  }
+  const auto extra = detail::SubmissionAccess::reserve(io);
+  EXPECT_THROW(detail::SubmissionAccess::charge(io, extra, 1), Error)
+      << "Aggregate effective budget admitted excess content";
+  EXPECT_THROW(io.submit("extra"), Error);
+  detail::SubmissionAccess::abandon(io, tickets.back());
+  detail::SubmissionAccess::charge(io, extra, detail::expanded_input_limit);
+  EXPECT_THROW(detail::SubmissionAccess::charge(io, extra, detail::expanded_input_limit + 1),
+               Error);
+  detail::SubmissionAccess::commit(io, extra, "/review", true, true, expanded);
+  for (auto ticket : tickets)
+    detail::SubmissionAccess::abandon(io, ticket);
+  io.end_turn();
+  unsigned consumed = 0;
+  while (auto next = detail::SubmissionAccess::next(io, "s")) {
+    ASSERT_TRUE(next->prepared);
+    EXPECT_EQ(next->prepared->expanded.size(), detail::expanded_input_limit);
+    ++consumed;
+  }
+  EXPECT_EQ(consumed, 17u);
+  // All charges, including consumed queue entries, have been released.
+  for (unsigned i = 0; i != 100; ++i)
+    io.submit(std::string(detail::raw_input_limit, 'r'));
+  EXPECT_THROW(io.submit("overflow"), Error);
+  EXPECT_EQ(io.take_pending("s").size(), 100u);
+  io.submit("usable");
+  EXPECT_EQ(io.take_pending("s"), (std::vector<std::string>{"usable"}));
+}
+TEST(SubmissionQueue, LeaseAndSteeringConsumptionReleaseEffectiveCharges) {
+  Interaction io;
+  io.begin_turn("s");
+  {
+    const auto ticket = detail::SubmissionAccess::reserve(io);
+    detail::SubmissionLease lease(&io, ticket);
+    detail::SubmissionAccess::charge(io, ticket, detail::expanded_input_limit);
+    EXPECT_THROW(detail::SubmissionAccess::commit(io, ticket, std::string(65537, 'x'), false),
+                 Error);
+  }
+  EXPECT_TRUE(io.take_input().empty());
+  for (unsigned round = 0; round != 3; ++round) {
+    for (unsigned i = 0; i != 42; ++i)
+      io.submit(std::string(detail::raw_input_limit, static_cast<char>(0x80)));
+    EXPECT_THROW(io.submit(std::string(detail::raw_input_limit, static_cast<char>(0x80))), Error);
+    auto steering = io.take_input();
+    EXPECT_EQ(steering.size(), 42u);
+    EXPECT_EQ(steering.front().size(), 196608u);
+  }
+  io.end_turn();
+  EXPECT_TRUE(io.take_pending("s").empty());
 }

@@ -1,5 +1,6 @@
 #pragma once
 #include "codet/core.hpp"
+#include "codet/detail/input_limits.hpp"
 #include "codet/detail/warning_bits.hpp"
 #include <condition_variable>
 #include <deque>
@@ -22,9 +23,12 @@ class Interaction {
     uint64_t turn = 0, sequence = 0;
     InputKind kind = InputKind::steering;
     std::shared_ptr<const detail::PreparedPrompt> prepared = {};
+    size_t charged_bytes = 0;
   };
   bool input_barrier(std::deque<Input>::const_iterator end) const noexcept;
   uint64_t next_input_ = 0;
+  size_t input_bytes_ = 0;
+  void check_input_capacity(size_t, size_t previous = 0) const;
   std::deque<Input> input_;
   std::string session_;
   uint64_t turn_ = 0;

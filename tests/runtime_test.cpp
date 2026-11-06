@@ -955,3 +955,26 @@ TEST_F(Runtime, InteractivePreparationKeepsMissingNamesAsProseAndSnapshotsEligib
   EXPECT_THAT([&] { detail::prepare_interactive_prompt(config, files, "/review argument"); },
               ThrowsMessage<Error>(HasSubstr("Unsafe custom command path")));
 }
+
+TEST_F(Runtime, InteractiveExpansionLimitsSubstitutionBeforeConstructingOversizedContent) {
+  const auto command = config.home / "commands/review.md";
+  fs::create_directories(command.parent_path());
+  const std::string argument(32768, 'a');
+  files.atomic_write(command, std::string("$ARGUMENTS$ARGUMENTS$ARGUMENTS$ARGUMENTS") +
+                                  "$ARGUMENTS$ARGUMENTS$ARGUMENTS$ARGUMENTS");
+  const auto exact = detail::prepare_interactive_prompt(config, files, "/review " + argument);
+  ASSERT_TRUE(exact);
+  EXPECT_EQ(exact->expanded.size(), 262144u);
+  files.atomic_write(command, "$ARGUMENTS$ARGUMENTS$ARGUMENTS$ARGUMENTS$ARGUMENTS"
+                              "$ARGUMENTS$ARGUMENTS$ARGUMENTS$ARGUMENTS");
+  EXPECT_THAT([&] { detail::prepare_interactive_prompt(config, files, "/review " + argument); },
+              ThrowsMessage<Error>(HasSubstr("Expanded custom command exceeds input limit")));
+  files.atomic_write(command, "$ARGUMENTS$ARGUMENTS$ARGUMENTS");
+  EXPECT_THROW(detail::prepare_interactive_prompt(
+                   config, files, "/review " + std::string(32768, static_cast<char>(0x80))),
+               Error);
+  files.atomic_write(command, "$ARGUMENTS$ARGUMENTS");
+  auto literal = detail::prepare_interactive_prompt(config, files, "/review $ARGUMENTS");
+  ASSERT_TRUE(literal);
+  EXPECT_EQ(literal->expanded, "$ARGUMENTS$ARGUMENTS");
+}
