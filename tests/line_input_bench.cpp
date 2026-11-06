@@ -186,7 +186,7 @@ int main(int argc, char **argv) {
       return 3;
   }
   Cancellation cancel;
-  test::TempDirectory fixture;
+  TempDirectory fixture;
   Config configuration;
   configuration.home = fixture.root;
   NativeFileSystem filesystem;

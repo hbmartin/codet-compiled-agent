@@ -37,6 +37,10 @@ raise SystemExit(exit_code)
 
 def run_controls(root, folder):
     cases = [
+        ("measure-constructor", "evidence_tiger_context_bench",
+         "self.temporary.cleanup() # Constructor owns storage until startup returns.",
+         "pass # Mutant leaves constructor storage behind.",
+         "test_tiger_recovery.MeasurementExceptionOwnership.test_constructor_failure_releases_storage_before_the_exception_leaves"),
         ("recipe-admission", "tiger_provenance",
          "if lock is not None and value['recipe'] != recipe:",
          "if False:", "test_tiger_recovery.RecipeAdmission.test_current_recipe_must_match_before_any_build_directory_is_created"),
@@ -156,7 +160,7 @@ def run_controls(root, folder):
             verify_unittest_result(*runs)
         except ValueError as error:
             raise ValueError("Control " + name + ": " + repr(runs)) from error
-        markers = {"recipe-admission": "ValueError not raised", "root-environment": "Nonempty environment override was ignored", "measure-cleanup": "RuntimeError not raised",
+        markers = {"measure-constructor": "Constructor failure retained owned temporary storage", "recipe-admission": "ValueError not raised", "root-environment": "Nonempty environment override was ignored", "measure-cleanup": "RuntimeError not raised",
                    "cleanup-original": "Cleanup restoration replaced the original timeout",
                    "cleanup-escalation": "Repeated interruption skipped escalation",
                    "cleanup-inactive": "Leader was reaped before group ownership ended",

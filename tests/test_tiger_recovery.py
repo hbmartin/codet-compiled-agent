@@ -286,6 +286,20 @@ class ContextMeasurement(unittest.TestCase):
 
 
 class MeasurementExceptionOwnership(unittest.TestCase):
+
+    def test_constructor_failure_releases_storage_before_the_exception_leaves(self):
+        import evidence_tiger_context_bench
+        native=tempfile.TemporaryDirectory;created=[]
+        def temporary(*args,**kwargs):
+            value=native(*args,**kwargs);created.append(Path(value.name));return value
+        failure=RuntimeError('constructor setup failed')
+        with patch.object(evidence_tiger_context_bench.tempfile,'TemporaryDirectory',temporary),patch.object(Path,'write_text',side_effect=failure):
+            try:evidence_tiger_context_bench.ContextWorkload()
+            except RuntimeError as error:
+                self.assertIs(error,failure)
+                self.assertTrue(created)
+                self.assertFalse(created[0].exists(),'Constructor failure retained owned temporary storage')
+            else:self.fail('Constructor failure was not propagated')
     def test_caller_exception_does_not_hide_a_successful_measurements_cleanup_failure(self):
         import evidence_tiger_context_bench
         import evidence_tool_bench

@@ -14,6 +14,17 @@ class ContextWorkload:
         import tiger_provenance as module
         self.module=module
         self.temporary=tempfile.TemporaryDirectory(prefix="codet-context-measure-")
+        try:
+            self._initialize()
+        except BaseException:
+            try:
+                self.temporary.cleanup() # Constructor owns storage until startup returns.
+            except BaseException:
+                pass
+            raise
+
+    def _initialize(self):
+        module=self.module
         self.root=Path(self.temporary.name)
         self.folder=self.root/"build/tiger-builds"/("a"*32)
         native=self.folder/"native";native.mkdir(parents=True)
