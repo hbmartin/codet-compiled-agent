@@ -150,12 +150,55 @@ class DependencyInputs(DistributionFixture):
             lock["ca_bundle"]["sha256"]+"  tiger-cacert.pem\n")
         self.assertFalse((self.deps/"tiger-cacert.pem.sha256").exists())
 
+    def test_empty_root_is_unset_and_real_cmake_honors_environment_and_cache_precedence(self):
+        from dependency_paths import dependency_root
+        with patch.dict(os.environ,CODET_DEPENDENCY_ROOT=''):
+            self.assertEqual(dependency_root(self.root),(self.root/'.deps').resolve())
+        with tempfile.TemporaryDirectory(prefix='codet dependency configure ') as temporary:
+            folder=Path(temporary);selected=folder/'empty dependencies';selected.mkdir()
+            def configure(output,override,*extra):
+                return subprocess.run(['cmake','-S',str(ROOT),'-B',str(output),'-DCODET_FOUNDATION_ONLY=ON',*extra],
+                    env=dict(os.environ,CODET_DEPENDENCY_ROOT=override),capture_output=True,text=True,timeout=30)
+            output=folder/'default';result=configure(output,'')
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn('CODET_DEPENDENCY_ROOT:PATH='+str(ROOT/'.deps'),(output/'CMakeCache.txt').read_text())
+            output=folder/'selected';result=configure(output,str(selected))
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('Missing pinned googletest',result.stderr)
+            result=configure(output,str(selected),'-DCODET_DEPENDENCY_ROOT='+str(ROOT/'.deps'))
+            self.assertEqual(result.returncode,0,result.stderr)
+            result=configure(output,str(folder/'another missing location'))
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn('CODET_DEPENDENCY_ROOT:PATH='+str(ROOT/'.deps'),(output/'CMakeCache.txt').read_text())
+
+    def test_recipe_cache_has_no_distribution_metadata_and_rejects_unknown_lock_formats(self):
+        from test_tiger_packaging import load_script
+        module=load_script('build-tiger-sysroot')
+        for name in ('build-tiger-sysroot.py','verified_sources.py','dependency_paths.py'):
+            self.write('scripts/'+name,'stable build helper')
+        lock=dict(format=1,dependencies=[],patches=[],ca_bundle=dict(version='old'),tigerports_revision='old')
+        stage=self.root/'build/tiger-sysroot'
+        fingerprint=module.sysroot_fingerprint(self.root,lock,module.PREFIX,module.FLAGS,'','compiler')
+        recipe=dict(dependencies=[],patches=[])
+        manifest=dict(sysroot_format=2,recipe=recipe,prefix=module.PREFIX,source_hash=fingerprint,
+                      outputs=module.tree_hashes(stage,exclude_manifest=True))
+        (stage/'manifest.json').write_text(json.dumps(manifest));before=(stage/'manifest.json').read_bytes()
+        lock['ca_bundle']['version']='new';lock['tigerports_revision']='new'
+        self.write('tiger-dependencies.lock.json',json.dumps(lock))
+        with patch.multiple(module,ROOT=self.root,BUILD=self.root/'build/tiger-deps',STAGE=stage),patch.object(module,'file_hash',return_value='compiler'):
+            module.main()
+            self.assertEqual((stage/'manifest.json').read_bytes(),before)
+            self.assertNotIn('ca_bundle',manifest);self.assertNotIn('tigerports_revision',manifest)
+            lock['format']=2;self.write('tiger-dependencies.lock.json',json.dumps(lock))
+            with self.assertRaisesRegex(ValueError,'Unsupported Tiger dependency lock format'):
+                module.main()
+
     def test_sysroot_cache_ignores_distribution_policy_but_tracks_build_inputs(self):
         from test_tiger_packaging import load_script
         module=load_script("build-tiger-sysroot")
         for name in ("build-tiger-sysroot.py","verified_sources.py","dependency_paths.py"):
             self.write("scripts/"+name,"build input "+name)
-        lock=dict(dependencies=[dict(name="curl",sha256="a"*64)],patches=[],ca_bundle=dict(version="old"))
+        lock=dict(format=1,dependencies=[dict(name="curl",sha256="a"*64)],patches=[],ca_bundle=dict(version="old"))
         def key():
             return module.sysroot_fingerprint(self.root,lock,"/opt/tigr","flags","image","compiler")
         original=key()
