@@ -61,7 +61,7 @@ def main():
     extras = extra_notices(args.extra_license, inputs)
     original = context.verified_report()
     sysroot = ROOT / "build/tiger-sysroot"
-    manifest = json.loads((sysroot / "manifest.json").read_text())
+    manifest = context.manifest
     prefix = manifest["prefix"]
     dist = ROOT / "build/dist"
     dist.mkdir(exist_ok=True)

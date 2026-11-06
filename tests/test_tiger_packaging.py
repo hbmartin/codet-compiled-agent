@@ -73,6 +73,7 @@ class DistributionFixture(unittest.TestCase):
             "tiger-dependencies.lock.json",
             json.dumps(
                 dict(
+                    format=1, dependencies=[], patches=[],
                     ca_bundle=dict(
                         version="fixture",
                         url="https://fixture.invalid/mozilla.pem",
@@ -98,7 +99,7 @@ class DistributionFixture(unittest.TestCase):
         self.write("tests/fixtures/events-v1.jsonl", "{}\n")
         self.write("CMakeLists.txt", "cmake_minimum_required(VERSION 3.20)\n")
         self.write("src/modern/fixture.cpp", "int frozen;\n")
-        self.write("build/tiger-sysroot/manifest.json", json.dumps(dict(prefix="/opt/tigr")))
+        self.write("build/tiger-sysroot/manifest.json", json.dumps(dict(sysroot_format=2,recipe=dict(dependencies=[],patches=[]),prefix="/opt/tigr")))
         for name in [
             "d/dumb",
             "v/vt100",
