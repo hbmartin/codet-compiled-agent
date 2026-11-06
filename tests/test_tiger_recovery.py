@@ -109,6 +109,44 @@ class PinnedPackaging(DistributionFixture):
         self.package();before=self.archive.read_bytes()
         self.package();self.assertEqual(self.archive.read_bytes(),before)
 
+    def test_transient_live_prefix_cannot_select_another_verified_terminfo_tree(self):
+        from test_tiger_packaging import portable
+        stage=self.root/'build/tiger-sysroot';manifest=stage/'manifest.json';original=manifest.read_bytes()
+        for source in list((stage/'opt/tigr/share/terminfo').rglob('*')):
+            if source.is_file():
+                target=stage/'alternate/share/terminfo'/source.relative_to(stage/'opt/tigr/share/terminfo')
+                target.parent.mkdir(parents=True,exist_ok=True);target.write_text('alternate verified data')
+        self.record['before']['sysroot']=provenance.tree_hashes(stage)
+        self.record['after']=self.record['before']
+        provenance.atomic_json(self.folder/'provenance.json',self.record)
+        sha=provenance.file_hash(self.folder/'provenance.json')
+        provenance.atomic_json(self.root/'build/tiger-current.json',dict(build_id=self.folder.name,sha256=sha))
+        self.verification['build_provenance_sha256']=sha
+        provenance.atomic_json(self.folder/'verification.json',self.verification)
+        verified=provenance.BuildContext.verified_report;dependencies=portable.MachO.dependencies
+        def tamper(context):
+            value=verified(context)
+            altered=json.loads(original);altered['prefix']='/alternate';manifest.write_text(json.dumps(altered))
+            return value
+        def restore(inspection,binary):
+            manifest.write_bytes(original)
+            return dependencies(inspection,binary)
+        with patch.object(provenance.BuildContext,'verified_report',tamper),patch.object(portable.MachO,'dependencies',restore):
+            self.package()
+        import tarfile
+        with tarfile.open(self.archive) as archive:
+            self.assertEqual(archive.extractfile('codet-tiger/share/terminfo/d/dumb').read(),b'terminal',
+                             'Transient live prefix selected a different terminfo tree')
+            self.assertEqual(archive.extractfile('codet-tiger/sysroot-manifest.json').read(),original)
+
+    def test_pinned_manifest_is_immutable_and_its_archive_digest_is_required(self):
+        context=provenance.resolve(self.root)
+        with self.assertRaises(TypeError):context.manifest['prefix']='/changed'
+        with self.assertRaises(TypeError):context.manifest['recipe']['dependencies']=[]
+        path=self.folder/'inputs'/self.record['sysroot_manifest'];path.write_text('corrupt')
+        with self.assertRaisesRegex(ValueError,'input changed while copying'):
+            provenance.resolve(self.root)
+
     def test_legacy_format_requires_new_build(self):
         record=dict(self.record,format=1)
         provenance.atomic_json(self.folder/"provenance.json",record)
@@ -150,12 +188,55 @@ class DependencyInputs(DistributionFixture):
             lock["ca_bundle"]["sha256"]+"  tiger-cacert.pem\n")
         self.assertFalse((self.deps/"tiger-cacert.pem.sha256").exists())
 
+    def test_empty_root_is_unset_and_real_cmake_honors_environment_and_cache_precedence(self):
+        from dependency_paths import dependency_root
+        with patch.dict(os.environ,CODET_DEPENDENCY_ROOT=''):
+            self.assertEqual(dependency_root(self.root),(self.root/'.deps').resolve())
+        with tempfile.TemporaryDirectory(prefix='codet dependency configure ') as temporary:
+            folder=Path(temporary);selected=folder/'empty dependencies';selected.mkdir()
+            def configure(output,override,*extra):
+                return subprocess.run(['cmake','-S',str(ROOT),'-B',str(output),'-DCODET_FOUNDATION_ONLY=ON',*extra],
+                    env=dict(os.environ,CODET_DEPENDENCY_ROOT=override),capture_output=True,text=True,timeout=30)
+            output=folder/'default';result=configure(output,'')
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn('CODET_DEPENDENCY_ROOT:PATH='+str(ROOT/'.deps'),(output/'CMakeCache.txt').read_text())
+            output=folder/'selected';result=configure(output,str(selected))
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('Missing pinned googletest',result.stderr)
+            result=configure(output,str(selected),'-DCODET_DEPENDENCY_ROOT='+str(ROOT/'.deps'))
+            self.assertEqual(result.returncode,0,result.stderr)
+            result=configure(output,str(folder/'another missing location'))
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn('CODET_DEPENDENCY_ROOT:PATH='+str(ROOT/'.deps'),(output/'CMakeCache.txt').read_text())
+
+    def test_recipe_cache_has_no_distribution_metadata_and_rejects_unknown_lock_formats(self):
+        from test_tiger_packaging import load_script
+        module=load_script('build-tiger-sysroot')
+        for name in ('build-tiger-sysroot.py','verified_sources.py','dependency_paths.py'):
+            self.write('scripts/'+name,'stable build helper')
+        lock=dict(format=1,dependencies=[],patches=[],ca_bundle=dict(version='old'),tigerports_revision='old')
+        stage=self.root/'build/tiger-sysroot'
+        fingerprint=module.sysroot_fingerprint(self.root,lock,module.PREFIX,module.FLAGS,'','compiler')
+        recipe=dict(dependencies=[],patches=[])
+        manifest=dict(sysroot_format=2,recipe=recipe,prefix=module.PREFIX,source_hash=fingerprint,
+                      outputs=module.tree_hashes(stage,exclude_manifest=True))
+        (stage/'manifest.json').write_text(json.dumps(manifest));before=(stage/'manifest.json').read_bytes()
+        lock['ca_bundle']['version']='new';lock['tigerports_revision']='new'
+        self.write('tiger-dependencies.lock.json',json.dumps(lock))
+        with patch.multiple(module,ROOT=self.root,BUILD=self.root/'build/tiger-deps',STAGE=stage),patch.object(module,'file_hash',return_value='compiler'):
+            module.main()
+            self.assertEqual((stage/'manifest.json').read_bytes(),before)
+            self.assertNotIn('ca_bundle',manifest);self.assertNotIn('tigerports_revision',manifest)
+            lock['format']=2;self.write('tiger-dependencies.lock.json',json.dumps(lock))
+            with self.assertRaisesRegex(ValueError,'Unsupported Tiger dependency lock format'):
+                module.main()
+
     def test_sysroot_cache_ignores_distribution_policy_but_tracks_build_inputs(self):
         from test_tiger_packaging import load_script
         module=load_script("build-tiger-sysroot")
         for name in ("build-tiger-sysroot.py","verified_sources.py","dependency_paths.py"):
             self.write("scripts/"+name,"build input "+name)
-        lock=dict(dependencies=[dict(name="curl",sha256="a"*64)],patches=[],ca_bundle=dict(version="old"))
+        lock=dict(format=1,dependencies=[dict(name="curl",sha256="a"*64)],patches=[],ca_bundle=dict(version="old"))
         def key():
             return module.sysroot_fingerprint(self.root,lock,"/opt/tigr","flags","image","compiler")
         original=key()
@@ -170,6 +251,25 @@ class DependencyInputs(DistributionFixture):
 
 
 class ContextMeasurement(unittest.TestCase):
+    def test_startup_failure_restores_patches_tracing_and_temporary_storage(self):
+        import tracemalloc
+
+        import evidence_tiger_context_bench
+        import evidence_tool_bench
+        original_check=subprocess.check_output;original_stat=Path.stat
+        start=evidence_tiger_context_bench.ContextWorkload.start
+        failure=ValueError('injected context startup failure');created=[]
+        def fail(context):
+            created.append(context);start(context);raise failure
+        with patch.object(evidence_tiger_context_bench.ContextWorkload,'start',fail):
+            with self.assertRaises(ValueError) as caught:
+                evidence_tool_bench.measure(ROOT,'HEAD','build-context')
+        self.assertIs(caught.exception,failure)
+        self.assertIs(subprocess.check_output,original_check)
+        self.assertIs(Path.stat,original_stat)
+        self.assertFalse(tracemalloc.is_tracing())
+        self.assertFalse(created[0].root.exists())
+
     def test_scoped_context_counters_have_an_observed_positive_control(self):
         import evidence_tool_bench
         from evidence_benchmarks import verify_tooling_metrics

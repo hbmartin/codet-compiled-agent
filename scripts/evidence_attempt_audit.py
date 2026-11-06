@@ -30,10 +30,21 @@ def verify(folder):
         raise ValueError('Symlink in attempt bundle')
     actual = {str(p.relative_to(folder)): digest(p) for p in folder.rglob('*') if p.is_file() and p != folder / 'inventory.json'}
     if actual != inventory:
-        raise ValueError('Attempt inventory mismatch')
+        raise ValueError('Attempt inventory mismatch: missing=' + repr(sorted(set(inventory) - set(actual)))
+                         + ', extra=' + repr(sorted(set(actual) - set(inventory)))
+                         + ', mismatched=' + repr(sorted(name for name in set(actual) & set(inventory)
+                                                          if actual[name] != inventory[name])))
     manifest = load_manifest(folder / 'manifest.json')
     run = json.loads((folder / 'capture/run.json').read_text())
     report = json.loads((folder / 'report.json').read_text())
+    try:
+        measurements = json.loads(safe_member(folder, 'measurements.json').read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError('Missing or malformed attempt measurements.json') from error
+    if (not isinstance(measurements, list) or measurements
+            or type(report.get('measurement_samples')) is not int
+            or report['measurement_samples'] != 0):
+        raise ValueError('Incomplete attempt must declare an empty measurement list and zero samples')
     if report.get('attempt_bundle_version') != 2 or report.get('eligible_current') is not False or report.get('complete') is not False:
         raise ValueError('Incomplete attempt must not claim acceptance')
     if run.get('schema_version') != 5 or report.get('schema_version') != 5:
@@ -66,11 +77,11 @@ def verify(folder):
             if not role_selected(name, role) or name.startswith('/') or '..' in name.split('/'):
                 raise ValueError('Invalid fingerprint path')
             need('run', 'fingerprint:' + role, name, sha)
-        for name, sha in report['validation_hashes'].items():
-            if name.startswith('scripts/') and '/' not in name[len('scripts/'):]:
-                copied = folder / 'verifier_tooling' / Path(name).name
-                if not copied.is_file() or digest(copied) != sha:
-                    raise ValueError('Verifier tooling source mismatch')
+    for name, sha in report['validation_hashes'].items():
+        if name.startswith('scripts/') and '/' not in name[len('scripts/'):]:
+            copied = folder / 'verifier_tooling' / Path(name).name
+            if not copied.is_file() or digest(copied) != sha:
+                raise ValueError('Verifier tooling source mismatch')
     helpers = report.get('assembly_inputs')
     if not isinstance(helpers, dict) or set(helpers) != {'evidence_attempt.py', 'evidence_attempt_audit.py'}:
         raise ValueError('Incomplete assembly helper declarations')
@@ -116,7 +127,12 @@ def verify(folder):
                 processes = ast.literal_eval(lines[-1]) if lines else []
                 from evidence_processes import blocking_processes
                 if not isinstance(processes, list) or not processes or blocking_processes(processes) != processes:
-                    raise ValueError('Unavailable benchmark reason not evidenced')
+                    prefix = 'Measurement inspection unavailable: '
+                    inspections = [line[len(prefix):] for line in log.splitlines() if line.startswith(prefix)]
+                    if len(inspections) != 1:
+                        raise ValueError('Unavailable benchmark reason not evidenced')
+                    from evidence_processes import validate_inspection_failure
+                    validate_inspection_failure(json.loads(inspections[0]), report['validation_hashes']['scripts/evidence_processes.py'])
             else:
                 raise ValueError('Unexpected measurement failure')
         if completed:
@@ -147,7 +163,8 @@ def verify(folder):
                 raise ValueError('Incomplete successful output declarations')
             if len(record['artifacts']) != len(check.get('artifacts', [])):
                 raise ValueError('Incomplete successful artifacts')
-        for saved, spec in zip(record['artifacts'], check.get('artifacts', []), strict=True) if acceptable else []:
+        for position, saved in enumerate(record['artifacts']) if acceptable else []:
+            spec = check.get('artifacts', [])[position]
             target = 'artifacts/' + name + '/' + Path(saved['path']).name
             if saved['path'] != spec['path'] or digest(safe_member(folder, target)) != saved['sha256']:
                 raise ValueError('Artifact digest mismatch')

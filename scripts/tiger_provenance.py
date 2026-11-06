@@ -8,6 +8,7 @@ import subprocess
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 from dependency_paths import dependency_root
 from evidence_inputs import role_hashes
@@ -18,7 +19,7 @@ from verified_sources import file_hash, tree_hashes
 
 BINARIES = ("codet", "codet_tests", "codet_persistence_bench")
 CONFIGURATION = {"CMakeCache.txt", "compile_commands.json", "Makefile", "codet-compiler-identity.json"}
-BUILD_FORMAT = 2
+BUILD_FORMAT = 3
 BUILD_TIMEOUT = 1800
 
 
@@ -78,10 +79,35 @@ def store(folder, data):
     return digest
 
 
+def freeze_json(value):
+    if isinstance(value, dict):
+        return MappingProxyType({key: freeze_json(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(freeze_json(item) for item in value)
+    return value
+
+
+def validated_manifest(data):
+    try:
+        value = json.loads(data)
+        if (value['sysroot_format'] != 2 or not isinstance(value['recipe'], dict)
+                or set(value['recipe']) != {'dependencies', 'patches'}
+                or any(not isinstance(x, list) for x in value['recipe'].values())
+                or not isinstance(value['prefix'], str) or not value['prefix'].startswith('/')
+                or '..' in Path(value['prefix']).parts):
+            raise ValueError('Invalid Tiger sysroot recipe manifest')
+    except (KeyError, TypeError, json.JSONDecodeError) as error:
+        raise ValueError('Invalid Tiger sysroot recipe manifest') from error
+    return freeze_json(value)
+
+
 def prepare(root, deps, image):
     folder = root / "build/tiger-builds" / uuid.uuid4().hex
     folder.mkdir(parents=True)
     before = snapshots(root, deps)
+    manifest = checked_bytes(root / 'build/tiger-sysroot/manifest.json',
+                             before['sysroot']['manifest.json'])
+    validated_manifest(manifest)
     git = ["git", "-C", str(root)]
     commit = subprocess.check_output([*git, "rev-parse", "HEAD"], text=True, timeout=30).strip()
     epoch = int(
@@ -102,6 +128,7 @@ def prepare(root, deps, image):
         before=before,
         distribution=index,
         source_snapshot=source_index,
+        sysroot_manifest=store(folder, manifest),
         root_provenance=str(root),
         dependency_provenance=str(deps),
     )
@@ -281,6 +308,7 @@ class BuildContext:
     folder: Path
     provenance_sha256: str
     _record: bytes
+    manifest: object
 
     @property
     def record(self):
@@ -318,7 +346,11 @@ def resolve(root, build_id=None, provenance_sha256=None):
     if (build_id is None) != (provenance_sha256 is None):
         raise ValueError("Both Tiger build ID and provenance digest are required")
     folder, record, digest, data = _load(root, build_id, provenance_sha256)
-    context = BuildContext(root, folder, digest, data)
+    manifest_digest = record.get('sysroot_manifest')
+    if not manifest_digest or manifest_digest != record['before']['sysroot'].get('manifest.json'):
+        raise ValueError('Tiger build lacks a pinned sysroot manifest')
+    manifest_bytes = checked_bytes(folder / 'inputs' / manifest_digest, manifest_digest)
+    context = BuildContext(root, folder, digest, data, validated_manifest(manifest_bytes))
     context.verify_sysroot()
     return context
 
@@ -354,7 +386,7 @@ def copy_audit_inputs(root, destination, context=None):
     data = destination / "build-inputs"
     data.mkdir()
     for digest in set().union(*(set(record[name].values())
-                               for name in ("distribution", "source_snapshot", "configuration"))):
+                               for name in ("distribution", "source_snapshot", "configuration"))) | {record["sysroot_manifest"]}:
         copy_checked(context.folder / "inputs" / digest, data / digest, digest)
     (destination / "build-provenance.json").write_bytes(context._record)
 

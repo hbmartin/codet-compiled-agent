@@ -19,6 +19,8 @@ class ContextWorkload:
         native=self.folder/"native";native.mkdir(parents=True)
         inputs=self.folder/"inputs";inputs.mkdir()
         sysroot=self.root/"build/tiger-sysroot";sysroot.mkdir()
+        (sysroot/'manifest.json').write_text(json.dumps(dict(sysroot_format=2,
+            recipe=dict(dependencies=[],patches=[]),prefix='/opt/tigr')))
         for n in range(128):
             (sysroot/str(n)).write_bytes(bytes([n])*4096)
         def store(data):
@@ -38,6 +40,7 @@ class ContextWorkload:
             configuration=configuration,outputs=outputs,build_timeout=1800,
             compilers={name:tools[name] for name in ("gcc","g++")},build_tools={name:tools[name] for name in ("cmake","make")},
             commands=[dict(argv=["cmake"],exit=0,outcome="passed",timeout=600),dict(argv=["build"],exit=0,outcome="passed",timeout=1800)],
+            sysroot_manifest=store((sysroot/"manifest.json").read_bytes()),
             source_commit="d"*40,source_epoch=1600000000,toolchain_image="sha256:"+"e"*64)
         (self.folder/"provenance.json").write_text(json.dumps(record))
         (self.root/"build/tiger-current.json").write_text(json.dumps(dict(build_id=self.folder.name,sha256=module.file_hash(self.folder/"provenance.json"))))

@@ -1,0 +1,19 @@
+{
+  "kind": "postpublication-relocated-audit",
+  "campaign_acceptance_record": false,
+  "bundle_inventory_sha256": "418d9dd2d851e27089d873d1b8346420ebc078029440cbae77b1311660d97161",
+  "capture_run_id": "e502981668834de6b65125a42142611a",
+  "python": "3.12.15 (main, Sep 30 2026, 22:04:19) [Clang 21.0.0 (clang-2100.3.34.2)]",
+  "audit": {
+    "verified": true,
+    "eligible_current": true,
+    "schema_version": 5,
+    "campaign_id": "c09de1fd8fc44463aa197b8896ae671a",
+    "checks": 41,
+    "audit_inputs": 13075,
+    "reran_binaries": false
+  },
+  "corruption_rejected": "Audit inventory mismatch",
+  "original_checkout_io_blocked": true,
+  "subprocess_launches_blocked": true
+}

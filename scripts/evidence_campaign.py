@@ -54,6 +54,16 @@ def history_files(folders):
         prior = Path(prior)
         files.extend(prior / name for name in ("config.json", "manifest.json", "capture-driver.log", "capture/run.json"))
         files.extend(sorted((prior / "capture").glob("*")))
+        for captured in sorted((prior / "capture").glob("*.json")):
+            if captured.name == "run.json":
+                continue
+            record = json.loads(captured.read_text())
+            for artifact in record.get("artifacts", []):
+                original_root = Path(json.loads((prior / "manifest.json").read_text())["root"])
+                path = original_root / artifact["path"]
+                if not path.is_file() or digest(path) != artifact["sha256"]:
+                    raise ValueError("Prior attempt artifact changed: " + str(path))
+                files.append(path)
     if any(not path.is_file() for path in files):
         raise ValueError("Prior attempt metadata is missing")
     return list(dict.fromkeys(files))
@@ -215,12 +225,14 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
                 artifacts=[isolation] if isolation else [],
                 file_inputs=([dict(path=name, archive=not name.endswith("/codet_tests")) for name in isolation_inputs] if isolation else []) +
                     [dict(path=rel(path)) for path in sorted((root / "licenses").glob("*")) if path.is_file()],
-                directory_inputs=["licenses"])
+                directory_inputs=["licenses"] + config["dependency_roots"])
         else:
             add("tsan-20", [build / "codet_tests", focused, "--gtest_repeat=20"], [mode + "-build"])
     debug = Path(builds["debug"])
     add("focused-20", [debug / "codet_tests", focused, "--gtest_repeat=20"], ["debug-build"])
     add("python39", [python39, "-m", "unittest", "discover", "-s", "tests", "-p", "test_validation_evidence.py", "-v"], python_version=[3, 9])
+    add("python39-attempt", [python39, "-m", "unittest", "discover", "-s", "tests", "-p", "test_attempt_evidence.py", "-v"], python_version=[3, 9])
+    add("python39-tiger", [python39, "-m", "unittest", "discover", "-s", "tests", "-p", "test_tiger_recovery.py", "-v"], python_version=[3, 9], directory_inputs=config["dependency_roots"])
     add("python39-integration", [python39, "tests/hermetic.py", python39, "tests/cli_integration.py", debug / "codet"], ["debug-build"], python_version=[3, 9])
     add("lint", [native["make"], "check-lint", "CHECK_PYTHON=" + python])
     add("semgrep", [native["make"], "check-semgrep", "CHECK_PYTHON=" + python, "SEMGREP=" + str(root / "build/semgrep-venv/bin/pysemgrep")])

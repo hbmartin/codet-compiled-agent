@@ -39,8 +39,6 @@ inline TurnInputDisposition classify_turn_input(const InputLine &line, const Jso
     return {TurnInputAction::new_session, {}, {}};
   if (command != LocalCommand::none)
     return {TurnInputAction::restricted, {}, "Use local commands after the active turn completes."};
-  if (!custom_command_name(text).empty())
-    return {TurnInputAction::idle_command, {}, {}};
   if (text.empty())
     return {TurnInputAction::ignore, {}, {}};
   return {phase == TurnInputPhase::completed || line.presentation_held ? TurnInputAction::hold

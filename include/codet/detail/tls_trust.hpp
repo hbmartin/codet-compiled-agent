@@ -1,12 +1,13 @@
 #pragma once
-#include "codet/detail/local_command.hpp"
 #include "codet/detail/transport_error.hpp"
+#include <cstdint>
+#include <cstring>
 #include <curl/curl.h>
 #include <string_view>
+#include <utility>
 
 namespace codet::detail {
 enum class DirectoryTrust : uint8_t { present, absent, unknown };
-// curl's public macro uses a signed shift. Keep an unsigned mask, checking its
 // Validate the native API without expanding its signed-shift macro into C++.
 // Modeled analyzer headers may omit it; the assertion still rejects a missing
 // or mismatched constant in a real compiler.
@@ -21,18 +22,23 @@ struct TrustCapabilities {
   DirectoryTrust directories = DirectoryTrust::unknown;
 };
 inline DirectoryTrust directory_trust(std::string_view backend) noexcept {
-  for (const std::string_view name :
-       {"OpenSSL/", "LibreSSL/", "BoringSSL", "AWS-LC/", "GnuTLS/", "mbedTLS/", "wolfSSL/"})
-    if (command_prefix(backend, name) &&
+  static constexpr std::pair<std::string_view, DirectoryTrust> backends[] = {
+      {"OpenSSL/", DirectoryTrust::present},        {"LibreSSL/", DirectoryTrust::present},
+      {"BoringSSL", DirectoryTrust::present},       {"AWS-LC/", DirectoryTrust::present},
+      {"GnuTLS/", DirectoryTrust::present},         {"mbedTLS/", DirectoryTrust::present},
+      {"wolfSSL/", DirectoryTrust::present},        {"SecureTransport", DirectoryTrust::absent},
+      {"Secure Transport", DirectoryTrust::absent}, {"Schannel", DirectoryTrust::absent},
+      {"rustls/", DirectoryTrust::absent},          {"Rustls/", DirectoryTrust::absent},
+      {"rustls-ffi/", DirectoryTrust::absent},      {"crustls/", DirectoryTrust::absent},
+      {"BearSSL", DirectoryTrust::absent}};
+  for (const auto &entry : backends) {
+    const auto name = entry.first;
+    if (backend.size() >= name.size() &&
+        std::memcmp(backend.data(), name.data(), name.size()) == 0 &&
         (name.back() == '/' || backend.size() == name.size() || backend[name.size()] == ' ' ||
          backend[name.size()] == '/'))
-      return DirectoryTrust::present;
-  for (const std::string_view name :
-       {"SecureTransport", "Secure Transport", "Schannel", "rustls/", "Rustls/"})
-    if (command_prefix(backend, name) &&
-        (name.back() == '/' || backend.size() == name.size() || backend[name.size()] == ' ' ||
-         backend[name.size()] == '/'))
-      return DirectoryTrust::absent;
+      return entry.second;
+  }
   return DirectoryTrust::unknown;
 }
 // The injected setter is also the capability regression seam; no ambient/test controls.

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 import hashlib
-import json
 import pathlib
 import subprocess
 
@@ -61,7 +60,7 @@ def main():
     for name in ("gcc","g++"):
         if tiger_provenance.compiler(pathlib.Path(PREFIX+name)) != provenance["compilers"][name]:
             raise ValueError("Verification compiler differs from producing build")
-    manifest=json.loads((ROOT/'build/tiger-sysroot/manifest.json').read_text());prefix=manifest['prefix']
+    prefix=context.manifest['prefix']
     report={'build_provenance_sha256':context.provenance_sha256,'build_id':folder.name,'target_runtime_verified':False,'compiler':output(PREFIX+'gcc','-dumpfullversion').strip(),'binaries':[]}
     if report['compiler']!='14.2.0':raise SystemExit('Wrong compiler')
     macros=output(PREFIX+'gcc','-m32','-mcpu=750','-mmacosx-version-min=10.4','-dM','-E','-x','c','/dev/null')

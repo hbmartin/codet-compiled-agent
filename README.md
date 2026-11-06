@@ -261,3 +261,8 @@ uses the same explicit config/`--output` convention.
 Captured compatibility entry points may omit `--output` to use the configured
 default, or provide a path declared by the capture manifest. They retain the
 capture identity and strict input checks; they never emit an unbound result.
+
+Interactive slash input expands existing custom commands once at submission.
+Unknown names and slash-prefixed paths are prose; built-in commands retain their
+usual meaning. Headless command expansion stays strict. See the interactive slash
+input notes in [MODERN-AGENT.md](docs/MODERN-AGENT.md).

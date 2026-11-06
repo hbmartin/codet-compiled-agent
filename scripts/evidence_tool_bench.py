@@ -29,17 +29,20 @@ def measure(root, ref, workload, repository=None):
         git_calls += name == 'git'
         process_inspections += name == 'ps'
         return native(*args, **kwargs)
-    subprocess.check_output = counted
-    tracemalloc.start()
-    control = bytearray(4096)
-    if tracemalloc.get_traced_memory()[0] < len(control):
-        raise ValueError("Python allocation observation positive control failed")
-    del control
-    tracemalloc.reset_peak()
-    if context:
-        context.start()
-    start = time.perf_counter()
+    tracing = False
     try:
+        subprocess.check_output = counted
+        if not tracemalloc.is_tracing():
+            tracemalloc.start()
+            tracing = True
+        control = bytearray(4096)
+        if tracemalloc.get_traced_memory()[0] < len(control):
+            raise ValueError("Python allocation observation positive control failed")
+        del control
+        tracemalloc.reset_peak()
+        if context:
+            context.start()
+        start = time.perf_counter()
         if workload == "git-inspection":
             hashes = verify_git_source(repository or root, root, ref)["production_hashes"]
         elif workload == "hashing":
@@ -63,10 +66,17 @@ def measure(root, ref, workload, repository=None):
         retained, peak = tracemalloc.get_traced_memory()
         stats = tracemalloc.take_snapshot().statistics("filename")
     finally:
-        subprocess.check_output = native
-        tracemalloc.stop()
-        if context:
-            context.close()
+        original = sys.exc_info()[1]
+        try:
+            if context:
+                context.close()
+        except BaseException:
+            if original is None:
+                raise
+        finally:
+            subprocess.check_output = native
+            if tracing:
+                tracemalloc.stop()
     if not hashes or (workload == "git-inspection" and calls < 3):
         raise ValueError("Hash/Git work counter positive control failed")
     return dict(**(dict(context_metric_version=1, **context.counts) if context else {}), case=workload, milliseconds=elapsed, files=0 if workload == "supervision" else len(hashes),

@@ -2339,7 +2339,7 @@ TEST(TurnInput, CompleteLocalGrammarAndBoundAnswersShareOnePolicy) {
     detail::InputLine line{text, {}, false, origin};
     EXPECT_EQ(detail::classify_turn_input(line, nullptr, origin, detail::TurnInputPhase::completed)
                   .action,
-              detail::TurnInputAction::idle_command);
+              detail::TurnInputAction::hold);
   }
 }
 
@@ -2396,7 +2396,7 @@ TEST(SubmissionQueue, UnreadSteeringClosesIntoSeparateFollowupTurns) {
   ASSERT_TRUE(second);
   EXPECT_EQ(second->text, "B");
 }
-TEST(TurnInput, PathsAreProseButValidUnknownCommandsKeepTheirIdlePolicy) {
+TEST(TurnInput, SlashIdentifiersNeedResolvedCommandsBeforeDeferral) {
   const detail::InputOrigin origin{"s", 1};
   for (const std::string text : {"/tmp/build.log shows the crash", "/tmp.log", "/", "/a/b"}) {
     detail::InputLine line{text, {}, false, origin};
@@ -2408,7 +2408,7 @@ TEST(TurnInput, PathsAreProseButValidUnknownCommandsKeepTheirIdlePolicy) {
   detail::InputLine command{"/reveiw args", {}, false, origin};
   EXPECT_EQ(
       detail::classify_turn_input(command, nullptr, origin, detail::TurnInputPhase::active).action,
-      detail::TurnInputAction::idle_command);
+      detail::TurnInputAction::steer);
 }
 
 TEST(TlsTrust, UnsupportedDirectoryStoresAreAcceptedOnlyForKnownAbsentCapabilities) {
@@ -2472,4 +2472,36 @@ TEST(SubmissionQueue, ReservedBarrierSurvivesRejectionOfItsPredecessor) {
   auto pending = detail::SubmissionAccess::next(io, "s");
   ASSERT_TRUE(pending);
   EXPECT_EQ(pending->text, "later");
+}
+
+TEST(TlsTrust, ActualBackendVersionsRetainDelimiterAwareCapabilities) {
+  for (const std::string backend : {"rustls-ffi/0.15.0/rustls/0.23.0/aws-lc-rs",
+                                    "crustls/0.8.0/rustls/0.20.0", "BearSSL", "BearSSL/0.6"}) {
+    ASSERT_EQ(detail::directory_trust(backend), detail::DirectoryTrust::absent) << backend;
+    EXPECT_NO_THROW(detail::configure_tls_trust(
+        "selected.pem", {true, detail::directory_trust(backend)},
+        [](CURLoption option, const char *) {
+          return option == CURLOPT_CAPATH || option == CURLOPT_PROXY_CAPATH ? CURLE_NOT_BUILT_IN
+                                                                            : CURLE_OK;
+        }))
+        << backend;
+  }
+  for (const std::string backend : {"BearSSLFuture", "SchannelFuture", "rustls-ffi", "crustls"})
+    EXPECT_EQ(detail::directory_trust(backend), detail::DirectoryTrust::unknown) << backend;
+}
+TEST(SubmissionQueue, InactiveCompatibilityInputCannotBecomeOldTurnSteering) {
+  Interaction io;
+  io.begin_turn("s");
+  io.end_turn();
+  io.submit("between turns");
+  io.begin_turn("s");
+  std::vector<std::string> steering;
+  EXPECT_NO_THROW(steering = io.take_input())
+      << "Inactive compatibility input retained old-turn steering";
+  EXPECT_TRUE(steering.empty());
+  io.end_turn();
+  const auto queued = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(queued);
+  EXPECT_EQ(queued->text, "between turns");
+  EXPECT_FALSE(detail::SubmissionAccess::next(io, "s"));
 }
