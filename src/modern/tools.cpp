@@ -2068,6 +2068,6 @@ std::optional<detail::PreparedPrompt> detail::prepare_interactive_prompt(const C
 std::string Tools::expand_command(const std::string &input) const {
   if (input.empty() || input[0] != '/')
     return input;
-  return *custom_expansion(config_, files_, input, true);
+  return custom_expansion(config_, files_, input, true).value();
 }
 } // namespace codet

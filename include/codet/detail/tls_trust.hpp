@@ -1,6 +1,7 @@
 #pragma once
 #include "codet/detail/transport_error.hpp"
 #include <cstdint>
+#include <cstring>
 #include <curl/curl.h>
 #include <string_view>
 #include <utility>
@@ -32,7 +33,8 @@ inline DirectoryTrust directory_trust(std::string_view backend) noexcept {
       {"BearSSL", DirectoryTrust::absent}};
   for (const auto &entry : backends) {
     const auto name = entry.first;
-    if (backend.size() >= name.size() && backend.compare(0, name.size(), name) == 0 &&
+    if (backend.size() >= name.size() &&
+        std::memcmp(backend.data(), name.data(), name.size()) == 0 &&
         (name.back() == '/' || backend.size() == name.size() || backend[name.size()] == ' ' ||
          backend[name.size()] == '/'))
       return entry.second;

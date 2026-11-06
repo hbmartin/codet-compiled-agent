@@ -704,7 +704,7 @@ public:
         line.pop_back();
       if (resources_.entries())
         history(resources_.entries(), &history_event_, H_ENTER, line.c_str());
-      const auto submitted = input_.take(std::move(line));
+      auto submitted = input_.take(std::move(line));
       if (submitted.action() == detail::InputAction::discard) {
         discarded_line();
         return read(cancel);
