@@ -59,6 +59,40 @@ struct Resources : detail::TerminalResourceOps {
     record('H');
   }
 };
+template <class Receive>
+std::string drain_helper_output(const std::atomic<bool> &done, Receive receive) {
+  std::string output;
+  for (;;) {
+    const bool finished = done;
+    char bytes[4096];
+    const auto count = receive(bytes, sizeof(bytes), finished ? 0 : 20);
+    if (count > 0)
+      output.append(bytes, static_cast<size_t>(count));
+    else if (count < 0 && errno == EINTR)
+      continue;
+    else if (finished)
+      break;
+  }
+  return output;
+}
+TEST(TerminalResources, CompletionAfterTimedOutPollStillDrainsFinalOutput) {
+  std::atomic<bool> done{false};
+  int calls = 0;
+  const auto output = drain_helper_output(done, [&](char *bytes, size_t, int wait) -> ssize_t {
+    if (++calls == 1) {
+      EXPECT_EQ(wait, 20);
+      done = true; // Completion and final bytes race with the previous timed-out poll.
+      return 0;
+    }
+    EXPECT_EQ(wait, 0);
+    if (calls == 2) {
+      std::memcpy(bytes, "final", 5);
+      return 5;
+    }
+    return 0;
+  });
+  EXPECT_EQ(output, "final") << "Final helper bytes were lost after completion";
+}
 TEST(TerminalResources, ValidationBeforeAcquisitionDoesNotTouchTheTerminal) {
   Resources ops;
   {
@@ -225,17 +259,11 @@ TEST(TerminalResources, StartupExceptionsRestoreRealPtyModesBeforeReporting) {
     });
     // endwin/libedit can drain the PTY while restoring it. Drain concurrently with the
     // existing bounded helper wait rather than waiting for exit before reading.
-    std::string output;
-    for (;;) {
+    const auto output = drain_helper_output(done, [&](char *bytes, size_t size, int wait) {
       pollfd ready{master, POLLIN, 0};
-      if (::poll(&ready, 1, done ? 0 : 20) > 0) {
-        char bytes[4096];
-        const auto count = ::read(master, bytes, sizeof(bytes));
-        if (count > 0)
-          output.append(bytes, static_cast<size_t>(count));
-      } else if (done)
-        break;
-    }
+      const auto polled = ::poll(&ready, 1, wait);
+      return polled > 0 ? ::read(master, bytes, size) : static_cast<ssize_t>(polled);
+    });
     waiter.join();
     ASSERT_TRUE(waited) << phase;
     ASSERT_TRUE(WIFEXITED(status));

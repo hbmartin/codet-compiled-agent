@@ -102,6 +102,9 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native mutant linking failed: " + repr(linked))
         return source, binary, compiled, linked
     cases = [
+        ("pty-final-drain", "tests/terminal_resources_test.cpp", "tests/terminal_resources_test.cpp",
+         "else if (finished)\n      break;", "else if (done)\n      break;",
+         "TerminalResources.CompletionAfterTimedOutPollStillDrainsFinalOutput"),
         ("deferred", "tests/diagnostic_lifecycle_test.cpp", "include/codet/detail/line_prompt.hpp",
          "if (submission_result == DiagnosticResult::deferred) {",
          "if (((void)submission_result, false)) {",
@@ -184,7 +187,7 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native control baseline failed: " + target)
         source, binary, compiled, linked = compile_mutant(directory, binary_target, "control-tests", entry_name, source_name, before, after)
         mutant = _test(binary, target, directory)
-        markers = {"deferred": "deferred", "pending-visible": "Frozen submitted line was not displayed",
+        markers = {"pty-final-drain": "Final helper bytes were lost after completion", "deferred": "deferred", "pending-visible": "Frozen submitted line was not displayed",
                    "pending-interruption": "Value of: submitted", "separator": 'read()', "printer": "Expected equality of these values", "pid-guard": "unexpected wait",
                    "refresh": "Refresh after failed drawing", "inspection": "handle->read",
                    "submission-allocation": "Allocation consumed a line without pending ownership",
