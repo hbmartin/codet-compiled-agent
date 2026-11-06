@@ -1493,6 +1493,19 @@ class EvidenceV4(ValidationEvidence):
         with self.assertRaisesRegex(ValueError, 'Prior attempt metadata'):
             history_files(folders)
 
+    def test_prior_attempt_declared_artifacts_are_preserved_and_digest_checked(self):
+        from evidence_campaign import history_files
+        folder=self.root/'attempt';(folder/'capture').mkdir(parents=True)
+        for name in ('config.json','capture-driver.log','capture/run.json'):
+            (folder/name).write_text('original historical metadata')
+        (folder/'manifest.json').write_text(json.dumps(dict(root=str(self.root))))
+        artifact=folder/'analysis.json';artifact.write_text('original observed findings')
+        (folder/'capture/analysis.json').write_text(json.dumps(dict(artifacts=[dict(path=str(artifact),sha256=evidence.digest(artifact))])))
+        self.assertIn(artifact,history_files([folder]))
+        artifact.write_text('changed')
+        with self.assertRaisesRegex(ValueError,'Prior attempt artifact changed'):
+            history_files([folder])
+
     def test_tooling_benchmark_uses_repository_identity_for_nested_archives(self):
         import shutil
         subprocess.run(['git', 'init', '-q', str(self.root)], check=True, timeout=30)

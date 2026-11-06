@@ -54,6 +54,16 @@ def history_files(folders):
         prior = Path(prior)
         files.extend(prior / name for name in ("config.json", "manifest.json", "capture-driver.log", "capture/run.json"))
         files.extend(sorted((prior / "capture").glob("*")))
+        for captured in sorted((prior / "capture").glob("*.json")):
+            if captured.name == "run.json":
+                continue
+            record = json.loads(captured.read_text())
+            for artifact in record.get("artifacts", []):
+                original_root = Path(json.loads((prior / "manifest.json").read_text())["root"])
+                path = original_root / artifact["path"]
+                if not path.is_file() or digest(path) != artifact["sha256"]:
+                    raise ValueError("Prior attempt artifact changed: " + str(path))
+                files.append(path)
     if any(not path.is_file() for path in files):
         raise ValueError("Prior attempt metadata is missing")
     return list(dict.fromkeys(files))
