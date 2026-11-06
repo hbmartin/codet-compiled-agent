@@ -287,6 +287,25 @@ class ContextMeasurement(unittest.TestCase):
 
 class MeasurementExceptionOwnership(unittest.TestCase):
 
+    def test_shared_fixture_cannot_be_shadowed_by_the_variant_support_module(self):
+        with tempfile.TemporaryDirectory(prefix='codet shared fixture ') as temporary:
+            root=Path(temporary);scripts=root/'scripts';scripts.mkdir()
+            (scripts/'evidence_tiger_context_bench.py').write_text("class ContextWorkload:\n    counts={}\n    def start(self):pass\n    def perform(self):return {'variant-only':b'wrong fixture'}\n    def close(self):pass\n")
+            marker=root/'core-selected'
+            core=(ROOT/'scripts/tiger_provenance.py').read_text()
+            (scripts/'tiger_provenance.py').write_text(core+'\nPath('+repr(str(marker))+').write_text("variant core")\n')
+            output=root/'measurement.json'
+            import evidence_tool_bench
+            harness=root/'harness';harness.mkdir()
+            entry=harness/'evidence_tool_bench.py';entry.write_bytes(Path(evidence_tool_bench.__file__).read_bytes())
+            (harness/'evidence_tiger_context_bench.py').write_bytes((ROOT/'scripts/evidence_tiger_context_bench.py').read_bytes())
+            result=subprocess.run([sys.executable,str(entry),str(root),'HEAD','build-context',str(output)],
+                capture_output=True,text=True,timeout=30,env=dict(os.environ,PYTHONPATH=str(ROOT/'scripts')))
+            self.assertEqual(result.returncode,0,'Shared support snapshot was not used: '+result.stderr)
+            row=json.loads(output.read_text())
+            self.assertEqual(row['files'],2,'Shared fixture inputs differ between variants')
+            self.assertTrue(marker.exists(),'Shared fixture did not select the variant core')
+
     def test_constructor_failure_releases_storage_before_the_exception_leaves(self):
         import evidence_tiger_context_bench
         native=tempfile.TemporaryDirectory;created=[]

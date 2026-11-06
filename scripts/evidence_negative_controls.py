@@ -37,6 +37,10 @@ raise SystemExit(exit_code)
 
 def run_controls(root, folder):
     cases = [
+        ("shared-fixture", "evidence_tool_bench",
+         "import evidence_tiger_context_bench\n\n# Select each variant's tooling through the same harness, without modifying its tree.\nif __name__ == \"__main__\":\n    sys.path.insert(0, str(Path(sys.argv[1]) / \"scripts\"))",
+         "if __name__ == \"__main__\":\n    sys.path.insert(0, str(Path(sys.argv[1]) / \"scripts\"))\nimport evidence_tiger_context_bench",
+         "test_tiger_recovery.MeasurementExceptionOwnership.test_shared_fixture_cannot_be_shadowed_by_the_variant_support_module"),
         ("measure-constructor", "evidence_tiger_context_bench",
          "self.temporary.cleanup() # Constructor owns storage until startup returns.",
          "pass # Mutant leaves constructor storage behind.",
@@ -160,7 +164,7 @@ def run_controls(root, folder):
             verify_unittest_result(*runs)
         except ValueError as error:
             raise ValueError("Control " + name + ": " + repr(runs)) from error
-        markers = {"measure-constructor": "Constructor failure retained owned temporary storage", "recipe-admission": "ValueError not raised", "root-environment": "Nonempty environment override was ignored", "measure-cleanup": "RuntimeError not raised",
+        markers = {"shared-fixture": "Shared fixture inputs differ between variants", "measure-constructor": "Constructor failure retained owned temporary storage", "recipe-admission": "ValueError not raised", "root-environment": "Nonempty environment override was ignored", "measure-cleanup": "RuntimeError not raised",
                    "cleanup-original": "Cleanup restoration replaced the original timeout",
                    "cleanup-escalation": "Repeated interruption skipped escalation",
                    "cleanup-inactive": "Leader was reaped before group ownership ended",

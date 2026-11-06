@@ -6,6 +6,9 @@ import time
 import tracemalloc
 from pathlib import Path
 
+# Load the declared support snapshot before selecting a variant's implementation.
+import evidence_tiger_context_bench
+
 # Select each variant's tooling through the same harness, without modifying its tree.
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(sys.argv[1]) / "scripts"))
@@ -18,8 +21,7 @@ def measure(root, ref, workload, repository=None):
     calls = git_calls = process_inspections = 0
     context = None
     if workload == "build-context":
-        from evidence_tiger_context_bench import ContextWorkload
-        context = ContextWorkload()
+        context = evidence_tiger_context_bench.ContextWorkload()
     native = subprocess.check_output
     def counted(*args, **kwargs):
         nonlocal calls, git_calls, process_inspections
