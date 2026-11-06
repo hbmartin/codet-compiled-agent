@@ -1,0 +1,16 @@
+{
+  "binding": "post-publication-integrity-audit-not-an-additional-campaign-check",
+  "run": "57253daf77c94391858174663ae6d86d",
+  "relocated_audit": {
+    "verified": true,
+    "eligible_current": true,
+    "schema_version": 5,
+    "campaign_id": "31e9c7ccb35540098abc7d1a92830ba7",
+    "checks": 39,
+    "audit_inputs": 12711,
+    "reran_binaries": false
+  },
+  "corrupt_archive_rejected": "Audit inventory mismatch",
+  "auditor": "reconstructed from digest-verified declared validation inputs",
+  "original_checkout_access_blocked": true
+}

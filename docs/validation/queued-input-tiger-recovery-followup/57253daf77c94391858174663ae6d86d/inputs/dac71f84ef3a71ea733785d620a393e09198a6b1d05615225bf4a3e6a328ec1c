@@ -1,0 +1,35 @@
+Native control: deferred
+Native control: pending-visible
+Native control: pending-interruption
+Native control: separator
+Native control: printer
+Native control: pid-guard
+Native control: refresh
+Native control: inspection
+Native control: submission-allocation
+Native control: fragment-boundary
+Native control: newline-ack
+Native control: receipt-admission
+Native control: control-overflow
+Native control: held-fifo
+Native control: origin-owner
+Native control: pending-progress
+Native control: path-prose
+Native control: tls-capability
+Native control: unread-turn
+Native control: empty-fragment
+Native control: queue-barrier
+Integration control: command-filesystem
+Traceback (most recent call last):
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_campaign.py", line 561, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_campaign.py", line 557, in main
+    return produce(args.config, args.kind, output=args.output)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_campaign.py", line 479, in produce
+    payload = run_controls(root, folder, build, config["tools"]["ninja"]["path"])
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_native_controls.py", line 259, in run_controls
+    raise ValueError("Review mutant did not fail its intended assertion: " + target + repr(mutant))
+ValueError: Review mutant did not fail its intended assertion: CliTests.test_filesystem_command_preparation_error_preserves_later_input{'argv': ['/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/build/lint-venv/bin/python', '-c', "\nimport importlib.util,json,sys,unittest\nfrom pathlib import Path\nroot,binary,output,target=sys.argv[1:]\npath=Path(root)/'tests/cli_integration.py'\nsys.path.insert(0,str(path.parent));sys.argv=[str(path),binary]\nspec=importlib.util.spec_from_file_location('pending_native_control',path)\nmodule=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)\nif target=='CliTests.test_frozen_submission_obeys_turn_outcome_and_services_controls':module.CliTests.pending_outcomes=('quit',)\nif target=='CliTests.test_completed_result_is_saved_and_displayed_before_late_close':module.CliTests.completed_closes=(b'\\x04',)\nif target=='CliTests.test_late_signals_preserve_result_and_return_to_usable_prompt':module.CliTests.late_stops=(module.signal.SIGTERM,)\nsuite=unittest.defaultTestLoader.loadTestsFromName(target,module)\nif suite.countTestCases()!=1:raise ValueError('Pending-control target was not discovered exactly once')\nresult=unittest.TextTestRunner(verbosity=2).run(suite)\nPath(output).write_text(json.dumps(dict(tests=result.testsRun,failures=[trace for _,trace in result.failures],errors=[trace for _,trace in result.errors])))\nraise SystemExit(int(not result.wasSuccessful()))\n", '/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent', '/Volumes/Pro2T/codet-compiled-agent/build/queued-input-tiger-recovery/campaign-20261105-06/native-control-command-filesystem/codet', '/Volumes/Pro2T/codet-compiled-agent/build/queued-input-tiger-recovery/campaign-20261105-06/native-control-command-filesystem/integration-result.json', 'CliTests.test_filesystem_command_preparation_error_preserves_later_input'], 'cwd': '/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent', 'exit': 1, 'log': 'test_filesystem_command_preparation_error_preserves_later_input (pending_native_control.CliTests.test_filesystem_command_preparation_error_preserves_later_input) ... FAIL\n\n======================================================================\nFAIL: test_filesystem_command_preparation_error_preserves_later_input (pending_native_control.CliTests.test_filesystem_command_preparation_error_preserves_later_input)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/tests/cli_integration.py", line 1572, in test_filesystem_command_preparation_error_preserves_later_input\n    collect(lambda:bytes(received).count(b\'fixture done\')>=2 or process.poll() is not None)\n  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/tests/pty_process.py", line 29, in collect\n    test.assertTrue(predicate(), bytes(received))\nAssertionError: False is not true : b\'Permissions: default; no OS shell sandbox\\r\\ncodet> [default] /xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\r                                                                               \\rcodet> [default] <xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\r\\ncodet> [default] later\\r\\nfixture done\\r\\n\'\n\n----------------------------------------------------------------------\nRan 1 test in 10.633s\n\nFAILED (failures=1)\n', 'assertions': ['Traceback (most recent call last):\n  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/tests/cli_integration.py", line 1572, in test_filesystem_command_preparation_error_preserves_later_input\n    collect(lambda:bytes(received).count(b\'fixture done\')>=2 or process.poll() is not None)\n  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/tests/pty_process.py", line 29, in collect\n    test.assertTrue(predicate(), bytes(received))\nAssertionError: False is not true : b\'Permissions: default; no OS shell sandbox\\r\\ncodet> [default] /xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\r                                                                               \\rcodet> [default] <xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\r\\ncodet> [default] later\\r\\nfixture done\\r\\n\'\n']}

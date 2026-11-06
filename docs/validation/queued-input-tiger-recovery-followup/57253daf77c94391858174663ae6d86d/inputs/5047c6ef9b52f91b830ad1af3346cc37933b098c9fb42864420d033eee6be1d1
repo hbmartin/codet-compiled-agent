@@ -1,0 +1,30 @@
+[1/60] Building C object CMakeFiles/codet_text.dir/src/text_compat.c.o
+[2/60] Linking C static library libcodet_text.a
+[3/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/failure.cpp.o
+[4/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/capture_catalog.cpp.o
+[5/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/support.cpp.o
+[6/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/reliability.cpp.o
+[7/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/platform.cpp.o
+[8/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/output.cpp.o
+[9/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/config.cpp.o
+[10/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/provider.cpp.o
+[11/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/patch.cpp.o
+[12/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/state.cpp.o
+[13/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/hooks.cpp.o
+[14/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/interaction.cpp.o
+[15/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/tool_registry.cpp.o
+[16/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/images.cpp.o
+[17/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/tools.cpp.o
+[18/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/instructions.cpp.o
+[19/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/computer.cpp.o
+[20/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/artifacts.cpp.o
+[21/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/inspection.cpp.o
+[22/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/prompts.cpp.o
+[23/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/context.cpp.o
+[24/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/agent.cpp.o
+[25/60] Building CXX object CMakeFiles/codet_tests.dir/tests/terminal_resources_test.cpp.o
+[26/60] Building CXX object CMakeFiles/codet_core.dir/src/modern/cli.cpp.o
+[27/60] Building CXX object CMakeFiles/codet_tests.dir/tests/cli_diagnostics_test.cpp.o
+[28/60] Building CXX object CMakeFiles/codet_tests.dir/tests/pr17_test.cpp.o
+[29/60] Building CXX object CMakeFiles/codet_tests.dir/tests/test_main.cpp.o
+ninja: build stopped: interrupted by user.
