@@ -26,7 +26,8 @@ class ContextWorkload:
         def store(data):
             digest=hashlib.sha256(data).hexdigest();(inputs/digest).write_bytes(data);return digest
         sources={"src/fixture.cpp":store(b"frozen source")}
-        distribution={"notice.txt":store(b"frozen notice")}
+        distribution={"notice.txt":store(b"frozen notice"),
+                      "tiger-dependencies.lock.json":store(b'{"format":1,"dependencies":[],"patches":[]}')}
         configuration={}
         for name in sorted(getattr(module,"CONFIGURATION",("CMakeCache.txt","compile_commands.json","Makefile"))):
             data=(name+" frozen").encode();(native/name).write_bytes(data);configuration[name]=store(data)
@@ -79,7 +80,8 @@ class ContextWorkload:
             module.load(self.root)
             values=module.archived_inputs(self.root)
             module.copy_audit_inputs(self.root,self.destination)
-        if values!={"notice.txt":b"frozen notice"}:
+        if values!={"notice.txt":b"frozen notice",
+                    "tiger-dependencies.lock.json":b'{"format":1,"dependencies":[],"patches":[]}'}:
             raise ValueError("Build-context work equivalence control failed")
         return values
 

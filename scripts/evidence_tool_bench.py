@@ -30,6 +30,7 @@ def measure(root, ref, workload, repository=None):
         process_inspections += name == 'ps'
         return native(*args, **kwargs)
     tracing = False
+    failure = None
     try:
         subprocess.check_output = counted
         if not tracemalloc.is_tracing():
@@ -58,6 +59,21 @@ def measure(root, ref, workload, repository=None):
                     hashes[str(number)] = error.process_cleanup["reaped"]
                 else:
                     raise ValueError("Supervision positive control did not time out")
+        elif workload == "dependency-resolution":
+            from dependency_paths import dependency_root
+            hashes = {}
+            for number in range(1000):
+                hashes[str(number)] = str(dependency_root(root))
+        elif workload == "measurement-cleanup":
+            from tempfile import TemporaryDirectory
+            hashes = {}
+            for number in range(100):
+                with TemporaryDirectory(prefix="codet-cleanup-measure-") as directory:
+                    target = Path(directory) / "owned"
+                    target.write_bytes(b"owned")
+                if Path(directory).exists():
+                    raise ValueError("Measurement resource cleanup positive control failed")
+                hashes[str(number)] = True
         elif workload == "build-context":
             hashes = context.perform()
         else:
@@ -65,13 +81,15 @@ def measure(root, ref, workload, repository=None):
         elapsed = (time.perf_counter() - start) * 1000
         retained, peak = tracemalloc.get_traced_memory()
         stats = tracemalloc.take_snapshot().statistics("filename")
+    except BaseException as error:
+        failure = error
+        raise
     finally:
-        original = sys.exc_info()[1]
         try:
             if context:
                 context.close()
         except BaseException:
-            if original is None:
+            if failure is None:
                 raise
         finally:
             subprocess.check_output = native

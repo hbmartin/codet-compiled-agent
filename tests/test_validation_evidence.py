@@ -1484,11 +1484,16 @@ class EvidenceV4(ValidationEvidence):
         for folder in folders:
             (folder / 'capture').mkdir(parents=True)
             for name in ('config.json', 'manifest.json', 'capture-driver.log', 'capture/run.json'):
-                (folder / name).write_text('original ' + folder.name + ' ' + name)
-        paths = history_files(folders)
+                (folder / name).write_text(json.dumps(dict(root=str(self.root))) if name=='manifest.json' else 'original ' + folder.name + ' ' + name)
+        native=Path.read_text;reads=[]
+        def counted(path,*args,**kwargs):
+            if path.name=='manifest.json':reads.append(path)
+            return native(path,*args,**kwargs)
+        with patch.object(Path,'read_text',counted):paths = history_files(folders)
+        self.assertEqual(reads,[folder/'manifest.json' for folder in folders])
         self.assertEqual(len(paths), 8)
         self.assertEqual({p.parent for p in paths if p.name == 'run.json'}, {f / 'capture' for f in folders})
-        self.assertTrue(all(p.read_text().startswith('original ') for p in paths))
+        self.assertTrue(all(p.read_text().startswith('original ') for p in paths if p.name!='manifest.json'))
         (folders[1] / 'capture/run.json').unlink()
         with self.assertRaisesRegex(ValueError, 'Prior attempt metadata'):
             history_files(folders)
