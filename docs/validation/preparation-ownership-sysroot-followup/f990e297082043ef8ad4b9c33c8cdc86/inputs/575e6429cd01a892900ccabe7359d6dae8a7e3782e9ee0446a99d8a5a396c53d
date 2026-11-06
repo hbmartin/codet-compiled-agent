@@ -1,0 +1,35 @@
+[1/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/failure.cpp.o
+[2/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/support.cpp.o
+[3/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/capture_catalog.cpp.o
+[4/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/reliability.cpp.o
+[5/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/platform.cpp.o
+[6/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/output.cpp.o
+[7/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/config.cpp.o
+[8/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/patch.cpp.o
+[9/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/provider.cpp.o
+[10/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/hooks.cpp.o
+[11/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/state.cpp.o
+[12/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/interaction.cpp.o
+[13/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/tool_registry.cpp.o
+[14/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/computer.cpp.o
+[15/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/images.cpp.o
+[16/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/instructions.cpp.o
+[17/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/inspection.cpp.o
+[18/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/tools.cpp.o
+[19/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/context.cpp.o
+[20/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/artifacts.cpp.o
+[21/37] Building CXX object CMakeFiles/codet_line_input_bench.dir/tests/line_input_bench.cpp.o
+FAILED: CMakeFiles/codet_line_input_bench.dir/tests/line_input_bench.cpp.o 
+/usr/bin/c++ -DCODET_VERSION=\"0.1.0\" -I/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/include -I/Volumes/Pro2T/codet-compiled-agent/.deps/json-schema-validator/src -isystem /Volumes/Pro2T/codet-compiled-agent/.deps/json/include -isystem /Volumes/Pro2T/codet-compiled-agent/.deps/tomlplusplus/include -isystem /opt/homebrew/Cellar/openssl@4/4.0.3/include -Wno-error=implicit-int-float-conversion -Wno-error=unused-result -O3 -DNDEBUG -std=c++17 -arch arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk -Wall -Wextra -Wpedantic -Werror -Wconversion -Wsign-conversion -Wshorten-64-to-32 -MD -MT CMakeFiles/codet_line_input_bench.dir/tests/line_input_bench.cpp.o -MF CMakeFiles/codet_line_input_bench.dir/tests/line_input_bench.cpp.o.d -o CMakeFiles/codet_line_input_bench.dir/tests/line_input_bench.cpp.o -c /Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/tests/line_input_bench.cpp
+/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/tests/line_input_bench.cpp:189:3: error: no type named 'TempDirectory' in namespace 'codet::test'; did you mean simply 'TempDirectory'?
+  189 |   test::TempDirectory fixture;
+      |   ^~~~~~~~~~~~~~~~~~~
+      |   TempDirectory
+/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/tests/temp.hpp:5:8: note: 'TempDirectory' declared here
+    5 | struct TempDirectory {
+      |        ^
+1 error generated.
+[22/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/prompts.cpp.o
+[23/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/agent.cpp.o
+[24/37] Building CXX object CMakeFiles/codet_core.dir/src/modern/cli.cpp.o
+ninja: build stopped: subcommand failed.

@@ -1,0 +1,29 @@
+Measured 1 line allocation-positive
+Measured 1 line geometry-positive
+Measured 1 line busy
+Measured 1 line native-busy
+Measured 1 line editing
+Measured 1 line editing-basic
+Measured 1 line native-editing
+Measurement inspection unavailable: {"deadline_seconds": 5, "inspector_sha256": "a460409a1fce5f85728838471a76cac45af833742e8f7cf0800641179b880322", "reason": "CalledProcessError", "returncode": 1, "stderr": "Traceback (most recent call last):\n  File \"/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_processes.py\", line 206, in <module>\n    print(json.dumps(process_snapshot()))\n                     ^^^^^^^^^^^^^^^^^^\n  File \"/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_processes.py\", line 148, in process_snapshot\n    arguments = read_argv(pid)\n                ^^^^^^^^^^^^^^\n  File \"/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_processes.py\", line 128, in read_argv\n    raise OSError(code, os.strerror(code))\nOSError: [Errno 22] Invalid argument\n"}
+Traceback (most recent call last):
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_campaign.py", line 575, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_campaign.py", line 571, in main
+    return produce(args.config, args.kind, output=args.output)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_campaign.py", line 485, in produce
+    payload = measure(config)
+              ^^^^^^^^^^^^^^^
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_campaign.py", line 328, in measure
+    require_quiet_processes()
+  File "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_processes.py", line 169, in require_quiet_processes
+    processes = json.loads(subprocess.check_output(
+                           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.12/3.12.15/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py", line 466, in check_output
+    return run(*popenargs, stdout=PIPE, timeout=timeout, check=True,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.12/3.12.15/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/build/lint-venv/bin/python', '/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/scripts/evidence_processes.py', '--snapshot']' returned non-zero exit status 1.

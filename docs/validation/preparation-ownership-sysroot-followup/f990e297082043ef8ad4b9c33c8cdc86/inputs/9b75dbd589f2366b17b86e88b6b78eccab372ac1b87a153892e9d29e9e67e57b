@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""Explicit network step; normal configure/build/test never downloads sources."""
+import argparse
+import hashlib
+import json
+import pathlib
+import urllib.request
+
+from dependency_paths import dependency_root
+from verified_sources import extract_verified
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+def main():
+    parser = argparse.ArgumentParser(__doc__)
+    parser.add_argument('--offline', action='store_true')
+    parser.add_argument('--tiger', action='store_true', help='Also fetch cross-build dependencies and TigerPorts patches')
+    args = parser.parse_args()
+    dest = dependency_root(ROOT)
+    dest.mkdir(parents=True, exist_ok=True)
+    locks=[(json.loads((ROOT / 'dependencies.lock.json').read_text()), '')]
+    if args.tiger:
+        locks.append((json.loads((ROOT / 'tiger-dependencies.lock.json').read_text()), 'tiger-'))
+    for lock,prefix in locks:
+      for dep in lock['dependencies']:
+        archive = dest / (prefix+dep['name'] + ('.tar' if prefix else '.tar.gz'))
+        if not archive.exists() or hashlib.sha256(archive.read_bytes()).hexdigest() != dep['sha256']:
+            if args.offline:
+                raise SystemExit('Missing or outdated archive: ' + str(archive))
+            with urllib.request.urlopen(dep['url'], timeout=120) as response:
+                data = response.read()
+            if hashlib.sha256(data).hexdigest() != dep['sha256']:
+                raise SystemExit('Checksum mismatch: ' + dep['name'])
+            archive.write_bytes(data)
+        if hashlib.sha256(archive.read_bytes()).hexdigest() != dep['sha256']:
+            raise SystemExit('Checksum mismatch: ' + dep['name'])
+        extract_verified(archive, dep['sha256'], dest / (prefix + dep['name']))
+        print(dep['name'], dep['version'], dep['sha256'])
+      if 'ca_bundle' in lock:
+        ca=lock['ca_bundle'];path=dest/'tiger-cacert.pem'
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest()!=ca['sha256']:
+          if args.offline:raise SystemExit('Missing or corrupt pinned Mozilla CA bundle: '+str(path))
+          data=urllib.request.urlopen(ca['url'],timeout=120).read()
+          if hashlib.sha256(data).hexdigest()!=ca['sha256']:raise SystemExit('Mozilla CA checksum mismatch')
+          path.write_bytes(data)
+        (dest/'tiger-cacert.pem.sha256').write_text(ca['sha256']+'  tiger-cacert.pem\n')
+      for patch in lock.get('patches',[]):
+        path=dest/'tiger-patches'/patch['name']/patch['path']
+        if not path.exists() or hashlib.sha256(path.read_bytes()).hexdigest()!=patch['sha256']:
+          if args.offline and not patch.get('local_file'): raise SystemExit('Missing or corrupt patch: '+str(path))
+          data=(ROOT/patch['local_file']).read_bytes() if patch.get('local_file') else urllib.request.urlopen(patch['url'],timeout=60).read()
+          if hashlib.sha256(data).hexdigest()!=patch['sha256']:
+            raise SystemExit('Checksum mismatch: '+str(path))
+          path.parent.mkdir(parents=True,exist_ok=True)
+          import os
+          import tempfile
+          with tempfile.NamedTemporaryFile(dir=path.parent,delete=False) as stream:
+            temporary=pathlib.Path(stream.name)
+            stream.write(data)
+          try:
+            os.replace(temporary,path)
+          finally:
+            temporary.unlink(missing_ok=True)
+
+if __name__ == '__main__':
+    main()

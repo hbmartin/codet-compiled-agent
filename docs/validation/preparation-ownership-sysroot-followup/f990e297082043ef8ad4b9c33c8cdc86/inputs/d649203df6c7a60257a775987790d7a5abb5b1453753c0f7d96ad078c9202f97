@@ -1,0 +1,29 @@
+test_real_configure_with_toolchain_variables_and_spaces (test_tiger_recovery.CompilerIdentity) ... ok
+test_scoped_context_counters_have_an_observed_positive_control (test_tiger_recovery.ContextMeasurement) ... ok
+test_startup_failure_restores_patches_tracing_and_temporary_storage (test_tiger_recovery.ContextMeasurement) ... ok
+test_empty_root_is_unset_and_real_cmake_honors_environment_and_cache_precedence (test_tiger_recovery.DependencyInputs) ... ok
+test_offline_fetch_uses_the_configured_root_and_correct_checksum_name (test_tiger_recovery.DependencyInputs) ... ok
+test_recipe_cache_has_no_distribution_metadata_and_rejects_unknown_lock_formats (test_tiger_recovery.DependencyInputs) ... Verified sysroot cache: /Volumes/Pro2T/codet-compiled-agent/build/preparation-ownership-sysroot/campaign-20261106-01/tmp/codet-distribution-p6yl1s00/build/tiger-sysroot
+ok
+test_sysroot_cache_ignores_distribution_policy_but_tracks_build_inputs (test_tiger_recovery.DependencyInputs) ... ok
+test_environment_reconfiguration_and_relative_cwd_resolution (test_tiger_recovery.DependencyReconfiguration) ... ok
+test_nonempty_environment_root_has_exact_precedence (test_tiger_recovery.DependencyReconfiguration) ... ok
+test_caller_exception_does_not_hide_a_successful_measurements_cleanup_failure (test_tiger_recovery.MeasurementExceptionOwnership) ... ok
+test_measurement_exception_keeps_identity_when_cleanup_also_fails (test_tiger_recovery.MeasurementExceptionOwnership) ... ok
+test_current_pointer_can_change_between_copy_stages_without_mixing_builds (test_tiger_recovery.PinnedPackaging) ... ok
+test_each_copied_sysroot_input_is_checked_even_if_source_is_restored (test_tiger_recovery.PinnedPackaging) ... ok
+test_legacy_format_requires_new_build (test_tiger_recovery.PinnedPackaging) ... ok
+test_pinned_manifest_is_immutable_and_its_archive_digest_is_required (test_tiger_recovery.PinnedPackaging) ... ok
+test_post_admission_sysroot_changes_reject_before_publication (test_tiger_recovery.PinnedPackaging) ... ok
+test_same_frozen_build_packages_identically (test_tiger_recovery.PinnedPackaging) ... ok
+test_timeout_budget_and_failure_preserve_previous_build (test_tiger_recovery.PinnedPackaging) ... ok
+test_transient_live_prefix_cannot_select_another_verified_terminfo_tree (test_tiger_recovery.PinnedPackaging) ... ok
+test_archived_lock_is_checked_instead_of_the_live_checkout (test_tiger_recovery.RecipeAdmission) ... ok
+test_current_recipe_must_match_before_any_build_directory_is_created (test_tiger_recovery.RecipeAdmission) ... ok
+test_distribution_changes_do_not_invalidate_a_compiled_recipe (test_tiger_recovery.RecipeAdmission) ... ok
+test_missing_and_legacy_manifests_have_recovery_guidance_without_directories (test_tiger_recovery.RecipeAdmission) ... ok
+
+----------------------------------------------------------------------
+Ran 23 tests in 6.172s
+
+OK

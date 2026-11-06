@@ -1,0 +1,2 @@
+/* Host-only unused link-list placeholder; no Tiger implementation. */
+int codet_host_placeholder;

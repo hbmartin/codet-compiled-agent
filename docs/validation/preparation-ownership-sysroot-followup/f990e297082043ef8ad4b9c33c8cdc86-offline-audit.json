@@ -1,0 +1,43 @@
+{
+  "kind": "postpublication-offline-audit-not-campaign-acceptance",
+  "bundle_id": "f990e297082043ef8ad4b9c33c8cdc86",
+  "bundle_inventory_sha256": "30a15bd6868608a891c1a3bd71228735d3b46536b95415d6505aa331116ac401",
+  "helper_sha256": "3be912a680930384ed1dcebbf796430291960af56396014f377c8c3604cb7475",
+  "interpreter": {
+    "path": "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+    "version": [
+      3,
+      9,
+      6
+    ],
+    "sha256": "c5a13e37785524fbc0384539d3c99aa4f888cb7c89e13e0bf0018436378b13bc"
+  },
+  "relocated": true,
+  "original_checkout_io_forbidden": true,
+  "process_launches_forbidden": true,
+  "audit": {
+    "integrity_verified": true,
+    "eligible_current": false,
+    "complete": false,
+    "checks": 40,
+    "unmet_required": {
+      "benchmarks": "failed"
+    },
+    "observations": [
+      "baseline-analysis",
+      "changed-analysis"
+    ],
+    "measurement_samples": 0,
+    "limitation": "This audits an incomplete attempt, not full campaign acceptance."
+  },
+  "negative_control": {
+    "rejected": true,
+    "member": "inputs/965a8f579993ad7fc23bd80c7ebad238b959254609fe51877cde4f6ebd71f5b2",
+    "reason": "Attempt inventory mismatch: missing=[], extra=[], mismatched=['inputs/965a8f579993ad7fc23bd80c7ebad238b959254609fe51877cde4f6ebd71f5b2']"
+  },
+  "driver_source": "import builtins,hashlib,io,json,os,shutil,subprocess,sys,tempfile\nfrom pathlib import Path\nbundle=Path(sys.argv[1]).resolve();destination=Path(sys.argv[2]).resolve()\noriginals=[Path('/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent'),Path('/Volumes/Pro2T/codet-compiled-agent')]\nhelper_sha=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()\ninventory_sha=hashlib.sha256((bundle/'inventory.json').read_bytes()).hexdigest()\ninterpreter_sha=hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest()\nsys.dont_write_bytecode=True\nwith tempfile.TemporaryDirectory(prefix='codet relocated audit ') as temporary:\n    root=Path(temporary);moved=root/'moved bundle';shutil.copytree(bundle,moved)\n    os.chdir(root)\n    sys.path[:]=[p for p in sys.path if p and not any(Path(p).resolve().is_relative_to(o) for o in originals)]\n    sys.path.insert(0,str(moved));sys.path.insert(0,str(moved/'verifier_tooling'))\n    import evidence_attempt_audit\n    blocked=[]\n    def check(path):\n        if isinstance(path,int):return\n        value=os.path.abspath(os.fsdecode(path))\n        if any(value==str(o) or value.startswith(str(o)+os.sep) for o in originals):\n            blocked.append(value);raise PermissionError('Original checkout I/O is forbidden in this audit')\n    saved=[]\n    def protect(owner,name):\n        native=getattr(owner,name)\n        def guarded(path,*args,**kwargs):check(path);return native(path,*args,**kwargs)\n        saved.append((owner,name,native));setattr(owner,name,guarded)\n    for owner,name in [(builtins,'open'),(io,'open'),(os,'open'),(os,'stat'),(os,'lstat')]:protect(owner,name)\n    def no_process(*args,**kwargs):raise PermissionError('Process launch is forbidden in this audit')\n    for name in ('Popen','run','check_output','check_call','call'):\n        saved.append((subprocess,name,getattr(subprocess,name)));setattr(subprocess,name,no_process)\n    try:\n        result=evidence_attempt_audit.verify(moved)\n        if result.get('integrity_verified') is not True or result.get('eligible_current') is not False:\n            raise ValueError('Unexpected audit disposition')\n        if result['unmet_required']!={'benchmarks':'failed'}:\n            raise ValueError('Unexpected required failures')\n        member=next(p for p in (moved/'inputs').iterdir() if p.is_file())\n        member.write_bytes(b'corrupted offline negative control')\n        try:evidence_attempt_audit.verify(moved)\n        except ValueError as error:\n            reason=str(error)\n            if 'Attempt inventory mismatch' not in reason or member.name not in reason:raise\n            corruption=dict(rejected=True,member='inputs/'+member.name,reason=reason)\n        else:raise ValueError('Corrupt archived input passed audit')\n        if blocked:raise ValueError('Audit attempted original checkout I/O')\n    finally:\n        for owner,name,native in reversed(saved):setattr(owner,name,native)\nreceipt=dict(kind='postpublication-offline-audit-not-campaign-acceptance',bundle_id=bundle.name,\n    bundle_inventory_sha256=inventory_sha,helper_sha256=helper_sha,\n    interpreter=dict(path=sys.executable,version=list(sys.version_info[:3]),sha256=interpreter_sha),\n    relocated=True,original_checkout_io_forbidden=True,process_launches_forbidden=True,\n    audit=result,negative_control=corruption)\ndestination.write_text(json.dumps(receipt,indent=2)+'\\n')\nprint(json.dumps(receipt,indent=2))\n",
+  "driver_arguments": [
+    "<bundle>",
+    "<receipt-output>"
+  ]
+}

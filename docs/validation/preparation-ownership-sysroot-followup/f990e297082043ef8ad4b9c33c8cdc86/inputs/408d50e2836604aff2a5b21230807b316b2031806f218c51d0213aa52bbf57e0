@@ -1,0 +1,90 @@
+test_explicit_inputs_audit_after_relocation_without_tmp_helpers (test_attempt_evidence.AttemptPublication) ... ok
+test_failed_process_inspection_remains_ineligible_and_source_bound (test_attempt_evidence.AttemptPublication) ... ok
+test_helper_and_unrelated_required_failures_are_rejected (test_attempt_evidence.AttemptPublication) ... ok
+test_measurements_and_reported_counts_must_both_be_empty (test_attempt_evidence.AttemptPublication) ... ok
+test_missing_helpers_and_existing_outputs_never_replace_artifacts (test_attempt_evidence.AttemptPublication) ... ok
+test_successful_check_audits_on_the_running_supported_interpreter (test_attempt_evidence.AttemptPublication) ... ok
+test_unexpected_files_are_rejected_with_identifying_details (test_attempt_evidence.AttemptPublication) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 1.812s
+
+OK
+{
+  "integrity_verified": true,
+  "eligible_current": false,
+  "complete": false,
+  "checks": 2,
+  "unmet_required": {
+    "hash-experiment": "failed",
+    "benchmarks": "blocked"
+  },
+  "observations": [],
+  "measurement_samples": 0,
+  "limitation": "This audits an incomplete attempt, not full campaign acceptance."
+}
+{
+  "integrity_verified": true,
+  "eligible_current": false,
+  "complete": false,
+  "checks": 2,
+  "unmet_required": {
+    "hash-experiment": "failed",
+    "benchmarks": "blocked"
+  },
+  "observations": [],
+  "measurement_samples": 0,
+  "limitation": "This audits an incomplete attempt, not full campaign acceptance."
+}
+{
+  "integrity_verified": true,
+  "eligible_current": false,
+  "complete": false,
+  "checks": 2,
+  "unmet_required": {
+    "hash-experiment": "failed",
+    "benchmarks": "blocked"
+  },
+  "observations": [],
+  "measurement_samples": 0,
+  "limitation": "This audits an incomplete attempt, not full campaign acceptance."
+}
+{
+  "integrity_verified": true,
+  "eligible_current": false,
+  "complete": false,
+  "checks": 2,
+  "unmet_required": {
+    "hash-experiment": "failed",
+    "benchmarks": "blocked"
+  },
+  "observations": [],
+  "measurement_samples": 0,
+  "limitation": "This audits an incomplete attempt, not full campaign acceptance."
+}
+{
+  "integrity_verified": true,
+  "eligible_current": false,
+  "complete": false,
+  "checks": 3,
+  "unmet_required": {
+    "hash-experiment": "failed",
+    "benchmarks": "blocked"
+  },
+  "observations": [],
+  "measurement_samples": 0,
+  "limitation": "This audits an incomplete attempt, not full campaign acceptance."
+}
+{
+  "integrity_verified": true,
+  "eligible_current": false,
+  "complete": false,
+  "checks": 2,
+  "unmet_required": {
+    "hash-experiment": "failed",
+    "benchmarks": "blocked"
+  },
+  "observations": [],
+  "measurement_samples": 0,
+  "limitation": "This audits an incomplete attempt, not full campaign acceptance."
+}
