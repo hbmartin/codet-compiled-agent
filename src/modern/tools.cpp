@@ -2050,8 +2050,6 @@ std::optional<std::string> custom_expansion(const Config &config, FileSystem &fi
     }
     return text;
   }
-  if (strict)
-    throw Error("Unknown command: /" + std::string(name));
   return {};
 }
 } // namespace
@@ -2068,6 +2066,9 @@ std::optional<detail::PreparedPrompt> detail::prepare_interactive_prompt(const C
 std::string Tools::expand_command(const std::string &input) const {
   if (input.empty() || input[0] != '/')
     return input;
-  return custom_expansion(config_, files_, input, true).value();
+  auto expanded = custom_expansion(config_, files_, input, true);
+  if (!expanded)
+    throw Error("Unknown command: /" + std::string(detail::custom_command_name(input)));
+  return std::move(*expanded);
 }
 } // namespace codet
