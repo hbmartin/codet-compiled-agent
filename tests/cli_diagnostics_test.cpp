@@ -2505,3 +2505,76 @@ TEST(SubmissionQueue, InactiveCompatibilityInputCannotBecomeOldTurnSteering) {
   EXPECT_EQ(queued->text, "between turns");
   EXPECT_FALSE(detail::SubmissionAccess::next(io, "s"));
 }
+
+TEST(InputPreparation, CancellationIsAnOutcomeBeforeDuringAndAfterLookup) {
+  for (unsigned stage = 0; stage != 3; ++stage) {
+    Cancellation cancel;
+    unsigned calls = 0;
+    cancel.requested = stage == 0;
+    const auto result =
+        detail::prepare_submission(cancel, [&]() -> std::optional<detail::PreparedPrompt> {
+          ++calls;
+          if (stage == 1)
+            throw Error("lookup cancelled", 130);
+          cancel.requested = true;
+          return detail::PreparedPrompt{"original", "expanded"};
+        });
+    EXPECT_EQ(result.state, detail::PreparationState::cancelled);
+    EXPECT_FALSE(result.prompt);
+    EXPECT_EQ(calls, stage == 0 ? 0u : 1u);
+  }
+}
+TEST(InputPreparation, LocalErrorsKeepTheirTypeAndAllocationFailuresPropagate) {
+  Cancellation cancel;
+  const auto result =
+      detail::prepare_submission(cancel, []() -> std::optional<detail::PreparedPrompt> {
+        throw std::filesystem::filesystem_error("lookup failure",
+                                                std::make_error_code(std::errc::permission_denied));
+      });
+  EXPECT_EQ(result.state, detail::PreparationState::failed);
+  EXPECT_THROW(std::rethrow_exception(result.failure), std::filesystem::filesystem_error);
+  EXPECT_THROW(
+      detail::prepare_submission(
+          cancel, []() -> std::optional<detail::PreparedPrompt> { throw std::bad_alloc(); }),
+      std::bad_alloc);
+}
+TEST(InputPreparation, ReadyContentKeepsOriginalAndCompletionCanStillBeCollected) {
+  Cancellation cancel;
+  auto worker = std::async(std::launch::deferred, [] { return 42; });
+  const auto result =
+      detail::prepare_submission(cancel, [&]() -> std::optional<detail::PreparedPrompt> {
+        return detail::PreparedPrompt{"original", "expanded"};
+      });
+  EXPECT_EQ(result.state, detail::PreparationState::ready);
+  ASSERT_TRUE(result.prompt);
+  EXPECT_EQ(result.prompt->original, "original");
+  EXPECT_EQ(result.prompt->expanded, "expanded");
+  cancel.requested = true;
+  EXPECT_NO_THROW(
+      (void)detail::prepare_submission(cancel, []() -> std::optional<detail::PreparedPrompt> {
+        ADD_FAILURE() << "Cancelled preparation reached its lookup";
+        return {};
+      }));
+  EXPECT_EQ(worker.get(), 42);
+}
+TEST(SubmissionQueue, MovingOrUnwindingALineReleasesItsReservedEntryExactlyOnce) {
+  Interaction io;
+  io.begin_turn("s");
+  const auto first = detail::SubmissionAccess::reserve(io);
+  io.submit("later");
+  try {
+    detail::InputLine line{"original"};
+    line.admission = first;
+    line.reservation = detail::SubmissionLease(&io, first);
+    auto moved = std::move(line);
+    EXPECT_EQ(moved.text, "original");
+    throw std::bad_alloc();
+  } catch (const std::bad_alloc &) {
+  }
+  io.end_turn();
+  const auto next = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(next) << "Preparation failure leaked its reserved prefix";
+  EXPECT_EQ(next->text, "later");
+  EXPECT_TRUE(io.take_pending("s").empty())
+      << "Reservation cleanup emitted an empty pending notice";
+}

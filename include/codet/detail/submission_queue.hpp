@@ -1,5 +1,6 @@
 #pragma once
 #include "codet/detail/prepared_prompt.hpp"
+#include "codet/detail/submission_lease.hpp"
 #include "codet/interaction.hpp"
 #include <algorithm>
 

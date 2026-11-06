@@ -1,10 +1,15 @@
 #include "codet/interaction.hpp"
 #include "codet/detail/diagnostic_stream.hpp"
+#include "codet/detail/submission_queue.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <iterator>
 
 namespace codet {
+void detail::abandon_submission(Interaction *owner, uint64_t sequence) noexcept {
+  if (owner && sequence)
+    SubmissionAccess::abandon(*owner, sequence);
+}
 void Interaction::post(Json event) {
   std::lock_guard<std::mutex> lock(mutex_);
   if (events_.size() >= 2048 && event.value("type", "") == "item.updated")
