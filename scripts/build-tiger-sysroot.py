@@ -8,6 +8,7 @@ import pathlib
 import shutil
 import subprocess
 
+from compiled_recipe import compiled_recipe
 from dependency_paths import dependency_root
 from verified_sources import extract_verified, file_hash, remove_tree, tree_hashes
 
@@ -33,17 +34,13 @@ SYSROOT_FORMAT = 2
 
 
 def recipe_inputs(lock):
-    if not isinstance(lock, dict) or lock.get('format') != 1:
-        raise ValueError('Unsupported Tiger dependency lock format')
-    if not isinstance(lock.get('dependencies'), list) or not isinstance(lock.get('patches'), list):
-        raise ValueError('Invalid Tiger dependency recipe')
-    return {key: lock[key] for key in ('dependencies', 'patches')}
+    return compiled_recipe(lock)
 
 
 def sysroot_fingerprint(root, lock, prefix, flags, toolchain, compiler_digest):
     # Distribution-only CA/document/archive policy never changes compiled dependencies.
     payload = json.dumps(recipe_inputs(lock), sort_keys=True).encode()
-    for name in ('build-tiger-sysroot.py', 'verified_sources.py', 'dependency_paths.py'):
+    for name in ('build-tiger-sysroot.py', 'verified_sources.py', 'dependency_paths.py', 'compiled_recipe.py'):
         payload += (root / 'scripts' / name).read_bytes()
     payload += prefix.encode() + flags.encode() + toolchain.encode() + compiler_digest.encode()
     return hashlib.sha256(payload).hexdigest()
