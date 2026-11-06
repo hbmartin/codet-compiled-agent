@@ -2473,3 +2473,19 @@ TEST(SubmissionQueue, ReservedBarrierSurvivesRejectionOfItsPredecessor) {
   ASSERT_TRUE(pending);
   EXPECT_EQ(pending->text, "later");
 }
+
+TEST(TlsTrust, ActualBackendVersionsRetainDelimiterAwareCapabilities) {
+  for (const std::string backend : {"rustls-ffi/0.15.0/rustls/0.23.0/aws-lc-rs",
+                                    "crustls/0.8.0/rustls/0.20.0", "BearSSL", "BearSSL/0.6"}) {
+    ASSERT_EQ(detail::directory_trust(backend), detail::DirectoryTrust::absent) << backend;
+    EXPECT_NO_THROW(detail::configure_tls_trust(
+        "selected.pem", {true, detail::directory_trust(backend)},
+        [](CURLoption option, const char *) {
+          return option == CURLOPT_CAPATH || option == CURLOPT_PROXY_CAPATH ? CURLE_NOT_BUILT_IN
+                                                                            : CURLE_OK;
+        }))
+        << backend;
+  }
+  for (const std::string backend : {"BearSSLFuture", "SchannelFuture", "rustls-ffi", "crustls"})
+    EXPECT_EQ(detail::directory_trust(backend), detail::DirectoryTrust::unknown) << backend;
+}
