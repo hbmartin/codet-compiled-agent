@@ -2495,7 +2495,10 @@ TEST(SubmissionQueue, InactiveCompatibilityInputCannotBecomeOldTurnSteering) {
   io.end_turn();
   io.submit("between turns");
   io.begin_turn("s");
-  EXPECT_TRUE(io.take_input().empty());
+  std::vector<std::string> steering;
+  EXPECT_NO_THROW(steering = io.take_input())
+      << "Inactive compatibility input retained old-turn steering";
+  EXPECT_TRUE(steering.empty());
   io.end_turn();
   const auto queued = detail::SubmissionAccess::next(io, "s");
   ASSERT_TRUE(queued);

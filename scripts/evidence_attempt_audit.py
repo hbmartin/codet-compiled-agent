@@ -127,7 +127,12 @@ def verify(folder):
                 processes = ast.literal_eval(lines[-1]) if lines else []
                 from evidence_processes import blocking_processes
                 if not isinstance(processes, list) or not processes or blocking_processes(processes) != processes:
-                    raise ValueError('Unavailable benchmark reason not evidenced')
+                    prefix = 'Measurement inspection unavailable: '
+                    inspections = [line[len(prefix):] for line in log.splitlines() if line.startswith(prefix)]
+                    if len(inspections) != 1:
+                        raise ValueError('Unavailable benchmark reason not evidenced')
+                    from evidence_processes import validate_inspection_failure
+                    validate_inspection_failure(json.loads(inspections[0]), report['validation_hashes']['scripts/evidence_processes.py'])
             else:
                 raise ValueError('Unexpected measurement failure')
         if completed:

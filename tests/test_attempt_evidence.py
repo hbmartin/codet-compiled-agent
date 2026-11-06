@@ -84,6 +84,24 @@ class AttemptPublication(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'malformed attempt measurements'):
             audit.verify(self.output)
 
+    def test_failed_process_inspection_remains_ineligible_and_source_bound(self):
+        manifest_path=self.campaign/'manifest.json';manifest=json.loads(manifest_path.read_text())
+        code=('import sys,subprocess;sys.path.insert(0,"scripts");from unittest.mock import patch;'
+              'from evidence_processes import require_quiet_processes\n'
+              'with patch("subprocess.check_output",side_effect=subprocess.CalledProcessError(1,"inspection",stderr="native inspection failed")):require_quiet_processes()')
+        manifest['checks'][0]['argv']=[sys.executable,'-c',code]
+        manifest_path.write_text(json.dumps(manifest));shutil.rmtree(self.campaign/'capture')
+        evidence.capture(manifest_path,self.campaign/'capture');self.assemble()
+        value=audit.verify(self.output)
+        self.assertFalse(value['eligible_current']);self.assertEqual(value['measurement_samples'],0)
+        self.assertEqual(value['unmet_required'],{'hash-experiment':'failed','benchmarks':'blocked'})
+        from evidence_processes import validate_inspection_failure
+        sha=evidence.validation_hashes(self.root)['scripts/evidence_processes.py']
+        for observation in (dict(inspector_sha256='0'*64,deadline_seconds=5,reason='CalledProcessError',returncode=1,stderr='failed'),
+                            dict(inspector_sha256=sha,deadline_seconds=5,reason='CalledProcessError',returncode=0,stderr='')):
+            with self.assertRaisesRegex(ValueError,'process inspection'):
+                validate_inspection_failure(observation,sha)
+
     def test_unexpected_files_are_rejected_with_identifying_details(self):
         self.assemble();(self.output/'.DS_Store').write_text('Finder metadata')
         with self.assertRaisesRegex(ValueError,r'extra=.*\.DS_Store'):

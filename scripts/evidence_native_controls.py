@@ -160,8 +160,15 @@ def run_controls(root, folder, build, ninja):
          "if (cancelled)", "if (cancelled || started_)",
          "PendingControl.PartialPrefixNeverGatesIndependentHandoff"),
         ("path-prose", "tests/cli_diagnostics_test.cpp", "include/codet/detail/turn_input.hpp",
-         "if (!custom_command_name(text).empty())", "if (!text.empty() && text.front() == '/')",
-         "TurnInput.PathsAreProseButValidUnknownCommandsKeepTheirIdlePolicy"),
+         "  if (text.empty())", "  if (!text.empty() && text.front() == '/') return {TurnInputAction::idle_command, {}, {}};\n  if (text.empty())",
+         "TurnInput.SlashIdentifiersNeedResolvedCommandsBeforeDeferral"),
+        ("inactive-submit", "src/modern/interaction.cpp", "src/modern/interaction.cpp",
+         "const bool held = !active_ || input_barrier(input_.cend());",
+         "const bool held = input_barrier(input_.cend());",
+         "SubmissionQueue.InactiveCompatibilityInputCannotBecomeOldTurnSteering"),
+        ("tls-version", "tests/cli_diagnostics_test.cpp", "include/codet/detail/tls_trust.hpp",
+         '"rustls-ffi/", DirectoryTrust::absent', '"unrecognized-test/", DirectoryTrust::absent',
+         "TlsTrust.ActualBackendVersionsRetainDelimiterAwareCapabilities"),
         ("tls-capability", "tests/cli_diagnostics_test.cpp", "include/codet/detail/tls_trust.hpp",
          "capabilities.directories == DirectoryTrust::absent", "capabilities.directories == DirectoryTrust::present",
          "TlsTrust.UnsupportedDirectoryStoresAreAcceptedOnlyForKnownAbsentCapabilities"),
@@ -199,7 +206,9 @@ def run_controls(root, folder, build, ninja):
                    "queue-barrier": "Rejected prefix lost its reserved barrier",
                    "unread-turn": "Unread steering crossed its originating turn",
                    "empty-fragment": "Empty separator kept a stale fragment",
-                   "path-prose": "Expected equality", "tls-capability": "Actual:"}
+                   "path-prose": "Expected equality", "tls-capability": "Actual:",
+                   "inactive-submit": "Inactive compatibility input retained old-turn steering",
+                   "tls-version": "Expected equality"}
         if (mutant["exit"] != 1 or not mutant["assertions"] or
                 any("C++ exception" in message or "unknown file" in message for message in mutant["assertions"]) or
                 not any(markers[name] in message for message in mutant["assertions"])):
@@ -221,14 +230,13 @@ def run_controls(root, folder, build, ninja):
         raise ValueError("Pending keyboard mutant did not fail its intended assertion: " + repr(mutant))
     results.append(dict(name="pending-keyboard", target="CliTests.test_frozen_submission_obeys_turn_outcome_and_services_controls", mutation=dict(before=before, after=after, original_sha256=digest(root / "src/modern/cli.cpp"), mutant_sha256=digest(source)), binary_sha256=digest(binary), baseline=baseline, compile=compiled, link=linked, mutant=mutant))
     review_controls = [
-        ("command-filesystem", "CliTests.test_filesystem_command_preparation_error_preserves_later_input",
-         "prepared = detail::PreparedPrompt{*input, tools.expand_command(*input)};\n      } catch (const std::bad_alloc &) {\n        throw;\n      } catch (const std::exception &error) {",
-         "prepared = detail::PreparedPrompt{*input, tools.expand_command(*input)};\n      } catch (const std::bad_alloc &) {\n        throw;\n      } catch (const Error &error) {",
-         "Filesystem command error ended the interactive session"),
-        ("command-isolation", "CliTests.test_bad_deferred_command_preserves_later_messages_and_expands_once",
-         "continue; // A local command error owns this item, never the remaining queue.",
-         "pending_input(false); continue; // Mutant discards unrelated input.",
-         "Local command error discarded later admitted input"),
+        ("command-freeze", "CliTests.test_known_command_content_is_frozen_before_deferred_presentation",
+         'line_ ? line_->try_take(prepare_submission_)', 'line_ ? line_->try_take()',
+         "Frozen command content changed before handoff"),
+        ("command-prose-freeze", "CliTests.test_unknown_command_stays_prose_if_created_after_enter",
+         'if (line.prepared || line.discarded || line.request ||',
+         'if ((line.prepared && false) || line.discarded || line.request ||',
+         "Submitted prose was reinterpreted as a later command"),
         ("pending-control-owner", "CliTests.test_partial_pending_controls_never_stall_or_leak_into_messages",
          '    if (line_ && (line_->submission_pending() || pending_control_.started())) {',
          '    if (line_ && line_->submission_pending()) {', "Extra pending input became a user message"),

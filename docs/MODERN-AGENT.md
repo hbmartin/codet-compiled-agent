@@ -65,6 +65,19 @@ Sysroot identity is checked at admission and before publication, and copied
 inputs are checked against their pinned digests. `CODET_DEPENDENCY_ROOT` selects
 the same location for explicit dependency fetching and all Tiger consumers.
 
+New Tiger builds use provenance format 3 and a version 2 sysroot recipe manifest.
+The recipe manifest describes compiled pins, patches, settings, and outputs;
+the complete distribution lock, including CA metadata and TigerPorts provenance,
+is archived separately with the application build. Previous formats remain
+historical and require a fresh compatible build before verification or packaging.
+Package prefix decisions use digest-checked manifest bytes archived by that build,
+so a transient change to the writable sysroot cannot select different contents.
+
+Host configuration also honors `CODET_DEPENDENCY_ROOT`: a nonempty explicit
+CMake/cache setting wins, then a nonempty environment setting, then the source
+checkout's `.deps`. Empty settings use this fallback rather than the launch
+directory. Existing explicit cached paths remain selected on reconfiguration.
+
 For a portable distribution, explicitly fetch the pinned Mozilla CA data with
 `make fetch-tiger-deps`, then run from the repository root:
 
@@ -435,3 +448,19 @@ frames and become provider errors, so optional compaction can safely report and 
 
 [PR #17 follow-up validation](validation/pr17-correctness-scaling.json) records schema-7 migration,
 rollback, repair, replay and cache regressions alongside the offline validation matrix.
+
+### Interactive slash input
+
+Built-in commands keep precedence. Other identifier-shaped slash input expands
+only when an eligible custom command exists in the trusted project or home command
+search path. Missing names and paths such as `/tmp` or `/tmp/build.log` are ordinary
+prose in interactive sessions; a mistyped custom name can therefore reach the
+model. Headless command expansion remains strict.
+
+An existing custom command is read and expanded once when Enter admits the line,
+even if diagnostic output delays its presentation or the current turn is still
+running. Later command-file edits or removal do not alter that submission, and
+creating a command later cannot reinterpret submitted prose. Prompt hooks receive
+the original slash input; persistence and provider requests receive its frozen
+expansion. Unsafe or unreadable candidates report a local error for that line
+without starting a provider turn or discarding other admitted input.

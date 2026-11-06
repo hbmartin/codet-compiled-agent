@@ -1602,11 +1602,11 @@ class CliTests(unittest.TestCase):
                 process=resources.start([BIN,'-C',str(self.workspace),'--ui','line',*command,'/tmp/build.log'],
                     stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
                 received=bytearray();collect=partial(collect_pty,self,master,received)
-                collect(lambda:b'fixture done' in received or process.poll() is not None)
+                collect(lambda received=received,process=process:b'fixture done' in received or process.poll() is not None)
                 self.assertIsNone(process.poll(),'Interactive preflight rejected path prose')
                 self.assertEqual(len(self.server.requests),before+1)
                 self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'/tmp/build.log')
-                os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+                os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
                 self.assertEqual(process.returncode,0,received)
 
     def test_known_command_content_is_frozen_before_deferred_presentation(self):
@@ -1635,7 +1635,8 @@ class CliTests(unittest.TestCase):
             os.write(trigger,b'g');token(b'd');release.set();token(b'c')
             collect(lambda:len(self.server.requests)>=before+2)
             collect(lambda:bytes(received).count(b'fixture done')>=2)
-            self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'/later argument')
+            self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'/later argument',
+                             'Submitted prose was reinterpreted as a later command')
             os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
             self.assertEqual(process.returncode,0,received)
 
@@ -1930,7 +1931,7 @@ class CliTests(unittest.TestCase):
                 received.clear();os.write(master,b'plain message\n')
                 collect(lambda:b'fixture done\r\ncodet> [default] ' in received)
                 self.assertEqual(bytes(received).count(b'codet> [default] '),1,received)
-                os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+                os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
                 self.assertEqual(process.returncode,0,received)
             finally:
                 release.set()

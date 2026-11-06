@@ -2,6 +2,7 @@
 
 import ctypes
 import errno
+import hashlib
 import json
 import os
 import re
@@ -164,13 +165,41 @@ def process_snapshot():
 
 def require_quiet_processes():
     # The child deadline bounds ps and native argv inspection together.
-    processes = json.loads(subprocess.check_output(
-        [sys.executable, str(Path(__file__).resolve()), "--snapshot"], text=True, timeout=5))
+    try:
+        processes = json.loads(subprocess.check_output(
+            [sys.executable, str(Path(__file__).resolve()), "--snapshot"], text=True,
+            stderr=subprocess.PIPE, timeout=5))
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        stderr = error.stderr or ''
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode('utf-8', 'replace')
+        observation = dict(inspector_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                           deadline_seconds=5, reason=type(error).__name__,
+                           returncode=getattr(error, 'returncode', None), stderr=stderr[-16384:])
+        print('Measurement inspection unavailable: ' + json.dumps(observation, sort_keys=True),
+              file=sys.stderr)
+        raise
     if not isinstance(processes, list) or not processes:
         raise ValueError("Process inspection returned no usable records")
     blocked = blocking_processes(processes)
     if blocked:
         raise ValueError("Concurrent validation/build/analyzer processes: " + repr(blocked))
+
+
+def validate_inspection_failure(value, inspector_digest):
+    if (not isinstance(value, dict) or set(value) != {'inspector_sha256', 'deadline_seconds', 'reason', 'returncode', 'stderr'}
+            or value['inspector_sha256'] != inspector_digest
+            or type(value['deadline_seconds']) is not int or value['deadline_seconds'] != 5
+            or not isinstance(value['stderr'], str) or len(value['stderr']) > 16384):
+        raise ValueError('Unavailable process inspection is not source-bound')
+    if value['reason'] == 'CalledProcessError':
+        if type(value['returncode']) is not int or value['returncode'] == 0:
+            raise ValueError('Unavailable process inspection has no failed outcome')
+    elif value['reason'] == 'TimeoutExpired':
+        if value['returncode'] is not None:
+            raise ValueError('Timed-out process inspection has an exit status')
+    else:
+        raise ValueError('Unsupported unavailable process inspection outcome')
 
 
 if __name__ == "__main__":

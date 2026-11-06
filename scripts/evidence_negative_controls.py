@@ -14,6 +14,9 @@ root,module_path,module_name,test_name,output=sys.argv[1:]
 sys.path[:0]=[str(Path(root)/'scripts'),str(Path(root)/'tests')]
 spec=importlib.util.spec_from_file_location(module_name,module_path)
 module=importlib.util.module_from_spec(spec);sys.modules[module_name]=module;spec.loader.exec_module(module)
+if module_name=='package-tiger-portable':
+    import test_tiger_packaging
+    test_tiger_packaging.portable=module
 class Result(unittest.TextTestResult):
     assertion_failure=False
     def addFailure(self,test,error):
@@ -97,6 +100,14 @@ def run_controls(root, folder):
          "                failed = bool(list(root.iter('failure')) or list(root.iter('error')))\n                if failed and not completed.returncode:\n                    raise ValueError('Failed assertions with successful process exit')\n                if list(root.iter('skipped')):\n                    skipped.append(name)",
          "                if list(root.iter('skipped')):\n                    skipped.append(name)\n                failed = bool(list(root.iter('failure')) or list(root.iter('error')))\n                if failed and not completed.returncode:\n                    raise ValueError('Failed assertions with successful process exit')",
          "SanitizerIsolation.test_failed_and_skipped_cases_preserve_reports_with_inconsistent_zero_exit"),
+        ("attempt-measurements", "evidence_attempt_audit",
+         "        raise ValueError('Incomplete attempt must declare an empty measurement list and zero samples')",
+         "        pass # Mutant accepts undeclared samples.",
+         "test_attempt_evidence.AttemptPublication.test_measurements_and_reported_counts_must_both_be_empty"),
+        ("tiger-manifest-prefix", "package-tiger-portable",
+         '    manifest = context.manifest',
+         '    manifest = json.loads((sysroot / "manifest.json").read_text())',
+         "test_tiger_recovery.PinnedPackaging.test_transient_live_prefix_cannot_select_another_verified_terminfo_tree"),
         ("tiger-compiler-metadata", "tiger_provenance",
          '        value = json.loads((output / "codet-compiler-identity.json").read_text())',
          '        next(line for line in (output / "CMakeCache.txt").read_text().splitlines() if line.startswith("CMAKE_C_COMPILER:"))\n        value = json.loads((output / "codet-compiler-identity.json").read_text())',
@@ -139,6 +150,8 @@ def run_controls(root, folder):
                    "cppcheck-order": "Valid reordered Cppcheck relocation was rejected",
                    "hash-version": "ValueError not raised", "tooling-counts": "ValueError not raised", "isolated-coverage": "ValueError not raised",
                    "isolated-protocol": "Protocol error lost its failed report",
+                   "tiger-manifest-prefix": "Transient live prefix selected a different terminfo tree",
+                   "attempt-measurements": "ValueError not raised",
                    "tiger-compiler-metadata": "Valid configure metadata was rejected",
                    "tiger-pinned-context": "Packaging reloaded its mutable build pointer",
                    "tiger-copied-input": "ValueError not raised"}
