@@ -1687,20 +1687,16 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       throw Error("Headless mode requires a prompt, stdin or an image", 2);
     return run(prompt);
   }
-  if (!prompt.empty() || !pending_images.empty())
-    interactive_run(prompt);
-  if (quit_requested) {
-    detail::secondary_diagnostic([&] {
-      terminal->discard_pending();
-      pending_input(false);
-    });
-    return output.status(0);
-  }
+  bool initial_pending = !prompt.empty() || !pending_images.empty();
   while (!cancel.requested && !quit_requested) {
     std::optional<std::string> input;
     std::optional<detail::InputLine> idle_line;
-    const auto queued = detail::SubmissionAccess::next(*interaction, session.id);
-    if (queued) {
+    const auto queued = initial_pending ? std::optional<detail::QueuedSubmission>{}
+                                        : detail::SubmissionAccess::next(*interaction, session.id);
+    if (initial_pending) {
+      initial_pending = false;
+      input = prompt;
+    } else if (queued) {
       input = queued->text;
       run(*input, true, queued->prepared.get());
       continue; // Classification and custom content were frozen at submission.
@@ -1714,7 +1710,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     }
     if (!input)
       break;
-    if (input->empty())
+    if (input->empty() && pending_images.empty())
       continue;
     const auto local = detail::local_command(*input);
     if (local == detail::LocalCommand::quit)

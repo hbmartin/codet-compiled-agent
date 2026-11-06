@@ -1593,6 +1593,21 @@ class CliTests(unittest.TestCase):
             self.assertEqual([json.loads(x)['prompt'] for x in log.read_text().splitlines()],prompts)
             self.assertNotIn(b'Invalid custom command name',received)
 
+    def test_initial_interactive_builtins_never_reach_the_provider(self):
+        for command,expected in (('/help',b'/help /quit /model'),('/model',b'Current: openai/fixture'),('/quit',None)):
+            with self.subTest(command=command),PtyProcess() as resources:
+                before=len(self.server.requests);master,slave=resources.openpty()
+                process=resources.start([BIN,'-C',str(self.workspace),'--ui','line',command],
+                    stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+                received=bytearray();collect=partial(collect_pty,self,master,received)
+                if expected:
+                    collect(lambda expected=expected,received=received,process=process:expected in received or process.poll() is not None)
+                    self.assertIn(expected,received,'Initial built-in bypassed local dispatch')
+                    os.write(master,b'/quit\n')
+                collect(lambda process=process:process.poll() is not None)
+                self.assertEqual(process.returncode,0,received)
+                self.assertEqual(len(self.server.requests),before,'Initial built-in became a provider prompt')
+
     def test_initial_resume_and_fork_interactive_paths_use_the_prose_policy(self):
         first=self.run_cli('exec','--output-format','json','simple')
         self.assertEqual(first.returncode,0,first.stderr);sid=json.loads(first.stdout)['session_id']
