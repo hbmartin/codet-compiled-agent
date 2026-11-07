@@ -299,7 +299,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     return folder / "manifest.json"
 
 
-def positive_controls(row, harness, case):
+def positive_controls(row, harness, case, variant=None):
     if harness == "line":
         if case == "allocation-positive" and (row["allocations"], row["allocated_bytes"]) != (1000, 32000):
             raise ValueError("Allocation positive control failed")
@@ -313,7 +313,7 @@ def positive_controls(row, harness, case):
             raise ValueError("Prepared submission counter positive control failed")
     if harness == "preparation":
         from evidence_benchmarks import verify_preparation_metrics
-        verify_preparation_metrics(dict(row, harness=harness, workload=case))
+        verify_preparation_metrics(dict(row, harness=harness, workload=case), variant=variant)
     if harness == "output" and case.endswith("-positive"):
         key = {"write-positive": "writes", "stat-positive": "fstat", "flags-positive": "fcntl", "bounds-positive": "fpathconf"}[case]
         if row[key] != 128:
@@ -367,7 +367,7 @@ def measure(config):
                         row = json.loads(result.read_text())
                         if row.get("case") != case:
                             raise ValueError("Benchmark returned a different workload")
-                        positive_controls(row, harness, case)
+                        positive_controls(row, harness, case, variant)
                         row.update(set=number, sample=sample, variant=variant, harness=harness, workload=case, warmup=sample == 0)
                         rows.append(row)
                         invocations.append(dict(argv=argv, exit=run.returncode, stderr=run.stderr, result_sha256=digest(result)))

@@ -60,14 +60,26 @@ def verify_tooling_metrics(row):
             raise ValueError('Build-context scoped counters or controls are invalid')
 
 
-def verify_preparation_metrics(row):
+def verify_preparation_metrics(row, *, variant=None):
     if row.get("harness") != "preparation":
         return
     fields = ("iterations", "allocations", "allocated_bytes", "payload_sized_allocations", "rejections",
               "prepared_submissions", "distinct_command_wrappers", "effective_content_bytes")
-    if row.get("preparation_metric_version") != 1 or any(type(row.get(k)) is not int or row[k] < 0 for k in fields) or row["iterations"] != 128:
+    if row.get("preparation_metric_version") not in (1, 2) or any(type(row.get(k)) is not int or row[k] < 0 for k in fields) or row["iterations"] != 128:
         raise ValueError("Invalid preparation measurement counters")
     workload = row.get("workload")
+    workloads = ("allocation-positive", "saturated-count", "saturated-effective", "saturated-retained",
+                 "cli-preparation", "compatibility-preparation", "normalization")
+    if not isinstance(workload, str) or workload not in workloads:
+        raise ValueError("Invalid preparation workload: " + repr(workload))
+    if row["preparation_metric_version"] == 2:
+        role = row.get("variant") if variant is None else variant
+        if role not in ("baseline", "changed") or ("variant" in row and row["variant"] != role):
+            raise ValueError("Invalid preparation variant")
+        if role == "changed" and workload.startswith("saturated-") and row["payload_sized_allocations"]:
+            raise ValueError("Changed saturated preparation allocated payload-sized backing")
+        if role == "changed" and workload == "cli-preparation" and row["distinct_command_wrappers"] != row["prepared_submissions"]:
+            raise ValueError("Changed CLI preparation duplicated command wrappers")
     if workload == "allocation-positive" and (row["allocations"] != 128 or row["payload_sized_allocations"] != 128 or row["allocated_bytes"] != 8388608):
         raise ValueError("Preparation allocation positive control failed")
     if workload.startswith("saturated-") and row["rejections"] != 128:

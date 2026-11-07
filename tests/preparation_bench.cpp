@@ -107,7 +107,7 @@ int main(int argc, char **argv) {
   const auto duration =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
   std::ofstream(argv[2]) << Json({{"case", mode},
-                                  {"preparation_metric_version", 1},
+                                  {"preparation_metric_version", 2},
                                   {"iterations", 128},
                                   {"allocations", allocations},
                                   {"allocated_bytes", allocated},

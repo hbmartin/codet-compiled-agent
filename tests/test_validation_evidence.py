@@ -1911,3 +1911,60 @@ class PreparationMeasurement(unittest.TestCase):
                                  ('normalization',dict(effective_content_bytes=1))]:
             with self.subTest(workload=workload),self.assertRaisesRegex(ValueError,'preparation|Preparation|Normalization'):
                 verify_preparation_metrics(dict(row,workload=workload,**changes))
+
+
+class PreparationRecovery(unittest.TestCase):
+    @staticmethod
+    def row(**changes):
+        value = dict(harness='preparation', workload='saturated-count', variant='changed',
+                     preparation_metric_version=2, iterations=128, allocations=256, allocated_bytes=18000,
+                     payload_sized_allocations=0, rejections=128, prepared_submissions=0,
+                     distinct_command_wrappers=0, effective_content_bytes=0)
+        value.update(changes)
+        return value
+
+    def test_new_counter_contract_rejects_payload_allocations_and_duplicate_wrappers(self):
+        from evidence_benchmarks import verify_preparation_metrics
+        verify_preparation_metrics(self.row())
+        for workload in ('saturated-count', 'saturated-effective', 'saturated-retained'):
+            with self.subTest(workload=workload), self.assertRaisesRegex(ValueError, 'payload-sized'):
+                verify_preparation_metrics(self.row(workload=workload, payload_sized_allocations=256))
+        verify_preparation_metrics(self.row(variant='baseline', payload_sized_allocations=256))
+        with self.assertRaisesRegex(ValueError, 'duplicated command wrappers'):
+            verify_preparation_metrics(self.row(workload='cli-preparation', prepared_submissions=128,
+                distinct_command_wrappers=256, effective_content_bytes=1664))
+        verify_preparation_metrics(self.row(workload='cli-preparation', prepared_submissions=128,
+            distinct_command_wrappers=128, effective_content_bytes=1664))
+
+    def test_workload_validation_has_an_identifying_error(self):
+        from evidence_benchmarks import verify_preparation_metrics
+        for workload in (None, [], {}, 1, '', 'saturated-unknown'):
+            with self.subTest(workload=workload), self.assertRaisesRegex(ValueError, 'preparation workload'):
+                verify_preparation_metrics(self.row(workload=workload))
+        row = self.row(); del row['workload']
+        with self.assertRaisesRegex(ValueError, 'preparation workload'):
+            verify_preparation_metrics(row)
+        for variant in (None, '', 'other'):
+            with self.subTest(variant=variant), self.assertRaisesRegex(ValueError, 'preparation variant'):
+                verify_preparation_metrics(self.row(variant=variant))
+
+    def test_historical_counters_remain_observations(self):
+        from evidence_benchmarks import verify_preparation_metrics
+        verify_preparation_metrics(self.row(preparation_metric_version=1, payload_sized_allocations=256))
+
+    def test_adapter_driver_rewrites_only_after_production_excerpt_changes(self):
+        from preparation_bench_driver import generate
+        source = Path(__file__).resolve().parents[1] / 'src/modern/cli.cpp'
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'generated/cli_prepare_adapter.hpp'
+            generate(source, output)
+            stamp = output.stat().st_mtime_ns
+            generate(source, output)
+            self.assertEqual(output.stat().st_mtime_ns, stamp)
+            self.assertIn('prepare_input_submission', output.read_text())
+            ambiguous = Path(directory) / 'cli.cpp'
+            ambiguous.write_text(source.read_text() + '\n  const auto prepare_line = duplicate;')
+            previous = output.read_bytes()
+            with self.assertRaisesRegex(ValueError, 'not unique'):
+                generate(ambiguous, output)
+            self.assertEqual(output.read_bytes(), previous)
