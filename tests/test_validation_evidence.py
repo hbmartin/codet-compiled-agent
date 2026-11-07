@@ -1833,3 +1833,19 @@ class PortableV5(unittest.TestCase):
             self.assertEqual(result['outcome'], 'launch-error')
             self.assertIsNone(result['exit'])
             self.assertIn('not-directory', result['error'])
+
+
+class ConfigurationMeasurement(unittest.TestCase):
+    def test_configuration_metric_requires_three_real_commands_and_checks(self):
+        from evidence_benchmarks import verify_tooling_metrics
+        from evidence_tool_bench import measure
+        value=measure(Path(__file__).resolve().parents[1],'unused','configuration-selection')
+        value.update(harness='tooling',workload='configuration-selection')
+        verify_tooling_metrics(value)
+        self.assertEqual(value['cmake_commands'],3)
+        self.assertEqual(value['configuration_checks'],3)
+        self.assertEqual(value['files'],0)
+        for field,wrong in (('cmake_commands',2),('files',2),('configuration_checks',2),('configuration_metric_version',99)):
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(ValueError,'Configuration selection'):
+                    verify_tooling_metrics(dict(value,**{field:wrong}))
