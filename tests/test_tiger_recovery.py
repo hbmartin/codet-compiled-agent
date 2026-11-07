@@ -588,5 +588,74 @@ class DependencyReconfiguration(unittest.TestCase):
             self.assertIn('-UCODET_DEPENDENCY_ROOT',result.stderr)
             self.assertIn('CODET_DEPENDENCY_ROOT=',result.stderr)
 
+    def test_equal_explicit_overrides_replace_derived_ownership_after_failure_or_success(self):
+        for generator in ('Ninja','Unix Makefiles'):
+            for failed in (False,True):
+                for declaration in ('-DCODET_DEPENDENCY_ROOT=','-DCODET_DEPENDENCY_ROOT:PATH='):
+                    with self.subTest(generator=generator,failed=failed,declaration=declaration),tempfile.TemporaryDirectory() as d:
+                        source,output,text,configure=self.dependency_probe(Path(d),generator)
+                        (source/'CMakeLists.txt').write_text(text+('message(SEND_ERROR "first failure")\n' if failed else ''))
+                        result=configure('/root-A');self.assertEqual(result.returncode,1 if failed else 0,result.stderr)
+                        # Even a same-valued normal variable must not hide explicit cache intent.
+                        (source/'CMakeLists.txt').write_text(text.replace('include(','set(CODET_DEPENDENCY_ROOT "/normal-B")\ninclude(',1))
+                        result=configure('/environment-B',declaration+'/root-A')
+                        self.assertEqual(result.returncode,0,result.stderr)
+                        self.assertEqual((output/'CMakeFiles/codet-dependency-root.txt').read_text(),'/root-A',
+                                         'Equal explicit override lost its command-line intent')
+                        self.assertIn('_CODET_DEPENDENCY_ORIGIN:INTERNAL=explicit',(output/'CMakeCache.txt').read_text())
+
+    def test_obsolete_empty_markers_require_reset_and_do_not_rediscover(self):
+        for reset in ('-UCODET_DEPENDENCY_ROOT','-DCODET_DEPENDENCY_ROOT='):
+            with self.subTest(reset=reset),tempfile.TemporaryDirectory() as d:
+                _,output,_,configure=self.dependency_probe(Path(d),'Ninja')
+                self.assertEqual(configure('/root-A').returncode,0)
+                cache=output/'CMakeCache.txt';value=cache.read_text()
+                value=value.replace('CODET_DEPENDENCY_ROOT:PATH=/root-A','CODET_DEPENDENCY_ROOT:PATH=')
+                value=value.replace('_CODET_DEPENDENCY_VERSION:INTERNAL=2','_CODET_DEPENDENCY_VERSION:INTERNAL=1')
+                cache.write_text(value)
+                result=configure('/root-B')
+                self.assertNotEqual(result.returncode,0,'Obsolete pin silently rediscovered another tree')
+                self.assertIn('Obsolete dependency selection metadata',result.stderr)
+                self.assertIn('-UCODET_DEPENDENCY_ROOT',result.stderr)
+                self.assertEqual(configure('/root-B',reset).returncode,0)
+                self.assertEqual((output/'CMakeFiles/codet-dependency-root.txt').read_text(),'/root-B')
+
+    def test_same_valued_normal_override_preserves_cache_properties_and_parent_scope(self):
+        with tempfile.TemporaryDirectory() as d:
+            source,output,text,configure=self.dependency_probe(Path(d),'Ninja')
+            self.assertEqual(configure('/root-A').returncode,0)
+            pin=output/'CMakeFiles/codet-dependency-selection.json';receipt=pin.read_bytes()
+            sentinel=('set(_root parent-root)\nset(_origin parent-origin)\nset(_source parent-source)\n'
+                      'set(_token parent-token)\nset(_kind parent-kind)\nset(_error parent-error)\nset(_field parent-field)\n'
+                      'set(CODET_DEPENDENCY_ROOT /root-A)\n'
+                      'set_property(CACHE CODET_DEPENDENCY_ROOT PROPERTY ADVANCED TRUE)\n'
+                      'set_property(CACHE CODET_DEPENDENCY_ROOT PROPERTY STRINGS "A;B")\n'
+                      'foreach(p VALUE TYPE HELPSTRING ADVANCED STRINGS)\n'
+                      'get_property(before_${p} CACHE CODET_DEPENDENCY_ROOT PROPERTY ${p})\nendforeach()\n')
+            assertions=('foreach(p VALUE TYPE HELPSTRING ADVANCED STRINGS)\n'
+                        'get_property(after CACHE CODET_DEPENDENCY_ROOT PROPERTY ${p})\n'
+                        'if(NOT after STREQUAL before_${p})\nmessage(FATAL_ERROR "Scoped inspection changed ${p}")\nendif()\nendforeach()\n'
+                        'foreach(p root origin source token kind error field)\n'
+                        'if(NOT _${p} STREQUAL "parent-${p}")\nmessage(FATAL_ERROR "Include clobbered parent temporary ${p}")\nendif()\nendforeach()\n')
+            (source/'CMakeLists.txt').write_text(text.replace('include(',sentinel+'include(',1)+assertions)
+            result=configure('/root-B');self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(pin.read_bytes(),receipt,'Same-valued scoped selection replaced the pin')
+            self.assertIn('_CODET_DEPENDENCY_ORIGIN:INTERNAL=environment',(output/'CMakeCache.txt').read_text())
+            (source/'CMakeLists.txt').write_text(text)
+            self.assertEqual(configure('/root-B').returncode,0)
+            self.assertEqual((output/'CMakeFiles/codet-dependency-root.txt').read_text(),'/root-A')
+
+    def test_literal_generator_expressions_roundtrip_in_receipt_paths(self):
+        for generator in ('Ninja','Unix Makefiles'):
+            with self.subTest(generator=generator),tempfile.TemporaryDirectory(prefix='codet literal-$<CONFIG>-') as d:
+                folder=Path(d);source,output,_,configure=self.dependency_probe(folder,generator)
+                selected=folder/'dependency-$<CONFIG>-literal'
+                for _ in range(2):
+                    result=configure(selected);self.assertEqual(result.returncode,0,result.stderr)
+                    value=json.loads((output/'CMakeFiles/codet-dependency-selection.json').read_text())
+                    self.assertEqual(value['root'],str(selected),'Receipt evaluated literal generator-expression text')
+                    self.assertEqual(value['source'],str(source))
+                    self.assertEqual(value['format'],2)
+
 if __name__ == "__main__":
     unittest.main()

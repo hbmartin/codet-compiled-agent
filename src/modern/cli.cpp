@@ -8,6 +8,7 @@
 #include "codet/detail/cli_output.hpp"
 #include "codet/detail/curses_input.hpp"
 #include "codet/detail/curses_render.hpp"
+#include "codet/detail/interactive_preparation.hpp"
 #include "codet/detail/line_prompt.hpp"
 #include "codet/detail/native_terminal.hpp"
 #include "codet/detail/pending_control.hpp"
@@ -647,8 +648,8 @@ public:
     control_explained_ = false;
     if (input_queue_)
       detail::SubmissionAccess::abandon(*input_queue_, std::exchange(admission_, 0));
-    if (line)
-      pending_not_sent(line->text, immediate);
+    if (line && line->original_storage())
+      pending_not_sent(*line->original_storage(), immediate);
   }
   void pending_not_sent(std::string_view text, bool immediate = false) noexcept {
     if (text.empty())
@@ -702,7 +703,7 @@ public:
             break; // Hand libedit ownership only after every stale/control line ended.
           }
           if (resources_.entries())
-            history(resources_.entries(), &history_event_, H_ENTER, line->text.c_str());
+            history(resources_.entries(), &history_event_, H_ENTER, line->text().c_str());
           return line;
         }
         if (discarding_controls && !pending_control_.started() && !submission_pending())
@@ -754,7 +755,7 @@ public:
           discarded_line();
           continue;
         }
-        say("you> " + submitted.text);
+        say("you> " + submitted.text());
         return submitted;
       }
       if (ch == bindings_["backspace"] || ch == KEY_BACKSPACE || ch == 8) {
@@ -878,7 +879,7 @@ public:
         return {};
       }
       auto submitted = std::move(*ready);
-      const auto &text = submitted.text;
+      const auto &text = submitted.text();
       if (!submitted.discarded && approval_ && detail::approves(text) &&
           !approval_->approved_review()) {
         render();
@@ -1366,58 +1367,30 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   };
   const auto prepare_line = [&](detail::InputLine &line) {
     if (line.preparation.state != detail::PreparationState::unprepared || line.discarded ||
-        line.request || detail::local_command(line.text) != detail::LocalCommand::none)
+        line.request || detail::local_command(line.text()) != detail::LocalCommand::none)
       return;
     if (lifecycle.preparing)
-      lifecycle.preparing(lifecycle.context, line.text, 0);
+      lifecycle.preparing(lifecycle.context, line.text(), 0);
     const bool pending_input = line.preparation_context == detail::PreparationContext::pending;
-    if (pending_input && line.text.empty())
+    if (pending_input && line.text().empty())
       return;
-    std::optional<detail::SubmissionPreparation> inspected;
-    std::shared_ptr<const detail::PreparedSubmission> payload;
-    line.preparation = detail::prepare_submission(cancel, [&] {
-      if (line.admission_failure)
-        std::rethrow_exception(line.admission_failure);
-      if (pending_input && !line.admission)
-        throw Error("Pending submission has no admission");
-      if (pending_input)
-        inspected.emplace(line.original_storage());
-      if (line.admission)
-        detail::SubmissionAccess::charge(*interaction, line.admission, 0,
-                                         inspected->retained_size());
-      if (lifecycle.preparing)
-        lifecycle.preparing(lifecycle.context, line.text, 1);
-      auto value = detail::prepare_interactive_prompt(
-          config, files, line.original_storage(), [&](size_t bytes) {
-            if (line.admission)
-              detail::SubmissionAccess::charge(*interaction, line.admission, bytes,
-                                               inspected->retained_size(bytes));
-          });
-      if (lifecycle.preparing)
-        lifecycle.preparing(lifecycle.context, line.text, 2);
-      if (pending_input) {
-        auto command = value ? std::make_shared<const detail::PreparedPrompt>(*value) : nullptr;
-        auto submission = inspected->finish(std::move(command), [&](size_t bytes, size_t retained) {
-          detail::SubmissionAccess::charge(*interaction, line.admission, bytes, retained);
+    line.preparation = detail::prepare_input_submission(
+        config, files, line, interaction.get(), cancel, [&](unsigned stage) {
+          if (lifecycle.preparing)
+            lifecycle.preparing(lifecycle.context, line.text(), stage);
         });
-        payload = std::make_shared<const detail::PreparedSubmission>(std::move(submission));
-      }
-      return value;
-    });
-    if (line.preparation.state == detail::PreparationState::ready)
-      line.preparation.submission = std::move(payload);
   };
   const auto preparation_ready = [&](detail::InputLine &line) {
     prepare_line(line);
     if (line.preparation.state == detail::PreparationState::cancelled) {
       cancel.requested = true;
-      if (!line.text.empty())
-        terminal->pending_not_sent(line.text);
+      if (!line.text().empty())
+        terminal->pending_not_sent(line.text());
       return false;
     }
     if (line.preparation.state == detail::PreparationState::failed) {
       if (line.preparation_context == detail::PreparationContext::pending)
-        terminal->pending_not_sent(line.text);
+        terminal->pending_not_sent(line.text());
       detail::secondary_diagnostic([&] {
         try {
           std::rethrow_exception(line.preparation.failure);
@@ -1505,13 +1478,11 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       auto action = detail::classify_turn_input(
           line, phase == detail::TurnInputPhase::active && pending ? &*pending : nullptr, origin,
           phase);
-      std::shared_ptr<const detail::PreparedPrompt> expansion;
       if (action.action == detail::TurnInputAction::steer ||
           action.action == detail::TurnInputAction::hold) {
         if (!preparation_ready(line))
           return;
-        expansion = line.preparation.prompt;
-        if (expansion)
+        if (line.preparation.submission && line.preparation.submission->command())
           action.action = detail::TurnInputAction::idle_command;
       }
       switch (action.action) {
@@ -1524,7 +1495,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
         terminal->discarded_line(*action.rejection);
         break;
       case detail::TurnInputAction::reject_origin:
-        terminal->pending_not_sent(line.text);
+        terminal->pending_not_sent(line.text());
         break;
       case detail::TurnInputAction::restricted:
         terminal->say(std::string(action.guidance));
@@ -1534,12 +1505,12 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
         terminal->say("Starting a new session after pending messages are handled.");
         break;
       case detail::TurnInputAction::answer: {
-        if (pending->value("type", "") == "codet.approval" && detail::approves(line.text) &&
+        if (pending->value("type", "") == "codet.approval" && detail::approves(line.text()) &&
             !terminal->approval_reviewed(*pending))
           break;
-        const bool answered = interaction->answer(pending->at("request_id"), line.text);
+        const bool answered = interaction->answer(pending->at("request_id"), line.text());
         pending.reset();
-        terminal->end_approval(answered ? std::optional<std::string_view>(line.text)
+        terminal->end_approval(answered ? std::optional<std::string_view>(line.text())
                                         : std::nullopt);
         if (!answered)
           terminal->discarded_line(detail::InputDiscard::expired);
@@ -1556,10 +1527,10 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
                                                     action.action == detail::TurnInputAction::hold);
           line.reservation.release();
         } catch (const Error &error) {
-          terminal->pending_not_sent(line.text);
+          terminal->pending_not_sent(line.text());
           terminal->say(error.what());
         } catch (...) {
-          terminal->pending_not_sent(line.text);
+          terminal->pending_not_sent(line.text());
           throw;
         }
         break;
@@ -1751,7 +1722,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     } else {
       idle_line = terminal->read(cancel);
       if (idle_line)
-        input = idle_line->text;
+        input = idle_line->text();
     }
     if (!input)
       break;

@@ -85,7 +85,13 @@ provisional cache metadata that is rediscovered next time. A later generator
 error can retain a validated selection. Automatic Ninja/Make regeneration reuses
 committed selections regardless of its shell environment. Both an explicit empty
 `-DCODET_DEPENDENCY_ROOT=` and `-UCODET_DEPENDENCY_ROOT` reset discovery.
-Old selection records are not migrated: reset or recreate an old build directory.
+Selection ownership and receipt metadata use internal version 2. Old owned records
+are not migrated and stop configuration with reset instructions, including obsolete
+empty markers; they never silently select another tree. Use
+`-UCODET_DEPENDENCY_ROOT` (or an untyped empty override) or recreate an old build directory.
+Explicit cache assignments replace ownership metadata, so repeating an identical
+`-D` value still overrides a provisional or committed derived selection. Literal
+`$<...>` text in paths is preserved in receipts rather than evaluated.
 A corrupt current receipt produces an identifying reset diagnostic. Missing
 dependencies report the selected root; provisioning must use that same root,
 for example `CODET_DEPENDENCY_ROOT=/absolute/path python3 scripts/fetch-deps.py`.

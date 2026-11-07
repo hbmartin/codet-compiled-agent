@@ -30,7 +30,7 @@ inline TurnInputDisposition classify_turn_input(const InputLine &line, const Jso
     return {TurnInputAction::discard, submission.rejection, {}};
   if (!line.origin || line.origin->session != origin.session || line.origin->turn != origin.turn)
     return {TurnInputAction::reject_origin, {}, {}};
-  const auto &text = line.text;
+  const auto &text = line.text();
   // A bound answer keeps its bytes and identity; only quit is global.
   if (submission.action == InputAction::answer)
     return {TurnInputAction::answer, {}, {}};

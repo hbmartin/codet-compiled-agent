@@ -23,7 +23,6 @@ private:
   std::shared_ptr<const std::string> original_;
 
 public:
-  const std::string &text;
   std::optional<ApprovalIdentity> request;
   bool discarded = false;
   std::optional<InputOrigin> origin;
@@ -35,8 +34,10 @@ public:
   std::exception_ptr admission_failure;
   InputLine(std::shared_ptr<const std::string> bytes, std::optional<ApprovalIdentity> identity = {},
             bool stale = false, std::optional<InputOrigin> source = {})
-      : original_(std::move(bytes)), text(PreparedPrompt::checked(original_)),
-        request(std::move(identity)), discarded(stale), origin(std::move(source)) {}
+      : original_(std::move(bytes)), request(std::move(identity)), discarded(stale),
+        origin(std::move(source)) {
+    (void)PreparedPrompt::checked(original_);
+  }
   InputLine(std::string bytes, std::optional<ApprovalIdentity> identity = {}, bool stale = false,
             std::optional<InputOrigin> source = {})
       : InputLine(std::make_shared<const std::string>(std::move(bytes)), std::move(identity), stale,
@@ -44,16 +45,27 @@ public:
   InputLine(InputLine &&) noexcept = default;
   InputLine &operator=(InputLine &&other) noexcept {
     if (this != &other) {
-      this->~InputLine();
-      new (this) InputLine(std::move(other));
+      original_ = std::move(other.original_);
+      request = std::move(other.request);
+      discarded = other.discarded;
+      origin = std::move(other.origin);
+      presentation_held = other.presentation_held;
+      admission = other.admission;
+      preparation = std::move(other.preparation);
+      preparation_context = other.preparation_context;
+      reservation = std::move(other.reservation);
+      admission_failure = std::move(other.admission_failure);
     }
     return *this;
+  }
+  const std::string &text() const {
+    return PreparedPrompt::checked(original_);
   }
   const auto &original_storage() const noexcept {
     return original_;
   }
   InputSubmission classify(const Json *pending = nullptr) const {
-    if (is_quit_command(text))
+    if (is_quit_command(text()))
       return {InputAction::quit, {}};
     if (discarded)
       return {InputAction::discard, InputDiscard::unfinished};

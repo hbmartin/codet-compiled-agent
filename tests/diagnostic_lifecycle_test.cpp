@@ -684,7 +684,7 @@ TEST_F(NativeRecordLifecycle, DeferredSubmissionRetainsRawBytesAndOriginalReques
   EXPECT_TRUE(deferred);
   EXPECT_TRUE(delivered);
   EXPECT_FALSE(gate.timed_out);
-  EXPECT_EQ(submitted->text, std::string("a\xe9"));
+  EXPECT_EQ(submitted->text(), std::string("a\xe9"));
   EXPECT_EQ(submitted->request->request, "first");
   EXPECT_EQ(submitted->action(), detail::InputAction::discard);
   EXPECT_THAT(read(), HasSubstr("\\xE9"));
@@ -752,7 +752,7 @@ void pending_echo(NativeRecordLifecycle &fixture, unsigned columns, bool prior_l
   });
   ASSERT_TRUE(held);
   ASSERT_TRUE(submitted);
-  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_EQ(submitted->text(), "abc");
   EXPECT_FALSE(gate.timed_out);
   EXPECT_THAT(fixture.read(), HasSubstr("codet> abc")) << "Frozen submitted line was not displayed";
 }
@@ -797,7 +797,7 @@ TEST_F(NativeRecordLifecycle, FrozenSubmissionOwnsOriginAndDiscardCompletesExact
   });
   ASSERT_TRUE(held);
   ASSERT_TRUE(discarded);
-  EXPECT_EQ(discarded->text, "abc");
+  EXPECT_EQ(discarded->text(), "abc");
   ASSERT_TRUE(discarded->origin);
   EXPECT_EQ(discarded->origin->session, "origin-session");
   EXPECT_EQ(discarded->origin->turn, 7u);
@@ -840,7 +840,7 @@ TEST_F(NativeRecordLifecycle, InterruptedSubmissionRepaintsAfterItsSeparatorWasD
   });
   ASSERT_TRUE(held);
   ASSERT_TRUE(submitted);
-  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_EQ(submitted->text(), "abc");
   EXPECT_THAT(read(), EndsWith("intervening diagnostic\r\ncodet> abc\r\n"));
   EXPECT_FALSE(gate.timed_out);
 }
@@ -884,7 +884,7 @@ TEST_F(NativeRecordLifecycle, FrozenSubmissionReflowsItsBoundedViewAfterResize) 
     });
     ASSERT_TRUE(held);
     ASSERT_TRUE(submitted);
-    EXPECT_EQ(submitted->text, "abcdefghijklmnopqrstuvwxyz");
+    EXPECT_EQ(submitted->text(), "abcdefghijklmnopqrstuvwxyz");
     EXPECT_THAT(read(), EndsWith("codet> <pqrstuvwxyz\r\n"));
     EXPECT_FALSE(gate.timed_out);
   }
@@ -893,7 +893,7 @@ TEST_F(NativeRecordLifecycle, FrozenSubmissionReflowsItsBoundedViewAfterResize) 
 TEST_F(NativeRecordLifecycle, EmptyOrdinarySubmissionDoesNotPaintSteeringPrompt) {
   auto submitted = capture([&] { return line->try_take(); });
   ASSERT_TRUE(submitted);
-  EXPECT_TRUE(submitted->text.empty());
+  EXPECT_TRUE(submitted->text().empty());
   EXPECT_EQ(submitted->action(), detail::InputAction::message);
   EXPECT_TRUE(read().empty());
 }
@@ -907,7 +907,7 @@ TEST_F(NativeRecordLifecycle, UnseenRevisionReplacesTheSurvivingKnownWidthRow) {
   input.append('c');
   auto submitted = capture([&] { return line->try_take(); });
   ASSERT_TRUE(submitted);
-  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_EQ(submitted->text(), "abc");
   EXPECT_EQ(read(), "\r         \rcodet> abc\r\n");
 }
 
@@ -960,7 +960,7 @@ TEST_F(NativeRecordLifecycle, CompletedInterveningRecordCannotHideFrozenSubmissi
   });
   ASSERT_TRUE(held);
   ASSERT_TRUE(submitted);
-  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_EQ(submitted->text(), "abc");
   EXPECT_THAT(read(), EndsWith("codet> abc\r\n"));
   EXPECT_FALSE(gate.timed_out);
 }
@@ -978,7 +978,7 @@ TEST_F(NativeRecordLifecycle, UnterminatedDiagnosticSeparatesFrozenKnownWidthLin
     submitted = line->try_take();
   });
   ASSERT_TRUE(submitted);
-  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_EQ(submitted->text(), "abc");
   EXPECT_EQ(read(), "\r\nfragment\r\ncodet> abc\r\n") << "Unterminated diagnostic hid frozen input";
 }
 TEST_F(NativeRecordLifecycle, CompletedSubmissionNewlineDoesNotReplayAfterLaterDiagnostic) {
@@ -1020,7 +1020,7 @@ TEST_F(NativeRecordLifecycle, CompletedSubmissionNewlineDoesNotReplayAfterLaterD
     metrics = {};
   });
   ASSERT_TRUE(submitted) << "Frozen completed line was deferred after its newline";
-  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_EQ(submitted->text(), "abc");
   EXPECT_TRUE(delivered);
   EXPECT_FALSE(gate.timed_out);
   const auto wire = read();
@@ -1044,7 +1044,7 @@ TEST_F(NativeRecordLifecycle, PartialSubmissionFailureStillSeparatesRecovery) {
   std::optional<detail::InputLine> submitted;
   capture([&] { submitted = line->try_take(); });
   ASSERT_TRUE(submitted);
-  EXPECT_EQ(submitted->text, std::string("abc\x1b"));
+  EXPECT_EQ(submitted->text(), std::string("abc\x1b"));
   EXPECT_EQ(read(), "\\x\r\ncodet> abc\\x1B\r\n");
 }
 

@@ -1,0 +1,25 @@
+{
+  "kind": "postpublication-lossless-transport",
+  "transport_version": 1,
+  "capture_run_id": "68a48c6fee9743c08d6a5e9f21d0aeef",
+  "archive": {
+    "path": "audit-bundle.tar.gz",
+    "sha256": "da6da3af5f023a6de3c30d27dbdc85e7014a51449c735a6f652bdb9d97c13fb4",
+    "bytes": 9572398
+  },
+  "expanded": {
+    "prefix": "68a48c6fee9743c08d6a5e9f21d0aeef",
+    "files": 477,
+    "bytes": 383683534,
+    "inventory_sha256": "ac5660fe795b38b863ebd36489a37be83034cbca4dbcf33bca2ea6dc78152678"
+  },
+  "previews": {
+    "manifest.json": "bc754ab773c47b955ac9a8ad85a7143541f31c8094dc67f1e9874add7747fd01",
+    "samples.csv": "34fd15d41026ec171f8b1722cd22323ac67bdee7bf84cc66369a9a5497c964e9",
+    "medians.csv": "e5b72c2988048dcf6754ce2756e16e1abdc555ccba3e1057a8be19648800f079",
+    "offline-audit.json": "c93ccf29dcfb0719a09d4702190f60bad7a24388a1c5ff7414304117a1fa1f37"
+  },
+  "roundtrip_all_members_verified": true,
+  "note": "Transport packaging only. Expanded captured records remain unchanged; no report compaction, reconstructed outcomes, or new campaign acceptance claims.",
+  "driver_source": "import gzip,hashlib,json,shutil,tarfile,tempfile\nfrom pathlib import Path\nroot=Path('/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent')\nscratch=Path('/Volumes/Pro2T/codet-compiled-agent/build/configuration-input-preflight')\nrun='68a48c6fee9743c08d6a5e9f21d0aeef'\ndestination=root/'docs/validation/configuration-input-preflight-followup'/run\nbundle=scratch/('published-expanded-'+run)\nif bundle.exists():raise ValueError('Expanded archive destination already exists')\nshutil.move(str(destination),bundle)\ndestination.mkdir()\narchive=destination/'audit-bundle.tar.gz'\nfiles=sorted(p for p in bundle.rglob('*') if p.is_file())\nwith archive.open('xb') as raw,gzip.GzipFile(filename='',mode='wb',fileobj=raw,mtime=0) as zipped,tarfile.open(fileobj=zipped,mode='w|',format=tarfile.PAX_FORMAT) as tar:\n    for path in files:\n        info=tarfile.TarInfo(run+'/'+str(path.relative_to(bundle)))\n        info.size=path.stat().st_size;info.mode=0o644;info.mtime=0;info.uid=info.gid=0;info.uname=info.gname=''\n        with path.open('rb') as source:tar.addfile(info,source)\ndef sha(p):\n    h=hashlib.sha256()\n    with p.open('rb') as f:\n        for block in iter(lambda:f.read(65536),b''):h.update(block)\n    return h.hexdigest()\n# Verify every transported byte, without importing any checkout code.\nwith tempfile.TemporaryDirectory(dir=scratch,prefix='transport-check-') as temporary:\n    with tarfile.open(archive) as tar:\n        for member in tar:\n            expected=run+'/'\n            if not member.isfile() or not member.name.startswith(expected) or '..' in Path(member.name).parts:raise ValueError('Unsafe transport member')\n            target=Path(temporary)/member.name;target.parent.mkdir(parents=True,exist_ok=True)\n            with tar.extractfile(member) as source,target.open('xb') as output:shutil.copyfileobj(source,output)\n    restored=Path(temporary)/run\n    actual={str(p.relative_to(restored)):sha(p) for p in restored.rglob('*') if p.is_file()}\n    expected={str(p.relative_to(bundle)):sha(p) for p in files}\n    if actual!=expected:raise ValueError('Transport changed immutable bundle bytes')\npreviews={'manifest.json':bundle/'manifest.json','samples.csv':bundle/'measurements/benchmarks/measure.json/samples.csv','medians.csv':bundle/'measurements/benchmarks/measure.json/medians.csv','offline-audit.json':scratch/'offline-audit.json'}\nfor name,path in previews.items():shutil.copy2(path,destination/name)\nreceipt=dict(kind='postpublication-lossless-transport',transport_version=1,capture_run_id=run,\n    archive=dict(path=archive.name,sha256=sha(archive),bytes=archive.stat().st_size),\n    expanded=dict(prefix=run,files=len(files),bytes=sum(p.stat().st_size for p in files),inventory_sha256=sha(bundle/'inventory.json')),\n    previews={name:sha(path) for name,path in previews.items()},roundtrip_all_members_verified=True,\n    note='Transport packaging only. Expanded captured records remain unchanged; no report compaction, reconstructed outcomes, or new campaign acceptance claims.',driver_source=Path(__file__).read_text())\n(destination/'transport.json').write_text(json.dumps(receipt,indent=2)+'\\n')\nprint(json.dumps({k:v for k,v in receipt.items() if k not in ('driver_source','previews')},indent=2))\n"
+}

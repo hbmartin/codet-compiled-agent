@@ -3,6 +3,7 @@
 #include "codet/detail/cleanup_diagnostics.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
 #include "codet/detail/curses_input.hpp"
+#include "codet/detail/interactive_preparation.hpp"
 #include "codet/detail/line_prompt.hpp"
 #include "codet/detail/native_output.hpp"
 #include "codet/detail/pending_control.hpp"
@@ -457,7 +458,7 @@ TEST(RequestInput, ExpiryAndReplacementNeverReclassifyDraftAnswers) {
   EXPECT_TRUE(input.ordinary_draft());
   input.close();
   EXPECT_TRUE(input.ordinary_draft()); // Worker completion preserves ordinary intent.
-  EXPECT_EQ(input.take("ordinary steering").text, "ordinary steering");
+  EXPECT_EQ(input.take("ordinary steering").text(), "ordinary steering");
   input.edit(); // An ordinary draft started before a request cannot answer it.
   EXPECT_TRUE(input.open(first));
   EXPECT_TRUE(input.take("yes").discarded);
@@ -585,7 +586,7 @@ TEST(LinePrompt, RestoresTheSafeDraftAndDeletionMatchesSubmittedBytes) {
   for (char byte : std::string("llo"))
     f.line->append(byte);
   EXPECT_EQ(last_line(f.stream.str()), "codet> hllo");
-  EXPECT_EQ(f.line->take().text, "hllo");
+  EXPECT_EQ(f.line->take().text(), "hllo");
 }
 TEST(LinePrompt, SafeAppendsUseOnlyTheNewPreparedBytes) {
   for (size_t columns : {size_t{0}, size_t{9}, size_t{80}}) {
@@ -638,7 +639,7 @@ TEST(LinePrompt, BasicEmptyDraftEndsItsRowAndSubmissionExposesDeferredBytes) {
       for (char byte : raw)
         f.line->append(byte);
       const auto submitted = f.line->take();
-      EXPECT_EQ(submitted.text, raw);
+      EXPECT_EQ(submitted.text(), raw);
       EXPECT_EQ(f.stream.str(), "codet> " + detail::literal_text(raw) + "\n");
     }
   }
@@ -654,7 +655,7 @@ TEST(LinePrompt, MultipleMutationsAndOwnershipGapsCannotUseTheBasicAppendShortcu
   f.line->append('y');
   f.line->append('z');
   EXPECT_EQ(last_line(f.stream.str()), "codet> abxyz");
-  EXPECT_EQ(f.line->take().text, "abxyz");
+  EXPECT_EQ(f.line->take().text(), "abxyz");
   EXPECT_THAT(f.stream.str(), Not(HasSubstr("abcyz")));
 }
 TEST(CursesInput, SharedDecoderDistinguishesIncompleteAndMalformedTrailingPrefixes) {
@@ -702,7 +703,7 @@ TEST(LinePrompt, ApprovalAndQuestionDraftsSurviveOutputWithoutDuplicatedAnswers)
     f.line->flush();
     EXPECT_THAT(last_line(f.stream.str()), ::testing::EndsWith(" y"));
     f.line->submitted();
-    EXPECT_EQ(f.input.take().text, "y");
+    EXPECT_EQ(f.input.take().text(), "y");
   }
 }
 TEST(LinePrompt, RedirectedOutputAndReleasedRecoveryNeverRepaintAnotherPrompt) {
@@ -840,7 +841,7 @@ TEST(LinePrompt, FailedRowsAndGuidanceUseTheSharedRecoveryNewline) {
       line.erase_character();
       line.erase_character();
       EXPECT_EQ(last_line(buffer.str()), "codet> abcdefghijklmn") << skip << ":" << keep;
-      EXPECT_EQ(input.take().text, "abcdefghijklmn");
+      EXPECT_EQ(input.take().text(), "abcdefghijklmn");
     }
 }
 TEST(LinePrompt, ErasingTheFinalCharacterRemovesTheActiveOrdinaryPrompt) {
@@ -2247,7 +2248,7 @@ TEST(LinePrompt, InjectedFragmentEndsBeforeFrozenPresentation) {
   f.output.display({"fragment"}, false);
   auto submitted = f.line->try_take();
   ASSERT_TRUE(submitted);
-  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_EQ(submitted->text(), "abc");
   EXPECT_THAT(f.stream.str(), EndsWith("fragment\ncodet> abc\n"));
 }
 
@@ -2566,7 +2567,7 @@ TEST(SubmissionQueue, MovingOrUnwindingALineReleasesItsReservedEntryExactlyOnce)
     line.admission = first;
     line.reservation = detail::SubmissionLease(&io, first);
     auto moved = std::move(line);
-    EXPECT_EQ(moved.text, "original");
+    EXPECT_EQ(moved.text(), "original");
     throw std::bad_alloc();
   } catch (const std::bad_alloc &) {
   }
@@ -2701,7 +2702,8 @@ TEST(SubmissionQueue, SharedPreparedOriginalCountsOneBackingAndStillForcesAFollo
   auto command =
       std::make_shared<const detail::PreparedPrompt>(detail::PreparedPrompt{"/review", "expanded"});
   auto text = std::shared_ptr<const std::string>(command, &command->original);
-  const auto payload = detail::SubmissionPreparation(text).finish(command, [](size_t, size_t) {});
+  const auto payload =
+      detail::SubmissionPreparation(text).finish(command, true, [](size_t, size_t) {});
   EXPECT_EQ(payload.retained_size(), 15u);
   const auto ticket = detail::SubmissionAccess::reserve(io);
   detail::SubmissionAccess::commit_prepared(io, ticket, payload, false);
@@ -2743,7 +2745,7 @@ TEST(SubmissionQueue, PublicPreparationExposesNoReservationAcrossTurnCleanup) {
         if (go.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
           throw Error("Submission test gate did not open");
         return detail::SubmissionPreparation(std::make_shared<const std::string>(raw))
-            .finish({}, [](size_t, size_t) {});
+            .finish({}, false, [](size_t, size_t) {});
       });
     } catch (...) {
       failure = std::current_exception();
@@ -2795,13 +2797,13 @@ TEST(SubmissionQueue, MalformedCompatibilityExpansionRetainsItsNormalizedCharge)
 
 TEST(SubmissionQueue, ValidatedPayloadSharesUnchangedBytesAndRejectsMissingBacking) {
   auto raw = std::make_shared<const std::string>(65536, 'x');
-  const auto valid = detail::SubmissionPreparation(raw).finish({}, [](size_t, size_t) {});
+  const auto valid = detail::SubmissionPreparation(raw).finish({}, false, [](size_t, size_t) {});
   EXPECT_EQ(valid.normalized_storage().get(), raw.get());
   EXPECT_EQ(valid.execution()->original_storage().get(), raw.get());
   EXPECT_EQ(valid.execution()->expanded_storage().get(), raw.get());
   EXPECT_EQ(valid.retained_size(), raw->size()) << "Identical backing was charged more than once";
   auto bad = std::make_shared<const std::string>(65536, static_cast<char>(0x80));
-  const auto repaired = detail::SubmissionPreparation(bad).finish({}, [](size_t, size_t) {});
+  const auto repaired = detail::SubmissionPreparation(bad).finish({}, false, [](size_t, size_t) {});
   EXPECT_EQ(repaired.execution()->original_storage().get(), bad.get());
   EXPECT_EQ(repaired.execution()->expanded.size(), 196608u);
   EXPECT_EQ(repaired.retained_size(), 262144u);
@@ -2809,4 +2811,199 @@ TEST(SubmissionQueue, ValidatedPayloadSharesUnchangedBytesAndRejectsMissingBacki
   EXPECT_THROW((detail::PreparedPrompt(nullptr, raw)), Error);
   static_assert(!std::is_default_constructible<detail::PreparedSubmission>::value,
                 "Unvalidated payloads must not be constructible");
+}
+
+TEST(InputPreparation, MoveAssignmentKeepsFrozenIdentityAndExactlyOneLease) {
+  static_assert(std::is_nothrow_move_constructible<detail::InputLine>::value);
+  static_assert(std::is_nothrow_move_assignable<detail::InputLine>::value);
+  Interaction io;
+  io.begin_turn("session");
+  const auto old_ticket = detail::SubmissionAccess::reserve(io);
+  const auto ticket = detail::SubmissionAccess::reserve(io);
+  std::optional<detail::InputLine> destination{std::in_place, "obsolete"};
+  destination->reservation = detail::SubmissionLease(&io, old_ticket);
+  detail::InputLine source{"raw", detail::ApprovalIdentity{"session", "question", 9}, true,
+                           detail::InputOrigin{"session", 9}};
+  auto bytes = source.original_storage();
+  source.admission = ticket;
+  source.reservation = detail::SubmissionLease(&io, ticket);
+  source.presentation_held = true;
+  source.preparation_context = detail::PreparationContext::pending;
+  source.preparation.state = detail::PreparationState::failed;
+  source.admission_failure = std::make_exception_ptr(Error("admission"));
+  *destination = std::move(source);
+  EXPECT_THROW(detail::SubmissionAccess::charge(io, old_ticket, 0), Error);
+  for (unsigned iteration = 0; iteration != 16; ++iteration) {
+    auto moved = std::move(*destination);
+    destination = std::move(moved);
+    auto *alias = &*destination;
+    *destination = std::move(*alias);
+    EXPECT_EQ(destination->text(), "raw") << "Move assignment lost frozen backing";
+    EXPECT_EQ(destination->original_storage().get(), bytes.get());
+    ASSERT_TRUE(destination->request);
+    EXPECT_EQ(destination->request->request, "question");
+    ASSERT_TRUE(destination->origin);
+    EXPECT_EQ(destination->origin->session, "session");
+    EXPECT_EQ(destination->origin->turn, 9u);
+    EXPECT_TRUE(destination->discarded);
+    EXPECT_TRUE(destination->presentation_held);
+    EXPECT_EQ(destination->admission, ticket);
+    EXPECT_EQ(destination->preparation_context, detail::PreparationContext::pending);
+    EXPECT_EQ(destination->preparation.state, detail::PreparationState::failed);
+    EXPECT_TRUE(destination->admission_failure);
+  }
+  destination.reset();
+  EXPECT_THROW(detail::SubmissionAccess::charge(io, ticket, 0), Error);
+  // Both replaced and transferred leases are gone; every queue slot is available.
+  for (unsigned count = 0; count != 100; ++count)
+    EXPECT_NO_THROW((void)detail::SubmissionAccess::reserve(io));
+  io.end_turn();
+  EXPECT_TRUE(io.take_pending("session").empty());
+}
+
+TEST(SubmissionQueue, ExplicitCommandFlagIsIndependentOfPreparedContentAndHeldState) {
+  for (bool command : {false, true})
+    for (bool expanded : {false, true})
+      for (bool held : {false, true}) {
+        Interaction io;
+        io.begin_turn("session");
+        const auto ticket = detail::SubmissionAccess::reserve(io);
+        auto expansion =
+            expanded ? std::make_shared<const detail::PreparedPrompt>("original", "expanded")
+                     : nullptr;
+        detail::SubmissionAccess::commit(io, ticket, "original", held, command, expansion);
+        const auto incoming = io.take_input();
+        EXPECT_EQ(incoming.size(), command || held ? 0u : 1u)
+            << "Prepared content changed the explicit command barrier";
+        if (!incoming.empty())
+          EXPECT_EQ(incoming.front(), "original");
+        io.end_turn();
+        const auto next = detail::SubmissionAccess::next(io, "session");
+        EXPECT_EQ(next.has_value(), command || held);
+        if (next) {
+          ASSERT_TRUE(next->prepared);
+          EXPECT_EQ(next->prepared->original, "original");
+          EXPECT_EQ(next->prepared->expanded, expanded ? "expanded" : "original");
+          if (!expanded)
+            EXPECT_EQ(next->prepared->original_storage().get(),
+                      next->prepared->expanded_storage().get())
+                << "Barrier-only content duplicated unchanged backing";
+        }
+      }
+}
+TEST(InputPreparation, SharedProductionPreparationKeepsOneFrozenCommandAndRawHookBytes) {
+  TempDirectory temporary;
+  NativeFileSystem files;
+  Config config;
+  config.cwd = temporary.root;
+  config.home = temporary.root / "home";
+  fs::create_directories(config.home / "commands");
+  files.atomic_write(config.home / "commands/review.md", "expanded $ARGUMENTS");
+  Interaction io;
+  io.begin_turn("session");
+  for (const auto &text : {std::string("/review once"), std::string("bad\xff")}) {
+    detail::InputLine line{text};
+    line.preparation_context = detail::PreparationContext::pending;
+    line.admission = detail::SubmissionAccess::reserve(io);
+    line.reservation = detail::SubmissionLease(&io, line.admission);
+    const auto result =
+        detail::prepare_input_submission(config, files, line, &io, Cancellation{}, [](unsigned) {});
+    ASSERT_EQ(result.state, detail::PreparationState::ready);
+    ASSERT_TRUE(result.submission);
+    const auto execution = result.submission->execution();
+    EXPECT_EQ(execution->original, text);
+    if (text.front() == '/') {
+      EXPECT_EQ(result.prompt.get(), execution.get())
+          << "Preparation created two custom prompt wrappers";
+      EXPECT_TRUE(result.submission->command());
+      EXPECT_EQ(execution->expanded, "expanded once");
+      files.atomic_write(config.home / "commands/review.md", "modified after submission");
+      EXPECT_EQ(execution->expanded, "expanded once");
+    } else {
+      EXPECT_FALSE(result.prompt);
+      EXPECT_FALSE(result.submission->command());
+      EXPECT_EQ(execution->expanded, detail::normalized_input(text, 262144));
+    }
+  }
+  io.end_turn();
+  EXPECT_TRUE(io.take_pending("session").empty());
+}
+TEST(InputPreparation, InvalidAdmissionContextAndRawFailurePrecedenceAreDeterministic) {
+  TempDirectory temporary;
+  NativeFileSystem files;
+  Config config;
+  config.cwd = config.home = temporary.root;
+  Interaction io;
+  io.begin_turn("session");
+  const auto message = [&](detail::InputLine &line, const Cancellation &cancel) {
+    const auto result =
+        detail::prepare_input_submission(config, files, line, &io, cancel, [](unsigned) {});
+    if (result.state == detail::PreparationState::cancelled)
+      return std::string("cancelled");
+    EXPECT_EQ(result.state, detail::PreparationState::failed);
+    try {
+      if (result.failure)
+        std::rethrow_exception(result.failure);
+    } catch (const Error &error) {
+      return std::string(error.what());
+    }
+    return std::string("missing error");
+  };
+  detail::InputLine fresh{"fresh"};
+  fresh.admission = 1;
+  EXPECT_THAT(message(fresh, Cancellation{}), HasSubstr("incompatible preparation context"))
+      << "Fresh input dereferenced a missing pending inspection";
+  detail::InputLine pending{std::string(65537, 'x')};
+  pending.preparation_context = detail::PreparationContext::pending;
+  pending.admission_failure = std::make_exception_ptr(Error("Pending retained queue budget"));
+  EXPECT_THAT(message(pending, Cancellation{}), HasSubstr("65536-byte"))
+      << "Admission failure masked the pending raw limit";
+  Cancellation cancelled;
+  cancelled.requested = true;
+  EXPECT_EQ(message(pending, cancelled), "cancelled");
+}
+
+TEST(SubmissionQueue, FinalAdmissionRechecksCapacityAfterBorrowedPreparation) {
+  Interaction io;
+  io.begin_turn("before");
+  std::promise<void> ready, release;
+  auto go = release.get_future();
+  auto started = ready.get_future();
+  std::exception_ptr failure;
+  std::thread producer([&] {
+    try {
+      detail::SubmissionAccess::submit(io, "message", [&](const std::string &raw) {
+        auto payload =
+            detail::SubmissionPreparation::from_raw(raw, false, {}, [](size_t, size_t) {});
+        ready.set_value();
+        if (go.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
+          throw Error("Submission capacity gate did not open");
+        return payload;
+      });
+    } catch (...) {
+      failure = std::current_exception();
+    }
+  });
+  const bool waiting = started.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
+  if (waiting) {
+    io.end_turn();
+    EXPECT_TRUE(io.take_pending("before").empty());
+    io.begin_turn("after");
+    for (unsigned n = 0; n != 100; ++n)
+      (void)detail::SubmissionAccess::reserve(io);
+  }
+  release.set_value();
+  producer.join();
+  EXPECT_TRUE(waiting);
+  ASSERT_TRUE(failure) << "Advisory preflight bypassed final admission capacity";
+  try {
+    std::rethrow_exception(failure);
+  } catch (const Error &error) {
+    EXPECT_THAT(error.what(), HasSubstr("100-entry limit"));
+  }
+  io.end_turn();
+  EXPECT_TRUE(io.take_pending("after").empty());
+  io.begin_turn("after");
+  io.submit("usable");
+  EXPECT_EQ(io.take_input(), (std::vector<std::string>{"usable"}));
 }

@@ -50,6 +50,13 @@ struct PreparationOutcome {
   std::exception_ptr failure;
   std::shared_ptr<const PreparedSubmission> submission = {};
 };
+inline std::shared_ptr<const PreparedPrompt> share_prepared(std::optional<PreparedPrompt> value) {
+  return value ? std::make_shared<const PreparedPrompt>(std::move(*value)) : nullptr;
+}
+inline std::shared_ptr<const PreparedPrompt>
+share_prepared(std::shared_ptr<const PreparedPrompt> value) {
+  return value;
+}
 // Expected cancellation belongs to the input phase, not the UI exception boundary.
 template <class Prepare>
 PreparationOutcome prepare_submission(const Cancellation &cancel, Prepare prepare) {
@@ -57,7 +64,7 @@ PreparationOutcome prepare_submission(const Cancellation &cancel, Prepare prepar
     cancel.check();
     auto value = prepare();
     cancel.check();
-    auto prompt = value ? std::make_shared<const PreparedPrompt>(std::move(*value)) : nullptr;
+    auto prompt = share_prepared(std::move(value));
     return {PreparationState::ready, std::move(prompt), {}};
   } catch (const std::bad_alloc &) {
     throw;

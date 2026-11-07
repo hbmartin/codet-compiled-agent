@@ -103,6 +103,27 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native mutant linking failed: " + repr(linked))
         return source, binary, compiled, linked
     cases = [
+        ("safe-input-move", "tests/cli_diagnostics_test.cpp", "include/codet/detail/request_input.hpp",
+         "      original_ = std::move(other.original_);", '      original_ = std::make_shared<const std::string>("mutated");',
+         "InputPreparation.MoveAssignmentKeepsFrozenIdentityAndExactlyOneLease"),
+        ("borrowed-preflight", "src/modern/interaction.cpp", "include/codet/detail/submission_queue.hpp",
+         "    preflight(io);", "    const auto copied = std::make_shared<const std::string>(text); (void)copied; preflight(io);",
+         "PreparationFault.SaturatedPublicAdmissionRejectsBeforeAnyPayloadSizedAllocation"),
+        ("budget-preflight", "src/modern/interaction.cpp", "include/codet/detail/submission_payload.hpp",
+         "    reserve(expansion ? 0 : inspected.normalized, retained);", "    (void)retained;",
+         "PreparationFault.SaturatedPublicAdmissionRejectsBeforeAnyPayloadSizedAllocation"),
+        ("explicit-command", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_payload.hpp",
+         "std::move(command), barrier};", "std::move(command), (static_cast<void>(barrier), static_cast<bool>(command))};",
+         "SubmissionQueue.ExplicitCommandFlagIsIndependentOfPreparedContentAndHeldState"),
+        ("shared-command-wrapper", "tests/cli_diagnostics_test.cpp", "include/codet/detail/interactive_preparation.hpp",
+         "          command, static_cast<bool>(command),", "          command ? std::make_shared<const PreparedPrompt>(*command) : nullptr, static_cast<bool>(command),",
+         "InputPreparation.SharedProductionPreparationKeepsOneFrozenCommandAndRawHookBytes"),
+        ("pending-context", "tests/cli_diagnostics_test.cpp", "include/codet/detail/interactive_preparation.hpp",
+         "if (line.admission && (!pending || !interaction))", "if (false)",
+         "InputPreparation.InvalidAdmissionContextAndRawFailurePrecedenceAreDeterministic"),
+        ("raw-precedence", "tests/cli_diagnostics_test.cpp", "include/codet/detail/interactive_preparation.hpp",
+         "    if (pending)\n      SubmissionPreparation::validate_raw(line.text());", "    (void)pending;",
+         "InputPreparation.InvalidAdmissionContextAndRawFailurePrecedenceAreDeterministic"),
         ("atomic-submit", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_queue.hpp",
          "    const auto payload = prepare(text); // No queue state is visible during preparation.\n    insert(io, payload);",
          "    const auto ticket = reserve(io); SubmissionLease lease(&io, ticket);\n    const auto payload = prepare(text);\n    commit_prepared(io, ticket, payload, false); lease.release();",
@@ -235,11 +256,13 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native control baseline failed: " + target)
         source, binary, compiled, linked = compile_mutant(directory, binary_target, "control-tests", entry_name, source_name, before, after)
         mutant = _test(binary, target, directory)
-        markers = {"atomic-submit": "Atomic compatibility submit exposed an intermediate reservation",
+        markers = {"safe-input-move": "Expected equality", "borrowed-preflight": "Rejected public input allocated its full payload",
+                   "budget-preflight": "Rejected public input allocated its full payload", "explicit-command": "Expected equality",
+                   "shared-command-wrapper": "Expected equality", "pending-context": "Expected",
+                   "raw-precedence": "Expected", "atomic-submit": "Atomic compatibility submit exposed an intermediate reservation",
                    "normalized-expansion-charge": "Normalized expansion bytes disappeared from accounting",
                    "shared-payload": "Identical backing was charged more than once",
                    "expansion-preflight": "Expansion allocated its backing before queue preflight",
-                   "image-ownership": "Initial images lost their owning turn",
                    "retained-budget": "Retained originals bypassed the owned-text budget",
                    "reserved-drain": "Reserved placeholders escaped cleanup",
                    "prepared-command-barrier": "Prepared command became unexpanded steering",
@@ -290,22 +313,22 @@ def run_controls(root, folder, build, ninja):
         ("admission-reason", "CliTests.test_pending_admission_reports_the_actual_constraint_once",
          "std::rethrow_exception(line.admission_failure);",
          'throw Error("Pending input exceeds 100-entry limit");',
-         "Admission failure reported wrong constraint"),
+         "Admission failure reported wrong constraint", "include/codet/detail/interactive_preparation.hpp"),
         ("empty-rejection", "CliTests.test_empty_frozen_submission_cancellation_never_reports_an_empty_notice",
          '    if (text.empty())\n      return;\n    try {\n      std::string message = "[Pending message not sent: ";',
          '    try {\n      std::string message = "[Pending message not sent: ";',
          "Empty frozen input emitted an empty pending notice"),
         ("fresh-input-scope", "CliTests.test_large_fresh_argv_and_libedit_prose_are_not_pending_input",
-         "if (pending_input)\n        inspected.emplace(line.original_storage());",
-         "inspected.emplace(line.original_storage());",
-         "Fresh prose was rejected by a pending-input limit"),
+         "const bool pending = line.preparation_context == PreparationContext::pending;",
+         "const bool pending = true;",
+         "Fresh prose was rejected by a pending-input limit", "include/codet/detail/interactive_preparation.hpp"),
         ("preparation-rejection", "CliTests.test_failed_pending_preparation_reports_the_rejected_line_and_keeps_worker",
-         "if (line.preparation_context == detail::PreparationContext::pending)\n        terminal->pending_not_sent(line.text);",
+         "if (line.preparation_context == detail::PreparationContext::pending)\n        terminal->pending_not_sent(line.text());",
          "if (line.preparation_context == detail::PreparationContext::pending)\n        (void)line;",
          "Preparation failure omitted its pending-input rejection notice"),
         ("command-isolation", "CliTests.test_unsafe_command_preserves_later_messages_and_expands_once",
          '    if (line.preparation.state == detail::PreparationState::failed) {',
-         '    if (line.preparation.state == detail::PreparationState::failed) { line.preparation.submission = std::make_shared<const detail::PreparedSubmission>(detail::SubmissionPreparation(line.original_storage()).finish({}, [](size_t, size_t) {})); return true;',
+         '    if (line.preparation.state == detail::PreparationState::failed) { line.preparation.submission = std::make_shared<const detail::PreparedSubmission>(detail::SubmissionPreparation(line.original_storage()).finish({}, false, [](size_t, size_t) {})); return true;',
          "Unsafe custom command path: /unsafe"),
         ("preparation-cancellation", "CliTests.test_preparation_cancellation_collects_an_already_successful_worker",
          '    if (line.preparation.state == detail::PreparationState::cancelled) {',
@@ -337,7 +360,9 @@ def run_controls(root, folder, build, ninja):
          '      if (late_cancel && !quit_requested)\n        cancel.requested = false;',
          '      (void)late_cancel;', "Late signal prevented a fresh interactive turn"),
     ]
-    for name, target, before, after, marker in review_controls:
+    for item in review_controls:
+        name, target, before, after, marker, *source_override = item
+        source_name = source_override[0] if source_override else "src/modern/cli.cpp"
         print("Integration control:", name, flush=True)
         directory = folder / ("native-control-" + name)
         directory.mkdir()
@@ -345,12 +370,12 @@ def run_controls(root, folder, build, ninja):
         if baseline["exit"] or baseline["assertions"]:
             raise ValueError("Review control baseline failed: " + target)
         binary_target = "codet" if name in ("fresh-input-scope", "preparation-rejection") else "codet_tests"
-        source, binary, compiled, linked = compile_mutant(directory, binary_target, binary_target, "src/modern/cli.cpp", "src/modern/cli.cpp", before, after)
+        source, binary, compiled, linked = compile_mutant(directory, binary_target, binary_target, "src/modern/cli.cpp", source_name, before, after)
         placeholder = directory / "codet"
         if binary_target != "codet":
             shutil.copy2(build / "codet", placeholder)
         mutant = _integration(root, placeholder, directory, target)
         if mutant["exit"] != 1 or not mutant["assertions"] or not all(marker in assertion for assertion in mutant["assertions"]):
             raise ValueError("Review mutant did not fail its intended assertion: " + target + repr(mutant))
-        results.append(dict(name=name, target=target, mutation=dict(before=before, after=after, original_sha256=digest(root / "src/modern/cli.cpp"), mutant_sha256=digest(source)), binary_sha256=digest(binary), baseline=baseline, compile=compiled, link=linked, mutant=mutant))
+        results.append(dict(name=name, target=target, mutation=dict(before=before, after=after, original_sha256=digest(root / source_name), mutant_sha256=digest(source)), binary_sha256=digest(binary), baseline=baseline, compile=compiled, link=linked, mutant=mutant))
     return results

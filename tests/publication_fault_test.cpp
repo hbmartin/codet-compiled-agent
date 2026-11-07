@@ -2397,7 +2397,7 @@ TEST(LineSubmissionFault, AllocationFailureCannotConsumeAnUnownedLine) {
       submitted = line.try_take();
     }
     ASSERT_TRUE(submitted);
-    EXPECT_EQ(submitted->text, raw);
+    EXPECT_EQ(submitted->text(), raw);
   }
 }
 
@@ -2454,7 +2454,8 @@ TEST(PreparationFault, PreparedCommitTransfersBackingsWithoutAllocatingOrRenorma
   auto text = std::shared_ptr<const std::string>(command, &command->original);
   detail::SubmissionAccess::charge(io, ticket, 8,
                                    22); // Includes the frozen raw line until transfer.
-  const auto payload = detail::SubmissionPreparation(text).finish(command, [](size_t, size_t) {});
+  const auto payload =
+      detail::SubmissionPreparation(text).finish(command, true, [](size_t, size_t) {});
   bool failed = false;
   fault::countdown = 0;
   try {
@@ -2475,7 +2476,7 @@ TEST(PreparationFault, QueueHandoffKeepsTheBackingWithoutAFullTextAllocation) {
   io.begin_turn("s");
   auto text = std::make_shared<const std::string>(65536, 'x');
   const auto ticket = detail::SubmissionAccess::reserve(io);
-  const auto payload = detail::SubmissionPreparation(text).finish({}, [](size_t, size_t) {});
+  const auto payload = detail::SubmissionPreparation(text).finish({}, false, [](size_t, size_t) {});
   detail::SubmissionAccess::commit_prepared(io, ticket, payload, true);
   io.end_turn();
   bool failed = false;
@@ -2528,4 +2529,41 @@ TEST(PreparationFault, QueuePreflightRunsBeforeAllocatingTheExpandedBacking) {
   EXPECT_TRUE(rejected);
   EXPECT_EQ(requested, 262144u);
   EXPECT_LT(largest, 131072u) << "Expansion allocated its backing before queue preflight";
+}
+
+TEST(PreparationFault, SaturatedPublicAdmissionRejectsBeforeAnyPayloadSizedAllocation) {
+  const std::string raw(65536, static_cast<char>(0xff));
+  for (unsigned constraint = 0; constraint != 3; ++constraint) {
+    Interaction io;
+    io.begin_turn("session");
+    if (constraint == 0) {
+      for (unsigned i = 0; i != 100; ++i)
+        (void)detail::SubmissionAccess::reserve(io);
+    } else if (constraint == 1) {
+      for (unsigned i = 0; i != 32; ++i) {
+        const auto ticket = detail::SubmissionAccess::reserve(io);
+        detail::SubmissionAccess::charge(io, ticket, 262144, 0);
+      }
+    } else {
+      const auto ticket = detail::SubmissionAccess::reserve(io);
+      detail::SubmissionAccess::charge(io, ticket, 0, 8388608);
+    }
+    fault::largest_allocation = 0;
+    fault::measure_allocations = true;
+    bool rejected = false;
+    try {
+      io.submit(raw);
+    } catch (const Error &) {
+      rejected = true;
+    }
+    const auto largest = fault::largest_allocation;
+    fault::disable();
+    EXPECT_TRUE(rejected);
+    EXPECT_LT(largest, 32768u) << "Rejected public input allocated its full payload";
+    io.end_turn();
+    EXPECT_TRUE(io.take_pending("session").empty());
+    io.begin_turn("session");
+    EXPECT_NO_THROW(io.submit("usable"));
+    EXPECT_EQ(io.take_input(), (std::vector<std::string>{"usable"}));
+  }
 }

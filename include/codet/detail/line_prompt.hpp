@@ -511,7 +511,7 @@ public:
                           submission.boundary == boundary_generation_ &&
                           submission.columns == columns_;
       const bool display =
-          !submission.line.text.empty() || submission.line.request || submission.line.discarded;
+          !submission.line.text().empty() || submission.line.request || submission.line.discarded;
       const auto text = !display ? std::string_view{}
                         : append ? std::string_view(submission.tail)
                                  : frozen_view(submission);

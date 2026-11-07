@@ -85,6 +85,12 @@ public:
     assign(*entry, payload, followup);
     io.changed_.notify_all();
   }
+  static void preflight(Interaction &io, size_t bytes = 0, size_t retained = 0) {
+    std::lock_guard<std::mutex> lock(io.mutex_);
+    if (io.input_.size() >= queued_input_count)
+      throw Error("Pending input exceeds 100-entry limit");
+    io.check_input_capacity(bytes, retained);
+  }
   static void insert(Interaction &io, const PreparedSubmission &payload) {
     std::lock_guard<std::mutex> lock(io.mutex_);
     if (io.input_.size() >= queued_input_count)
@@ -100,20 +106,17 @@ public:
   }
   template <class Prepare>
   static void submit(Interaction &io, const std::string &text, Prepare prepare) {
+    SubmissionPreparation::validate_raw(text);
+    preflight(io);
     const auto payload = prepare(text); // No queue state is visible during preparation.
     insert(io, payload);
   }
   // Raw compatibility callers use exactly the same payload preparation as the UI.
   static void commit(Interaction &io, uint64_t sequence, const std::string &text, bool held,
                      bool command = false, std::shared_ptr<const PreparedPrompt> expansion = {}) {
-    if (command && !expansion) {
-      // A caller may freeze a command barrier without custom expansion.
-      expansion = std::make_shared<const PreparedPrompt>(text, text);
-    }
-    const auto payload = SubmissionPreparation(std::make_shared<const std::string>(text))
-                             .finish(std::move(expansion), [&](size_t bytes, size_t retained) {
-                               charge(io, sequence, bytes, retained);
-                             });
+    const auto payload = SubmissionPreparation::from_raw(
+        text, command, std::move(expansion),
+        [&](size_t bytes, size_t retained) { charge(io, sequence, bytes, retained); });
     commit_prepared(io, sequence, payload, held);
   }
   static std::optional<QueuedSubmission> next(Interaction &io, const std::string &session) {

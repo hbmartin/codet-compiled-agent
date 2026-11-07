@@ -1,0 +1,33 @@
+{
+  "kind": "postpublication-offline-audit",
+  "driver_source": "import builtins,hashlib,io,json,os,shutil,subprocess,sys,tempfile\nfrom pathlib import Path\nbundle=Path(sys.argv[1]).resolve();destination=Path(sys.argv[2]).resolve()\noriginals=[Path('/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent'),Path('/Volumes/Pro2T/codet-compiled-agent')]\nhelper_sha=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()\ninventory_sha=hashlib.sha256((bundle/'inventory.json').read_bytes()).hexdigest()\ninterpreter_sha=hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest()\nsys.dont_write_bytecode=True\nwith tempfile.TemporaryDirectory(prefix='codet relocated audit ') as temporary:\n    root=Path(temporary);moved=root/'moved bundle';shutil.copytree(bundle,moved)\n    os.chdir(root)\n    sys.path[:]=[p for p in sys.path if p and not any(Path(p).resolve().is_relative_to(o) for o in originals)]\n    sys.path.insert(0,str(moved));sys.path.insert(0,str(moved/'verifier_tooling'))\n    if not (moved/'verifier_tooling').exists():\n        tooling=root/'archived verifier tooling';tooling.mkdir()\n        index=json.loads((moved/'inputs.json').read_text())\n        for item in index:\n            name=item['path']\n            if item['check_id']=='run' and item['role']=='fingerprint:validation' and name.startswith('scripts/') and name.count('/')==1 and name.endswith('.py'):\n                archived=moved/item['storage'];data=archived.read_bytes()\n                if hashlib.sha256(data).hexdigest()!=item['sha256']:raise ValueError('Changed archived verifier')\n                (tooling/Path(name).name).write_bytes(data)\n        sys.path.insert(0,str(tooling))\n    report=json.loads((moved/'report.json').read_text())\n    attempt='attempt_bundle_version' in report\n    if attempt:\n        import evidence_attempt_audit\n        verify=evidence_attempt_audit.verify\n    else:\n        from evidence_bundle import verify_bundle\n        verify=verify_bundle\n    blocked=[]\n    def check(path):\n        if isinstance(path,int):return\n        value=os.path.abspath(os.fsdecode(path))\n        if any(value==str(o) or value.startswith(str(o)+os.sep) for o in originals):\n            blocked.append(value);raise PermissionError('Original checkout I/O is forbidden in this audit')\n    saved=[]\n    def protect(owner,name):\n        native=getattr(owner,name)\n        def guarded(path,*args,**kwargs):check(path);return native(path,*args,**kwargs)\n        saved.append((owner,name,native));setattr(owner,name,guarded)\n    for owner,name in [(builtins,'open'),(io,'open'),(os,'open'),(os,'stat'),(os,'lstat')]:protect(owner,name)\n    def no_process(*args,**kwargs):raise PermissionError('Process launch is forbidden in this audit')\n    for name in ('Popen','run','check_output','check_call','call'):\n        saved.append((subprocess,name,getattr(subprocess,name)));setattr(subprocess,name,no_process)\n    try:\n        result=verify(moved)\n        if attempt:\n            if result.get('integrity_verified') is not True or result.get('eligible_current') is not False:\n                raise ValueError('Unexpected attempt audit disposition')\n            if result['unmet_required']!={'benchmarks':'failed'}:\n                raise ValueError('Unexpected required failures')\n        elif result.get('verified') is not True or result.get('eligible_current') is not True:\n            raise ValueError('Unexpected complete audit disposition')\n        member=next(p for p in (moved/'inputs').iterdir() if p.is_file())\n        member.write_bytes(b'corrupted offline negative control')\n        try:verify(moved)\n        except ValueError as error:\n            reason=str(error)\n            if 'inventory' not in reason.lower():raise\n            corruption=dict(rejected=True,member='inputs/'+member.name,reason=reason)\n        else:raise ValueError('Corrupt archived input passed audit')\n        if blocked:raise ValueError('Audit attempted original checkout I/O')\n    finally:\n        for owner,name,native in reversed(saved):setattr(owner,name,native)\nreceipt=dict(kind='postpublication-offline-audit',driver_source=Path(__file__).read_text(),bundle_id=bundle.name,\n    bundle_inventory_sha256=inventory_sha,helper_sha256=helper_sha,\n    interpreter=dict(path=sys.executable,version=list(sys.version_info[:3]),sha256=interpreter_sha),\n    relocated=True,original_checkout_io_forbidden=True,process_launches_forbidden=True,\n    audit=result,negative_control=corruption)\ndestination.write_text(json.dumps(receipt,indent=2)+'\\n')\nprint(json.dumps(receipt,indent=2))\n",
+  "bundle_id": "68a48c6fee9743c08d6a5e9f21d0aeef",
+  "bundle_inventory_sha256": "ac5660fe795b38b863ebd36489a37be83034cbca4dbcf33bca2ea6dc78152678",
+  "helper_sha256": "fea9511053dc6fd1347801da2e41cadf9b726125bb96e8f97039759590ee0f71",
+  "interpreter": {
+    "path": "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+    "version": [
+      3,
+      9,
+      6
+    ],
+    "sha256": "c5a13e37785524fbc0384539d3c99aa4f888cb7c89e13e0bf0018436378b13bc"
+  },
+  "relocated": true,
+  "original_checkout_io_forbidden": true,
+  "process_launches_forbidden": true,
+  "audit": {
+    "verified": true,
+    "eligible_current": true,
+    "schema_version": 5,
+    "campaign_id": "d125748d552849329f4d40c4bb4f2de7",
+    "checks": 39,
+    "audit_inputs": 12768,
+    "reran_binaries": false
+  },
+  "negative_control": {
+    "rejected": true,
+    "member": "inputs/965a8f579993ad7fc23bd80c7ebad238b959254609fe51877cde4f6ebd71f5b2",
+    "reason": "Audit inventory mismatch"
+  }
+}

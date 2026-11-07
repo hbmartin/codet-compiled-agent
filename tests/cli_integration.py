@@ -1646,6 +1646,8 @@ class CliTests(unittest.TestCase):
                 os.write(master,b'c\n');token(b's')
                 os.write(master,draft+b'\x01');token(b'i')
                 os.write(trigger,b'g');token(b'd')
+                # The pipe gate proves completion, but PTY bytes may still await collection.
+                collect(lambda received=received:'codet> [default] abc' in '\n'.join(line_cells(received)))
                 self.assertIn('codet> [default] abc','\n'.join(line_cells(received)))
                 if finish_first:
                     release.set();token(b'c')

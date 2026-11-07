@@ -46,7 +46,7 @@ inline int line_viewport_helper(int release, int notify, int replacement) {
   const auto submitted = line.take();
   auto expected = raw;
   expected.pop_back();
-  return submitted.text == expected ? 0 : 8;
+  return submitted.text() == expected ? 0 : 8;
 }
 inline int line_prompt_helper(const std::string &mode, int release, int notify) {
   if (mode != "approval" && mode != "question")
