@@ -281,7 +281,7 @@ def run_controls(root, folder, build, ninja):
         ("command-isolation", "CliTests.test_unsafe_command_preserves_later_messages_and_expands_once",
          '    if (line.preparation.state == detail::PreparationState::failed) {',
          '    if (line.preparation.state == detail::PreparationState::failed) { line.preparation.normalized = std::make_shared<const std::string>(line.text); return true;',
-         "Bad command lost later queued input"),
+         "Unsafe custom command path: /unsafe"),
         ("preparation-cancellation", "CliTests.test_preparation_cancellation_collects_an_already_successful_worker",
          '    if (line.preparation.state == detail::PreparationState::cancelled) {',
          '    if (line.preparation.state == detail::PreparationState::cancelled) { std::rethrow_exception(line.preparation.failure);',

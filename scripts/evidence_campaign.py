@@ -52,18 +52,34 @@ def history_files(folders):
     files = []
     for prior in folders:
         prior = Path(prior)
-        original_root = Path(json.loads((prior / "manifest.json").read_text())["root"])
-        files.extend(prior / name for name in ("config.json", "manifest.json", "capture-driver.log", "capture/run.json"))
+        required = [prior / name for name in ("config.json", "manifest.json", "capture-driver.log", "capture/run.json")]
+        for path in required:
+            if not path.is_file():
+                raise ValueError("Prior attempt metadata is missing: " + str(path))
+        manifest_path = prior / "manifest.json"
+        try:
+            manifest = json.loads(manifest_path.read_text())
+            if not isinstance(manifest, dict) or not isinstance(manifest.get("root"), str) or not manifest["root"]:
+                raise ValueError("root must be a nonempty string")
+            original_root = Path(manifest["root"])
+        except (OSError, ValueError, TypeError) as error:
+            raise ValueError("Prior attempt metadata is invalid: " + str(manifest_path) + ": " + str(error)) from error
+        files.extend(required)
         files.extend(sorted((prior / "capture").glob("*")))
         for captured in sorted((prior / "capture").glob("*.json")):
             if captured.name == "run.json":
                 continue
-            record = json.loads(captured.read_text())
-            for artifact in record.get("artifacts", []):
-                path = original_root / artifact["path"]
-                if not path.is_file() or digest(path) != artifact["sha256"]:
-                    raise ValueError("Prior attempt artifact changed: " + str(path))
-                files.append(path)
+            try:
+                record = json.loads(captured.read_text())
+                if not isinstance(record, dict) or not isinstance(record.get("artifacts", []), list):
+                    raise ValueError("artifacts must be a list")
+                for artifact in record.get("artifacts", []):
+                    path = original_root / artifact["path"]
+                    if not path.is_file() or digest(path) != artifact["sha256"]:
+                        raise ValueError("Prior attempt artifact changed: " + str(path))
+                    files.append(path)
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                raise ValueError("Prior attempt metadata is invalid: " + str(captured) + ": " + str(error)) from error
     if any(not path.is_file() for path in files):
         raise ValueError("Prior attempt metadata is missing")
     return list(dict.fromkeys(files))
@@ -197,10 +213,10 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     def configured_outputs(build, compiler_metadata=True):
         names = ["CMakeCache.txt", "compile_commands.json", "build.ninja", "generated/prompts.hpp", "generated/core_contract.hpp"]
         if compiler_metadata:
-            names.append("codet-compiler-identity.json")
+            names.extend(("codet-compiler-identity.json", "CMakeFiles/codet-dependency-selection.json"))
         return [dict(path=rel(Path(build) / n)) for n in names]
     add("provision-offline", [python, "scripts/fetch-deps.py", "--offline"])
-    focused = "--gtest_filter=NativeRecordLifecycle.*:DiagnosticFixture.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.*:PendingControl.*:SubmissionQueue.*:TurnInput.*:TlsTrust.*:InteractionWarnings.*:InputPreparation.*:Runtime.InteractiveExpansion*"
+    focused = "--gtest_filter=NativeRecordLifecycle.*:DiagnosticFixture.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.*:PendingControl.*:SubmissionQueue.*:TurnInput.*:TlsTrust.*:InteractionWarnings.*:InputPreparation.*:InputAttachments.*:Runtime.InteractiveExpansion*"
     for mode in ("debug", "asan", "tsan"):
         build = Path(builds[mode])
         args = configure(root, build, "Debug")
