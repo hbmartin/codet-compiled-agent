@@ -8,7 +8,6 @@
 #include "codet/detail/pending_control.hpp"
 #include "codet/detail/request_input.hpp"
 #include "codet/detail/request_input_controller.hpp"
-#include "codet/detail/submission_images.hpp"
 #include "codet/detail/submission_queue.hpp"
 #include "codet/detail/terminal_input.hpp"
 #include "codet/detail/tls_trust.hpp"
@@ -2810,23 +2809,4 @@ TEST(SubmissionQueue, ValidatedPayloadSharesUnchangedBytesAndRejectsMissingBacki
   EXPECT_THROW((detail::PreparedPrompt(nullptr, raw)), Error);
   static_assert(!std::is_default_constructible<detail::PreparedSubmission>::value,
                 "Unvalidated payloads must not be constructible");
-}
-
-TEST(InputAttachments, PreparedProviderReceivesOriginalImages) {
-  std::vector<ImageArtifact> images(1);
-  images.front().path = "owned-image";
-  detail::PreparedPrompt command{"/review", "expanded"};
-  unsigned calls = 0;
-  detail::execute_image_submission(
-      "original", &command, std::move(images),
-      [&](const std::string &text, bool verbatim, const detail::PreparedPrompt *value,
-          std::vector<ImageArtifact> received) {
-        ++calls;
-        EXPECT_EQ(text, "original");
-        EXPECT_TRUE(verbatim);
-        EXPECT_EQ(value, &command);
-        ASSERT_EQ(received.size(), 1u) << "Initial images lost their owning turn";
-        EXPECT_EQ(received.front().path, "owned-image");
-      });
-  EXPECT_EQ(calls, 1u);
 }

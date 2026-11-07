@@ -13,7 +13,6 @@
 #include "codet/detail/pending_control.hpp"
 #include "codet/detail/prepared_prompt.hpp"
 #include "codet/detail/request_input_controller.hpp"
-#include "codet/detail/submission_images.hpp"
 #include "codet/detail/submission_queue.hpp"
 #include "codet/detail/terminal_input.hpp"
 #include "codet/detail/turn_input.hpp"
@@ -949,6 +948,11 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
 }
 int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel, IoContext &io,
                      const CursesDrawOps &drawing, const CliLifecycleOps &lifecycle) {
+  return detail::cli_main(args, cancel, io, drawing, lifecycle, CliServices{});
+}
+int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel, IoContext &io,
+                     const CursesDrawOps &drawing, const CliLifecycleOps &lifecycle,
+                     const CliServices &services) {
   detail::DiagnosticWriter errors(std::cerr, &io);
   detail::reset_standard_diagnostics();
   io.line_destinations = {};
@@ -1224,7 +1228,8 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   config.effort = resolve_effort(config, session.id.empty() ? nullptr : &session);
   validate_effort(config);
   const auto selected_effort = saved_effort(config, session.id.empty() ? nullptr : &session);
-  auto initial_images = input_images(config, files, *native_images(), o.images, cancel);
+  auto initial_images = input_images(
+      config, files, services.images ? *services.images : *native_images(), o.images, cancel);
   if (o.command == "resume" || o.command == "fork")
     provider_preflight();
   if (o.command == "fork")
@@ -1439,6 +1444,8 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     }
     interaction->begin_turn(session.id);
     terminal->input_origin(session.id, ++input_turn);
+    if (services.turn_started)
+      services.turn_started(services.context, *interaction);
     std::future<RunResult> work;
     std::optional<Json> pending;
     terminal->input_queue(interaction.get());
@@ -1710,7 +1717,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
                                    std::vector<ImageArtifact> images) {
     auto line = frozen ? std::move(*frozen) : detail::InputLine{text};
     if (preparation_ready(line))
-      detail::execute_image_submission(text, line.preparation.prompt.get(), std::move(images), run);
+      run(text, true, line.preparation.prompt.get(), std::move(images));
     else
       discard_images(images);
   };
