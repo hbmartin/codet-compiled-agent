@@ -13,7 +13,6 @@
 #include "codet/detail/pending_control.hpp"
 #include "codet/detail/prepared_prompt.hpp"
 #include "codet/detail/request_input_controller.hpp"
-#include "codet/detail/submission_images.hpp"
 #include "codet/detail/submission_queue.hpp"
 #include "codet/detail/terminal_input.hpp"
 #include "codet/detail/turn_input.hpp"
@@ -591,10 +590,13 @@ public:
             input_queue_ ? detail::PreparationContext::pending : detail::PreparationContext::fresh;
       if (!line.admission)
         line.admission = admission_; // The terminal still owns a deferred presentation's ticket.
+      if (!line.admission_failure)
+        line.admission_failure = admission_failure_;
       prepare(line);
     };
   }
   uint64_t admission_ = 0;
+  std::exception_ptr admission_failure_;
   void reserve_submission() {
     if (input_queue_ && !admission_ && input_.ordinary_draft() && !input_.input().empty() &&
         detail::local_command(input_.input().raw()) == detail::LocalCommand::none)
@@ -604,13 +606,16 @@ public:
         detail::SubmissionAccess::charge(*input_queue_, ticket, 0, input_.input().raw().size());
         admission_ = ticket;
         lease.release();
-      } catch (const Error &error) {
-        say(error.what());
+      } catch (const Error &) {
+        admission_failure_ = std::current_exception();
       }
   }
   std::optional<detail::InputLine> admitted(std::optional<detail::InputLine> line) {
     if (line) {
       line->admission = std::exchange(admission_, 0);
+      if (!line->admission_failure)
+        line->admission_failure = admission_failure_;
+      admission_failure_ = {};
       line->reservation = detail::SubmissionLease(input_queue_, line->admission);
     }
     return line;
@@ -619,6 +624,7 @@ public:
     if (input_queue_)
       detail::SubmissionAccess::abandon(*input_queue_, admission_);
     admission_ = 0;
+    admission_failure_ = {};
     input_queue_ = queue;
   }
   std::optional<detail::InputOrigin> input_origin_;
@@ -942,6 +948,11 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
 }
 int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel, IoContext &io,
                      const CursesDrawOps &drawing, const CliLifecycleOps &lifecycle) {
+  return detail::cli_main(args, cancel, io, drawing, lifecycle, CliServices{});
+}
+int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel, IoContext &io,
+                     const CursesDrawOps &drawing, const CliLifecycleOps &lifecycle,
+                     const CliServices &services) {
   detail::DiagnosticWriter errors(std::cerr, &io);
   detail::reset_standard_diagnostics();
   io.line_destinations = {};
@@ -1217,7 +1228,8 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   config.effort = resolve_effort(config, session.id.empty() ? nullptr : &session);
   validate_effort(config);
   const auto selected_effort = saved_effort(config, session.id.empty() ? nullptr : &session);
-  auto initial_images = input_images(config, files, *native_images(), o.images, cancel);
+  auto initial_images = input_images(
+      config, files, services.images ? *services.images : *native_images(), o.images, cancel);
   if (o.command == "resume" || o.command == "fork")
     provider_preflight();
   if (o.command == "fork")
@@ -1361,44 +1373,39 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     const bool pending_input = line.preparation_context == detail::PreparationContext::pending;
     if (pending_input && line.text.empty())
       return;
-    bool repaired = false;
-    size_t normalized_bytes = 0;
+    std::optional<detail::SubmissionPreparation> inspected;
+    std::shared_ptr<const detail::PreparedSubmission> payload;
     line.preparation = detail::prepare_submission(cancel, [&] {
-      if (pending_input && line.text.size() > detail::raw_input_limit)
-        throw Error("Pending raw input exceeds 65536-byte limit");
+      if (line.admission_failure)
+        std::rethrow_exception(line.admission_failure);
       if (pending_input && !line.admission)
-        throw Error("Pending input exceeds 100-entry limit");
+        throw Error("Pending submission has no admission");
       if (pending_input)
-        normalized_bytes =
-            detail::normalized_input_size(line.text, detail::expanded_input_limit, &repaired);
+        inspected.emplace(line.original_storage());
       if (line.admission)
         detail::SubmissionAccess::charge(*interaction, line.admission, 0,
-                                         line.text.size() + normalized_bytes);
+                                         inspected->retained_size());
       if (lifecycle.preparing)
         lifecycle.preparing(lifecycle.context, line.text, 1);
-      auto value = detail::prepare_interactive_prompt(config, files, line.text, [&](size_t bytes) {
-        if (line.admission) {
-          // Valid raw text aliases PreparedPrompt::original; repaired text owns a second backing.
-          const auto retained =
-              line.text.size() + normalized_bytes + bytes + (repaired ? line.text.size() : 0);
-          detail::SubmissionAccess::charge(*interaction, line.admission, bytes, retained);
-        }
-      });
-      if (!value && line.admission)
-        detail::SubmissionAccess::charge(*interaction, line.admission, normalized_bytes,
-                                         line.text.size() + normalized_bytes);
+      auto value = detail::prepare_interactive_prompt(
+          config, files, line.original_storage(), [&](size_t bytes) {
+            if (line.admission)
+              detail::SubmissionAccess::charge(*interaction, line.admission, bytes,
+                                               inspected->retained_size(bytes));
+          });
       if (lifecycle.preparing)
         lifecycle.preparing(lifecycle.context, line.text, 2);
+      if (pending_input) {
+        auto command = value ? std::make_shared<const detail::PreparedPrompt>(*value) : nullptr;
+        auto submission = inspected->finish(std::move(command), [&](size_t bytes, size_t retained) {
+          detail::SubmissionAccess::charge(*interaction, line.admission, bytes, retained);
+        });
+        payload = std::make_shared<const detail::PreparedSubmission>(std::move(submission));
+      }
       return value;
     });
-    if (pending_input && line.preparation.state == detail::PreparationState::ready) {
-      if (line.preparation.prompt && !repaired)
-        line.preparation.normalized = std::shared_ptr<const std::string>(
-            line.preparation.prompt, &line.preparation.prompt->original);
-      else
-        line.preparation.normalized = std::make_shared<const std::string>(
-            detail::normalized_input_known(line.text, normalized_bytes, repaired));
-    }
+    if (line.preparation.state == detail::PreparationState::ready)
+      line.preparation.submission = std::move(payload);
   };
   const auto preparation_ready = [&](detail::InputLine &line) {
     prepare_line(line);
@@ -1437,6 +1444,8 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     }
     interaction->begin_turn(session.id);
     terminal->input_origin(session.id, ++input_turn);
+    if (services.turn_started)
+      services.turn_started(services.context, *interaction);
     std::future<RunResult> work;
     std::optional<Json> pending;
     terminal->input_queue(interaction.get());
@@ -1539,16 +1548,12 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       case detail::TurnInputAction::hold:
       case detail::TurnInputAction::idle_command:
       case detail::TurnInputAction::steer:
-        if (!line.admission) {
-          terminal->pending_not_sent(line.text);
-          break;
-        }
         try {
-          detail::SubmissionAccess::commit_prepared(
-              *interaction, line.admission, line.preparation.normalized,
-              action.action == detail::TurnInputAction::hold,
-              action.action == detail::TurnInputAction::idle_command, std::move(expansion));
-          line.text.clear(); // The immutable queue payload now owns its charged backing.
+          if (!line.preparation.submission)
+            throw Error("Pending submission has no validated payload");
+          detail::SubmissionAccess::commit_prepared(*interaction, line.admission,
+                                                    *line.preparation.submission,
+                                                    action.action == detail::TurnInputAction::hold);
           line.reservation.release();
         } catch (const Error &error) {
           terminal->pending_not_sent(line.text);
@@ -1712,7 +1717,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
                                    std::vector<ImageArtifact> images) {
     auto line = frozen ? std::move(*frozen) : detail::InputLine{text};
     if (preparation_ready(line))
-      detail::execute_image_submission(text, line.preparation.prompt.get(), std::move(images), run);
+      run(text, true, line.preparation.prompt.get(), std::move(images));
     else
       discard_images(images);
   };

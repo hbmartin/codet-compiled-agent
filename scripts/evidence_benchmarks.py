@@ -36,7 +36,15 @@ def verify_tooling_metrics(row):
     if (any(type(row.get(name)) is not int or row[name] < 0 for name in fields) or
             {'retained_allocations', 'retained_bytes', 'allocations', 'metadata_queries'} & set(row)):
         raise ValueError('Missing or ambiguous tooling counters')
-    if row['check_output_calls'] != row['git_commands'] + row['process_inspection_commands']:
+    cmake = row.get('cmake_commands', 0)
+    if type(cmake) is not int or cmake < 0:
+        raise ValueError('Invalid configuration command counter')
+    if row.get('workload') == 'configuration-selection':
+        if row.get('configuration_metric_version') != 1 or cmake != 3 or row.get('configuration_checks') != 3 or row['files'] or row['owned_processes']:
+            raise ValueError('Configuration selection counters or controls are invalid')
+    elif cmake:
+        raise ValueError('Non-configuration workload claims CMake commands')
+    if row['check_output_calls'] != row['git_commands'] + row['process_inspection_commands'] + cmake:
         raise ValueError('Tooling command counter classification mismatch')
     if row['retained_traced_bytes'] > row['peak_traced_bytes']:
         raise ValueError('Tooling retained memory exceeds peak')

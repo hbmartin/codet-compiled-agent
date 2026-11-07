@@ -2078,8 +2078,9 @@ std::optional<std::string> custom_expansion(const Config &config, FileSystem &fi
 } // namespace
 std::optional<detail::PreparedPrompt>
 detail::prepare_interactive_prompt(const Config &config, FileSystem &files,
-                                   const std::string &input,
+                                   std::shared_ptr<const std::string> original,
                                    const std::function<void(size_t)> &reserve) {
+  const auto &input = PreparedPrompt::checked(original);
   if (local_command(input) != LocalCommand::none)
     return {};
   auto expanded = custom_expansion(config, files, input, false, expanded_input_limit, reserve);
@@ -2089,8 +2090,19 @@ detail::prepare_interactive_prompt(const Config &config, FileSystem &files,
   const auto bytes = normalized_input_size(*expanded, expanded_input_limit, &repaired);
   if (reserve)
     reserve(bytes);
-  return PreparedPrompt{input, repaired ? normalized_input_known(*expanded, bytes, true)
-                                        : std::move(*expanded)};
+  PreparedPrompt result{
+      std::move(original),
+      std::make_shared<const std::string>(repaired ? normalized_input_known(*expanded, bytes, true)
+                                                   : std::move(*expanded))};
+  result.validated_ = true;
+  return result;
+}
+std::optional<detail::PreparedPrompt>
+detail::prepare_interactive_prompt(const Config &config, FileSystem &files,
+                                   const std::string &input,
+                                   const std::function<void(size_t)> &reserve) {
+  return prepare_interactive_prompt(config, files, std::make_shared<const std::string>(input),
+                                    reserve);
 }
 std::string Tools::expand_command(const std::string &input) const {
   if (input.empty() || input[0] != '/')

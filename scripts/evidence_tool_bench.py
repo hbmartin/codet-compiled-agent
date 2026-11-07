@@ -1,5 +1,7 @@
 """Hashing, Git, and supervision observations with scoped memory/command counters."""
 import json
+import os
+import shutil
 import subprocess
 import sys
 import time
@@ -18,18 +20,19 @@ from validation_evidence import production_hashes
 
 
 def measure(root, ref, workload, repository=None):
-    calls = git_calls = process_inspections = 0
+    calls = git_calls = process_inspections = cmake_calls = 0
     context = None
     if workload == "build-context":
         context = evidence_tiger_context_bench.ContextWorkload()
     native = subprocess.check_output
     def counted(*args, **kwargs):
-        nonlocal calls, git_calls, process_inspections
+        nonlocal calls, git_calls, process_inspections, cmake_calls
         calls += 1
         argv = args[0] if args else kwargs.get('args', [])
         name = Path(argv[0]).name if isinstance(argv, (list, tuple)) and argv else ''
         git_calls += name == 'git'
         process_inspections += name == 'ps'
+        cmake_calls += name == 'cmake'
         return native(*args, **kwargs)
     tracing = False
     failure = None
@@ -66,6 +69,29 @@ def measure(root, ref, workload, repository=None):
             hashes = {}
             for number in range(1000):
                 hashes[str(number)] = str(dependency_root(root))
+        elif workload == "configuration-selection":
+            from tempfile import TemporaryDirectory
+            hashes = {}
+            cmake,ninja=shutil.which('cmake'),shutil.which('ninja')
+            if not cmake or not ninja:
+                raise ValueError('Configuration measurement requires recorded CMake/Ninja tools')
+            with TemporaryDirectory(prefix='codet configuration measure ') as directory:
+                source=Path(directory)/'source';source.mkdir();build=Path(directory)/'build'
+                (source/'CMakeLists.txt').write_text('cmake_minimum_required(VERSION 3.20)\nproject(probe LANGUAGES NONE)\n'
+                    +'include("'+str(root/'cmake/compiler-identity.cmake')+'")\n'
+                    +'include("'+str(root/'cmake/dependency-root.cmake')+'")\n')
+                first,second=Path(directory)/'first',Path(directory)/'second'
+                for number,selected,reset,expected in ((0,first,False,first),(1,second,False,first),(2,second,True,second)):
+                    command=[cmake,'-S',str(source),'-B',str(build),'-G','Ninja','-DCMAKE_MAKE_PROGRAM='+ninja]
+                    if reset:command.append('-UCODET_DEPENDENCY_ROOT')
+                    subprocess.check_output(command,env=dict(os.environ,CODET_DEPENDENCY_ROOT=str(selected)),
+                                            stderr=subprocess.STDOUT,timeout=30)
+                    actual=(build/'CMakeFiles/codet-dependency-root.txt').read_text()
+                    if actual!=str(expected):
+                        raise ValueError('Configuration selection positive control failed')
+                    hashes[str(number)]=True
+            if cmake_calls!=3:
+                raise ValueError('Configuration command positive control failed')
         elif workload == "measurement-cleanup":
             from tempfile import TemporaryDirectory
             hashes = {}
@@ -99,10 +125,11 @@ def measure(root, ref, workload, repository=None):
                 tracemalloc.stop()
     if not hashes or (workload == "git-inspection" and calls < 3):
         raise ValueError("Hash/Git work counter positive control failed")
-    return dict(**(dict(context_metric_version=1, **context.counts) if context else {}), case=workload, milliseconds=elapsed, files=0 if workload == "supervision" else len(hashes),
+    return dict(**(dict(context_metric_version=1, **context.counts) if context else {}), case=workload, milliseconds=elapsed, files=0 if workload in ("supervision", "configuration-selection") else len(hashes),
                 owned_processes=len(hashes) if workload == "supervision" else 0,
                 check_output_calls=calls, git_commands=git_calls,
                 process_inspection_commands=process_inspections,
+                **(dict(configuration_metric_version=1,cmake_commands=cmake_calls,configuration_checks=len(hashes)) if workload=="configuration-selection" else {}),
                 metric_version=2, retained_traced_blocks=sum(s.count for s in stats), retained_traced_bytes=retained, peak_traced_bytes=peak)
 
 

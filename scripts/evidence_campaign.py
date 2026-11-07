@@ -25,7 +25,7 @@ from validation_evidence import atomic_json, digest, require_quiet_processes, wr
 CASES = {
     "line": ["allocation-positive", "geometry-positive", "busy", "native-busy", "editing", "editing-basic",
              "native-editing", "deletion", "unchanged", "deferred-tail", "native-boundary", "native-flush-boundary", "native-unchanged", "pending-submission", "native-pending-submission", "native-pending-fragment", "preparation-queue", "bounded-expansion"],
-    "tooling": ["hashing", "git-inspection", "supervision", "build-context", "dependency-resolution", "measurement-cleanup"],
+    "tooling": ["hashing", "git-inspection", "supervision", "build-context", "dependency-resolution", "configuration-selection", "measurement-cleanup"],
     "output": ["write-positive", "stat-positive", "flags-positive", "bounds-positive", "diagnostics-amplified",
                "diagnostics-standalone-amplified", "diagnostics-pipe-amplified"],
     "export": ["small", "large"],
@@ -213,7 +213,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     def configured_outputs(build, compiler_metadata=True):
         names = ["CMakeCache.txt", "compile_commands.json", "build.ninja", "generated/prompts.hpp", "generated/core_contract.hpp"]
         if compiler_metadata:
-            names.extend(("codet-compiler-identity.json", "CMakeFiles/codet-dependency-selection.json"))
+            names.extend(("codet-compiler-identity.json", "CMakeFiles/codet-dependency-root.txt"))
         return [dict(path=rel(Path(build) / n)) for n in names]
     add("provision-offline", [python, "scripts/fetch-deps.py", "--offline"])
     focused = "--gtest_filter=NativeRecordLifecycle.*:DiagnosticFixture.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.*:PendingControl.*:SubmissionQueue.*:TurnInput.*:TlsTrust.*:InteractionWarnings.*:InputPreparation.*:InputAttachments.*:Runtime.InteractiveExpansion*"

@@ -726,6 +726,27 @@ class CliTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform=='darwin','Native image ownership requires the Darwin codec')
     def test_initial_images_are_owned_by_their_submission(self):
+        self.exercise_initial_image_disposition([BIN])
+
+    def test_portable_initial_images_follow_real_line_cli_disposition(self):
+        helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+        self.exercise_initial_image_disposition([helper,'--codet-image-helper'])
+
+    def test_portable_initial_images_follow_real_curses_cli_disposition(self):
+        helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+        self.exercise_initial_image_disposition([helper,'--codet-image-helper'],ui='curses')
+
+    def test_portable_image_transfer_control_reaches_provider(self):
+        self.image_cases=(('/review',True),)
+        helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+        self.exercise_initial_image_disposition([helper,'--codet-image-helper'])
+
+    def test_portable_memory_image_disposal_control_reaches_provider(self):
+        self.image_cases=(('/memory consolidate',False),)
+        helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+        self.exercise_initial_image_disposition([helper,'--codet-image-helper'])
+
+    def exercise_initial_image_disposition(self,launcher,ui='line'):
         import base64
         image=self.root/'owned.png'
         image.write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX6kAAAAASUVORK5CYII='))
@@ -736,22 +757,25 @@ class CliTests(unittest.TestCase):
         def images(request):
             message=[m for m in request['body']['messages'] if m['role']=='user'][-1]
             return sum(part.get('type')=='image_url' for part in message['content']) if isinstance(message.get('content'),list) else 0
-        for command,starts_turn in (('/help',False),('/status',False),('/model',False),
-                                   ('/compact',False),('/memory consolidate',False),('/unsafe',False),('/review',True),('x'*80000,True),('',True)):
+        cases=getattr(self,'image_cases',(('/help',False),('/status',False),('/model',False),
+                    ('/compact',False),('/memory consolidate',False),('/unsafe',False),('/review',True),('x'*80000,True),('',True)))
+        for command,starts_turn in cases:
             with self.subTest(command=command),PtyProcess() as resources:
                 before=len(self.server.requests);master,slave=resources.openpty()
-                process=resources.start([BIN,'-C',str(self.workspace),'--ui','line','--permission-mode','accept-edits','-i',str(image),command],
+                process=resources.start([*launcher,'-C',str(self.workspace),'--ui',ui,'--permission-mode','accept-edits','-i',str(image),command],
                     stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
                 received=bytearray();collect=partial(collect_pty,self,master,received)
                 expected=b'fixture done' if starts_turn else b'Images discarded'
                 collect(lambda expected=expected,received=received,process=process,starts_turn=starts_turn:expected in received or (starts_turn and b'recovered reply' in received) or process.poll() is not None)
                 if starts_turn:
                     self.assertEqual(images(self.server.requests[-1]),1,'Initial images lost their owning turn')
-                else:
-                    self.assertTrue(all(images(r)==0 for r in self.server.requests[before:]),'Local command received initial images')
                 self.assertIn(expected,received,'Initial attachment disposition was not reported')
                 if command=='/compact':collect(lambda received=received:b'No older history to compact.' in received)
-                if command=='/memory consolidate':collect(lambda received=received:b'fixture done' in received)
+                if command=='/memory consolidate':
+                    collect(lambda received=received:b'fixture done' in received)
+                    self.assertGreater(len(self.server.requests),before,'Memory image check inspected no request')
+                if not starts_turn:
+                    self.assertTrue(all(images(r)==0 for r in self.server.requests[before:]),'Local command received initial images')
                 # Empty Enter must not resurrect discarded images or start a provider turn.
                 received.clear()
                 count=len(self.server.requests);os.write(master,b'\n/status\n')
@@ -763,6 +787,23 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(images(self.server.requests[-1]),0,'Images leaked into unrelated later input')
                 os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
                 self.assertEqual(process.returncode,0,received)
+
+    def test_portable_cancelled_image_preparation_starts_no_provider_turn(self):
+        commands=self.home/'commands';commands.mkdir(parents=True,exist_ok=True)
+        (commands/'review.md').write_text('must not reach provider')
+        image=self.root/'fake.png';image.write_bytes(b'validated by fixture codec')
+        helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+        before=len(self.server.requests)
+        with PtyProcess() as resources:
+            master,slave=resources.openpty()
+            process=resources.start([helper,'--codet-image-cancel-helper','-C',str(self.workspace),
+                '--ui','line','-i',str(image),'/review'],stdin=slave,stdout=slave,stderr=slave,
+                env=dict(self.env,TERM='xterm'))
+            received=bytearray();collect=partial(collect_pty,self,master,received)
+            collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,130,received)
+            self.assertIn(b'Images discarded',received,'Cancelled preparation retained initial images')
+            self.assertEqual(len(self.server.requests),before,'Cancelled image input started a provider turn')
 
     def test_preparation_cancellation_collects_an_already_successful_worker(self):
         commands=self.home/'commands';commands.mkdir(parents=True,exist_ok=True)
@@ -832,6 +873,37 @@ class CliTests(unittest.TestCase):
                 self.assertNotIn(b'limit exceeded',received)
                 os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
                 self.assertEqual(process.returncode,0,received[-500:])
+
+    def test_pending_admission_reports_the_actual_constraint_once(self):
+        helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+        errors={'count':b'100-entry limit','effective':b'effective input exceeds 8388608-byte queue budget',
+                'retained':b'retained text exceeds 8388608-byte queue budget'}
+        for ui in ('line','curses'):
+            for kind,message in errors.items():
+                with self.subTest(ui=ui,kind=kind),PtyProcess() as resources:
+                    ready,release=threading.Event(),threading.Event()
+                    self.server.signal_gate=(ready,release);self.server.releases.append(release)
+                    master,slave=resources.openpty()
+                    process=resources.start([helper,'--codet-admission-helper',kind,'-C',str(self.workspace),
+                        '--ui',ui,'fixture-signal-wait'],stdin=slave,stdout=slave,stderr=slave,
+                        env=dict(self.env,TERM='xterm'))
+                    received=bytearray();collect=partial(collect_pty,self,master,received)
+                    self.assertTrue(ready.wait(10))
+                    os.write(master,b'budget rejection\n')
+                    collect(lambda received=received:b'Error:' in received)
+                    self.assertIn(message,received,'Admission failure reported wrong constraint')
+                    self.assertIn(b'Pending message not sent: budget rejection',received,
+                                  'Admission failure omitted its rejected line')
+                    # Curses repaints history, so count admitted history records through the
+                    # production message marker, not byte occurrences across screen refreshes.
+                    if ui=='line':self.assertEqual(received.count(message),1,'Admission error was reported twice')
+                    if kind!='count':self.assertNotIn(b'100-entry limit',received,'Admission failure was relabeled as a count limit')
+                    os.write(master,b'fixture-recovered-output\n')
+                    release.set()
+                    collect(lambda received=received:b'recovered reply' in received)
+                    self.assertNotIn(b'Pending submission has no admission',received)
+                    os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                    self.assertEqual(process.returncode,0,received)
 
     def test_failed_pending_preparation_reports_the_rejected_line_and_keeps_worker(self):
         commands=self.home/'commands';commands.mkdir(parents=True,exist_ok=True)

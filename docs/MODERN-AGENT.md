@@ -74,19 +74,24 @@ Package prefix decisions use digest-checked manifest bytes archived by that buil
 so a transient change to the writable sysroot cannot select different contents.
 
 Host configuration also honors `CODET_DEPENDENCY_ROOT`: a nonempty explicit
-CMake/cache setting wins, then a nonempty environment setting, then the source
-checkout's `.deps`. Empty settings use this fallback rather than the launch
-directory. Relative overrides resolve from the actual invoking process directory,
-including explicit CMake cache paths, and are retained as absolute paths. After successful configuration, environment/default selections are pinned
-in a generated record so automatic regeneration cannot change dependency trees.
-An empty public cache entry marks that record; its selected root remains absolute.
-Change the root with an explicit `-DCODET_DEPENDENCY_ROOT=...`, or use
-`-UCODET_DEPENDENCY_ROOT` to select the current environment/default again. Failed
-first configurations do not pin a derived choice. A later generation error keeps
-the validated selection until explicit reset; CMake 3.20 has no post-generation
-commit callback. Older caches do not identify environment-derived values, so they
-are conservatively explicit: clear an old value once with
-`cmake -UCODET_DEPENDENCY_ROOT ...` to resume environment/default selection.
+cache override wins, followed by a scoped normal variable from a parent/toolchain,
+a committed derived selection, then a nonempty environment setting or source
+checkout's `.deps`. Relative inputs resolve from the actual invoking process cwd,
+not `$PWD`. Cache selections retain absolute paths. Normal variables are never
+promoted into persistent overrides and do not replace a remembered derived pin.
+A generated receipt commits derived selections only after project configuration
+succeeds; failed first configurations, including `SEND_ERROR`, leave at most
+provisional cache metadata that is rediscovered next time. A later generator
+error can retain a validated selection. Automatic Ninja/Make regeneration reuses
+committed selections regardless of its shell environment. Both an explicit empty
+`-DCODET_DEPENDENCY_ROOT=` and `-UCODET_DEPENDENCY_ROOT` reset discovery.
+Old selection records are not migrated: reset or recreate an old build directory.
+A corrupt current receipt produces an identifying reset diagnostic. Missing
+dependencies report the selected root; provisioning must use that same root,
+for example `CODET_DEPENDENCY_ROOT=/absolute/path python3 scripts/fetch-deps.py`.
+The sysroot cache conservatively includes build-helper bytes. PR #63's helper
+cleanup therefore invalidated older cache keys once without changing sysroot
+format 2; schema compatibility is not a cache-reuse promise.
 Application-build admission requires its dependency lock's compiled pins and
 patches to match the sysroot recipe before creating a build directory. Verification
 and packaging compare the archived lock with the archived pinned manifest, never

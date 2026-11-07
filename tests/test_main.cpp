@@ -1,7 +1,9 @@
+#include "codet/computer.hpp"
 #include "codet/detail/cli.hpp"
 #include "codet/detail/cli_output.hpp"
 #include "codet/detail/curses_render.hpp"
 #include "codet/detail/native_terminal.hpp"
+#include "codet/detail/submission_queue.hpp"
 #include "codet/detail/terminal_input.hpp"
 #include "codet/diagnostics.hpp"
 #ifdef CODET_NATIVE_TERMINAL_METRICS
@@ -157,6 +159,71 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc > 2 && std::string(argv[1]) == "--codet-admission-helper") {
+      struct Admission {
+        std::string constraint;
+        codet::Interaction *owner = nullptr;
+        std::vector<uint64_t> tickets;
+      } admission{argv[2], nullptr, {}};
+      const codet::detail::CliServices services{
+          nullptr,
+          +[](void *context, codet::Interaction &owner) {
+            auto &fixture = *static_cast<Admission *>(context);
+            if (fixture.owner)
+              return;
+            fixture.owner = &owner;
+            const unsigned count = fixture.constraint == "count" ? 100 : 32;
+            for (unsigned i = 0; i < count; ++i) {
+              const auto ticket = codet::detail::SubmissionAccess::reserve(owner);
+              fixture.tickets.push_back(ticket);
+              codet::detail::SubmissionAccess::charge(
+                  owner, ticket, fixture.constraint == "effective" ? 262144 : 0,
+                  fixture.constraint == "retained" ? 262144 : 0);
+            }
+          },
+          &admission};
+      const codet::detail::CliLifecycleOps lifecycle{
+          nullptr, &admission, +[](void *context, std::string_view text, unsigned stage) noexcept {
+            auto &fixture = *static_cast<Admission *>(context);
+            if (stage == 0 && fixture.owner &&
+                (fixture.constraint != "effective" || text == "fixture-recovered-output")) {
+              for (const auto ticket : fixture.tickets)
+                codet::detail::SubmissionAccess::abandon(*fixture.owner, ticket);
+              fixture.tickets.clear();
+            }
+          }};
+      codet::Cancellation cancel;
+      codet::detail::IoContext io(cancel);
+      return codet::detail::cli_main(std::vector<std::string>(argv + 3, argv + argc), cancel, io,
+                                     codet::detail::CursesDrawOps{}, lifecycle, services);
+    }
+    if (argc > 1 && (std::string(argv[1]) == "--codet-image-helper" ||
+                     std::string(argv[1]) == "--codet-image-cancel-helper")) {
+      struct Images final : codet::ImageBackend {
+        bool available() const override {
+          return true;
+        }
+        codet::ImageData load(const codet::fs::path &, const std::string &) override {
+          throw codet::Error("Image fixture must use validated bytes");
+        }
+        codet::ImageData load_bytes(const std::string &bytes, const std::string &) override {
+          return {bytes, "image/png", 1, 1};
+        }
+      } images;
+      codet::Cancellation cancel;
+      codet::detail::IoContext io(cancel);
+      codet::detail::CliLifecycleOps lifecycle;
+      if (std::string(argv[1]) == "--codet-image-cancel-helper") {
+        lifecycle.context = &cancel;
+        lifecycle.preparing = +[](void *context, std::string_view, unsigned stage) noexcept {
+          if (stage == 1)
+            static_cast<codet::Cancellation *>(context)->requested = true;
+        };
+      }
+      return codet::detail::cli_main(std::vector<std::string>(argv + 2, argv + argc), cancel, io,
+                                     codet::detail::CursesDrawOps{}, lifecycle,
+                                     codet::detail::CliServices{&images});
+    }
 #ifdef CODET_NATIVE_TERMINAL_METRICS
     if (argc > 6 && std::string(argv[1]) == "--codet-preparation-helper") {
       codet::Cancellation cancel;

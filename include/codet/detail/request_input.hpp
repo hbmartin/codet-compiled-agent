@@ -19,7 +19,11 @@ struct InputOrigin {
   uint64_t turn = 0;
 };
 struct InputLine {
-  std::string text;
+private:
+  std::shared_ptr<const std::string> original_;
+
+public:
+  const std::string &text;
   std::optional<ApprovalIdentity> request;
   bool discarded = false;
   std::optional<InputOrigin> origin;
@@ -28,10 +32,26 @@ struct InputLine {
   PreparationOutcome preparation;
   PreparationContext preparation_context = PreparationContext::fresh;
   SubmissionLease reservation;
+  std::exception_ptr admission_failure;
+  InputLine(std::shared_ptr<const std::string> bytes, std::optional<ApprovalIdentity> identity = {},
+            bool stale = false, std::optional<InputOrigin> source = {})
+      : original_(std::move(bytes)), text(PreparedPrompt::checked(original_)),
+        request(std::move(identity)), discarded(stale), origin(std::move(source)) {}
   InputLine(std::string bytes, std::optional<ApprovalIdentity> identity = {}, bool stale = false,
             std::optional<InputOrigin> source = {})
-      : text(std::move(bytes)), request(std::move(identity)), discarded(stale),
-        origin(std::move(source)) {}
+      : InputLine(std::make_shared<const std::string>(std::move(bytes)), std::move(identity), stale,
+                  std::move(source)) {}
+  InputLine(InputLine &&) noexcept = default;
+  InputLine &operator=(InputLine &&other) noexcept {
+    if (this != &other) {
+      this->~InputLine();
+      new (this) InputLine(std::move(other));
+    }
+    return *this;
+  }
+  const auto &original_storage() const noexcept {
+    return original_;
+  }
   InputSubmission classify(const Json *pending = nullptr) const {
     if (is_quit_command(text))
       return {InputAction::quit, {}};
@@ -84,7 +104,8 @@ public:
     return started_ && !draft_ && !stale_;
   }
   InputLine take(std::string text) {
-    InputLine result{std::move(text), started_ ? std::move(draft_) : active_, stale_, {}};
+    auto backing = std::make_shared<const std::string>(std::move(text));
+    InputLine result{std::move(backing), started_ ? std::move(draft_) : active_, stale_, {}};
     draft_.reset();
     started_ = stale_ = false;
     return result;
