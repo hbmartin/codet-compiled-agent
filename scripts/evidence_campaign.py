@@ -23,6 +23,7 @@ from process_supervision import run as supervised_run
 from validation_evidence import atomic_json, digest, require_quiet_processes, write_artifact
 
 CASES = {
+    "preparation": ["allocation-positive", "saturated-count", "saturated-effective", "saturated-retained", "cli-preparation", "compatibility-preparation", "normalization"],
     "line": ["allocation-positive", "geometry-positive", "busy", "native-busy", "editing", "editing-basic",
              "native-editing", "deletion", "unchanged", "deferred-tail", "native-boundary", "native-flush-boundary", "native-unchanged", "pending-submission", "native-pending-submission", "native-pending-fragment", "preparation-queue", "bounded-expansion"],
     "tooling": ["hashing", "git-inspection", "supervision", "build-context", "dependency-resolution", "configuration-selection", "measurement-cleanup"],
@@ -30,7 +31,7 @@ CASES = {
                "diagnostics-standalone-amplified", "diagnostics-pipe-amplified"],
     "export": ["small", "large"],
 }
-HARNESS_FILES = ["tests/line_input_bench.cpp", "tests/output_bench.cpp", "tests/export_bench.cpp",
+HARNESS_FILES = ["tests/preparation_bench.cpp", "tests/line_input_bench.cpp", "tests/output_bench.cpp", "tests/export_bench.cpp",
                  "tests/descriptor_bench_metrics.hpp", "tests/native_stat_interposer.hpp", "tests/native_symbol.hpp", "tests/temp.hpp", "scripts/evidence_tool_bench.py", "scripts/evidence_tiger_context_bench.py"]
 TOOLS = ("clang-tidy", "cppcheck", "clang-analyzer")
 
@@ -282,8 +283,9 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     producer("semgrep-controls", "semgrep-controls", ["semgrep"], timeout=300)
     producer("python-negative-controls", "negative-controls", ["runner-tests"])
     producer("native-negative-controls", "native-negative-controls", ["debug-build"], [rel(debug / "compile_commands.json"), rel(debug / "build.ninja")], timeout=2100)
-    harness_inputs = list(HARNESS_FILES) + [rel(folder / (v + "-release" ) / n) for v in ("baseline", "changed") for n in ("compile_commands.json", "build.ninja", "libcodet_core.a")]
-    harness_outputs = [dict(path=rel(folder / (v + "-harness") / n), archive=False) for v in ("baseline", "changed") for n in ("codet_line_input_bench", "codet_output_bench", "codet_export_bench")]
+    harness_inputs = [rel(folder / "baseline-src/src/modern/cli.cpp"), "src/modern/cli.cpp"] + list(HARNESS_FILES) + [rel(folder / (v + "-release" ) / n) for v in ("baseline", "changed") for n in ("compile_commands.json", "build.ninja", "libcodet_core.a")]
+    harness_outputs = [dict(path=rel(folder / (v + "-harness") / n), archive=False) for v in ("baseline", "changed") for n in ("codet_line_input_bench", "codet_output_bench", "codet_export_bench", "codet_preparation_bench")]
+    harness_outputs.extend(dict(path=rel(folder / (v + "-harness/cli_prepare_adapter.hpp"))) for v in ("baseline", "changed"))
     producer("benchmark-harness", "harness", ["baseline-build", "changed-build"], harness_inputs, timeout=1800, outputs=harness_outputs,
              file_inputs=[dict(path=rel(folder / (v + "-release/libcodet_core.a")), archive=False) for v in ("baseline", "changed")])
     producer("benchmarks", "measure", ["benchmark-harness", "static-comparison", "python-negative-controls", "native-negative-controls", "semgrep-controls"],
@@ -309,6 +311,9 @@ def positive_controls(row, harness, case):
         expected = (262144 if case == "bounded-expansion" else 135) * 128
         if row["prepared_submissions"] != 128 or row["effective_content_bytes"] != expected:
             raise ValueError("Prepared submission counter positive control failed")
+    if harness == "preparation":
+        from evidence_benchmarks import verify_preparation_metrics
+        verify_preparation_metrics(dict(row, harness=harness, workload=case))
     if harness == "output" and case.endswith("-positive"):
         key = {"write-positive": "writes", "stat-positive": "fstat", "flags-positive": "fcntl", "bounds-positive": "fpathconf"}[case]
         if row[key] != 128:
@@ -326,6 +331,9 @@ def measure(config):
             raise ValueError("Declared benchmark harness changed")
     binaries = {v: {h: executable_provenance(Path(record["executable"]))
                    for h, record in programs.items()} for v, programs in harness_build["variants"].items()}
+    from evidence_harness import verify_cli_adapter
+    for records in harness_build["variants"].values():
+        verify_cli_adapter(records["preparation"]["cli_adapter"])
     configurations = {}
     for variant in ("baseline", "changed"):
         cache = folder / (variant + "-release") / "CMakeCache.txt"
@@ -493,6 +501,7 @@ def produce(config_path, action, *, output=None):
     elif action == "harness":
         from evidence_harness import build_harnesses
         inputs.extend(HARNESS_FILES)
+        inputs.extend(["src/modern/cli.cpp", input_name(root, folder / "baseline-src/src/modern/cli.cpp")])
         inputs.extend(input_name(root, folder / (v + "-release") / n) for v in ("baseline", "changed") for n in ("compile_commands.json", "build.ninja", "libcodet_core.a"))
         payload = build_harnesses(root, folder, HARNESS_FILES, config["tools"]["ninja"]["path"])
     elif action == "measure":

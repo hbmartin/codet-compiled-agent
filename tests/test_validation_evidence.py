@@ -1838,14 +1838,76 @@ class PortableV5(unittest.TestCase):
 class ConfigurationMeasurement(unittest.TestCase):
     def test_configuration_metric_requires_three_real_commands_and_checks(self):
         from evidence_benchmarks import verify_tooling_metrics
-        from evidence_tool_bench import measure
-        value=measure(Path(__file__).resolve().parents[1],'unused','configuration-selection')
-        value.update(harness='tooling',workload='configuration-selection')
+        value=dict(harness='tooling',workload='configuration-selection',metric_version=2,
+                   files=0,owned_processes=0,check_output_calls=3,git_commands=0,
+                   process_inspection_commands=0,retained_traced_blocks=0,
+                   retained_traced_bytes=0,peak_traced_bytes=0,
+                   configuration_metric_version=1,cmake_commands=3,configuration_checks=3)
         verify_tooling_metrics(value)
-        self.assertEqual(value['cmake_commands'],3)
-        self.assertEqual(value['configuration_checks'],3)
-        self.assertEqual(value['files'],0)
         for field,wrong in (('cmake_commands',2),('files',2),('configuration_checks',2),('configuration_metric_version',99)):
             with self.subTest(field=field):
                 with self.assertRaisesRegex(ValueError,'Configuration selection'):
                     verify_tooling_metrics(dict(value,**{field:wrong}))
+
+    def test_real_configuration_fixture_runs_when_tools_are_available(self):
+        import shutil
+
+        from evidence_benchmarks import verify_tooling_metrics
+        from evidence_tool_bench import measure
+        if not shutil.which('cmake') or not shutil.which('ninja'):
+            self.skipTest('Real configuration fixture requires CMake and Ninja')
+        value=measure(Path(__file__).resolve().parents[1],'unused','configuration-selection')
+        value.update(harness='tooling',workload='configuration-selection')
+        verify_tooling_metrics(value)
+        self.assertEqual((value['cmake_commands'],value['configuration_checks'],value['files']),(3,3,0))
+
+    def test_missing_tools_skip_only_the_fixture_not_required_measurement(self):
+        from evidence_tool_bench import measure
+        with patch('evidence_tool_bench.shutil.which',return_value=None):
+            fixture=ConfigurationMeasurement('test_real_configuration_fixture_runs_when_tools_are_available')
+            result=unittest.TestResult();fixture.run(result)
+            self.assertEqual(len(result.skipped),1,'Missing tools did not skip the optional fixture')
+            self.assertFalse(result.errors or result.failures)
+            with self.assertRaisesRegex(ValueError,'requires recorded CMake/Ninja'):
+                measure(Path(__file__).resolve().parents[1],'unused','configuration-selection')
+
+class PreparationMeasurement(unittest.TestCase):
+    def test_verified_adapter_uses_the_production_lambda_and_rejects_ambiguous_excerpts(self):
+        from evidence_harness import cli_preparation_adapter
+        source = Path(__file__).resolve().parents[1] / 'src/modern/cli.cpp'
+        excerpt, adapter = cli_preparation_adapter(source)
+        self.assertIn(excerpt, source.read_text())
+        self.assertIn(excerpt, adapter)
+        self.assertIn('prepare_input_submission', excerpt)
+        import hashlib
+
+        from evidence_harness import verify_cli_adapter
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'adapter.hpp'
+            path.write_text(adapter)
+            record = dict(source=str(source),adapter=str(path),source_sha256=evidence.digest(source),
+                          adapter_sha256=evidence.digest(path),excerpt_sha256=hashlib.sha256(excerpt.encode()).hexdigest())
+            verify_cli_adapter(record)
+            path.write_text(adapter + '// altered')
+            with self.assertRaisesRegex(ValueError, 'differs from verified production'):
+                verify_cli_adapter(record)
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'cli.cpp'
+            path.write_text(source.read_text() + '\n  const auto prepare_line = duplicate;')
+            with self.assertRaisesRegex(ValueError, 'excerpt is not unique'):
+                cli_preparation_adapter(path)
+
+    def test_preparation_counters_require_executed_positive_controls(self):
+        from evidence_benchmarks import verify_preparation_metrics
+        row = dict(harness='preparation',workload='allocation-positive',preparation_metric_version=1,
+                   iterations=128,allocations=128,allocated_bytes=8388608,payload_sized_allocations=128,
+                   rejections=0,prepared_submissions=0,distinct_command_wrappers=0,effective_content_bytes=0)
+        verify_preparation_metrics(row)
+        for key in ('iterations','allocations','allocated_bytes','payload_sized_allocations'):
+            with self.subTest(key=key),self.assertRaisesRegex(ValueError,'preparation|Preparation'):
+                verify_preparation_metrics(dict(row,**{key:0}))
+        for workload,changes in [('saturated-count',dict(rejections=127)),
+                                 ('cli-preparation',dict(prepared_submissions=128,distinct_command_wrappers=0,effective_content_bytes=1664)),
+                                 ('normalization',dict(effective_content_bytes=1))]:
+            with self.subTest(workload=workload),self.assertRaisesRegex(ValueError,'preparation|Preparation|Normalization'):
+                verify_preparation_metrics(dict(row,workload=workload,**changes))

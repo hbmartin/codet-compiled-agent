@@ -60,6 +60,26 @@ def verify_tooling_metrics(row):
             raise ValueError('Build-context scoped counters or controls are invalid')
 
 
+def verify_preparation_metrics(row):
+    if row.get("harness") != "preparation":
+        return
+    fields = ("iterations", "allocations", "allocated_bytes", "payload_sized_allocations", "rejections",
+              "prepared_submissions", "distinct_command_wrappers", "effective_content_bytes")
+    if row.get("preparation_metric_version") != 1 or any(type(row.get(k)) is not int or row[k] < 0 for k in fields) or row["iterations"] != 128:
+        raise ValueError("Invalid preparation measurement counters")
+    workload = row.get("workload")
+    if workload == "allocation-positive" and (row["allocations"] != 128 or row["payload_sized_allocations"] != 128 or row["allocated_bytes"] != 8388608):
+        raise ValueError("Preparation allocation positive control failed")
+    if workload.startswith("saturated-") and row["rejections"] != 128:
+        raise ValueError("Saturated preparation failed to reject every input")
+    if workload in ("cli-preparation", "compatibility-preparation") and row["prepared_submissions"] != 128:
+        raise ValueError("Preparation acceptance control failed")
+    if workload == "cli-preparation" and (row["distinct_command_wrappers"] not in (128, 256) or row["effective_content_bytes"] != 1664):
+        raise ValueError("CLI preparation wrapper/content control failed")
+    if workload in ("normalization", "compatibility-preparation") and row["effective_content_bytes"] != 25165824:
+        raise ValueError("Normalization content control failed")
+
+
 def verify_samples(rows, summary, workloads, *, sets=2, measured=5):
     expected = {(s, harness, workload, variant) for s in range(1, sets + 1)
                 for harness, names in workloads.items() for workload in names
@@ -71,6 +91,7 @@ def verify_samples(rows, summary, workloads, *, sets=2, measured=5):
     seen = set()
     for row in rows:
         verify_tooling_metrics(row)
+        verify_preparation_metrics(row)
         key = (row["set"], row["harness"], row["workload"], row["variant"])
         if type(row["set"]) is not int or key not in grouped:
             raise ValueError("Unexpected benchmark group")

@@ -267,7 +267,7 @@ int main(int argc, char **argv) {
       line->append(static_cast<char>(0xe9));
       if (mode == "native-pending-fragment")
         (void)detail::write_diagnostic(std::cerr, {"fragment"}, false);
-      if (line->take().text != std::string("a\xe9"))
+      if (*line->take().original_storage() != std::string("a\xe9"))
         return 6;
     } else if (mode == "native-rebind") {
       auto *prior = std::cout.rdbuf(&discard);
