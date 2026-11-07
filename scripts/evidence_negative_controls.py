@@ -17,7 +17,7 @@ if module_name=='dependency-root':
     import shutil,tempfile,test_tiger_recovery
     temporary=tempfile.TemporaryDirectory(prefix='codet configure control ')
     fixture=Path(temporary.name);(fixture/'cmake').mkdir()
-    for name in ('compiler-identity.cmake','resolve-dependency-root.cmake'):
+    for name in ('compiler-identity.cmake','json.cmake','resolve-dependency-root.cmake'):
         shutil.copy2(Path(root)/'cmake'/name,fixture/'cmake'/name)
     shutil.copy2(module_path,fixture/'cmake/dependency-root.cmake')
     (fixture/'.deps').symlink_to((Path(root)/'.deps').resolve(),target_is_directory=True)

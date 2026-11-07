@@ -202,7 +202,7 @@ class DependencyInputs(DistributionFixture):
             self.assertEqual((output/'CMakeFiles/codet-dependency-root.txt').read_text(),str((ROOT/'.deps').resolve()))
             output=folder/'selected';result=configure(output,str(selected))
             self.assertNotEqual(result.returncode,0)
-            self.assertIn('Missing pinned googletest',result.stderr)
+            self.assertIn('Missing pinned dependency',result.stderr)
             result=configure(output,str(selected),'-DCODET_DEPENDENCY_ROOT='+str(ROOT/'.deps'))
             self.assertEqual(result.returncode,0,result.stderr)
             result=configure(output,str(folder/'another missing location'))
@@ -418,8 +418,8 @@ class DependencyReconfiguration(unittest.TestCase):
                     capture_output=True,text=True,timeout=30)
             result=configure('missing')
             self.assertNotEqual(result.returncode,0)
-            self.assertNotIn('CODET_DEPENDENCY_ROOT:PATH=',(output/'CMakeCache.txt').read_text(),
-                             'An environment default was persisted as an explicit override')
+            self.assertFalse((output/'CMakeFiles/codet-dependency-selection.json').exists(),
+                             'Failed configuration committed a derived choice')
             result=configure('deps alias');self.assertEqual(result.returncode,0,result.stderr)
             expected=str((ROOT/'.deps').resolve())
             self.assertEqual((output/'CMakeFiles/codet-dependency-root.txt').read_text(),expected,
@@ -492,6 +492,99 @@ class DependencyReconfiguration(unittest.TestCase):
                 result=configure('missing','-DCODET_DEPENDENCY_ROOT=relative deps');self.assertEqual(result.returncode,0,result.stderr)
                 self.assertIn('CODET_DEPENDENCY_ROOT:PATH='+expected,(output/'CMakeCache.txt').read_text())
                 result=configure('missing');self.assertEqual(result.returncode,0,result.stderr)
+
+    @staticmethod
+    def dependency_probe(folder, generator):
+        source=folder/'source';source.mkdir();output=folder/'output'
+        text=('cmake_minimum_required(VERSION 3.20)\nproject(probe LANGUAGES NONE)\n'
+              +'include("'+str(ROOT/'cmake/dependency-root.cmake')+'")\n'
+              +'add_custom_target(ok ALL)\n')
+        (source/'CMakeLists.txt').write_text(text)
+        def configure(value,*extra):
+            return subprocess.run(['cmake','-S',str(source),'-B',str(output),'-G',generator,*extra],
+                env=dict(os.environ,CODET_DEPENDENCY_ROOT=str(value)),capture_output=True,text=True,timeout=30)
+        return source,output,text,configure
+
+    def test_send_error_never_commits_a_first_selection(self):
+        for generator in ('Ninja','Unix Makefiles'):
+            for error in ('SEND_ERROR','FATAL_ERROR'):
+                with self.subTest(generator=generator,error=error),tempfile.TemporaryDirectory() as d:
+                    source,output,text,configure=self.dependency_probe(Path(d),generator)
+                    (source/'CMakeLists.txt').write_text(text+'message('+error+' "intentional configuration failure")\n')
+                    result=configure('/root-A');self.assertNotEqual(result.returncode,0)
+                    self.assertFalse((output/'CMakeFiles/codet-dependency-selection.json').exists(),
+                        'Failed configuration committed a derived choice')
+                    (source/'CMakeLists.txt').write_text(text)
+                    result=configure('/root-B');self.assertEqual(result.returncode,0,result.stderr)
+                    selection=json.loads((output/'CMakeFiles/codet-dependency-selection.json').read_text())
+                    self.assertEqual(selection['root'],'/root-B','Failed provisional selection became explicit')
+
+    def test_empty_and_unset_overrides_reset_explicit_and_derived_selections(self):
+        for generator in ('Ninja','Unix Makefiles'):
+            for reset in ('-DCODET_DEPENDENCY_ROOT=','-UCODET_DEPENDENCY_ROOT'):
+                with self.subTest(generator=generator,reset=reset),tempfile.TemporaryDirectory() as d:
+                    _,output,_,configure=self.dependency_probe(Path(d),generator)
+                    for explicit in (True,False):
+                        args=['-DCODET_DEPENDENCY_ROOT=/root-A'] if explicit else [reset]
+                        result=configure('/root-A',*args);self.assertEqual(result.returncode,0,result.stderr)
+                        result=configure('/root-B',reset);self.assertEqual(result.returncode,0,
+                            'Empty or unset override did not reset selection: '+result.stderr)
+                        self.assertEqual(json.loads((output/'CMakeFiles/codet-dependency-selection.json').read_text())['root'],'/root-B')
+
+    def test_normal_variables_are_scoped_and_do_not_replace_a_derived_pin(self):
+        for generator in ('Ninja','Unix Makefiles'):
+            with self.subTest(generator=generator),tempfile.TemporaryDirectory() as d:
+                source,output,text,configure=self.dependency_probe(Path(d),generator)
+                normal='set(CODET_DEPENDENCY_ROOT "/normal-root")\n'
+                (source/'CMakeLists.txt').write_text(text.replace('include(',normal+'include(',1))
+                result=configure('/environment-A');self.assertEqual(result.returncode,0,result.stderr)
+                cache=(output/'CMakeCache.txt').read_text()
+                self.assertNotIn('CODET_DEPENDENCY_ROOT:PATH=',cache,'Normal variable was promoted into cache')
+                (source/'CMakeLists.txt').write_text(text)
+                result=configure('/environment-A');self.assertEqual(result.returncode,0,result.stderr)
+                pin=output/'CMakeFiles/codet-dependency-selection.json';prior=pin.read_bytes()
+                (source/'CMakeLists.txt').write_text(text.replace('include(',normal+'include(',1))
+                result=configure('/environment-B');self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual((output/'CMakeFiles/codet-dependency-root.txt').read_text(),'/normal-root')
+                self.assertEqual(pin.read_bytes(),prior,'Scoped value replaced the remembered pin')
+                (source/'CMakeLists.txt').write_text(text)
+                result=configure('/environment-B');self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual((output/'CMakeFiles/codet-dependency-root.txt').read_text(),'/environment-A')
+                # A real cache override remains authoritative even with a normal variable.
+                (source/'CMakeLists.txt').write_text(text.replace('include(',normal+'include(',1))
+                result=configure('/environment-B','-DCODET_DEPENDENCY_ROOT=/explicit')
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual((output/'CMakeFiles/codet-dependency-root.txt').read_text(),'/explicit')
+
+    def test_invalid_records_have_one_actionable_error_and_reset_recovers(self):
+        with tempfile.TemporaryDirectory() as d:
+            _,output,_,configure=self.dependency_probe(Path(d),'Ninja')
+            result=configure('/root-A');self.assertEqual(result.returncode,0,result.stderr)
+            pin=output/'CMakeFiles/codet-dependency-selection.json';valid=json.loads(pin.read_text())
+            for invalid in ('{bad',json.dumps(dict(valid,root=3)),json.dumps(dict(valid,format=99)),json.dumps({'root':'/old','origin':'environment','source':valid['source']})):
+                with self.subTest(invalid=invalid):
+                    pin.write_text(invalid)
+                    result=configure('/root-B');self.assertNotEqual(result.returncode,0)
+                    self.assertIn('-UCODET_DEPENDENCY_ROOT',result.stderr)
+                    self.assertIn('codet-dependency-selection.json',result.stderr)
+                    self.assertNotIn('string sub-command JSON',result.stderr,'Pin parsing leaked raw errors')
+                    pin.write_text(json.dumps(valid))
+            pin.write_text('{bad')
+            result=configure('/root-B','-DCODET_DEPENDENCY_ROOT=');self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(json.loads(pin.read_text())['root'],'/root-B')
+
+    def test_missing_dependency_message_identifies_the_pinned_repair_destination(self):
+        with tempfile.TemporaryDirectory(prefix='codet missing pinned ') as d:
+            folder=Path(d);source,output,_,configure=self.dependency_probe(folder,'Ninja')
+            selected=folder/'selected deps'
+            result=configure(selected);self.assertEqual(result.returncode,0,result.stderr)
+            actual=(ROOT/'CMakeLists.txt').read_text();begin=actual.index('foreach(dep googletest')
+            validation=actual[begin:actual.index('endforeach()',begin)+len('endforeach()')]
+            (source/'CMakeLists.txt').write_text('cmake_minimum_required(VERSION 3.20)\nproject(probe LANGUAGES NONE)\ninclude("'+str(ROOT/'cmake/dependency-root.cmake')+'")\n'+validation+'\n')
+            result=configure('/wrong-environment');self.assertNotEqual(result.returncode,0)
+            self.assertIn(' '.join(str(selected).split()),' '.join(result.stderr.split()))
+            self.assertIn('-UCODET_DEPENDENCY_ROOT',result.stderr)
+            self.assertIn('CODET_DEPENDENCY_ROOT=',result.stderr)
 
 if __name__ == "__main__":
     unittest.main()
