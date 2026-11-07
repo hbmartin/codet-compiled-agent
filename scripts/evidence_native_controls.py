@@ -128,9 +128,13 @@ def run_controls(root, folder, build, ninja):
          "bytes > detail::queued_input_limit - (input_bytes_ - previous)",
          "(false && bytes > detail::queued_input_limit - (input_bytes_ - previous))",
          "SubmissionQueue.EffectiveBudgetCountsReservedAndCommittedContentExactlyOnce"),
+        ("expansion-preflight", "src/modern/tools.cpp", "src/modern/tools.cpp",
+         "    if (reserve)\n      reserve(bytes);\n    std::string expanded;",
+         "    (void)reserve;\n    std::string expanded;",
+         "PreparationFault.QueuePreflightRunsBeforeAllocatingTheExpandedBacking"),
         ("expansion-budget", "src/modern/tools.cpp", "src/modern/tools.cpp",
-         "custom_expansion(config, files, input, false, expanded_input_limit)",
-         "custom_expansion(config, files, input, false)",
+         "custom_expansion(config, files, input, false, expanded_input_limit, reserve)",
+         "custom_expansion(config, files, input, false, std::numeric_limits<size_t>::max(), reserve)",
          "Runtime.InteractiveExpansionLimitsSubstitutionBeforeConstructingOversizedContent"),
         ("pty-final-drain", "tests/terminal_resources_test.cpp", "tests/terminal_resources_test.cpp",
          "else if (finished)\n      break;", "else if (done)\n      break;",
@@ -218,13 +222,14 @@ def run_controls(root, folder, build, ninja):
         print("Native control:", name, flush=True)
         directory = folder / ("native-control-" + name)
         directory.mkdir()
-        binary_target = "codet_publication_fault_tests" if target.startswith("LineSubmissionFault.") else "codet_tests"
+        binary_target = "codet_publication_fault_tests" if target.startswith(("LineSubmissionFault.", "PreparationFault.")) else "codet_tests"
         baseline = _test(build / binary_target, target, directory)
         if baseline["exit"] or baseline["assertions"]:
             raise ValueError("Native control baseline failed: " + target)
         source, binary, compiled, linked = compile_mutant(directory, binary_target, "control-tests", entry_name, source_name, before, after)
         mutant = _test(binary, target, directory)
-        markers = {"image-ownership": "Initial images lost their owning turn",
+        markers = {"expansion-preflight": "Expansion allocated its backing before queue preflight",
+                   "image-ownership": "Initial images lost their owning turn",
                    "retained-budget": "Retained originals bypassed the owned-text budget",
                    "reserved-drain": "Reserved placeholders escaped cleanup",
                    "prepared-command-barrier": "Prepared command became unexpanded steering",

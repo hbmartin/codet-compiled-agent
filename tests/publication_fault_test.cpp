@@ -2496,3 +2496,34 @@ TEST(PreparationFault, QueueHandoffKeepsTheBackingWithoutAFullTextAllocation) {
   text.reset();
   EXPECT_EQ(moved->text, std::string(65536, 'x'));
 }
+
+TEST(PreparationFault, QueuePreflightRunsBeforeAllocatingTheExpandedBacking) {
+  TempDirectory temporary;
+  NativeFileSystem files;
+  Config config;
+  config.cwd = temporary.root;
+  config.home = temporary.root / "home";
+  fs::create_directories(config.home / "commands");
+  std::string command;
+  for (unsigned i = 0; i != 2048; ++i)
+    command += "$ARGUMENTS";
+  files.atomic_write(config.home / "commands/review.md", command);
+  const std::string input = "/review " + std::string(128, 'x');
+  bool rejected = false;
+  size_t requested = 0;
+  fault::largest_allocation = 0;
+  fault::measure_allocations = true;
+  try {
+    (void)detail::prepare_interactive_prompt(config, files, input, [&](size_t bytes) {
+      requested = bytes;
+      throw Error("Queue preflight rejected the expansion");
+    });
+  } catch (const Error &) {
+    rejected = true;
+  }
+  const auto largest = fault::largest_allocation;
+  fault::disable();
+  EXPECT_TRUE(rejected);
+  EXPECT_EQ(requested, 262144u);
+  EXPECT_LT(largest, 131072u) << "Expansion allocated its backing before queue preflight";
+}

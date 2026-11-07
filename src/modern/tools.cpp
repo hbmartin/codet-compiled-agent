@@ -2024,7 +2024,8 @@ void Tools::use_session(const std::string &id) {
 namespace {
 std::optional<std::string> custom_expansion(const Config &config, FileSystem &files,
                                             const std::string &input, bool strict,
-                                            size_t limit = std::numeric_limits<size_t>::max()) {
+                                            size_t limit = std::numeric_limits<size_t>::max(),
+                                            const std::function<void(size_t)> &reserve = {}) {
   const auto name = detail::custom_command_name(input);
   if (name.empty()) {
     if (strict)
@@ -2058,6 +2059,8 @@ std::optional<std::string> custom_expansion(const Config &config, FileSystem &fi
       copied = at + 10;
     }
     account(text.size() - copied);
+    if (reserve)
+      reserve(bytes);
     std::string expanded;
     expanded.reserve(bytes);
     copied = 0;
@@ -2079,7 +2082,7 @@ detail::prepare_interactive_prompt(const Config &config, FileSystem &files,
                                    const std::function<void(size_t)> &reserve) {
   if (local_command(input) != LocalCommand::none)
     return {};
-  auto expanded = custom_expansion(config, files, input, false, expanded_input_limit);
+  auto expanded = custom_expansion(config, files, input, false, expanded_input_limit, reserve);
   if (!expanded)
     return {};
   bool repaired = false;
