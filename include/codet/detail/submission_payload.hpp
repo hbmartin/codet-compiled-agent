@@ -82,6 +82,9 @@ public:
   static PreparedSubmission from_raw(const std::string &text, bool command,
                                      std::shared_ptr<const PreparedPrompt> expansion,
                                      Reserve reserve) {
+    validate_raw(text);
+    if (expansion && !command)
+      throw Error("Prepared expansion requires a command barrier");
     const auto inspected = inspect(text);
     const auto retained =
         PreparedSubmission::add(text.size(), inspected.repaired ? inspected.normalized : 0);
@@ -100,6 +103,8 @@ public:
   template <class Reserve>
   PreparedSubmission finish(std::shared_ptr<const PreparedPrompt> command, bool barrier,
                             Reserve reserve) const {
+    if (command && !barrier)
+      throw Error("Prepared expansion requires a command barrier");
     auto original = original_;
     if (command) {
       if (command->original_storage().get() != original_.get() && command->original != *original_)

@@ -2871,6 +2871,19 @@ TEST(SubmissionQueue, ExplicitCommandFlagIsIndependentOfPreparedContentAndHeldSt
         auto expansion =
             expanded ? std::make_shared<const detail::PreparedPrompt>("original", "expanded")
                      : nullptr;
+        if (expanded && !command) {
+          EXPECT_THROW(
+              detail::SubmissionAccess::commit(io, ticket, "original", held, command, expansion),
+              Error);
+          EXPECT_TRUE(io.take_input().empty()) << "Rejected expansion reached steering";
+          EXPECT_NO_THROW(detail::SubmissionAccess::charge(io, ticket, 0, 0));
+          detail::SubmissionAccess::abandon(io, ticket);
+          io.submit("later");
+          EXPECT_EQ(io.take_input(), (std::vector<std::string>{"later"}));
+          io.end_turn();
+          EXPECT_TRUE(io.take_pending("session").empty());
+          continue;
+        }
         detail::SubmissionAccess::commit(io, ticket, "original", held, command, expansion);
         const auto incoming = io.take_input();
         EXPECT_EQ(incoming.size(), command || held ? 0u : 1u)
@@ -2891,6 +2904,30 @@ TEST(SubmissionQueue, ExplicitCommandFlagIsIndependentOfPreparedContentAndHeldSt
         }
       }
 }
+TEST(SubmissionQueue, InvalidExpansionIsRejectedBeforePreflightAndPreservesRawErrorPrecedence) {
+  auto raw = std::make_shared<const std::string>("original");
+  auto expansion = std::make_shared<const detail::PreparedPrompt>(raw, raw);
+  unsigned charges = 0;
+  const auto reserve = [&](size_t, size_t) { ++charges; };
+  try {
+    (void)detail::SubmissionPreparation::from_raw(*raw, false, expansion, reserve);
+    FAIL() << "Non-command expansion was accepted";
+  } catch (const Error &error) {
+    EXPECT_STREQ(error.what(), "Prepared expansion requires a command barrier");
+  }
+  EXPECT_EQ(charges, 0u) << "Invalid expansion changed admission accounting";
+  EXPECT_THROW(detail::SubmissionPreparation(raw).finish(expansion, false, reserve), Error);
+  EXPECT_EQ(charges, 0u);
+  try {
+    (void)detail::SubmissionPreparation::from_raw(std::string(65537, 'x'), false, expansion,
+                                                  reserve);
+    FAIL() << "Oversized raw input was accepted";
+  } catch (const Error &error) {
+    EXPECT_STREQ(error.what(), "Pending raw input exceeds 65536-byte limit");
+  }
+  EXPECT_EQ(charges, 0u);
+}
+
 TEST(InputPreparation, SharedProductionPreparationKeepsOneFrozenCommandAndRawHookBytes) {
   TempDirectory temporary;
   NativeFileSystem files;
