@@ -436,6 +436,27 @@ class DependencyReconfiguration(unittest.TestCase):
             result=configure('missing','-UCODET_DEPENDENCY_ROOT');self.assertNotEqual(result.returncode,0)
             result=configure('deps alias');self.assertEqual(result.returncode,0,result.stderr)
 
+    def test_later_generator_failure_keeps_a_validated_selection_until_reset(self):
+        for generator in ('Ninja','Unix Makefiles'):
+            with self.subTest(generator=generator),tempfile.TemporaryDirectory(prefix='codet generation error ') as temporary:
+                folder=Path(temporary);source=folder/'source';source.mkdir();output=folder/'build'
+                text=('cmake_minimum_required(VERSION 3.20)\nproject(probe LANGUAGES NONE)\n'
+                    +'include("'+str(ROOT/'cmake/compiler-identity.cmake')+'")\n'
+                    +'include("'+str(ROOT/'cmake/dependency-root.cmake')+'")\n')
+                (source/'broken.c').write_text('int main(void){return 0;}')
+                (source/'CMakeLists.txt').write_text(text+'add_executable(broken broken.c)\n')
+                result=subprocess.run(['cmake','-S',str(source),'-B',str(output),'-G',generator],
+                    env=dict(os.environ,CODET_DEPENDENCY_ROOT=str(ROOT/'.deps')),capture_output=True,text=True,timeout=30)
+                self.assertNotEqual(result.returncode,0)
+                self.assertRegex(result.stderr.lower(),r'link(?:er)? language')
+                pin=output/'CMakeFiles/codet-dependency-selection.json'
+                self.assertEqual(json.loads(pin.read_text())['root'],str((ROOT/'.deps').resolve()))
+                (source/'CMakeLists.txt').write_text(text+'add_custom_target(ok ALL)\n')
+                result=subprocess.run(['cmake','-S',str(source),'-B',str(output)],
+                    env=dict(os.environ,CODET_DEPENDENCY_ROOT='missing'),capture_output=True,text=True,timeout=30)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual(json.loads(pin.read_text())['root'],str((ROOT/'.deps').resolve()))
+
     def test_successful_selection_survives_ninja_and_make_regeneration_until_reset(self):
         for generator in ('Ninja','Unix Makefiles'):
             with self.subTest(generator=generator), tempfile.TemporaryDirectory(prefix='codet pinned root ') as temporary:
@@ -448,7 +469,7 @@ class DependencyReconfiguration(unittest.TestCase):
                     +'if(NOT EXISTS "${CODET_DEPENDENCY_ROOT}/json/CMakeLists.txt")\nmessage(FATAL_ERROR "missing selected dependencies")\nendif()\n'
                     +'add_custom_target(probe ALL COMMAND "${CMAKE_COMMAND}" -E echo ok)\n')
                 cmake=source/'CMakeLists.txt';cmake.write_text(text)
-                def configure(value,*extra):
+                def configure(value,*extra,source=source,output=output,generator=generator,caller=caller):
                     return subprocess.run(['cmake','-S',str(source),'-B',str(output),'-G',generator,*extra],cwd=caller,
                         env=dict(os.environ,CODET_DEPENDENCY_ROOT=value,PWD='/misleading'),capture_output=True,text=True,timeout=30)
                 result=configure('missing');self.assertNotEqual(result.returncode,0)
@@ -460,7 +481,7 @@ class DependencyReconfiguration(unittest.TestCase):
                     env=dict(os.environ);env.pop('CODET_DEPENDENCY_ROOT',None)
                     if value is not None:env['CODET_DEPENDENCY_ROOT']=value
                     result=subprocess.run(['cmake','--build',str(output)],cwd=caller,env=env,capture_output=True,text=True,timeout=30)
-                    self.assertEqual(result.returncode,0,result.stderr+result.stdout)
+                    self.assertEqual(result.returncode,0,'Automatic regeneration changed dependency availability: '+result.stderr+result.stdout)
                     actual=json.loads((output/'CMakeFiles/codet-dependency-selection.json').read_text())
                     self.assertEqual(actual['root'],expected,'Automatic regeneration changed the selected dependency tree')
                     self.assertEqual(actual['origin'],'environment')

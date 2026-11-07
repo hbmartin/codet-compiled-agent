@@ -82,7 +82,9 @@ in a generated record so automatic regeneration cannot change dependency trees.
 An empty public cache entry marks that record; its selected root remains absolute.
 Change the root with an explicit `-DCODET_DEPENDENCY_ROOT=...`, or use
 `-UCODET_DEPENDENCY_ROOT` to select the current environment/default again. Failed
-first configurations do not pin a derived choice. Older caches do not identify environment-derived values, so they
+first configurations do not pin a derived choice. A later generation error keeps
+the validated selection until explicit reset; CMake 3.20 has no post-generation
+commit callback. Older caches do not identify environment-derived values, so they
 are conservatively explicit: clear an old value once with
 `cmake -UCODET_DEPENDENCY_ROOT ...` to resume environment/default selection.
 Application-build admission requires its dependency lock's compiled pins and

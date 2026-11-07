@@ -1,5 +1,5 @@
 # An empty cache entry is a resettable marker, not the selected path. The
-# generated record pins derived choices only after configuration/generation.
+# selection record pins derived choices when project configuration completes.
 set(_codet_dependency_pin "${CMAKE_BINARY_DIR}/CMakeFiles/codet-dependency-selection.json")
 set(_codet_dependency_origin "explicit")
 if(DEFINED CODET_DEPENDENCY_ROOT AND NOT CODET_DEPENDENCY_ROOT STREQUAL "")
@@ -40,12 +40,14 @@ function(_codet_commit_dependency_selection)
   else()
     set(CODET_DEPENDENCY_ROOT "" CACHE PATH "Dependency override; -U resets the generated selection" FORCE)
   endif()
-  # file(GENERATE) leaves no committed derived record on a configure error.
+  # Commit after the project finishes configuring. Later generator errors do
+  # not change a validated selection; -U explicitly resets it.
   _codet_json_string(_root "${_codet_dependency_value}")
   _codet_json_string(_origin "${_codet_dependency_origin}")
   _codet_json_string(_source "${CMAKE_SOURCE_DIR}")
-  file(GENERATE OUTPUT "${_codet_dependency_pin}" CONTENT
+  file(WRITE "${_codet_dependency_pin}.tmp"
     "{\"root\":${_root},\"origin\":${_origin},\"source\":${_source}}\n")
+  file(RENAME "${_codet_dependency_pin}.tmp" "${_codet_dependency_pin}")
 endfunction()
 # Persist the resolved spelling, not the relative input.
 set(_codet_dependency_value "${CODET_DEPENDENCY_ROOT}")
