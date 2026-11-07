@@ -1397,7 +1397,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
         lifecycle.preparing(lifecycle.context, line.text(), 2);
       if (pending_input) {
         auto command = value ? std::make_shared<const detail::PreparedPrompt>(*value) : nullptr;
-        auto submission = inspected->finish(std::move(command), [&](size_t bytes, size_t retained) {
+        auto submission = inspected->finish(std::move(command), static_cast<bool>(value), [&](size_t bytes, size_t retained) {
           detail::SubmissionAccess::charge(*interaction, line.admission, bytes, retained);
         });
         payload = std::make_shared<const detail::PreparedSubmission>(std::move(submission));

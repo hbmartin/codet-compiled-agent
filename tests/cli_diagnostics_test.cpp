@@ -2701,7 +2701,7 @@ TEST(SubmissionQueue, SharedPreparedOriginalCountsOneBackingAndStillForcesAFollo
   auto command =
       std::make_shared<const detail::PreparedPrompt>(detail::PreparedPrompt{"/review", "expanded"});
   auto text = std::shared_ptr<const std::string>(command, &command->original);
-  const auto payload = detail::SubmissionPreparation(text).finish(command, [](size_t, size_t) {});
+  const auto payload = detail::SubmissionPreparation(text).finish(command, true, [](size_t, size_t) {});
   EXPECT_EQ(payload.retained_size(), 15u);
   const auto ticket = detail::SubmissionAccess::reserve(io);
   detail::SubmissionAccess::commit_prepared(io, ticket, payload, false);
@@ -2743,7 +2743,7 @@ TEST(SubmissionQueue, PublicPreparationExposesNoReservationAcrossTurnCleanup) {
         if (go.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
           throw Error("Submission test gate did not open");
         return detail::SubmissionPreparation(std::make_shared<const std::string>(raw))
-            .finish({}, [](size_t, size_t) {});
+            .finish({}, false, [](size_t, size_t) {});
       });
     } catch (...) {
       failure = std::current_exception();
@@ -2795,13 +2795,13 @@ TEST(SubmissionQueue, MalformedCompatibilityExpansionRetainsItsNormalizedCharge)
 
 TEST(SubmissionQueue, ValidatedPayloadSharesUnchangedBytesAndRejectsMissingBacking) {
   auto raw = std::make_shared<const std::string>(65536, 'x');
-  const auto valid = detail::SubmissionPreparation(raw).finish({}, [](size_t, size_t) {});
+  const auto valid = detail::SubmissionPreparation(raw).finish({}, false, [](size_t, size_t) {});
   EXPECT_EQ(valid.normalized_storage().get(), raw.get());
   EXPECT_EQ(valid.execution()->original_storage().get(), raw.get());
   EXPECT_EQ(valid.execution()->expanded_storage().get(), raw.get());
   EXPECT_EQ(valid.retained_size(), raw->size()) << "Identical backing was charged more than once";
   auto bad = std::make_shared<const std::string>(65536, static_cast<char>(0x80));
-  const auto repaired = detail::SubmissionPreparation(bad).finish({}, [](size_t, size_t) {});
+  const auto repaired = detail::SubmissionPreparation(bad).finish({}, false, [](size_t, size_t) {});
   EXPECT_EQ(repaired.execution()->original_storage().get(), bad.get());
   EXPECT_EQ(repaired.execution()->expanded.size(), 196608u);
   EXPECT_EQ(repaired.retained_size(), 262144u);
@@ -2859,3 +2859,33 @@ TEST(InputPreparation, MoveAssignmentKeepsFrozenIdentityAndExactlyOneLease) {
   EXPECT_TRUE(io.take_pending("session").empty());
 }
 
+TEST(SubmissionQueue, ExplicitCommandFlagIsIndependentOfPreparedContentAndHeldState) {
+  for (bool command : {false, true})
+    for (bool expanded : {false, true})
+      for (bool held : {false, true}) {
+        Interaction io;
+        io.begin_turn("session");
+        const auto ticket = detail::SubmissionAccess::reserve(io);
+        auto expansion =
+            expanded ? std::make_shared<const detail::PreparedPrompt>("original", "expanded")
+                     : nullptr;
+        detail::SubmissionAccess::commit(io, ticket, "original", held, command, expansion);
+        const auto incoming = io.take_input();
+        EXPECT_EQ(incoming.size(), command || held ? 0u : 1u)
+            << "Prepared content changed the explicit command barrier";
+        if (!incoming.empty())
+          EXPECT_EQ(incoming.front(), "original");
+        io.end_turn();
+        const auto next = detail::SubmissionAccess::next(io, "session");
+        EXPECT_EQ(next.has_value(), command || held);
+        if (next) {
+          ASSERT_TRUE(next->prepared);
+          EXPECT_EQ(next->prepared->original, "original");
+          EXPECT_EQ(next->prepared->expanded, expanded ? "expanded" : "original");
+          if (!expanded)
+            EXPECT_EQ(next->prepared->original_storage().get(),
+                      next->prepared->expanded_storage().get())
+                << "Barrier-only content duplicated unchanged backing";
+        }
+      }
+}

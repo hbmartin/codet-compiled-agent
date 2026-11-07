@@ -52,23 +52,54 @@ public:
 // Inspect once, then use the same validated sizes for allocation and admission.
 class SubmissionPreparation {
   std::shared_ptr<const std::string> original_;
+  struct Inspection {
+    size_t normalized;
+    bool repaired;
+  };
   size_t normalized_bytes_;
-  bool repaired_ = false;
+  bool repaired_;
+  static Inspection inspect(std::string_view text) {
+    validate_raw(text);
+    Inspection result{};
+    result.normalized = normalized_input_size(text, expanded_input_limit, &result.repaired);
+    return result;
+  }
+  SubmissionPreparation(std::shared_ptr<const std::string> original, Inspection inspected)
+      : original_(std::move(original)), normalized_bytes_(inspected.normalized),
+        repaired_(inspected.repaired) {}
 
 public:
-  explicit SubmissionPreparation(std::shared_ptr<const std::string> original)
-      : original_(std::move(original)), normalized_bytes_(0) {
-    const auto &text = PreparedPrompt::checked(original_);
-    if (text.empty() || text.size() > raw_input_limit)
+  static void validate_raw(std::string_view text) {
+    if (text.empty())
+      throw Error("Pending input is empty");
+    if (text.size() > raw_input_limit)
       throw Error("Pending raw input exceeds 65536-byte limit");
-    normalized_bytes_ = normalized_input_size(text, expanded_input_limit, &repaired_);
+  }
+  explicit SubmissionPreparation(std::shared_ptr<const std::string> original)
+      : SubmissionPreparation(original, inspect(PreparedPrompt::checked(original))) {}
+  // Borrow while inspecting. Only accepted size preflights may allocate owned content.
+  template <class Reserve>
+  static PreparedSubmission from_raw(const std::string &text, bool command,
+                                     std::shared_ptr<const PreparedPrompt> expansion,
+                                     Reserve reserve) {
+    const auto inspected = inspect(text);
+    const auto retained =
+        PreparedSubmission::add(text.size(), inspected.repaired ? inspected.normalized : 0);
+    reserve(expansion ? 0 : inspected.normalized, retained);
+    if (expansion && expansion->original != text)
+      throw Error("Prepared command belongs to another input");
+    auto original =
+        expansion ? expansion->original_storage() : std::make_shared<const std::string>(text);
+    return SubmissionPreparation(std::move(original), inspected)
+        .finish(std::move(expansion), command, reserve);
   }
   size_t retained_size(size_t expansion = 0) const {
     return PreparedSubmission::add(
         PreparedSubmission::add(original_->size(), repaired_ ? normalized_bytes_ : 0), expansion);
   }
   template <class Reserve>
-  PreparedSubmission finish(std::shared_ptr<const PreparedPrompt> command, Reserve reserve) const {
+  PreparedSubmission finish(std::shared_ptr<const PreparedPrompt> command, bool barrier,
+                            Reserve reserve) const {
     auto original = original_;
     if (command) {
       if (command->original_storage().get() != original_.get() && command->original != *original_)
@@ -91,10 +122,9 @@ public:
     auto normalized = repaired_ ? std::make_shared<const std::string>(
                                       normalized_input_known(*original, normalized_bytes_, true))
                                 : original;
-    const bool custom = static_cast<bool>(command);
     if (!command)
       command = std::make_shared<const PreparedPrompt>(original, normalized);
-    return PreparedSubmission{std::move(normalized), std::move(command), custom};
+    return PreparedSubmission{std::move(normalized), std::move(command), barrier};
   }
 };
 } // namespace codet::detail
