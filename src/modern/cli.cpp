@@ -648,8 +648,8 @@ public:
     control_explained_ = false;
     if (input_queue_)
       detail::SubmissionAccess::abandon(*input_queue_, std::exchange(admission_, 0));
-    if (line)
-      pending_not_sent(line->text(), immediate);
+    if (line && line->original_storage())
+      pending_not_sent(*line->original_storage(), immediate);
   }
   void pending_not_sent(std::string_view text, bool immediate = false) noexcept {
     if (text.empty())

@@ -2962,3 +2962,48 @@ TEST(InputPreparation, InvalidAdmissionContextAndRawFailurePrecedenceAreDetermin
   cancelled.requested = true;
   EXPECT_EQ(message(pending, cancelled), "cancelled");
 }
+
+TEST(SubmissionQueue, FinalAdmissionRechecksCapacityAfterBorrowedPreparation) {
+  Interaction io;
+  io.begin_turn("before");
+  std::promise<void> ready, release;
+  auto go = release.get_future();
+  auto started = ready.get_future();
+  std::exception_ptr failure;
+  std::thread producer([&] {
+    try {
+      detail::SubmissionAccess::submit(io, "message", [&](const std::string &raw) {
+        auto payload =
+            detail::SubmissionPreparation::from_raw(raw, false, {}, [](size_t, size_t) {});
+        ready.set_value();
+        if (go.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
+          throw Error("Submission capacity gate did not open");
+        return payload;
+      });
+    } catch (...) {
+      failure = std::current_exception();
+    }
+  });
+  const bool waiting = started.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
+  if (waiting) {
+    io.end_turn();
+    EXPECT_TRUE(io.take_pending("before").empty());
+    io.begin_turn("after");
+    for (unsigned n = 0; n != 100; ++n)
+      (void)detail::SubmissionAccess::reserve(io);
+  }
+  release.set_value();
+  producer.join();
+  EXPECT_TRUE(waiting);
+  ASSERT_TRUE(failure) << "Advisory preflight bypassed final admission capacity";
+  try {
+    std::rethrow_exception(failure);
+  } catch (const Error &error) {
+    EXPECT_THAT(error.what(), HasSubstr("100-entry limit"));
+  }
+  io.end_turn();
+  EXPECT_TRUE(io.take_pending("after").empty());
+  io.begin_turn("after");
+  io.submit("usable");
+  EXPECT_EQ(io.take_input(), (std::vector<std::string>{"usable"}));
+}

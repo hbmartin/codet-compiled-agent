@@ -75,7 +75,7 @@ public:
     if (text.size() > raw_input_limit)
       throw Error("Pending raw input exceeds 65536-byte limit");
   }
-  explicit SubmissionPreparation(std::shared_ptr<const std::string> original)
+  explicit SubmissionPreparation(const std::shared_ptr<const std::string> &original)
       : SubmissionPreparation(original, inspect(PreparedPrompt::checked(original))) {}
   // Borrow while inspecting. Only accepted size preflights may allocate owned content.
   template <class Reserve>
