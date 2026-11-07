@@ -769,11 +769,13 @@ class CliTests(unittest.TestCase):
                 collect(lambda expected=expected,received=received,process=process,starts_turn=starts_turn:expected in received or (starts_turn and b'recovered reply' in received) or process.poll() is not None)
                 if starts_turn:
                     self.assertEqual(images(self.server.requests[-1]),1,'Initial images lost their owning turn')
-                else:
-                    self.assertTrue(all(images(r)==0 for r in self.server.requests[before:]),'Local command received initial images')
                 self.assertIn(expected,received,'Initial attachment disposition was not reported')
                 if command=='/compact':collect(lambda received=received:b'No older history to compact.' in received)
-                if command=='/memory consolidate':collect(lambda received=received:b'fixture done' in received)
+                if command=='/memory consolidate':
+                    collect(lambda received=received:b'fixture done' in received)
+                    self.assertGreater(len(self.server.requests),before,'Memory image check inspected no request')
+                if not starts_turn:
+                    self.assertTrue(all(images(r)==0 for r in self.server.requests[before:]),'Local command received initial images')
                 # Empty Enter must not resurrect discarded images or start a provider turn.
                 received.clear()
                 count=len(self.server.requests);os.write(master,b'\n/status\n')

@@ -527,6 +527,8 @@ class DependencyReconfiguration(unittest.TestCase):
                     for explicit in (True,False):
                         args=['-DCODET_DEPENDENCY_ROOT=/root-A'] if explicit else [reset]
                         result=configure('/root-A',*args);self.assertEqual(result.returncode,0,result.stderr)
+                        self.assertEqual((output/'CMakeFiles/codet-dependency-root.txt').read_text(),'/root-A',
+                                         'Empty reset retained the prior derived selection')
                         result=configure('/root-B',reset);self.assertEqual(result.returncode,0,
                             'Empty or unset override did not reset selection: '+result.stderr)
                         self.assertEqual(json.loads((output/'CMakeFiles/codet-dependency-selection.json').read_text())['root'],'/root-B')
