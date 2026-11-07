@@ -2594,7 +2594,7 @@ TEST(SubmissionQueue, EffectiveBudgetCountsReservedAndCommittedContentExactlyOnc
   for (unsigned i = 0; i != 32; ++i) {
     const auto ticket = detail::SubmissionAccess::reserve(io);
     tickets.push_back(ticket);
-    detail::SubmissionAccess::charge(io, ticket, expanded->expanded.size());
+    detail::SubmissionAccess::charge(io, ticket, expanded->expanded.size(), 0);
     if (i % 2 == 0)
       detail::SubmissionAccess::commit(io, ticket, "/review", true, true, expanded);
   }
@@ -2603,7 +2603,7 @@ TEST(SubmissionQueue, EffectiveBudgetCountsReservedAndCommittedContentExactlyOnc
       << "Aggregate effective budget admitted excess content";
   EXPECT_THROW(io.submit("extra"), Error);
   detail::SubmissionAccess::abandon(io, tickets.back());
-  detail::SubmissionAccess::charge(io, extra, detail::expanded_input_limit);
+  detail::SubmissionAccess::charge(io, extra, detail::expanded_input_limit, 0);
   EXPECT_THROW(detail::SubmissionAccess::charge(io, extra, detail::expanded_input_limit + 1),
                Error);
   detail::SubmissionAccess::commit(io, extra, "/review", true, true, expanded);
@@ -2646,4 +2646,83 @@ TEST(SubmissionQueue, LeaseAndSteeringConsumptionReleaseEffectiveCharges) {
   }
   io.end_turn();
   EXPECT_TRUE(io.take_pending("s").empty());
+}
+
+TEST(SubmissionQueue, RetainedOriginalsAndNormalizationCannotHideBehindTinyExpansions) {
+  Interaction io;
+  io.begin_turn("s");
+  std::string raw = "/review ";
+  raw.append(65528, static_cast<char>(0x80));
+  size_t owned = 0;
+  unsigned accepted = 0;
+  for (unsigned i = 0; i != 100; ++i) {
+    const auto ticket = detail::SubmissionAccess::reserve(io);
+    detail::SubmissionLease lease(&io, ticket);
+    auto value = std::make_shared<const detail::PreparedPrompt>(detail::PreparedPrompt{raw, "x"});
+    try {
+      detail::SubmissionAccess::commit(io, ticket, raw, true, true, value);
+      owned += detail::normalized_input_size(raw, detail::expanded_input_limit) + raw.size() + 1;
+      ++accepted;
+      lease.release();
+    } catch (const Error &error) {
+      EXPECT_THAT(error.what(), HasSubstr("retained text"));
+      break;
+    }
+  }
+  EXPECT_EQ(accepted, 32u) << "Retained originals bypassed the owned-text budget";
+  EXPECT_LE(owned, detail::retained_input_limit);
+  io.end_turn();
+  EXPECT_EQ(io.take_pending("s").size(), accepted);
+  io.submit("usable after release");
+  EXPECT_EQ(io.take_pending("s"), (std::vector<std::string>{"usable after release"}));
+}
+TEST(SubmissionQueue, IndependentRetainedBudgetChecksExactBoundaryAndReservedCleanup) {
+  Interaction io;
+  io.begin_turn("s");
+  std::vector<detail::SubmissionLease> leases;
+  for (unsigned i = 0; i != 32; ++i) {
+    const auto ticket = detail::SubmissionAccess::reserve(io);
+    leases.emplace_back(&io, ticket);
+    detail::SubmissionAccess::charge(io, ticket, 0, 262144);
+  }
+  const auto extra = detail::SubmissionAccess::reserve(io);
+  detail::SubmissionLease lease(&io, extra);
+  EXPECT_THROW(detail::SubmissionAccess::charge(io, extra, 0, 1), Error);
+  io.end_turn();
+  EXPECT_TRUE(io.take_pending("s").empty()) << "Reserved placeholders escaped cleanup";
+  io.submit("fresh");
+  leases.clear(); // Obsolete leases cannot remove or charge the newer entry.
+  EXPECT_EQ(io.take_pending("s"), (std::vector<std::string>{"fresh"}));
+}
+TEST(SubmissionQueue, SharedPreparedOriginalCountsOneBackingAndStillForcesAFollowup) {
+  Interaction io;
+  io.begin_turn("s");
+  auto command =
+      std::make_shared<const detail::PreparedPrompt>(detail::PreparedPrompt{"/review", "expanded"});
+  auto text = std::shared_ptr<const std::string>(command, &command->original);
+  EXPECT_EQ(detail::SubmissionAccess::retained_size(text, command), 15u);
+  const auto ticket = detail::SubmissionAccess::reserve(io);
+  detail::SubmissionAccess::commit_prepared(io, ticket, text, false, true, command);
+  EXPECT_TRUE(io.take_input().empty()) << "Prepared command became unexpanded steering";
+  io.end_turn();
+  auto next = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(next);
+  EXPECT_EQ(next->text, "/review");
+  EXPECT_EQ(next->prepared.get(), command.get());
+}
+TEST(InputPreparation, LimitMessagesNameTheThresholdActuallyEnforced) {
+  try {
+    (void)detail::normalized_input_size("xx", 1);
+    FAIL();
+  } catch (const Error &error) {
+    EXPECT_STREQ(error.what(), "Normalized input exceeds 1 bytes");
+  }
+  Interaction io;
+  const auto ticket = detail::SubmissionAccess::reserve(io);
+  try {
+    detail::SubmissionAccess::charge(io, ticket, 262145, 0);
+    FAIL();
+  } catch (const Error &error) {
+    EXPECT_THAT(error.what(), HasSubstr("262144-byte per-entry"));
+  }
 }

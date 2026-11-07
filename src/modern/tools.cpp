@@ -2073,15 +2073,21 @@ std::optional<std::string> custom_expansion(const Config &config, FileSystem &fi
   return {};
 }
 } // namespace
-std::optional<detail::PreparedPrompt> detail::prepare_interactive_prompt(const Config &config,
-                                                                         FileSystem &files,
-                                                                         const std::string &input) {
+std::optional<detail::PreparedPrompt>
+detail::prepare_interactive_prompt(const Config &config, FileSystem &files,
+                                   const std::string &input,
+                                   const std::function<void(size_t)> &reserve) {
   if (local_command(input) != LocalCommand::none)
     return {};
-  const auto expanded = custom_expansion(config, files, input, false, expanded_input_limit);
+  auto expanded = custom_expansion(config, files, input, false, expanded_input_limit);
   if (!expanded)
     return {};
-  return PreparedPrompt{input, normalized_input(*expanded, expanded_input_limit)};
+  bool repaired = false;
+  const auto bytes = normalized_input_size(*expanded, expanded_input_limit, &repaired);
+  if (reserve)
+    reserve(bytes);
+  return PreparedPrompt{input, repaired ? normalized_input_known(*expanded, bytes, true)
+                                        : std::move(*expanded)};
 }
 std::string Tools::expand_command(const std::string &input) const {
   if (input.empty() || input[0] != '/')

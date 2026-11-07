@@ -585,6 +585,9 @@ public:
   std::function<void(detail::InputLine &)> prepare_submission_;
   void submission_preparer(std::function<void(detail::InputLine &)> prepare) {
     prepare_submission_ = [this, prepare = std::move(prepare)](detail::InputLine &line) {
+      if (line.preparation.state == detail::PreparationState::unprepared)
+        line.preparation_context =
+            input_queue_ ? detail::PreparationContext::pending : detail::PreparationContext::fresh;
       if (!line.admission)
         line.admission = admission_; // The terminal still owns a deferred presentation's ticket.
       prepare(line);
@@ -595,7 +598,11 @@ public:
     if (input_queue_ && !admission_ && input_.ordinary_draft() && !input_.input().empty() &&
         detail::local_command(input_.input().raw()) == detail::LocalCommand::none)
       try {
-        admission_ = detail::SubmissionAccess::reserve(*input_queue_);
+        const auto ticket = detail::SubmissionAccess::reserve(*input_queue_);
+        detail::SubmissionLease lease(input_queue_, ticket);
+        detail::SubmissionAccess::charge(*input_queue_, ticket, 0, input_.input().raw().size());
+        admission_ = ticket;
+        lease.release();
       } catch (const Error &error) {
         say(error.what());
       }
@@ -1350,20 +1357,47 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       return;
     if (lifecycle.preparing)
       lifecycle.preparing(lifecycle.context, line.text, 0);
+    const bool pending_input = line.preparation_context == detail::PreparationContext::pending;
+    if (pending_input && line.text.empty())
+      return;
+    bool repaired = false;
+    size_t normalized_bytes = 0;
     line.preparation = detail::prepare_submission(cancel, [&] {
-      if (line.text.size() > detail::raw_input_limit)
-        throw Error("Pending user input limit exceeded");
+      if (pending_input && line.text.size() > detail::raw_input_limit)
+        throw Error("Pending raw input exceeds 65536-byte limit");
+      if (pending_input && !line.admission)
+        throw Error("Pending input exceeds 100-entry limit");
+      if (pending_input)
+        normalized_bytes =
+            detail::normalized_input_size(line.text, detail::expanded_input_limit, &repaired);
+      if (line.admission)
+        detail::SubmissionAccess::charge(*interaction, line.admission, 0,
+                                         line.text.size() + normalized_bytes);
       if (lifecycle.preparing)
         lifecycle.preparing(lifecycle.context, line.text, 1);
-      auto value = detail::prepare_interactive_prompt(config, files, line.text);
+      auto value = detail::prepare_interactive_prompt(config, files, line.text, [&](size_t bytes) {
+        if (line.admission) {
+          // Valid raw text aliases PreparedPrompt::original; repaired text owns a second backing.
+          const auto retained =
+              line.text.size() + normalized_bytes + bytes + (repaired ? line.text.size() : 0);
+          detail::SubmissionAccess::charge(*interaction, line.admission, bytes, retained);
+        }
+      });
+      if (!value && line.admission)
+        detail::SubmissionAccess::charge(*interaction, line.admission, normalized_bytes,
+                                         line.text.size() + normalized_bytes);
       if (lifecycle.preparing)
         lifecycle.preparing(lifecycle.context, line.text, 2);
-      const auto bytes = detail::normalized_input_size(value ? value->expanded : line.text,
-                                                       detail::expanded_input_limit);
-      if (line.admission)
-        detail::SubmissionAccess::charge(*interaction, line.admission, bytes);
       return value;
     });
+    if (pending_input && line.preparation.state == detail::PreparationState::ready) {
+      if (line.preparation.prompt && !repaired)
+        line.preparation.normalized = std::shared_ptr<const std::string>(
+            line.preparation.prompt, &line.preparation.prompt->original);
+      else
+        line.preparation.normalized = std::make_shared<const std::string>(
+            detail::normalized_input_known(line.text, normalized_bytes, repaired));
+    }
   };
   const auto preparation_ready = [&](detail::InputLine &line) {
     prepare_line(line);
@@ -1374,6 +1408,8 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       return false;
     }
     if (line.preparation.state == detail::PreparationState::failed) {
+      if (line.preparation_context == detail::PreparationContext::pending)
+        terminal->pending_not_sent(line.text);
       detail::secondary_diagnostic([&] {
         try {
           std::rethrow_exception(line.preparation.failure);
@@ -1507,10 +1543,11 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
           break;
         }
         try {
-          detail::SubmissionAccess::commit(*interaction, line.admission, line.text,
-                                           action.action == detail::TurnInputAction::hold,
-                                           action.action == detail::TurnInputAction::idle_command,
-                                           std::move(expansion));
+          detail::SubmissionAccess::commit_prepared(
+              *interaction, line.admission, line.preparation.normalized,
+              action.action == detail::TurnInputAction::hold,
+              action.action == detail::TurnInputAction::idle_command, std::move(expansion));
+          line.text.clear(); // The immutable queue payload now owns its charged backing.
           line.reservation.release();
         } catch (const Error &error) {
           terminal->pending_not_sent(line.text);

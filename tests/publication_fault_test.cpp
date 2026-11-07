@@ -2444,3 +2444,27 @@ TEST(PreparationFault, AllocationFailureReleasesReservedChargesAndPreservesLater
   EXPECT_GT(failures, 0u);
   EXPECT_GT(successes, 0u);
 }
+
+TEST(PreparationFault, PreparedCommitTransfersBackingsWithoutAllocatingOrRenormalizing) {
+  Interaction io;
+  io.begin_turn("s");
+  const auto ticket = detail::SubmissionAccess::reserve(io);
+  auto command =
+      std::make_shared<const detail::PreparedPrompt>(detail::PreparedPrompt{"/review", "expanded"});
+  auto text = std::shared_ptr<const std::string>(command, &command->original);
+  detail::SubmissionAccess::charge(io, ticket, 8,
+                                   22); // Includes the frozen raw line until transfer.
+  bool failed = false;
+  fault::countdown = 0;
+  try {
+    detail::SubmissionAccess::commit_prepared(io, ticket, text, false, true, command);
+  } catch (const std::bad_alloc &) {
+    failed = true;
+  }
+  fault::disable();
+  EXPECT_FALSE(failed) << "Prepared admission rebuilt its immutable payload";
+  io.end_turn();
+  auto next = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(next);
+  EXPECT_EQ(next->prepared.get(), command.get());
+}

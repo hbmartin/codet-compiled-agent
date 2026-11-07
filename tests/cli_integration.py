@@ -797,6 +797,60 @@ class CliTests(unittest.TestCase):
                     os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
                     self.assertEqual(process.returncode,0,received)
 
+    def test_large_fresh_argv_and_libedit_prose_are_not_pending_input(self):
+        large='x'*80000
+        for initial in (True,False):
+            with self.subTest(initial=initial),PtyProcess() as resources:
+                before=len(self.server.requests);master,slave=resources.openpty()
+                process=resources.start([BIN,'-C',str(self.workspace),'--ui','line',*([large] if initial else [])],
+                    stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+                received=bytearray();collect=partial(collect_pty,self,master,received)
+                writer=None;failures=[]
+                if not initial:
+                    collect(lambda received=received:b'codet>' in received)
+                    def paste(master=master,failures=failures):
+                        try:
+                            data=(large+'\n').encode();offset=0
+                            while offset<len(data):offset+=os.write(master,data[offset:offset+512])
+                        except OSError as error:failures.append(error)
+                    writer=threading.Thread(target=paste,daemon=True);writer.start()
+                collect(lambda before=before:len(self.server.requests)>before or b'Error: Pending raw input' in received,seconds=20)
+                self.assertNotIn(b'Pending raw input',received,'Fresh prose was rejected by a pending-input limit')
+                collect(lambda received=received:b'fixture done' in received)
+                if writer:writer.join(timeout=2);self.assertFalse(writer.is_alive());self.assertFalse(failures)
+                self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],large,
+                    'Fresh prose was rejected by a pending-input limit')
+                self.assertNotIn(b'limit exceeded',received)
+                os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                self.assertEqual(process.returncode,0,received[-500:])
+
+    def test_failed_pending_preparation_reports_the_rejected_line_and_keeps_worker(self):
+        commands=self.home/'commands';commands.mkdir(parents=True,exist_ok=True)
+        outside=self.root/'outside.md';outside.write_text('unsafe')
+        (commands/'unsafe.md').symlink_to(outside)
+        for ui in ('line','curses'):
+            with self.subTest(ui=ui),PtyProcess() as resources:
+                ready,release=threading.Event(),threading.Event()
+                self.server.signal_gate=(ready,release);self.server.releases.append(release)
+                before=len(self.server.requests);master,slave=resources.openpty()
+                process=resources.start([BIN,'-C',str(self.workspace),'--ui',ui,'fixture-signal-wait'],
+                    stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+                received=bytearray();collect=partial(collect_pty,self,master,received)
+                self.assertTrue(ready.wait(10))
+                os.write(master,b'/unsafe\n')
+                collect(lambda received=received:b'Unsafe custom command path' in received)
+                self.assertIn(b'Pending message not sent: /unsafe',received,
+                    'Preparation failure omitted its pending-input rejection notice')
+                self.assertIsNone(process.poll());release.set()
+                collect(lambda received=received:b'fixture done' in received)
+                self.assertEqual(len(self.server.requests),before+1,'Failed preparation started a turn')
+                os.write(master,b'fixture-recovered-output\n')
+                collect(lambda received=received:b'recovered reply' in received)
+                self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'fixture-recovered-output')
+                self.assertNotIn(b'Pending message not sent: ]',received)
+                os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                self.assertEqual(process.returncode,0,received)
+
     def test_idle_and_initial_preparation_cancellation_return_130(self):
         for initial in (False,True):
             for ui in ('line','curses'):

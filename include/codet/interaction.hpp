@@ -17,18 +17,20 @@ class Interaction {
   std::condition_variable changed_;
   std::deque<Json> events_;
   friend struct detail::SubmissionAccess;
-  enum class InputKind : uint8_t { reserved, steering, followup, idle_command };
+  enum class InputKind : uint8_t { reserved, steering, followup };
   struct Input {
-    std::string session, text;
+    std::string session;
+    std::shared_ptr<const std::string> text = {};
     uint64_t turn = 0, sequence = 0;
     InputKind kind = InputKind::steering;
     std::shared_ptr<const detail::PreparedPrompt> prepared = {};
-    size_t charged_bytes = 0;
+    size_t charged_bytes = 0, retained_bytes = 0;
   };
   bool input_barrier(std::deque<Input>::const_iterator end) const noexcept;
   uint64_t next_input_ = 0;
-  size_t input_bytes_ = 0;
-  void check_input_capacity(size_t, size_t previous = 0) const;
+  size_t input_bytes_ = 0, retained_bytes_ = 0;
+  void check_input_capacity(size_t, size_t, size_t previous = 0,
+                            size_t previous_retained = 0) const;
   std::deque<Input> input_;
   std::string session_;
   uint64_t turn_ = 0;
