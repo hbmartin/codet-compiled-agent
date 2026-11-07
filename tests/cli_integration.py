@@ -806,19 +806,27 @@ class CliTests(unittest.TestCase):
                 process=resources.start([BIN,'-C',str(self.workspace),'--ui','line',*([large] if initial else [])],
                     stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
                 received=bytearray();collect=partial(collect_pty,self,master,received)
-                writer=None;failures=[]
                 if not initial:
+                    import fcntl
                     collect(lambda received=received:b'codet>' in received)
-                    def paste(master=master,failures=failures):
-                        try:
-                            data=(large+'\n').encode();offset=0
-                            while offset<len(data):offset+=os.write(master,data[offset:offset+512])
-                        except OSError as error:failures.append(error)
-                    writer=threading.Thread(target=paste,daemon=True);writer.start()
+                    data=(large+'\n').encode();offset=0;deadline=time.monotonic()+20
+                    flags=fcntl.fcntl(master,fcntl.F_GETFL)
+                    fcntl.fcntl(master,fcntl.F_SETFL,flags|os.O_NONBLOCK)
+                    try:
+                        while offset<len(data) and time.monotonic()<deadline:
+                            readable,writable,_=select.select([master],[master],[],.02)
+                            if readable:
+                                try:received.extend(os.read(master,65536))
+                                except BlockingIOError:pass
+                            if writable:
+                                try:offset+=os.write(master,data[offset:offset+4096])
+                                except BlockingIOError:pass
+                        self.assertEqual(offset,len(data),'Fresh libedit paste did not complete')
+                    finally:
+                        fcntl.fcntl(master,fcntl.F_SETFL,flags)
                 collect(lambda before=before,received=received:len(self.server.requests)>before or b'Error: Pending raw input' in received,seconds=20)
                 self.assertNotIn(b'Pending raw input',received,'Fresh prose was rejected by a pending-input limit')
                 collect(lambda received=received:b'fixture done' in received)
-                if writer:writer.join(timeout=2);self.assertFalse(writer.is_alive());self.assertFalse(failures)
                 self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],large,
                     'Fresh prose was rejected by a pending-input limit')
                 self.assertNotIn(b'limit exceeded',received)
