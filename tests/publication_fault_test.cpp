@@ -2468,3 +2468,31 @@ TEST(PreparationFault, PreparedCommitTransfersBackingsWithoutAllocatingOrRenorma
   ASSERT_TRUE(next);
   EXPECT_EQ(next->prepared.get(), command.get());
 }
+
+TEST(PreparationFault, QueueHandoffKeepsTheBackingWithoutAFullTextAllocation) {
+  Interaction io;
+  io.begin_turn("s");
+  auto text = std::make_shared<const std::string>(65536, 'x');
+  const auto ticket = detail::SubmissionAccess::reserve(io);
+  detail::SubmissionAccess::commit_prepared(io, ticket, text, true, false);
+  io.end_turn();
+  bool failed = false;
+  auto next = [&]() -> std::optional<detail::QueuedSubmission> {
+    fault::countdown = 0;
+    try {
+      auto value = detail::SubmissionAccess::next(io, "s");
+      fault::disable();
+      return value;
+    } catch (const std::bad_alloc &) {
+      fault::disable();
+      failed = true;
+      return {};
+    }
+  }();
+  EXPECT_FALSE(failed) << "Queue handoff copied retained input";
+  ASSERT_TRUE(next);
+  EXPECT_EQ(next->text.data(), text->data());
+  auto moved = std::move(next);
+  text.reset();
+  EXPECT_EQ(moved->text, std::string(65536, 'x'));
+}

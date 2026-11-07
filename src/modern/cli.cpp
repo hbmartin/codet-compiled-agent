@@ -1738,8 +1738,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       input = prompt;
       images.swap(initial_images);
     } else if (queued) {
-      input = queued->text;
-      run(*input, true, queued->prepared.get());
+      run(queued->text, true, queued->prepared.get());
       continue; // Classification and custom content were frozen at submission.
     } else if (new_requested) {
       input = "/new";

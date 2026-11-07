@@ -6,8 +6,15 @@
 
 namespace codet::detail {
 struct QueuedSubmission {
-  std::string text;
+private:
+  std::shared_ptr<const std::string> backing_;
+
+public:
+  const std::string &text;
   std::shared_ptr<const PreparedPrompt> prepared;
+  QueuedSubmission(std::shared_ptr<const std::string> backing,
+                   std::shared_ptr<const PreparedPrompt> command)
+      : backing_(std::move(backing)), text(*backing_), prepared(std::move(command)) {}
 };
 // Queue admission and accounting share the existing interaction mutex. I/O and
 // normalization happen outside it; immutable normalized payloads transfer once.
@@ -104,7 +111,7 @@ struct SubmissionAccess {
     if (io.input_.front().kind == Interaction::InputKind::reserved)
       return {};
     auto &entry = io.input_.front();
-    QueuedSubmission result{*entry.text, std::move(entry.prepared)};
+    QueuedSubmission result{std::move(entry.text), std::move(entry.prepared)};
     io.input_bytes_ -= entry.charged_bytes;
     io.retained_bytes_ -= entry.retained_bytes;
     io.input_.pop_front();
