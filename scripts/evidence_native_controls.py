@@ -24,7 +24,7 @@ def _test(binary, target, directory):
     if not xml.is_file():
         raise ValueError("Native control did not produce a test result: " + target)
     cases = list(ET.parse(xml).getroot().iter("testcase"))
-    if len(cases) != 1 or cases[0].get("classname") + "." + cases[0].get("name") != target or cases[0].get("status") != "run":
+    if len(cases) != 1 or cases[0].get("classname") + "." + cases[0].get("name") != target or cases[0].get("status") != "run" or cases[0].find("skipped") is not None:
         raise ValueError("Native control did not execute exactly the intended test")
     result["assertions"] = [f.get("message", "") for f in cases[0].findall("failure")]
     return result
@@ -45,7 +45,7 @@ if target=='CliTests.test_late_signals_preserve_result_and_return_to_usable_prom
 suite=unittest.defaultTestLoader.loadTestsFromName(target,module)
 if suite.countTestCases()!=1:raise ValueError('Pending-control target was not discovered exactly once')
 result=unittest.TextTestRunner(verbosity=2).run(suite)
-Path(output).write_text(json.dumps(dict(tests=result.testsRun,failures=[trace for _,trace in result.failures],errors=[trace for _,trace in result.errors])))
+Path(output).write_text(json.dumps(dict(tests=result.testsRun,failures=[trace for _,trace in result.failures],errors=[trace for _,trace in result.errors],skipped=[reason for _,reason in result.skipped])))
 raise SystemExit(int(not result.wasSuccessful()))
 '''
 
@@ -57,7 +57,7 @@ def _integration(root, binary, directory, target="CliTests.test_frozen_submissio
     if not result_path.is_file():
         raise ValueError("Pending-control integration result missing")
     value = json.loads(result_path.read_text())
-    if value.get("tests") != 1 or value.get("errors"):
+    if value.get("tests") != 1 or value.get("errors") or value.get("skipped"):
         raise ValueError("Pending-control target did not execute cleanly: " + repr(value))
     result["assertions"] = value["failures"]
     return result
@@ -103,6 +103,20 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native mutant linking failed: " + repr(linked))
         return source, binary, compiled, linked
     cases = [
+        ("image-ownership", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_images.hpp",
+         "run(text, true, prompt, std::move(images));", "(void)images; run(text, true, prompt, {});",
+         "InputAttachments.PreparedProviderReceivesOriginalImages"),
+        ("retained-budget", "src/modern/interaction.cpp", "src/modern/interaction.cpp",
+         "retained > detail::retained_input_limit - (retained_bytes_ - previous_retained)",
+         "(false && retained > detail::retained_input_limit - (retained_bytes_ - previous_retained))",
+         "SubmissionQueue.RetainedOriginalsAndNormalizationCannotHideBehindTinyExpansions"),
+        ("reserved-drain", "src/modern/interaction.cpp", "src/modern/interaction.cpp",
+         "if (input.kind != InputKind::reserved)\n      out.push_back(*input.text);",
+         "out.push_back(input.text ? *input.text : std::string{});",
+         "SubmissionQueue.IndependentRetainedBudgetChecksExactBoundaryAndReservedCleanup"),
+        ("prepared-command-barrier", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_queue.hpp",
+         "command || held", "(command && false) || held",
+         "SubmissionQueue.SharedPreparedOriginalCountsOneBackingAndStillForcesAFollowup"),
         ("command-filesystem", "tests/cli_diagnostics_test.cpp", "include/codet/detail/prepared_prompt.hpp",
          "cancel.requested ? PreparationState::cancelled : PreparationState::failed",
          "cancel.requested ? PreparationState::cancelled : PreparationState::ready",
@@ -178,9 +192,9 @@ def run_controls(root, folder, build, ninja):
         ("path-prose", "tests/cli_diagnostics_test.cpp", "include/codet/detail/turn_input.hpp",
          "  if (text.empty())", "  if (!text.empty() && text.front() == '/') return {TurnInputAction::idle_command, {}, {}};\n  if (text.empty())",
          "TurnInput.SlashIdentifiersNeedResolvedCommandsBeforeDeferral"),
-        ("inactive-submit", "src/modern/interaction.cpp", "src/modern/interaction.cpp",
-         "const bool held = !active_ || input_barrier(input_.cend());",
-         "const bool held = input_barrier(input_.cend());",
+        ("inactive-submit", "src/modern/interaction.cpp", "include/codet/detail/submission_queue.hpp",
+         "io.input_barrier(entry) || !io.active_",
+         "io.input_barrier(entry) || false",
          "SubmissionQueue.InactiveCompatibilityInputCannotBecomeOldTurnSteering"),
         ("tls-version", "tests/cli_diagnostics_test.cpp", "include/codet/detail/tls_trust.hpp",
          '"rustls-ffi/", DirectoryTrust::absent', '"unrecognized-test/", DirectoryTrust::absent',
@@ -196,7 +210,7 @@ def run_controls(root, folder, build, ninja):
          "recovery.fragment = record.fragment; // Mutant retains the old fragment.",
          "DiagnosticWriter.EmptyInjectedSeparationClosesTheFragmentExactlyOnce"),
         ("queue-barrier", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_queue.hpp",
-         "held || barrier || !io.active_", "held || (barrier && false) || !io.active_",
+         "io.input_barrier(entry)", "(false && io.input_barrier(entry))",
          "SubmissionQueue.ReservedBarrierSurvivesRejectionOfItsPredecessor"),
     ]
     results = []
@@ -210,7 +224,11 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native control baseline failed: " + target)
         source, binary, compiled, linked = compile_mutant(directory, binary_target, "control-tests", entry_name, source_name, before, after)
         mutant = _test(binary, target, directory)
-        markers = {"command-filesystem": "Expected equality", "reservation-release": "Preparation failure leaked its reserved prefix",
+        markers = {"image-ownership": "Initial images lost their owning turn",
+                   "retained-budget": "Retained originals bypassed the owned-text budget",
+                   "reserved-drain": "Reserved placeholders escaped cleanup",
+                   "prepared-command-barrier": "Prepared command became unexpanded steering",
+                   "command-filesystem": "Expected equality", "reservation-release": "Preparation failure leaked its reserved prefix",
                    "aggregate-budget": "Aggregate effective budget admitted excess content", "expansion-budget": "Expanded custom command exceeds input limit",
                    "pty-final-drain": "Final helper bytes were lost after completion", "deferred": "deferred", "pending-visible": "Frozen submitted line was not displayed",
                    "pending-interruption": "Value of: submitted", "separator": 'read()', "printer": "Expected equality of these values", "pid-guard": "unexpected wait",
@@ -252,18 +270,22 @@ def run_controls(root, folder, build, ninja):
          '    if (text.empty())\n      return;\n    try {\n      std::string message = "[Pending message not sent: ";',
          '    try {\n      std::string message = "[Pending message not sent: ";',
          "Empty frozen input emitted an empty pending notice"),
+        ("fresh-input-scope", "CliTests.test_large_fresh_argv_and_libedit_prose_are_not_pending_input",
+         "if (pending_input && line.text.size() > detail::raw_input_limit)",
+         "if (line.text.size() > detail::raw_input_limit)",
+         "Fresh prose was rejected by a pending-input limit"),
+        ("preparation-rejection", "CliTests.test_failed_pending_preparation_reports_the_rejected_line_and_keeps_worker",
+         "if (line.preparation_context == detail::PreparationContext::pending)\n        terminal->pending_not_sent(line.text);",
+         "if (line.preparation_context == detail::PreparationContext::pending)\n        (void)line;",
+         "Preparation failure omitted its pending-input rejection notice"),
         ("command-isolation", "CliTests.test_unsafe_command_preserves_later_messages_and_expands_once",
          '    if (line.preparation.state == detail::PreparationState::failed) {',
-         '    if (false && line.preparation.state == detail::PreparationState::failed) {',
-         "Unsafe custom command path: /unsafe"),
+         '    if (line.preparation.state == detail::PreparationState::failed) { line.preparation.normalized = std::make_shared<const std::string>(line.text); return true;',
+         "Bad command lost later queued input"),
         ("preparation-cancellation", "CliTests.test_preparation_cancellation_collects_an_already_successful_worker",
          '    if (line.preparation.state == detail::PreparationState::cancelled) {',
          '    if (line.preparation.state == detail::PreparationState::cancelled) { std::rethrow_exception(line.preparation.failure);',
          "Preparation cancellation escaped the input phase"),
-        ("image-ownership", "CliTests.test_initial_images_are_owned_by_their_submission",
-         'run(text, true, line.preparation.prompt.get(), std::move(images));',
-         'run(text, true, line.preparation.prompt.get(), {});',
-         "Initial images lost their owning turn"),
         ("command-freeze", "CliTests.test_known_command_content_is_frozen_before_deferred_presentation",
          'line_ ? line_->try_take(prepare_submission_)', 'line_ ? line_->try_take()',
          "Frozen command content changed before handoff"),
@@ -296,7 +318,7 @@ def run_controls(root, folder, build, ninja):
         baseline = _integration(root, build / "codet", directory, target)
         if baseline["exit"] or baseline["assertions"]:
             raise ValueError("Review control baseline failed: " + target)
-        binary_target = "codet" if name == "image-ownership" else "codet_tests"
+        binary_target = "codet" if name in ("fresh-input-scope", "preparation-rejection") else "codet_tests"
         source, binary, compiled, linked = compile_mutant(directory, binary_target, binary_target, "src/modern/cli.cpp", "src/modern/cli.cpp", before, after)
         placeholder = directory / "codet"
         if binary_target != "codet":

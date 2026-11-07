@@ -737,10 +737,10 @@ class CliTests(unittest.TestCase):
             message=[m for m in request['body']['messages'] if m['role']=='user'][-1]
             return sum(part.get('type')=='image_url' for part in message['content']) if isinstance(message.get('content'),list) else 0
         for command,starts_turn in (('/help',False),('/status',False),('/model',False),
-                                   ('/compact',False),('/unsafe',False),('/review',True),('',True)):
+                                   ('/compact',False),('/memory consolidate',False),('/unsafe',False),('/review',True),('x'*80000,True),('',True)):
             with self.subTest(command=command),PtyProcess() as resources:
                 before=len(self.server.requests);master,slave=resources.openpty()
-                process=resources.start([BIN,'-C',str(self.workspace),'--ui','line','-i',str(image),command],
+                process=resources.start([BIN,'-C',str(self.workspace),'--ui','line','--permission-mode','accept-edits','-i',str(image),command],
                     stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
                 received=bytearray();collect=partial(collect_pty,self,master,received)
                 expected=b'fixture done' if starts_turn else b'Images discarded'
@@ -751,6 +751,7 @@ class CliTests(unittest.TestCase):
                     self.assertTrue(all(images(r)==0 for r in self.server.requests[before:]),'Local command received initial images')
                 self.assertIn(expected,received,'Initial attachment disposition was not reported')
                 if command=='/compact':collect(lambda received=received:b'No older history to compact.' in received)
+                if command=='/memory consolidate':collect(lambda received=received:b'fixture done' in received)
                 # Empty Enter must not resurrect discarded images or start a provider turn.
                 received.clear()
                 count=len(self.server.requests);os.write(master,b'\n/status\n')
@@ -814,7 +815,7 @@ class CliTests(unittest.TestCase):
                             while offset<len(data):offset+=os.write(master,data[offset:offset+512])
                         except OSError as error:failures.append(error)
                     writer=threading.Thread(target=paste,daemon=True);writer.start()
-                collect(lambda before=before:len(self.server.requests)>before or b'Error: Pending raw input' in received,seconds=20)
+                collect(lambda before=before,received=received:len(self.server.requests)>before or b'Error: Pending raw input' in received,seconds=20)
                 self.assertNotIn(b'Pending raw input',received,'Fresh prose was rejected by a pending-input limit')
                 collect(lambda received=received:b'fixture done' in received)
                 if writer:writer.join(timeout=2);self.assertFalse(writer.is_alive());self.assertFalse(failures)

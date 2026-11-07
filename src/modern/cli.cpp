@@ -13,6 +13,7 @@
 #include "codet/detail/pending_control.hpp"
 #include "codet/detail/prepared_prompt.hpp"
 #include "codet/detail/request_input_controller.hpp"
+#include "codet/detail/submission_images.hpp"
 #include "codet/detail/submission_queue.hpp"
 #include "codet/detail/terminal_input.hpp"
 #include "codet/detail/turn_input.hpp"
@@ -1711,7 +1712,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
                                    std::vector<ImageArtifact> images) {
     auto line = frozen ? std::move(*frozen) : detail::InputLine{text};
     if (preparation_ready(line))
-      run(text, true, line.preparation.prompt.get(), std::move(images));
+      detail::execute_image_submission(text, line.preparation.prompt.get(), std::move(images), run);
     else
       discard_images(images);
   };
@@ -1753,7 +1754,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     if (input->empty() && images.empty())
       continue;
     const auto local = detail::local_command(*input);
-    if (local != detail::LocalCommand::none && local != detail::LocalCommand::memory)
+    if (local != detail::LocalCommand::none)
       discard_images(images);
     if (local == detail::LocalCommand::quit)
       break;
