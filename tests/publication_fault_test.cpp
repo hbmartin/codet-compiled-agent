@@ -2397,7 +2397,7 @@ TEST(LineSubmissionFault, AllocationFailureCannotConsumeAnUnownedLine) {
       submitted = line.try_take();
     }
     ASSERT_TRUE(submitted);
-    EXPECT_EQ(submitted->text, raw);
+    EXPECT_EQ(submitted->text(), raw);
   }
 }
 

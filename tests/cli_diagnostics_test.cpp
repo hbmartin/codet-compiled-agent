@@ -457,7 +457,7 @@ TEST(RequestInput, ExpiryAndReplacementNeverReclassifyDraftAnswers) {
   EXPECT_TRUE(input.ordinary_draft());
   input.close();
   EXPECT_TRUE(input.ordinary_draft()); // Worker completion preserves ordinary intent.
-  EXPECT_EQ(input.take("ordinary steering").text, "ordinary steering");
+  EXPECT_EQ(input.take("ordinary steering").text(), "ordinary steering");
   input.edit(); // An ordinary draft started before a request cannot answer it.
   EXPECT_TRUE(input.open(first));
   EXPECT_TRUE(input.take("yes").discarded);
@@ -585,7 +585,7 @@ TEST(LinePrompt, RestoresTheSafeDraftAndDeletionMatchesSubmittedBytes) {
   for (char byte : std::string("llo"))
     f.line->append(byte);
   EXPECT_EQ(last_line(f.stream.str()), "codet> hllo");
-  EXPECT_EQ(f.line->take().text, "hllo");
+  EXPECT_EQ(f.line->take().text(), "hllo");
 }
 TEST(LinePrompt, SafeAppendsUseOnlyTheNewPreparedBytes) {
   for (size_t columns : {size_t{0}, size_t{9}, size_t{80}}) {
@@ -638,7 +638,7 @@ TEST(LinePrompt, BasicEmptyDraftEndsItsRowAndSubmissionExposesDeferredBytes) {
       for (char byte : raw)
         f.line->append(byte);
       const auto submitted = f.line->take();
-      EXPECT_EQ(submitted.text, raw);
+      EXPECT_EQ(submitted.text(), raw);
       EXPECT_EQ(f.stream.str(), "codet> " + detail::literal_text(raw) + "\n");
     }
   }
@@ -654,7 +654,7 @@ TEST(LinePrompt, MultipleMutationsAndOwnershipGapsCannotUseTheBasicAppendShortcu
   f.line->append('y');
   f.line->append('z');
   EXPECT_EQ(last_line(f.stream.str()), "codet> abxyz");
-  EXPECT_EQ(f.line->take().text, "abxyz");
+  EXPECT_EQ(f.line->take().text(), "abxyz");
   EXPECT_THAT(f.stream.str(), Not(HasSubstr("abcyz")));
 }
 TEST(CursesInput, SharedDecoderDistinguishesIncompleteAndMalformedTrailingPrefixes) {
@@ -702,7 +702,7 @@ TEST(LinePrompt, ApprovalAndQuestionDraftsSurviveOutputWithoutDuplicatedAnswers)
     f.line->flush();
     EXPECT_THAT(last_line(f.stream.str()), ::testing::EndsWith(" y"));
     f.line->submitted();
-    EXPECT_EQ(f.input.take().text, "y");
+    EXPECT_EQ(f.input.take().text(), "y");
   }
 }
 TEST(LinePrompt, RedirectedOutputAndReleasedRecoveryNeverRepaintAnotherPrompt) {
@@ -840,7 +840,7 @@ TEST(LinePrompt, FailedRowsAndGuidanceUseTheSharedRecoveryNewline) {
       line.erase_character();
       line.erase_character();
       EXPECT_EQ(last_line(buffer.str()), "codet> abcdefghijklmn") << skip << ":" << keep;
-      EXPECT_EQ(input.take().text, "abcdefghijklmn");
+      EXPECT_EQ(input.take().text(), "abcdefghijklmn");
     }
 }
 TEST(LinePrompt, ErasingTheFinalCharacterRemovesTheActiveOrdinaryPrompt) {
@@ -2247,7 +2247,7 @@ TEST(LinePrompt, InjectedFragmentEndsBeforeFrozenPresentation) {
   f.output.display({"fragment"}, false);
   auto submitted = f.line->try_take();
   ASSERT_TRUE(submitted);
-  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_EQ(submitted->text(), "abc");
   EXPECT_THAT(f.stream.str(), EndsWith("fragment\ncodet> abc\n"));
 }
 
@@ -2566,7 +2566,7 @@ TEST(SubmissionQueue, MovingOrUnwindingALineReleasesItsReservedEntryExactlyOnce)
     line.admission = first;
     line.reservation = detail::SubmissionLease(&io, first);
     auto moved = std::move(line);
-    EXPECT_EQ(moved.text, "original");
+    EXPECT_EQ(moved.text(), "original");
     throw std::bad_alloc();
   } catch (const std::bad_alloc &) {
   }
@@ -2810,3 +2810,52 @@ TEST(SubmissionQueue, ValidatedPayloadSharesUnchangedBytesAndRejectsMissingBacki
   static_assert(!std::is_default_constructible<detail::PreparedSubmission>::value,
                 "Unvalidated payloads must not be constructible");
 }
+
+TEST(InputPreparation, MoveAssignmentKeepsFrozenIdentityAndExactlyOneLease) {
+  static_assert(std::is_nothrow_move_constructible<detail::InputLine>::value);
+  static_assert(std::is_nothrow_move_assignable<detail::InputLine>::value);
+  Interaction io;
+  io.begin_turn("session");
+  const auto old_ticket = detail::SubmissionAccess::reserve(io);
+  const auto ticket = detail::SubmissionAccess::reserve(io);
+  std::optional<detail::InputLine> destination{std::in_place, "obsolete"};
+  destination->reservation = detail::SubmissionLease(&io, old_ticket);
+  detail::InputLine source{"raw", detail::ApprovalIdentity{"session", "question", 9}, true,
+                           detail::InputOrigin{"session", 9}};
+  auto bytes = source.original_storage();
+  source.admission = ticket;
+  source.reservation = detail::SubmissionLease(&io, ticket);
+  source.presentation_held = true;
+  source.preparation_context = detail::PreparationContext::pending;
+  source.preparation.state = detail::PreparationState::failed;
+  source.admission_failure = std::make_exception_ptr(Error("admission"));
+  *destination = std::move(source);
+  EXPECT_THROW(detail::SubmissionAccess::charge(io, old_ticket, 0), Error);
+  for (unsigned iteration = 0; iteration != 16; ++iteration) {
+    auto moved = std::move(*destination);
+    destination = std::move(moved);
+    auto *alias = &*destination;
+    *destination = std::move(*alias);
+    EXPECT_EQ(destination->text(), "raw") << "Move assignment lost frozen backing";
+    EXPECT_EQ(destination->original_storage().get(), bytes.get());
+    ASSERT_TRUE(destination->request);
+    EXPECT_EQ(destination->request->request, "question");
+    ASSERT_TRUE(destination->origin);
+    EXPECT_EQ(destination->origin->session, "session");
+    EXPECT_EQ(destination->origin->turn, 9u);
+    EXPECT_TRUE(destination->discarded);
+    EXPECT_TRUE(destination->presentation_held);
+    EXPECT_EQ(destination->admission, ticket);
+    EXPECT_EQ(destination->preparation_context, detail::PreparationContext::pending);
+    EXPECT_EQ(destination->preparation.state, detail::PreparationState::failed);
+    EXPECT_TRUE(destination->admission_failure);
+  }
+  destination.reset();
+  EXPECT_THROW(detail::SubmissionAccess::charge(io, ticket, 0), Error);
+  // Both replaced and transferred leases are gone; every queue slot is available.
+  for (unsigned count = 0; count != 100; ++count)
+    EXPECT_NO_THROW((void)detail::SubmissionAccess::reserve(io));
+  io.end_turn();
+  EXPECT_TRUE(io.take_pending("session").empty());
+}
+

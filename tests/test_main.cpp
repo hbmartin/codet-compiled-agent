@@ -353,7 +353,7 @@ int main(int argc, char **argv) {
         size.ws_col = 80;
         if (::ioctl(STDOUT_FILENO, TIOCSWINSZ, &size) < 0)
           return 6;
-        return line.take().text == std::string("a\xe9") ? 0 : 7;
+        return line.take().text() == std::string("a\xe9") ? 0 : 7;
       }
       if (mode == "buffer-rebind") {
         for (char byte : std::string("abc"))
@@ -373,7 +373,7 @@ int main(int argc, char **argv) {
         line.flush();
         const bool displayed = first.str().find("abcd") != std::string::npos &&
                                second.str().find("abcd") != std::string::npos;
-        return displayed && line.take().text == "abcde" ? 0 : 8;
+        return displayed && line.take().text() == "abcde" ? 0 : 8;
       }
       const bool only_flush = mode.size() > 6 && mode.substr(mode.size() - 6) == "-flush";
       if (only_flush)
@@ -383,7 +383,7 @@ int main(int argc, char **argv) {
         line.erase_character();
         for (char byte : std::string("a\xe9"))
           line.append(byte);
-        return line.take().text == std::string("a\xe9") ? 0 : 3;
+        return line.take().text() == std::string("a\xe9") ? 0 : 3;
       }
       for (char byte : std::string("abc"))
         line.append(byte);
@@ -415,10 +415,10 @@ int main(int argc, char **argv) {
       metrics = {};
       if (only_flush) {
         line.flush(); // No subsequent key may be needed to discover the diagnostic boundary.
-        return line.take().text == "abc" ? 0 : 5;
+        return line.take().text() == "abc" ? 0 : 5;
       }
       line.append('d');
-      return line.take().text == "abcd" ? 0 : 5;
+      return line.take().text() == "abcd" ? 0 : 5;
     }
     if (argc == 3 && std::string(argv[1]) == "--codet-alias-diagnostic-helper") {
       const int descriptor = std::stoi(argv[2]);
