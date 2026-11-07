@@ -591,10 +591,13 @@ public:
             input_queue_ ? detail::PreparationContext::pending : detail::PreparationContext::fresh;
       if (!line.admission)
         line.admission = admission_; // The terminal still owns a deferred presentation's ticket.
+      if (!line.admission_failure)
+        line.admission_failure = admission_failure_;
       prepare(line);
     };
   }
   uint64_t admission_ = 0;
+  std::exception_ptr admission_failure_;
   void reserve_submission() {
     if (input_queue_ && !admission_ && input_.ordinary_draft() && !input_.input().empty() &&
         detail::local_command(input_.input().raw()) == detail::LocalCommand::none)
@@ -604,13 +607,16 @@ public:
         detail::SubmissionAccess::charge(*input_queue_, ticket, 0, input_.input().raw().size());
         admission_ = ticket;
         lease.release();
-      } catch (const Error &error) {
-        say(error.what());
+      } catch (const Error &) {
+        admission_failure_ = std::current_exception();
       }
   }
   std::optional<detail::InputLine> admitted(std::optional<detail::InputLine> line) {
     if (line) {
       line->admission = std::exchange(admission_, 0);
+      if (!line->admission_failure)
+        line->admission_failure = admission_failure_;
+      admission_failure_ = {};
       line->reservation = detail::SubmissionLease(input_queue_, line->admission);
     }
     return line;
@@ -619,6 +625,7 @@ public:
     if (input_queue_)
       detail::SubmissionAccess::abandon(*input_queue_, admission_);
     admission_ = 0;
+    admission_failure_ = {};
     input_queue_ = queue;
   }
   std::optional<detail::InputOrigin> input_origin_;
@@ -1364,8 +1371,10 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     std::optional<detail::SubmissionPreparation> inspected;
     std::shared_ptr<const detail::PreparedSubmission> payload;
     line.preparation = detail::prepare_submission(cancel, [&] {
+      if (line.admission_failure)
+        std::rethrow_exception(line.admission_failure);
       if (pending_input && !line.admission)
-        throw Error("Pending input exceeds 100-entry limit");
+        throw Error("Pending submission has no admission");
       if (pending_input)
         inspected.emplace(line.original_storage());
       if (line.admission)

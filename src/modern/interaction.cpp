@@ -130,14 +130,10 @@ void Interaction::submit(const std::string &text) {
     return;
   if (text.size() > detail::raw_input_limit)
     throw Error("Pending raw input exceeds 65536-byte limit");
-  const auto ticket = detail::SubmissionAccess::reserve(*this);
-  detail::SubmissionLease lease(this, ticket);
-  const auto payload = detail::SubmissionPreparation(std::make_shared<const std::string>(text))
-                           .finish({}, [&](size_t bytes, size_t retained) {
-                             detail::SubmissionAccess::charge(*this, ticket, bytes, retained);
-                           });
-  detail::SubmissionAccess::commit_prepared(*this, ticket, payload, false);
-  lease.release();
+  detail::SubmissionAccess::submit(*this, text, [](const std::string &raw) {
+    return detail::SubmissionPreparation(std::make_shared<const std::string>(raw))
+        .finish({}, [](size_t, size_t) {});
+  });
 }
 std::vector<std::string> Interaction::take_input() {
   std::lock_guard<std::mutex> lock(mutex_);

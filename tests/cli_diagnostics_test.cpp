@@ -2730,6 +2730,41 @@ TEST(InputPreparation, LimitMessagesNameTheThresholdActuallyEnforced) {
   }
 }
 
+TEST(SubmissionQueue, PublicPreparationExposesNoReservationAcrossTurnCleanup) {
+  Interaction io;
+  io.begin_turn("s");
+  std::promise<void> ready, release;
+  auto go = release.get_future();
+  auto started = ready.get_future();
+  std::exception_ptr failure;
+  std::thread producer([&] {
+    try {
+      detail::SubmissionAccess::submit(io, "message", [&](const std::string &raw) {
+        ready.set_value();
+        if (go.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
+          throw Error("Submission test gate did not open");
+        return detail::SubmissionPreparation(std::make_shared<const std::string>(raw))
+            .finish({}, [](size_t, size_t) {});
+      });
+    } catch (...) {
+      failure = std::current_exception();
+    }
+  });
+  const bool waiting = started.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
+  std::vector<std::string> drained;
+  if (waiting) {
+    io.end_turn();
+    drained = io.take_pending("s");
+    io.begin_turn("s");
+  }
+  release.set_value();
+  producer.join();
+  EXPECT_TRUE(waiting);
+  EXPECT_TRUE(drained.empty());
+  EXPECT_FALSE(failure) << "Atomic compatibility submit exposed an intermediate reservation";
+  EXPECT_EQ(io.take_input(), (std::vector<std::string>{"message"}));
+}
+
 TEST(SubmissionQueue, MalformedCompatibilityExpansionRetainsItsNormalizedCharge) {
   Interaction io;
   io.begin_turn("s");
