@@ -62,6 +62,20 @@ void disable() noexcept {
   failed_status = SQLITE_IOERR;
   skip = 0;
 }
+// Measurement has independent ownership from allocation-fault injection.
+class AllocationMeasurement {
+  bool previous_ = measure_allocations;
+
+public:
+  AllocationMeasurement() noexcept {
+    measure_allocations = true;
+  }
+  ~AllocationMeasurement() {
+    measure_allocations = previous_;
+  }
+  AllocationMeasurement(const AllocationMeasurement &) = delete;
+  AllocationMeasurement &operator=(const AllocationMeasurement &) = delete;
+};
 } // namespace fault
 void *operator new(std::size_t n) {
   if (fault::measure_allocations)
@@ -2515,14 +2529,16 @@ TEST(PreparationFault, QueuePreflightRunsBeforeAllocatingTheExpandedBacking) {
   bool rejected = false;
   size_t requested = 0;
   fault::largest_allocation = 0;
-  fault::measure_allocations = true;
-  try {
-    (void)detail::prepare_interactive_prompt(config, files, input, [&](size_t bytes) {
-      requested = bytes;
-      throw Error("Queue preflight rejected the expansion");
-    });
-  } catch (const Error &) {
-    rejected = true;
+  {
+    fault::AllocationMeasurement measurement;
+    try {
+      (void)detail::prepare_interactive_prompt(config, files, input, [&](size_t bytes) {
+        requested = bytes;
+        throw Error("Queue preflight rejected the expansion");
+      });
+    } catch (const Error &) {
+      rejected = true;
+    }
   }
   const auto largest = fault::largest_allocation;
   fault::disable();
@@ -2549,12 +2565,14 @@ TEST(PreparationFault, SaturatedPublicAdmissionRejectsBeforeAnyPayloadSizedAlloc
       detail::SubmissionAccess::charge(io, ticket, 0, 8388608);
     }
     fault::largest_allocation = 0;
-    fault::measure_allocations = true;
     bool rejected = false;
-    try {
-      io.submit(raw);
-    } catch (const Error &) {
-      rejected = true;
+    {
+      fault::AllocationMeasurement measurement;
+      try {
+        io.submit(raw);
+      } catch (const Error &) {
+        rejected = true;
+      }
     }
     const auto largest = fault::largest_allocation;
     fault::disable();
@@ -2566,4 +2584,32 @@ TEST(PreparationFault, SaturatedPublicAdmissionRejectsBeforeAnyPayloadSizedAlloc
     EXPECT_NO_THROW(io.submit("usable"));
     EXPECT_EQ(io.take_input(), (std::vector<std::string>{"usable"}));
   }
+}
+
+TEST(PreparationFault, MeasurementRestoresItsOwnStateAcrossNestedAndExceptionalScopes) {
+  fault::measure_allocations = false;
+  for (bool allocation : {false, true}) {
+    try {
+      fault::AllocationMeasurement outer;
+      EXPECT_TRUE(fault::measure_allocations);
+      {
+        fault::AllocationMeasurement inner;
+        EXPECT_TRUE(fault::measure_allocations);
+      }
+      EXPECT_TRUE(fault::measure_allocations);
+      if (allocation)
+        throw std::bad_alloc();
+      throw Error("original measurement failure");
+    } catch (const std::bad_alloc &) {
+      EXPECT_TRUE(allocation);
+    } catch (const Error &error) {
+      EXPECT_FALSE(allocation);
+      EXPECT_STREQ(error.what(), "original measurement failure");
+    }
+    EXPECT_FALSE(fault::measure_allocations) << "Exceptional measurement leaked observation state";
+  }
+  fault::measure_allocations = true;
+  { fault::AllocationMeasurement nested; }
+  EXPECT_TRUE(fault::measure_allocations);
+  fault::measure_allocations = false;
 }
