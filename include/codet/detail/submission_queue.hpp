@@ -1,6 +1,6 @@
 #pragma once
-#include "codet/detail/prepared_prompt.hpp"
 #include "codet/detail/submission_lease.hpp"
+#include "codet/detail/submission_payload.hpp"
 #include "codet/interaction.hpp"
 #include <algorithm>
 
@@ -14,7 +14,8 @@ public:
   std::shared_ptr<const PreparedPrompt> prepared;
   QueuedSubmission(std::shared_ptr<const std::string> backing,
                    std::shared_ptr<const PreparedPrompt> command)
-      : backing_(std::move(backing)), text(*backing_), prepared(std::move(command)) {}
+      : backing_(std::move(backing)), text(PreparedPrompt::checked(backing_)),
+        prepared(std::move(command)) {}
 };
 // Queue admission and accounting share the existing interaction mutex. I/O and
 // normalization happen outside it; immutable normalized payloads transfer once.
@@ -39,68 +40,81 @@ struct SubmissionAccess {
       io.input_.erase(entry);
     }
   }
-  static void charge(Interaction &io, uint64_t sequence, size_t bytes, size_t retained) {
-    std::lock_guard<std::mutex> lock(io.mutex_);
+
+private:
+  static auto reserved(Interaction &io, uint64_t sequence) {
     const auto entry = std::find_if(io.input_.begin(), io.input_.end(),
                                     [&](const auto &line) { return line.sequence == sequence; });
     if (entry == io.input_.end() || entry->kind != Interaction::InputKind::reserved)
       throw Error("Pending submission lost its admission");
-    io.check_input_capacity(bytes, retained, entry->charged_bytes, entry->retained_bytes);
-    io.input_bytes_ = io.input_bytes_ - entry->charged_bytes + bytes;
-    io.retained_bytes_ = io.retained_bytes_ - entry->retained_bytes + retained;
-    entry->charged_bytes = bytes;
-    entry->retained_bytes = retained;
+    return entry;
+  }
+  static void account_locked(Interaction &io, Interaction::Input &entry, size_t bytes,
+                             size_t retained) {
+    io.input_bytes_ = io.input_bytes_ - entry.charged_bytes + bytes;
+    io.retained_bytes_ = io.retained_bytes_ - entry.retained_bytes + retained;
+    entry.charged_bytes = bytes;
+    entry.retained_bytes = retained;
+  }
+  static void charge_locked(Interaction &io, Interaction::Input &entry, size_t bytes,
+                            size_t retained) {
+    io.check_input_capacity(bytes, retained, entry.charged_bytes, entry.retained_bytes);
+    account_locked(io, entry, bytes, retained);
+  }
+  static void assign(Interaction::Input &entry, const PreparedSubmission &payload, bool followup) {
+    entry.text = payload.normalized_storage();
+    entry.prepared = payload.execution();
+    entry.kind = followup ? Interaction::InputKind::followup : Interaction::InputKind::steering;
+  }
+
+public:
+  static void charge(Interaction &io, uint64_t sequence, size_t bytes, size_t retained) {
+    std::lock_guard<std::mutex> lock(io.mutex_);
+    charge_locked(io, *reserved(io, sequence), bytes, retained);
   }
   static void charge(Interaction &io, uint64_t sequence, size_t bytes) {
     charge(io, sequence, bytes, bytes);
   }
-  static size_t retained_size(const std::shared_ptr<const std::string> &text,
-                              const std::shared_ptr<const PreparedPrompt> &expansion) {
-    size_t bytes = text->size();
-    if (expansion) {
-      if (text.get() != &expansion->original)
-        bytes += expansion->original.size();
-      bytes += expansion->expanded.size();
-    }
-    return bytes;
-  }
-  static void commit_prepared(Interaction &io, uint64_t sequence,
-                              std::shared_ptr<const std::string> text, bool held, bool command,
-                              std::shared_ptr<const PreparedPrompt> expansion = {}) {
-    const auto bytes = expansion ? expansion->expanded.size() : text->size();
-    const auto retained = retained_size(text, expansion);
+  static void commit_prepared(Interaction &io, uint64_t sequence, const PreparedSubmission &payload,
+                              bool held) {
     std::lock_guard<std::mutex> lock(io.mutex_);
-    const auto entry = std::find_if(io.input_.begin(), io.input_.end(),
-                                    [&](const auto &line) { return line.sequence == sequence; });
-    if (entry == io.input_.end() || entry->kind != Interaction::InputKind::reserved)
-      throw Error("Pending submission lost its admission");
-    io.check_input_capacity(bytes, retained, entry->charged_bytes, entry->retained_bytes);
-    io.input_bytes_ = io.input_bytes_ - entry->charged_bytes + bytes;
-    io.retained_bytes_ = io.retained_bytes_ - entry->retained_bytes + retained;
-    entry->charged_bytes = bytes;
-    entry->retained_bytes = retained;
-    const bool followup =
-        command || held || entry->turn != io.turn_ || io.input_barrier(entry) || !io.active_;
-    entry->text = std::move(text);
-    entry->prepared = std::move(expansion);
-    entry->kind = followup ? Interaction::InputKind::followup : Interaction::InputKind::steering;
+    const auto entry = reserved(io, sequence);
+    charge_locked(io, *entry, payload.effective_size(), payload.retained_size());
+    const bool followup = payload.command() || held || entry->turn != io.turn_ ||
+                          io.input_barrier(entry) || !io.active_;
+    assign(*entry, payload, followup);
     io.changed_.notify_all();
   }
-  // Compatibility entry point for host harnesses and internal callers with raw text.
+  static void insert(Interaction &io, const PreparedSubmission &payload) {
+    std::lock_guard<std::mutex> lock(io.mutex_);
+    if (io.input_.size() >= queued_input_count)
+      throw Error("Pending input exceeds 100-entry limit");
+    io.check_input_capacity(payload.effective_size(), payload.retained_size());
+    const bool followup = payload.command() || !io.active_ || io.input_barrier(io.input_.cend());
+    io.input_.push_back(
+        {io.session_, {}, io.turn_, ++io.next_input_, Interaction::InputKind::reserved});
+    auto &entry = io.input_.back();
+    account_locked(io, entry, payload.effective_size(), payload.retained_size());
+    assign(entry, payload, followup);
+    io.changed_.notify_all();
+  }
+  template <class Prepare>
+  static void submit(Interaction &io, const std::string &text, Prepare prepare) {
+    const auto payload = prepare(text); // No queue state is visible during preparation.
+    insert(io, payload);
+  }
+  // Raw compatibility callers use exactly the same payload preparation as the UI.
   static void commit(Interaction &io, uint64_t sequence, const std::string &text, bool held,
                      bool command = false, std::shared_ptr<const PreparedPrompt> expansion = {}) {
-    if (text.empty() || text.size() > raw_input_limit)
-      throw Error("Pending raw input exceeds 65536-byte limit");
-    bool repaired = false;
-    const auto length = normalized_input_size(text, expanded_input_limit, &repaired);
-    const auto effective =
-        expansion ? normalized_input_size(expansion->expanded, expanded_input_limit) : length;
-    const auto retained =
-        length + (expansion ? expansion->original.size() + expansion->expanded.size() : 0);
-    charge(io, sequence, effective, retained);
-    auto normalized =
-        std::make_shared<const std::string>(normalized_input_known(text, length, repaired));
-    commit_prepared(io, sequence, std::move(normalized), held, command, std::move(expansion));
+    if (command && !expansion) {
+      // A caller may freeze a command barrier without custom expansion.
+      expansion = std::make_shared<const PreparedPrompt>(text, text);
+    }
+    const auto payload = SubmissionPreparation(std::make_shared<const std::string>(text))
+                             .finish(std::move(expansion), [&](size_t bytes, size_t retained) {
+                               charge(io, sequence, bytes, retained);
+                             });
+    commit_prepared(io, sequence, payload, held);
   }
   static std::optional<QueuedSubmission> next(Interaction &io, const std::string &session) {
     std::lock_guard<std::mutex> lock(io.mutex_);

@@ -21,6 +21,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <fstream>
+#include <future>
 #include <gmock/gmock.h>
 #include <gtest/gtest-spi.h>
 #include <gtest/gtest.h>
@@ -2638,11 +2639,11 @@ TEST(SubmissionQueue, LeaseAndSteeringConsumptionReleaseEffectiveCharges) {
   }
   EXPECT_TRUE(io.take_input().empty());
   for (unsigned round = 0; round != 3; ++round) {
-    for (unsigned i = 0; i != 42; ++i)
+    for (unsigned i = 0; i != 32; ++i)
       io.submit(std::string(detail::raw_input_limit, static_cast<char>(0x80)));
     EXPECT_THROW(io.submit(std::string(detail::raw_input_limit, static_cast<char>(0x80))), Error);
     auto steering = io.take_input();
-    EXPECT_EQ(steering.size(), 42u);
+    EXPECT_EQ(steering.size(), 32u);
     EXPECT_EQ(steering.front().size(), 196608u);
   }
   io.end_turn();
@@ -2701,9 +2702,10 @@ TEST(SubmissionQueue, SharedPreparedOriginalCountsOneBackingAndStillForcesAFollo
   auto command =
       std::make_shared<const detail::PreparedPrompt>(detail::PreparedPrompt{"/review", "expanded"});
   auto text = std::shared_ptr<const std::string>(command, &command->original);
-  EXPECT_EQ(detail::SubmissionAccess::retained_size(text, command), 15u);
+  const auto payload = detail::SubmissionPreparation(text).finish(command, [](size_t, size_t) {});
+  EXPECT_EQ(payload.retained_size(), 15u);
   const auto ticket = detail::SubmissionAccess::reserve(io);
-  detail::SubmissionAccess::commit_prepared(io, ticket, text, false, true, command);
+  detail::SubmissionAccess::commit_prepared(io, ticket, payload, false);
   EXPECT_TRUE(io.take_input().empty()) << "Prepared command became unexpanded steering";
   io.end_turn();
   auto next = detail::SubmissionAccess::next(io, "s");
@@ -2726,6 +2728,53 @@ TEST(InputPreparation, LimitMessagesNameTheThresholdActuallyEnforced) {
   } catch (const Error &error) {
     EXPECT_THAT(error.what(), HasSubstr("262144-byte per-entry"));
   }
+}
+
+TEST(SubmissionQueue, MalformedCompatibilityExpansionRetainsItsNormalizedCharge) {
+  Interaction io;
+  io.begin_turn("s");
+  unsigned accepted = 0;
+  for (; accepted != 43; ++accepted) {
+    const auto ticket = detail::SubmissionAccess::reserve(io);
+    detail::SubmissionLease lease(&io, ticket);
+    auto command = std::make_shared<const detail::PreparedPrompt>(
+        "x", std::string(65536, static_cast<char>(0x80)));
+    try {
+      detail::SubmissionAccess::commit(io, ticket, "x", true, true, command);
+      lease.release();
+    } catch (const Error &error) {
+      EXPECT_THAT(error.what(), HasSubstr("8388608-byte queue budget"));
+      break;
+    }
+  }
+  EXPECT_EQ(accepted, 42u) << "Normalized expansion bytes disappeared from accounting";
+  io.end_turn();
+  for (unsigned i = 0; i < accepted; ++i) {
+    auto next = detail::SubmissionAccess::next(io, "s");
+    ASSERT_TRUE(next);
+    EXPECT_EQ(next->prepared->expanded.size(), 196608u);
+    EXPECT_EQ(next->prepared->expanded,
+              detail::normalized_input(std::string(65536, static_cast<char>(0x80)), 262144));
+  }
+  EXPECT_FALSE(detail::SubmissionAccess::next(io, "s"));
+}
+
+TEST(SubmissionQueue, ValidatedPayloadSharesUnchangedBytesAndRejectsMissingBacking) {
+  auto raw = std::make_shared<const std::string>(65536, 'x');
+  const auto valid = detail::SubmissionPreparation(raw).finish({}, [](size_t, size_t) {});
+  EXPECT_EQ(valid.normalized_storage().get(), raw.get());
+  EXPECT_EQ(valid.execution()->original_storage().get(), raw.get());
+  EXPECT_EQ(valid.execution()->expanded_storage().get(), raw.get());
+  EXPECT_EQ(valid.retained_size(), raw->size()) << "Identical backing was charged more than once";
+  auto bad = std::make_shared<const std::string>(65536, static_cast<char>(0x80));
+  const auto repaired = detail::SubmissionPreparation(bad).finish({}, [](size_t, size_t) {});
+  EXPECT_EQ(repaired.execution()->original_storage().get(), bad.get());
+  EXPECT_EQ(repaired.execution()->expanded.size(), 196608u);
+  EXPECT_EQ(repaired.retained_size(), 262144u);
+  EXPECT_THROW(detail::SubmissionPreparation(nullptr), Error);
+  EXPECT_THROW((detail::PreparedPrompt(nullptr, raw)), Error);
+  static_assert(!std::is_default_constructible<detail::PreparedSubmission>::value,
+                "Unvalidated payloads must not be constructible");
 }
 
 TEST(InputAttachments, PreparedProviderReceivesOriginalImages) {

@@ -2454,10 +2454,11 @@ TEST(PreparationFault, PreparedCommitTransfersBackingsWithoutAllocatingOrRenorma
   auto text = std::shared_ptr<const std::string>(command, &command->original);
   detail::SubmissionAccess::charge(io, ticket, 8,
                                    22); // Includes the frozen raw line until transfer.
+  const auto payload = detail::SubmissionPreparation(text).finish(command, [](size_t, size_t) {});
   bool failed = false;
   fault::countdown = 0;
   try {
-    detail::SubmissionAccess::commit_prepared(io, ticket, text, false, true, command);
+    detail::SubmissionAccess::commit_prepared(io, ticket, payload, false);
   } catch (const std::bad_alloc &) {
     failed = true;
   }
@@ -2474,7 +2475,8 @@ TEST(PreparationFault, QueueHandoffKeepsTheBackingWithoutAFullTextAllocation) {
   io.begin_turn("s");
   auto text = std::make_shared<const std::string>(65536, 'x');
   const auto ticket = detail::SubmissionAccess::reserve(io);
-  detail::SubmissionAccess::commit_prepared(io, ticket, text, true, false);
+  const auto payload = detail::SubmissionPreparation(text).finish({}, [](size_t, size_t) {});
+  detail::SubmissionAccess::commit_prepared(io, ticket, payload, true);
   io.end_turn();
   bool failed = false;
   auto next = [&]() -> std::optional<detail::QueuedSubmission> {
