@@ -3,6 +3,7 @@
 #include "codet/detail/cleanup_diagnostics.hpp"
 #include "codet/detail/cli_diagnostics.hpp"
 #include "codet/detail/curses_input.hpp"
+#include "codet/detail/interactive_preparation.hpp"
 #include "codet/detail/line_prompt.hpp"
 #include "codet/detail/native_output.hpp"
 #include "codet/detail/pending_control.hpp"
@@ -2701,7 +2702,8 @@ TEST(SubmissionQueue, SharedPreparedOriginalCountsOneBackingAndStillForcesAFollo
   auto command =
       std::make_shared<const detail::PreparedPrompt>(detail::PreparedPrompt{"/review", "expanded"});
   auto text = std::shared_ptr<const std::string>(command, &command->original);
-  const auto payload = detail::SubmissionPreparation(text).finish(command, true, [](size_t, size_t) {});
+  const auto payload =
+      detail::SubmissionPreparation(text).finish(command, true, [](size_t, size_t) {});
   EXPECT_EQ(payload.retained_size(), 15u);
   const auto ticket = detail::SubmissionAccess::reserve(io);
   detail::SubmissionAccess::commit_prepared(io, ticket, payload, false);
@@ -2888,4 +2890,75 @@ TEST(SubmissionQueue, ExplicitCommandFlagIsIndependentOfPreparedContentAndHeldSt
                 << "Barrier-only content duplicated unchanged backing";
         }
       }
+}
+TEST(InputPreparation, SharedProductionPreparationKeepsOneFrozenCommandAndRawHookBytes) {
+  TempDirectory temporary;
+  NativeFileSystem files;
+  Config config;
+  config.cwd = temporary.root;
+  config.home = temporary.root / "home";
+  fs::create_directories(config.home / "commands");
+  files.atomic_write(config.home / "commands/review.md", "expanded $ARGUMENTS");
+  Interaction io;
+  io.begin_turn("session");
+  for (const auto &text : {std::string("/review once"), std::string("bad\xff")}) {
+    detail::InputLine line{text};
+    line.preparation_context = detail::PreparationContext::pending;
+    line.admission = detail::SubmissionAccess::reserve(io);
+    line.reservation = detail::SubmissionLease(&io, line.admission);
+    const auto result =
+        detail::prepare_input_submission(config, files, line, &io, Cancellation{}, [](unsigned) {});
+    ASSERT_EQ(result.state, detail::PreparationState::ready);
+    ASSERT_TRUE(result.submission);
+    const auto execution = result.submission->execution();
+    EXPECT_EQ(execution->original, text);
+    if (text.front() == '/') {
+      EXPECT_EQ(result.prompt.get(), execution.get())
+          << "Preparation created two custom prompt wrappers";
+      EXPECT_TRUE(result.submission->command());
+      EXPECT_EQ(execution->expanded, "expanded once");
+      files.atomic_write(config.home / "commands/review.md", "modified after submission");
+      EXPECT_EQ(execution->expanded, "expanded once");
+    } else {
+      EXPECT_FALSE(result.prompt);
+      EXPECT_FALSE(result.submission->command());
+      EXPECT_EQ(execution->expanded, detail::normalized_input(text, 262144));
+    }
+  }
+  io.end_turn();
+  EXPECT_TRUE(io.take_pending("session").empty());
+}
+TEST(InputPreparation, InvalidAdmissionContextAndRawFailurePrecedenceAreDeterministic) {
+  TempDirectory temporary;
+  NativeFileSystem files;
+  Config config;
+  config.cwd = config.home = temporary.root;
+  Interaction io;
+  io.begin_turn("session");
+  const auto message = [&](detail::InputLine &line, const Cancellation &cancel) {
+    const auto result =
+        detail::prepare_input_submission(config, files, line, &io, cancel, [](unsigned) {});
+    if (result.state == detail::PreparationState::cancelled)
+      return std::string("cancelled");
+    EXPECT_EQ(result.state, detail::PreparationState::failed);
+    try {
+      if (result.failure)
+        std::rethrow_exception(result.failure);
+    } catch (const Error &error) {
+      return std::string(error.what());
+    }
+    return std::string("missing error");
+  };
+  detail::InputLine fresh{"fresh"};
+  fresh.admission = 1;
+  EXPECT_THAT(message(fresh, Cancellation{}), HasSubstr("incompatible preparation context"))
+      << "Fresh input dereferenced a missing pending inspection";
+  detail::InputLine pending{std::string(65537, 'x')};
+  pending.preparation_context = detail::PreparationContext::pending;
+  pending.admission_failure = std::make_exception_ptr(Error("Pending retained queue budget"));
+  EXPECT_THAT(message(pending, Cancellation{}), HasSubstr("65536-byte"))
+      << "Admission failure masked the pending raw limit";
+  Cancellation cancelled;
+  cancelled.requested = true;
+  EXPECT_EQ(message(pending, cancelled), "cancelled");
 }

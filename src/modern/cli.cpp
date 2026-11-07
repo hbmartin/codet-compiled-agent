@@ -8,6 +8,7 @@
 #include "codet/detail/cli_output.hpp"
 #include "codet/detail/curses_input.hpp"
 #include "codet/detail/curses_render.hpp"
+#include "codet/detail/interactive_preparation.hpp"
 #include "codet/detail/line_prompt.hpp"
 #include "codet/detail/native_terminal.hpp"
 #include "codet/detail/pending_control.hpp"
@@ -1373,39 +1374,11 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     const bool pending_input = line.preparation_context == detail::PreparationContext::pending;
     if (pending_input && line.text().empty())
       return;
-    std::optional<detail::SubmissionPreparation> inspected;
-    std::shared_ptr<const detail::PreparedSubmission> payload;
-    line.preparation = detail::prepare_submission(cancel, [&] {
-      if (line.admission_failure)
-        std::rethrow_exception(line.admission_failure);
-      if (pending_input && !line.admission)
-        throw Error("Pending submission has no admission");
-      if (pending_input)
-        inspected.emplace(line.original_storage());
-      if (line.admission)
-        detail::SubmissionAccess::charge(*interaction, line.admission, 0,
-                                         inspected->retained_size());
-      if (lifecycle.preparing)
-        lifecycle.preparing(lifecycle.context, line.text(), 1);
-      auto value = detail::prepare_interactive_prompt(
-          config, files, line.original_storage(), [&](size_t bytes) {
-            if (line.admission)
-              detail::SubmissionAccess::charge(*interaction, line.admission, bytes,
-                                               inspected->retained_size(bytes));
-          });
-      if (lifecycle.preparing)
-        lifecycle.preparing(lifecycle.context, line.text(), 2);
-      if (pending_input) {
-        auto command = value ? std::make_shared<const detail::PreparedPrompt>(*value) : nullptr;
-        auto submission = inspected->finish(std::move(command), static_cast<bool>(value), [&](size_t bytes, size_t retained) {
-          detail::SubmissionAccess::charge(*interaction, line.admission, bytes, retained);
+    line.preparation = detail::prepare_input_submission(
+        config, files, line, interaction.get(), cancel, [&](unsigned stage) {
+          if (lifecycle.preparing)
+            lifecycle.preparing(lifecycle.context, line.text(), stage);
         });
-        payload = std::make_shared<const detail::PreparedSubmission>(std::move(submission));
-      }
-      return value;
-    });
-    if (line.preparation.state == detail::PreparationState::ready)
-      line.preparation.submission = std::move(payload);
   };
   const auto preparation_ready = [&](detail::InputLine &line) {
     prepare_line(line);
@@ -1505,13 +1478,11 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       auto action = detail::classify_turn_input(
           line, phase == detail::TurnInputPhase::active && pending ? &*pending : nullptr, origin,
           phase);
-      std::shared_ptr<const detail::PreparedPrompt> expansion;
       if (action.action == detail::TurnInputAction::steer ||
           action.action == detail::TurnInputAction::hold) {
         if (!preparation_ready(line))
           return;
-        expansion = line.preparation.prompt;
-        if (expansion)
+        if (line.preparation.submission && line.preparation.submission->command())
           action.action = detail::TurnInputAction::idle_command;
       }
       switch (action.action) {
