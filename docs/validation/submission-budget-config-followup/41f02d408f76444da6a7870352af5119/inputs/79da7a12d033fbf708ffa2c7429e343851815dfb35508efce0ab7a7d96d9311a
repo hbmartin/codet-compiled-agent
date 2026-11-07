@@ -1,0 +1,2748 @@
+#include "codet/detail/approval_identity.hpp"
+#include "codet/detail/approval_review.hpp"
+#include "codet/detail/cleanup_diagnostics.hpp"
+#include "codet/detail/cli_diagnostics.hpp"
+#include "codet/detail/curses_input.hpp"
+#include "codet/detail/line_prompt.hpp"
+#include "codet/detail/native_output.hpp"
+#include "codet/detail/pending_control.hpp"
+#include "codet/detail/request_input.hpp"
+#include "codet/detail/request_input_controller.hpp"
+#include "codet/detail/submission_images.hpp"
+#include "codet/detail/submission_queue.hpp"
+#include "codet/detail/terminal_input.hpp"
+#include "codet/detail/tls_trust.hpp"
+#include "codet/detail/turn_input.hpp"
+#include "codet/detail/ui_history.hpp"
+#include "codet/interaction.hpp"
+#include "native_io_metrics.hpp"
+#include "process_helper.hpp"
+#include "temp.hpp"
+#include <cstring>
+#include <fcntl.h>
+#include <fstream>
+#include <gmock/gmock.h>
+#include <gtest/gtest-spi.h>
+#include <gtest/gtest.h>
+#include <sstream>
+#include <thread>
+
+using namespace codet;
+using namespace testing;
+namespace {
+#ifdef CODET_NATIVE_TERMINAL_METRICS
+thread_local unsigned input_backoffs = 0;
+int input_pause(const timespec *delay, timespec *) {
+  EXPECT_EQ(delay->tv_sec, 0);
+  EXPECT_EQ(delay->tv_nsec, 25000000);
+  ++input_backoffs;
+  return 0;
+}
+TEST(TerminalInput, TransientReadinessFailuresRemainRetryableAndOnlyReadsIndicateEof) {
+  int descriptors[2];
+  ASSERT_EQ(::pipe(descriptors), 0);
+  struct Cleanup {
+    int *descriptors;
+    ~Cleanup() {
+      ::close(descriptors[0]);
+      ::close(descriptors[1]);
+      test::native_io_metrics = {};
+    }
+  } cleanup{descriptors};
+  ASSERT_EQ(::write(descriptors[1], "x", 1), 1);
+  Cancellation cancel;
+  input_backoffs = 0;
+  for (const auto error : {EINTR, EAGAIN, ENOMEM}) {
+    test::native_io_metrics.interrupt_fd = descriptors[0];
+    test::native_io_metrics.input_error = error;
+    test::native_io_metrics.input_polls_failed = 1;
+    EXPECT_EQ(detail::wait_terminal_input(descriptors[0], 0), -1);
+    EXPECT_EQ(errno, error);
+    EXPECT_TRUE(detail::retry_terminal_input(error, &cancel.requested, input_pause));
+    EXPECT_GT(detail::wait_terminal_input(descriptors[0], 0), 0);
+  }
+  EXPECT_EQ(input_backoffs, 2u);
+  cancel.requested = true;
+  EXPECT_TRUE(detail::retry_terminal_input(EAGAIN, &cancel.requested, input_pause));
+  EXPECT_EQ(input_backoffs, 2u);
+  EXPECT_FALSE(detail::retry_terminal_input(EBADF, &cancel.requested, input_pause));
+  EXPECT_FALSE(detail::retry_terminal_input(EINVAL, &cancel.requested, input_pause));
+  char byte;
+  EXPECT_EQ(::read(descriptors[0], &byte, 1), 1);
+  EXPECT_EQ(byte, 'x');
+}
+#endif
+TEST(InteractionWarnings, RegistryRequiresDistinctSingleNonzeroBits) {
+  constexpr unsigned good[]{1, 2, 4, 8}, overlap[]{1, 3, 4}, duplicate[]{1, 1, 6}, zero[]{0, 1};
+  static_assert(detail::valid_warning_values(good));
+  static_assert(!detail::valid_warning_values(overlap));
+  static_assert(!detail::valid_warning_values(duplicate));
+  static_assert(!detail::valid_warning_values(zero));
+  EXPECT_TRUE(detail::valid_warning_values(good));
+}
+TEST(InteractionWarnings, FourthKindCannotAliasAnExistingRetry) {
+  using Four = detail::WarningBits<15>;
+  static_assert(Four::shift == 4 && (Four::retries & 8u) == 0);
+  const auto fourth = 8u;
+  EXPECT_EQ((fourth | (fourth >> Four::shift)) & Four::kinds, fourth);
+  EXPECT_EQ(((fourth << Four::shift) >> Four::shift) & Four::kinds, fourth);
+  EXPECT_EQ((1u << Four::shift) & fourth, 0u);
+}
+TEST(InteractionWarnings, RetainedWarningsAreNotReadmittedAfterRefreshThrows) {
+  Interaction interaction;
+  detail::UiHistory history;
+  size_t renders = 0;
+  interaction.warn(Interaction::Warning::exec_stop);
+  const auto consume = [&](std::string_view message) noexcept {
+    return detail::retain_warning([&] { history.add(message); },
+                                  [&] {
+                                    ++renders;
+                                    throw std::bad_alloc();
+                                  });
+  };
+  for (int i = 0; i != 100; ++i)
+    interaction.drain_warnings(consume);
+  EXPECT_EQ(renders, 1u);
+  ASSERT_EQ(history.lines().size(), 1u);
+  EXPECT_EQ(history.lines().front(), "Exec cleanup failed while stopping owned process");
+  interaction.warn(Interaction::Warning::exec_stop);
+  interaction.drain_warnings(consume);
+  EXPECT_EQ(history.lines().size(), 2u); // A genuinely new occurrence can be admitted.
+}
+#ifdef CODET_NATIVE_TERMINAL_METRICS
+TEST(DiagnosticWriter, NativeAliasesSeparatePartialRecordsWithoutDuplicatingTheirBoundary) {
+  int descriptors[2];
+  ASSERT_EQ(::pipe(descriptors), 0);
+  const auto child = test::start_helper(
+      {"--codet-alias-diagnostic-helper", std::to_string(descriptors[1])}, {descriptors[0]});
+  ::close(descriptors[1]);
+  ASSERT_GT(child, 0);
+  int status = 0;
+  const bool finished = test::wait_helper(child, status);
+  std::string bytes;
+  char buffer[128];
+  for (;;) {
+    const auto count = ::read(descriptors[0], buffer, sizeof(buffer));
+    if (count <= 0)
+      break;
+    bytes.append(buffer, static_cast<size_t>(count));
+  }
+  ::close(descriptors[0]);
+  ASSERT_TRUE(finished);
+  ASSERT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
+  EXPECT_EQ(bytes, "wa\nnext\nlast\n");
+}
+#endif
+TEST(InteractionWarnings, FailedAdmissionRemainsPendingWithoutReplacingTheOperationException) {
+  Interaction interaction;
+  interaction.warn(Interaction::Warning::event_render);
+  size_t refreshes = 0;
+  interaction.drain_warnings([&](std::string_view) {
+    return detail::retain_warning([] { throw std::bad_alloc(); }, [&] { ++refreshes; });
+  });
+  EXPECT_EQ(refreshes, 0u);
+  detail::UiHistory history;
+  interaction.drain_warnings([&](std::string_view message) {
+    return detail::retain_warning([&] { history.add(message); }, [&] { ++refreshes; });
+  });
+  EXPECT_EQ(refreshes, 1u);
+  EXPECT_EQ(history.lines().size(), 1u);
+}
+TEST(InteractionWarnings, NewOccurrencesGetOneIdleAttemptAndFailuresWaitForRealEvents) {
+  Interaction interaction;
+  size_t attempts = 0;
+  const auto fail = [&](std::string_view) {
+    ++attempts;
+    return false;
+  };
+  interaction.warn(Interaction::Warning::exec_stop);
+  for (int i = 0; i != 100; ++i)
+    interaction.drain_warnings(fail, false);
+  EXPECT_EQ(attempts, 1u);
+  interaction.drain_warnings(fail, true);
+  EXPECT_EQ(attempts, 2u);
+  interaction.drain_warnings(fail, false);
+  EXPECT_EQ(attempts, 2u);
+  interaction.drain_warnings(
+      [&](std::string_view) {
+        ++attempts;
+        return true;
+      },
+      true);
+  interaction.drain_warnings(fail, true);
+  EXPECT_EQ(attempts, 3u);
+}
+TEST(InteractionWarnings, ConcurrentOccurrenceDuringFailedAdmissionKeepsItsFirstAttempt) {
+  Interaction interaction;
+  interaction.warn(Interaction::Warning::event_render);
+  size_t attempts = 0;
+  interaction.drain_warnings(
+      [&](std::string_view) {
+        ++attempts;
+        std::thread producer([&] { interaction.warn(Interaction::Warning::event_render); });
+        producer.join();
+        return false;
+      },
+      false);
+  interaction.drain_warnings(
+      [&](std::string_view) {
+        ++attempts;
+        return true;
+      },
+      false);
+  interaction.drain_warnings(
+      [&](std::string_view) {
+        ++attempts;
+        return false;
+      },
+      true);
+  EXPECT_EQ(attempts, 2u);
+}
+TEST(InteractionWarnings, ThrowingDeliveryStillDrainsNewWarningsWithoutReplacingItsException) {
+  Interaction interaction;
+  interaction.warn(Interaction::Warning::exec_original);
+  bool delivered = false;
+  size_t attempts = 0;
+  const auto drain = [&](bool retry) {
+    interaction.drain_warnings(
+        [&](std::string_view) {
+          ++attempts;
+          return false;
+        },
+        retry);
+  };
+  const auto original = std::make_exception_ptr(Error("original delivery"));
+  try {
+    detail::WarningDrainScope scope(drain, delivered, false);
+    std::rethrow_exception(original);
+  } catch (...) {
+    EXPECT_EQ(std::current_exception(), original);
+  }
+  EXPECT_EQ(attempts, 1u);
+  { detail::WarningDrainScope scope(drain, delivered, false); }
+  EXPECT_EQ(attempts, 1u);
+  { detail::WarningDrainScope scope(drain, delivered, true); }
+  EXPECT_EQ(attempts, 2u);
+}
+TEST(InteractionWarnings, SurfacesMustSpecifyAdmissionAndRetainedHistorySurvivesRefreshFailure) {
+  struct Bare : detail::CliDiagnosticSurface {
+    bool fullscreen() const override {
+      return true;
+    }
+    void diagnostic(const std::string &) override {}
+  };
+  static_assert(std::is_abstract_v<Bare>, "Warning admission cannot be inferred from rendering");
+  struct Retaining final : Bare {
+    detail::UiHistory history;
+    size_t refreshes = 0;
+    bool warning_rendered(detail::RenderedTextView text) noexcept override {
+      return detail::retain_warning([&] { history.add(text.text); },
+                                    [&] {
+                                      ++refreshes;
+                                      throw std::bad_alloc();
+                                    });
+    }
+  } surface;
+  Interaction interaction;
+  interaction.warn(Interaction::Warning::event_render);
+  for (int i = 0; i != 100; ++i)
+    interaction.drain_warnings([&](std::string_view text) {
+      const std::string owned(text);
+      return surface.warning_rendered({owned});
+    });
+  EXPECT_EQ(surface.history.lines().size(), 1u);
+  EXPECT_EQ(surface.refreshes, 1u);
+}
+TEST(LineDestinations, AliasesShareRecoveryAndPermissionChangesKeepTheBoundary) {
+  detail::LineDestinations destinations;
+  struct stat tty {};
+  tty.st_mode = S_IFCHR;
+  tty.st_dev = 1;
+  tty.st_ino = 2;
+  destinations.bind(STDOUT_FILENO, tty);
+  destinations.bind(STDERR_FILENO, tty);
+  destinations.open(tty);
+  destinations.pending(STDERR_FILENO, true);
+  const auto before = destinations.generation(STDOUT_FILENO);
+  destinations.interrupt(STDERR_FILENO);
+  EXPECT_TRUE(destinations.pending(STDOUT_FILENO));
+  EXPECT_FALSE(destinations.row(tty));
+  EXPECT_GT(destinations.generation(STDOUT_FILENO), before);
+  const auto generation = destinations.generation(STDOUT_FILENO);
+  tty.st_mode |= S_IRUSR;
+  destinations.bind(STDOUT_FILENO, tty);
+  EXPECT_EQ(destinations.generation(STDOUT_FILENO), generation);
+  auto next = tty;
+  ++next.st_ino;
+  destinations.bind(STDOUT_FILENO, next);
+  EXPECT_FALSE(destinations.pending(STDOUT_FILENO));
+  EXPECT_TRUE(destinations.pending(STDERR_FILENO));
+}
+TEST(ApprovalIdentity, RequiresCompleteTypedIdentityAndNeverDefaultsApproval) {
+  const Json valid = {
+      {"codet_session_id", "session"}, {"codet_turn", uint64_t{3}}, {"request_id", "request"}};
+  const auto identity = detail::ApprovalIdentity::from(valid);
+  EXPECT_TRUE(identity.matches(valid));
+  for (const auto *key : {"codet_session_id", "codet_turn", "request_id"}) {
+    auto missing = valid;
+    missing.erase(key);
+    EXPECT_THROW(detail::ApprovalIdentity::from(missing), Error);
+    EXPECT_FALSE(identity.matches(missing));
+    auto wrong = valid;
+    wrong[key] = Json::array();
+    EXPECT_THROW(detail::ApprovalIdentity::from(wrong), Error);
+    EXPECT_FALSE(identity.matches(wrong));
+  }
+  for (Json turn : {Json(0), Json(-1), Json(1.5)}) {
+    auto invalid = valid;
+    invalid["codet_turn"] = turn;
+    EXPECT_THROW(detail::ApprovalIdentity::from(invalid), Error);
+  }
+  auto other = valid;
+  other["request_id"] = "expired";
+  EXPECT_FALSE(identity.matches(other));
+  other = valid;
+  other["codet_session_id"] = "different";
+  EXPECT_FALSE(identity.matches(other));
+  other = valid;
+  other["codet_turn"] = 4;
+  EXPECT_FALSE(identity.matches(other));
+  for (const auto *answer : {"y", "yes"})
+    EXPECT_TRUE(detail::approves(answer));
+  for (const auto *answer : {"Y", "YES", " y", "yes ", "n", "/quit", ""})
+    EXPECT_FALSE(detail::approves(answer));
+}
+TEST(ApprovalReview, EveryPageMustRenderAndResizeRestartsReview) {
+  detail::ApprovalReview review("session", 3, "request", std::string(3000, 'a') + "suffix");
+  EXPECT_TRUE(review.reshape(8, 40));
+  ASSERT_GT(review.pages(), 2u);
+  EXPECT_FALSE(review.approved_review());
+  review.next();
+  EXPECT_EQ(review.page(), 0u);
+  while (review.page() + 1 < review.pages()) {
+    review.displayed();
+    EXPECT_FALSE(review.approved_review());
+    review.next();
+  }
+  EXPECT_FALSE(review.approved_review());
+  review.displayed();
+  EXPECT_TRUE(review.approved_review());
+  review.previous();
+  EXPECT_TRUE(review.approved_review());
+  EXPECT_FALSE(review.reshape(8, 40));
+  EXPECT_TRUE(review.approved_review());
+  EXPECT_TRUE(review.reshape(8, 30));
+  EXPECT_EQ(review.page(), 0u);
+  EXPECT_FALSE(review.approved_review());
+  EXPECT_TRUE(review.reshape(3, 5));
+  EXPECT_FALSE(review.usable());
+  review.displayed();
+  EXPECT_FALSE(review.approved_review());
+}
+TEST(ApprovalReview, WrappingRetainsCompleteUnicodeAndEscapeTokensBeyondTranscriptLimits) {
+  std::string source;
+  for (size_t i = 0; i != 1100; ++i)
+    source += "雪\\x0A ";
+  const auto document = detail::literal_text(source + "\r\n\t\xff");
+  const auto expected = detail::CursesText(document).text();
+  for (int columns : {20, 40, 80}) {
+    detail::ApprovalReview review("session", 1, "request", document);
+    review.reshape(6, columns);
+    std::string reconstructed;
+    for (;;) {
+      for (size_t i = 0; i < review.capacity(); ++i) {
+        const auto row = review.line(i);
+        EXPECT_EQ(safe_text(std::string(row)), row);
+        EXPECT_EQ(row.size(),
+                  detail::rendered_prefix(expected.substr(reconstructed.size()), row.size()));
+        reconstructed += row;
+      }
+      review.displayed();
+      if (review.approved_review())
+        break;
+      review.next();
+    }
+    EXPECT_EQ(reconstructed, expected);
+  }
+}
+TEST(CursesInput, IncrementalPreparationPreservesRawBytesAndHasLinearWork) {
+  for (bool unicode : {false, true}) {
+    detail::CursesInput input;
+    input.unicode(unicode);
+    const std::string text = "abc雪\\x0A\xff";
+    std::string prefix;
+    for (const char byte : text) {
+      prefix += byte;
+      input += byte;
+      EXPECT_EQ(input.raw(), prefix);
+      EXPECT_EQ(input.view("", 1000),
+                detail::CursesText(detail::literal_text(prefix), unicode).text());
+      for (size_t columns = 1; columns < 80; ++columns)
+        EXPECT_EQ(input.view("codet> ", columns),
+                  detail::CursesText::input("codet> ", prefix, columns, unicode));
+    }
+    while (!prefix.empty()) {
+      prefix.pop_back();
+      input.pop_back();
+      EXPECT_EQ(input.raw(), prefix);
+      EXPECT_EQ(input.view("", 1000),
+                detail::CursesText(detail::literal_text(prefix), unicode).text());
+    }
+  }
+  detail::CursesInput input;
+  for (size_t i = 0; i != detail::CursesInput::limit; ++i)
+    input += 'a';
+  EXPECT_LE(input.rebuilt_bytes(), 2 * detail::CursesInput::limit);
+  const auto before = input.rebuilt_bytes();
+  for (size_t i = 0; i != 100; ++i)
+    EXPECT_EQ(input.view("codet> ", 79).size(), 79u);
+  EXPECT_EQ(input.rebuilt_bytes(), before);
+  input += 'b';
+  EXPECT_EQ(input.size(), detail::CursesInput::limit);
+}
+TEST(CursesInput, CharacterEraseUsesValidatedRawBoundariesAndUpdatesTailOnce) {
+  const std::vector<std::pair<std::string, std::string>> cases{
+      {"abc", "ab"},          {"a雪", "a"},           {"a🙂", "a"},
+      {"ae\xcc\x81", "ae"},   {"a\xe9", "a"},         {"a\xe9\x9b", "a"},
+      {"a\xf0\x9f\x99", "a"}, {"a\x80", "a"},         {"a\x80\x81", "a\x80"},
+      {"x\xff\x80", "x\xff"}, {"a\xe0\x80", "a\xe0"}, {"a\xed\xa0", "a\xed"},
+      {"a\xf4\x90", "a\xf4"}, {"a\xf5\x80", "a\xf5"}, {"雪\x80", "雪"},
+      {"🙂\x80", "🙂"},       {"\\xFF", "\\xF"},      {"\\", ""}};
+  for (bool unicode : {false, true}) {
+    for (const auto &[before, after] : cases) {
+      detail::CursesInput input;
+      input.unicode(unicode);
+      for (char byte : before)
+        input += byte;
+      input.erase_character();
+      EXPECT_EQ(input.raw(), after);
+      EXPECT_EQ(input.view("", 1000),
+                detail::CursesText(detail::literal_text(after), unicode).text());
+    }
+  }
+  detail::CursesInput input;
+  for (const char byte : std::string("retained🙂"))
+    input += byte;
+  const auto before = input.rebuilt_bytes();
+  input.erase_character();
+  EXPECT_EQ(input.raw(), "retained");
+  EXPECT_EQ(input.rebuilt_bytes(), before);
+  input.clear();
+  EXPECT_NO_THROW(input.erase_character());
+}
+TEST(RequestInput, ExpiryAndReplacementNeverReclassifyDraftAnswers) {
+  const detail::ApprovalIdentity first{"session", "first", 1}, second{"session", "second", 1};
+  for (const auto *answer : {"yes", "n", "free text", "1"}) {
+    detail::RequestInput input;
+    input.open(first);
+    input.edit();
+    input.close(); // Worker expiry before Enter, including across turn cleanup.
+    const auto stale = input.take(answer);
+    ASSERT_TRUE(stale.request);
+    EXPECT_EQ(stale.request->request, "first");
+    EXPECT_TRUE(stale.discarded);
+    EXPECT_FALSE(input.take("ordinary steering").request);
+    input.open(first);
+    input.edit();
+    EXPECT_TRUE(input.open(second));
+    EXPECT_TRUE(input.take(answer).discarded);
+    const auto fresh = input.take(answer);
+    ASSERT_TRUE(fresh.request);
+    EXPECT_EQ(fresh.request->request, "second");
+    EXPECT_FALSE(fresh.discarded);
+  }
+  detail::RequestInput input;
+  input.edit();
+  EXPECT_TRUE(input.ordinary_draft());
+  input.close();
+  EXPECT_TRUE(input.ordinary_draft()); // Worker completion preserves ordinary intent.
+  EXPECT_EQ(input.take("ordinary steering").text, "ordinary steering");
+  input.edit(); // An ordinary draft started before a request cannot answer it.
+  EXPECT_TRUE(input.open(first));
+  EXPECT_TRUE(input.take("yes").discarded);
+  EXPECT_FALSE(input.take("yes").discarded);
+}
+TEST(RequestInput, ClassificationKeepsQuitOutOfBandAndRequiresFreshRequestInput) {
+  const detail::ApprovalIdentity identity{"session", "approval-or-question", 1};
+  const Json event = {
+      {"codet_session_id", "session"}, {"codet_turn", 1}, {"request_id", "approval-or-question"}};
+  detail::RequestInput input;
+  EXPECT_FALSE(input.open(identity));
+  input.edit();
+  EXPECT_EQ(input.take("y").action(&event), detail::InputAction::answer);
+  input.edit();
+  input.close();
+  EXPECT_TRUE(input.stale());
+  input.open(identity);
+  for (const auto *exit : {"/quit", "/exit"})
+    EXPECT_EQ((detail::InputLine{exit, identity, true}.action(&event)), detail::InputAction::quit);
+  auto stale = input.take("yes");
+  EXPECT_EQ(stale.action(&event), detail::InputAction::discard);
+  EXPECT_FALSE(input.stale());
+  auto fresh = input.take("n");
+  EXPECT_EQ(fresh.action(&event), detail::InputAction::answer);
+  EXPECT_EQ(fresh.action(), detail::InputAction::discard);
+  input.close();
+  EXPECT_EQ(input.take("run tests").action(), detail::InputAction::message);
+}
+TEST(RequestInput, DiscardReasonDistinguishesFinishedExpiryFromStaleDrafts) {
+  const detail::ApprovalIdentity identity{"s", "request", 1};
+  detail::InputLine finished{"yes", identity, false}, unfinished{"yes", identity, true};
+  EXPECT_EQ(finished.action(), detail::InputAction::discard);
+  EXPECT_EQ(detail::discard_message(*finished.classify().rejection),
+            "Request expired; answer discarded.");
+  EXPECT_EQ(detail::discard_message(*unfinished.classify().rejection),
+            "Unfinished input discarded.");
+}
+TEST(RequestInputController, FreshEmptyAndPresentationClearsHaveDistinctOwnership) {
+  detail::RequestInputController input;
+  const detail::ApprovalIdentity first{"s", "first", 1}, second{"s", "second", 1};
+  input.append('x');
+  input.erase_character();
+  input.open(first, detail::RequestKind::question);
+  EXPECT_FALSE(input.stale());
+  EXPECT_EQ(input.guidance(), detail::RequestInputController::question_prompt);
+  input.append('y');
+  input.presentation_clear();
+  EXPECT_TRUE(input.input().empty());
+  input.open(second, detail::RequestKind::approval);
+  EXPECT_TRUE(input.stale());
+  EXPECT_EQ(input.guidance(), detail::RequestInput::discard_instruction);
+  input.append('x');
+  input.erase_character();
+  EXPECT_TRUE(input.stale());
+  const auto discarded = input.take();
+  ASSERT_TRUE(discarded.request);
+  EXPECT_EQ(discarded.request->request, "first");
+  EXPECT_TRUE(discarded.discarded);
+  EXPECT_EQ(input.guidance(), "Approve? [y/N]");
+  input.append('y');
+  const auto answer = input.take();
+  ASSERT_TRUE(answer.request);
+  EXPECT_EQ(answer.request->request, "second");
+  EXPECT_FALSE(answer.discarded);
+}
+struct LineFixture {
+  Cancellation cancel;
+  detail::IoContext io{cancel};
+  detail::RequestInputController input;
+  std::ostringstream stream;
+  detail::CliOutput output{stream};
+  std::string prompt = "codet> ";
+  struct stat tty {};
+  std::optional<detail::LinePrompt> line;
+  explicit LineFixture(size_t columns = 80) {
+    output.associate_terminal(STDOUT_FILENO);
+    tty.st_mode = S_IFCHR;
+    tty.st_dev = 1;
+    tty.st_rdev = 2;
+    line.emplace(input, output, io, prompt, tty, columns);
+    line->acquire();
+  }
+  void normal(std::string_view text) {
+    if (line->before_output(STDERR_FILENO, tty))
+      output.echo({"\n"});
+    output.display({text});
+  }
+};
+// A basic terminal row: CR returns to its start, spaces overwrite, LF ends it.
+std::string last_line(std::string_view wire) {
+  std::string row;
+  size_t column = 0;
+  for (char byte : wire) {
+    if (byte == '\r')
+      column = 0;
+    else if (byte == '\n') {
+      row.clear();
+      column = 0;
+    } else {
+      if (column == row.size())
+        row += byte;
+      else
+        row[column] = byte;
+      ++column;
+    }
+  }
+  while (!row.empty() && row.back() == ' ')
+    row.pop_back();
+  return row;
+}
+TEST(LinePrompt, RestoresTheSafeDraftAndDeletionMatchesSubmittedBytes) {
+  LineFixture f;
+  f.line->flush();
+  EXPECT_TRUE(f.stream.str().empty());
+  f.line->append('h');
+  f.line->append('e');
+  f.normal("done");
+  f.normal("second record");
+  f.line->flush();
+  EXPECT_EQ(last_line(f.stream.str()), "codet> he");
+  const auto before = f.stream.str();
+  f.line->flush();
+  EXPECT_EQ(f.stream.str(), before);
+  f.line->erase_character();
+  for (char byte : std::string("llo"))
+    f.line->append(byte);
+  EXPECT_EQ(last_line(f.stream.str()), "codet> hllo");
+  EXPECT_EQ(f.line->take().text, "hllo");
+}
+TEST(LinePrompt, SafeAppendsUseOnlyTheNewPreparedBytes) {
+  for (size_t columns : {size_t{0}, size_t{9}, size_t{80}}) {
+    LineFixture f(columns);
+    for (int i = 0; i != 30; ++i)
+      f.line->append('x');
+    EXPECT_EQ(f.stream.str(), "codet> " + std::string(30, 'x'));
+    const auto bytes = f.stream.str().size();
+    f.line->flush();
+    EXPECT_EQ(f.stream.str().size(), bytes);
+    f.line->erase_character();
+    EXPECT_EQ(f.input.input().raw(), std::string(29, 'x'));
+    if (!columns || columns == 9) {
+      EXPECT_THAT(f.stream.str(), HasSubstr("\ncodet> " + std::string(29, 'x')));
+      const auto wire = f.stream.str();
+      EXPECT_EQ(std::count(wire.begin(), wire.end(), '\r'), 0);
+    }
+  }
+}
+TEST(LinePrompt, UnknownWidthHoldsIncompleteUtf8AndKeepsSnapshotsBounded) {
+  LineFixture f(0);
+  f.line->append(static_cast<char>(0xe9));
+  EXPECT_EQ(f.stream.str(), "codet> ");
+  f.line->append(static_cast<char>(0x9b));
+  EXPECT_EQ(f.stream.str(), "codet> ");
+  f.line->append(static_cast<char>(0xaa));
+  EXPECT_EQ(f.stream.str(), "codet> " + std::string(f.input.input().prepared()));
+  for (int i = 0; i != 200; ++i)
+    f.line->append('x');
+  auto wire = f.stream.str();
+  EXPECT_EQ(std::count(wire.begin(), wire.end(), '\n'), 0);
+  const auto before = wire.size();
+  f.line->erase_character();
+  EXPECT_LE(f.stream.str().size() - before, 82u);
+  EXPECT_THAT(f.stream.str().substr(before), StartsWith("\ncodet> <"));
+}
+TEST(LinePrompt, BasicEmptyDraftEndsItsRowAndSubmissionExposesDeferredBytes) {
+  for (size_t width : {size_t{0}, size_t{9}}) {
+    LineFixture f(width);
+    f.line->append('x');
+    f.line->erase_character();
+    EXPECT_EQ(f.stream.str(), "codet> x\n");
+    EXPECT_TRUE(f.input.input().empty());
+    const auto before = f.stream.str();
+    f.line->flush();
+    EXPECT_EQ(f.stream.str(), before);
+    for (const std::string &raw : {std::string("a\xe9"), std::string("a\xf0\x9f"),
+                                   std::string("a\xff"), std::string("a\\xE9")}) {
+      f.stream.str("");
+      for (char byte : raw)
+        f.line->append(byte);
+      const auto submitted = f.line->take();
+      EXPECT_EQ(submitted.text, raw);
+      EXPECT_EQ(f.stream.str(), "codet> " + detail::literal_text(raw) + "\n");
+    }
+  }
+}
+TEST(LinePrompt, MultipleMutationsAndOwnershipGapsCannotUseTheBasicAppendShortcut) {
+  LineFixture f(0);
+  for (char byte : std::string("abc"))
+    f.line->append(byte);
+  f.line->release();
+  f.input.erase_character();
+  f.input.append('x');
+  f.line->acquire();
+  f.line->append('y');
+  f.line->append('z');
+  EXPECT_EQ(last_line(f.stream.str()), "codet> abxyz");
+  EXPECT_EQ(f.line->take().text, "abxyz");
+  EXPECT_THAT(f.stream.str(), Not(HasSubstr("abcyz")));
+}
+TEST(CursesInput, SharedDecoderDistinguishesIncompleteAndMalformedTrailingPrefixes) {
+  for (const std::string &partial :
+       {std::string("\xc2"), std::string("\xe0\xa0"), std::string("\xf4\x8f\xbf")}) {
+    const auto token = detail::rendered_token(partial, 0);
+    EXPECT_TRUE(token.incomplete);
+    EXPECT_FALSE(token.valid);
+    EXPECT_EQ(token.bytes, partial.size());
+  }
+  for (const std::string &malformed : {std::string("\xc0"), std::string("\xe0\x80"),
+                                       std::string("\xf4\x90"), std::string("\xe9x")}) {
+    EXPECT_FALSE(detail::rendered_token(malformed, 0).incomplete);
+    detail::CursesInput input;
+    for (char byte : malformed)
+      input += byte;
+    EXPECT_EQ(input.committed_end(), input.prepared().size());
+  }
+}
+TEST(LinePrompt, CachedTokensReplaceRawEchoAndOneColumnBackspace) {
+  for (const std::string &text : {std::string("e\xcc\x81"), std::string("雪"),
+                                  std::string("\xc2\x9b\xe2\x80\xae\\x41\xff")}) {
+    LineFixture f;
+    f.input.unicode(false);
+    for (char byte : text)
+      f.line->append(byte);
+    EXPECT_EQ(last_line(f.stream.str()), f.input.view(f.prompt, 79));
+    EXPECT_EQ(f.stream.str().find('\b'), std::string::npos);
+    EXPECT_EQ(f.stream.str().find('\x9b'), std::string::npos);
+    f.normal("notice");
+    f.line->flush();
+    EXPECT_EQ(last_line(f.stream.str()), f.input.view(f.prompt, 79));
+    f.line->erase_character();
+    EXPECT_EQ(last_line(f.stream.str()),
+              f.input.input().empty() ? std::string{} : f.input.view(f.prompt, 79));
+  }
+}
+TEST(LinePrompt, ApprovalAndQuestionDraftsSurviveOutputWithoutDuplicatedAnswers) {
+  for (auto kind : {detail::RequestKind::approval, detail::RequestKind::question}) {
+    LineFixture f;
+    f.input.open({"s", "request", 1}, kind);
+    f.line->flush();
+    f.line->append('y');
+    f.normal("notice");
+    f.line->flush();
+    EXPECT_THAT(last_line(f.stream.str()), ::testing::EndsWith(" y"));
+    f.line->submitted();
+    EXPECT_EQ(f.input.take().text, "y");
+  }
+}
+TEST(LinePrompt, RedirectedOutputAndReleasedRecoveryNeverRepaintAnotherPrompt) {
+  LineFixture f;
+  f.line->append('x');
+  const auto before = f.stream.str();
+  struct stat log {};
+  log.st_mode = S_IFREG;
+  EXPECT_FALSE(f.line->before_output(STDERR_FILENO, log));
+  f.line->flush();
+  EXPECT_EQ(f.stream.str(), before);
+  f.input.close();
+  f.line->release();
+  f.normal("done");
+  f.line->flush();
+  EXPECT_THAT(f.stream.str(), ::testing::EndsWith("\ndone\n"));
+  f.line.reset();
+  EXPECT_EQ(f.io.line_output, nullptr);
+}
+TEST(LinePrompt, ControllerMutationsInvalidatePresentationWithoutNotifications) {
+  LineFixture f;
+  f.line->append('x');
+  f.input.open({"s", "first", 1}, detail::RequestKind::approval);
+  f.line->flush();
+  EXPECT_EQ(last_line(f.stream.str()), "discard>");
+  const auto stale = f.input.take();
+  EXPECT_EQ(stale.classify().rejection, detail::InputDiscard::unfinished);
+  f.line->flush();
+  EXPECT_EQ(last_line(f.stream.str()), "Approve? [y/N]");
+  f.line->append('y');
+  f.input.presentation_clear();
+  f.line->flush();
+  EXPECT_EQ(last_line(f.stream.str()), "Approve? [y/N]");
+  f.input.close();
+  f.line->flush();
+  EXPECT_EQ(last_line(f.stream.str()), "discard>");
+}
+TEST(RequestInput, ValidSubmissionHasNoDiscardReason) {
+  detail::InputLine ordinary{"run tests", {}, false};
+  EXPECT_FALSE(ordinary.classify().rejection);
+  EXPECT_EQ(ordinary.classify().action, detail::InputAction::message);
+  const detail::ApprovalIdentity identity{"s", "r", 1};
+  const Json event = {{"codet_session_id", "s"}, {"codet_turn", 1}, {"request_id", "r"}};
+  detail::InputLine answer{"", identity, false};
+  EXPECT_EQ(answer.classify(&event).action, detail::InputAction::answer);
+  EXPECT_FALSE(answer.classify(&event).rejection);
+}
+TEST(LinePrompt, OldDestinationKeepsOnlyASeparatorAndCannotRepaintTheNewRow) {
+  LineFixture f;
+  f.line->append('x');
+  auto next = f.tty;
+  next.st_ino = 7;
+  next.st_rdev = 8;
+  EXPECT_TRUE(
+      f.line->before_output(STDOUT_FILENO, next)); // Untracked terminal: conservative boundary.
+  f.line->flush();
+  const auto before = f.stream.str();
+  EXPECT_TRUE(f.line->before_output(STDERR_FILENO, f.tty));
+  f.line->flush();
+  EXPECT_EQ(f.stream.str(), before);
+  EXPECT_FALSE(f.line->before_output(STDERR_FILENO, f.tty));
+  EXPECT_TRUE(f.line->before_output(STDERR_FILENO, next));
+}
+TEST(LinePrompt, MultipleStdoutChangesPreserveTheReachableStderrBoundaryAndGuidance) {
+  LineFixture f(20);
+  f.io.line_destinations.bind(STDERR_FILENO, f.tty);
+  f.input.open({"s", "request", 1}, detail::RequestKind::approval);
+  f.line->flush();
+  for (const auto inode : {2, 3}) {
+    auto next = f.tty;
+    next.st_ino = static_cast<decltype(next.st_ino)>(inode);
+    f.stream.str("");
+    (void)f.line->before_output(STDOUT_FILENO, next);
+    f.line->flush();
+    EXPECT_THAT(f.stream.str(), HasSubstr("Approve? [y/N]\n"));
+    EXPECT_THAT(f.stream.str(), EndsWith("a> "));
+  }
+  EXPECT_TRUE(f.line->before_output(STDERR_FILENO, f.tty));
+  EXPECT_FALSE(f.line->before_output(STDERR_FILENO, f.tty));
+}
+TEST(LinePrompt, FailedRowsAndGuidanceUseTheSharedRecoveryNewline) {
+  struct Partial : std::stringbuf {
+    bool fail = false;
+    size_t keep = 0;
+    int skip = 0;
+    std::streamsize xsputn(const char *text, std::streamsize count) override {
+      if (!fail || skip-- > 0)
+        return std::stringbuf::xsputn(text, count);
+      fail = false;
+      const auto size = std::min(count, static_cast<std::streamsize>(keep));
+      (void)std::stringbuf::xsputn(text, size);
+      return size;
+    }
+  };
+  for (size_t keep = 0; keep < 38; ++keep) {
+    Partial buffer;
+    buffer.fail = true;
+    buffer.keep = keep;
+    std::ostream stream(&buffer);
+    detail::CliOutput output(stream);
+    output.associate_terminal(STDOUT_FILENO);
+    Cancellation cancel;
+    detail::IoContext io(cancel);
+    detail::RequestInputController input;
+    input.open({"s", "q", 1}, detail::RequestKind::question);
+    struct stat tty {};
+    tty.st_mode = S_IFCHR;
+    const std::string prompt = "codet> ";
+    detail::LinePrompt line(input, output, io, prompt, tty, 20);
+    line.acquire();
+    line.flush();
+    EXPECT_EQ(last_line(buffer.str()), "q>") << keep;
+    line.append('y');
+    EXPECT_EQ(last_line(buffer.str()), "q> y") << keep;
+  }
+  for (int skip = 0; skip != 4; ++skip)
+    for (size_t keep = 0; keep != 26; ++keep) {
+      Partial buffer;
+      std::ostream stream(&buffer);
+      detail::CliOutput output(stream);
+      output.associate_terminal(STDOUT_FILENO);
+      Cancellation cancel;
+      detail::IoContext io(cancel);
+      detail::RequestInputController input;
+      struct stat tty {};
+      tty.st_mode = S_IFCHR;
+      const std::string prompt = "codet> ";
+      detail::LinePrompt line(input, output, io, prompt, tty, 80);
+      line.acquire();
+      for (const auto byte : std::string("abcdefghijklmnop"))
+        line.append(byte);
+      buffer.fail = true;
+      buffer.keep = keep;
+      buffer.skip = skip;
+      line.erase_character();
+      line.erase_character();
+      EXPECT_EQ(last_line(buffer.str()), "codet> abcdefghijklmn") << skip << ":" << keep;
+      EXPECT_EQ(input.take().text, "abcdefghijklmn");
+    }
+}
+TEST(LinePrompt, ErasingTheFinalCharacterRemovesTheActiveOrdinaryPrompt) {
+  LineFixture f;
+  f.line->append('x');
+  f.line->erase_character();
+  EXPECT_TRUE(last_line(f.stream.str()).empty());
+  const auto end = f.stream.str().size();
+  f.normal("progress");
+  f.line->flush();
+  EXPECT_EQ(f.stream.str().substr(end), "progress\n");
+}
+TEST(LinePrompt, DraftTrafficIsBoundedAndUnknownGeometryUsesSnapshots) {
+  LineFixture f;
+  for (size_t i = 0; i < 20480; ++i)
+    f.input.append('x');
+  f.line->flush();
+  f.stream.str("");
+  for (int i = 0; i < 100; ++i) {
+    f.normal("progress");
+    f.line->flush();
+  }
+  EXPECT_LT(f.stream.str().size(), 100 * 100u);
+  EXPECT_EQ(f.input.input().size(), 20480u);
+  EXPECT_THAT(last_line(f.stream.str()), HasSubstr("<"));
+  for (size_t columns : {size_t{0}, size_t{9}}) {
+    f.line.reset();
+    f.stream.str("");
+    f.line.emplace(f.input, f.output, f.io, f.prompt, f.tty, columns);
+    f.line->acquire();
+    f.line->flush();
+    EXPECT_EQ(f.stream.str().find('\r'), std::string::npos);
+    EXPECT_NE(f.stream.str().back(), '\n');
+    EXPECT_LE(f.stream.str().size(), 81u);
+  }
+}
+TEST(LinePrompt, FailedConfiguredSinkUsesTheInvocationGate) {
+  LineFixture f;
+  f.line->append('y');
+  detail::DiagnosticWriter errors(f.stream, &f.io);
+  const DiagnosticSink broken = [](const auto &) { throw Error("sink failed"); };
+  const std::string warning = "fallback";
+  // Injected destinations have no native identity: explicitly exercise the shared gate.
+  if (f.line->before_output(STDERR_FILENO, f.tty))
+    f.output.echo({"\n"});
+  detail::context_diagnostic(broken, errors, {warning});
+  f.line->flush();
+  EXPECT_THAT(f.stream.str(), HasSubstr("\nfallback\ncodet> y"));
+  const DiagnosticSink exhausted = [](const auto &) { throw std::bad_alloc(); };
+  EXPECT_THROW(detail::context_diagnostic(exhausted, errors, {warning}), std::bad_alloc);
+}
+TEST(LinePrompt, InstructionDeliveryIsIndependentOfPromptDelivery) {
+  struct Failing : std::stringbuf {
+    int writes = 0, fail = 0, instructions = 0;
+    std::streamsize xsputn(const char *text, std::streamsize size) override {
+      if (std::string_view(text, static_cast<size_t>(size)) ==
+          detail::RequestInput::discard_instruction)
+        ++instructions;
+      if (++writes == fail) {
+        const auto count = std::min(std::streamsize{3}, size);
+        (void)std::stringbuf::xsputn(text, count);
+        return count;
+      }
+      return std::stringbuf::xsputn(text, size);
+    }
+  };
+  for (int failure : {1, 2}) {
+    Failing buffer;
+    buffer.fail = failure;
+    std::ostream stream(&buffer);
+    detail::CliOutput output(stream);
+    output.associate_terminal(STDOUT_FILENO);
+    Cancellation cancel;
+    detail::IoContext io(cancel);
+    detail::RequestInputController input;
+    input.append('x');
+    input.open({"s", "r", 1}, detail::RequestKind::approval);
+    struct stat tty {};
+    tty.st_mode = S_IFCHR;
+    const std::string prompt = "codet> ";
+    detail::LinePrompt line(input, output, io, prompt, tty, 80);
+    line.acquire();
+    line.flush();
+    const int attempts = buffer.writes;
+    line.flush();
+    EXPECT_EQ(buffer.writes, attempts);
+    if (line.before_output(STDERR_FILENO, tty))
+      output.echo({"\n"});
+    output.display({"warning"});
+    line.flush();
+    EXPECT_EQ(buffer.instructions, failure == 1 ? 2 : 1);
+    EXPECT_THAT(buffer.str(), HasSubstr("warning"));
+  }
+}
+TEST(LinePrompt, KeyboardRepaintingStaysBestEffortAndPreservesEarlierFailure) {
+  struct Refuse : std::stringbuf {
+    bool fail = false;
+    std::streamsize xsputn(const char *p, std::streamsize n) override {
+      return fail ? 0 : std::stringbuf::xsputn(p, n);
+    }
+  } buffer;
+  std::ostream stream(&buffer);
+  detail::CliOutput output(stream);
+  output.associate_terminal(STDOUT_FILENO);
+  Cancellation cancel;
+  detail::IoContext io(cancel);
+  detail::RequestInputController input;
+  struct stat tty {};
+  tty.st_mode = S_IFCHR;
+  const std::string prompt = "codet> ";
+  detail::LinePrompt line(input, output, io, prompt, tty, 80);
+  line.acquire();
+  line.append('x');
+  ASSERT_FALSE(output.failed());
+  buffer.fail = true;
+  line.append('y');
+  line.erase_character();
+  line.erase_character();
+  EXPECT_FALSE(output.failed());
+  EXPECT_TRUE(input.input().empty());
+  (void)output.display({"required display"});
+  EXPECT_TRUE(output.failed());
+  buffer.fail = false;
+  line.append('z');
+  line.erase_character();
+  EXPECT_TRUE(output.failed());
+}
+TEST(LinePrompt, FailedPromptIsSeparatedAndOnlyRetriedOnAnotherEvent) {
+  LineFixture f;
+  auto *original = f.stream.basic_ios<char>::rdbuf(nullptr);
+  f.line->append('h');
+  f.line->flush();
+  EXPECT_TRUE(f.output.failed());
+  f.stream.basic_ios<char>::rdbuf(original);
+  f.stream.clear();
+  f.normal("warning");
+  f.line->flush();
+  EXPECT_THAT(f.stream.str(), HasSubstr("warning\ncodet> h"));
+}
+TEST(RequestInputController, CompletionPreservesOrdinaryDraftAndQuitRemainsOutOfBand) {
+  detail::RequestInputController input;
+  input.append('a');
+  input.close();
+  EXPECT_TRUE(input.ordinary_draft());
+  EXPECT_EQ(input.input().raw(), "a");
+  input.open({"s", "q", 1}, detail::RequestKind::question);
+  input.presentation_clear();
+  input.close();
+  for (char byte : std::string("/quit"))
+    input.append(byte);
+  EXPECT_EQ(input.take().action(), detail::InputAction::quit);
+  EXPECT_EQ(input.take("new message").action(), detail::InputAction::message);
+}
+TEST(UiHistory, PreparationIsBoundedBeforeRawAndRenderedHistoryAllocation) {
+  const std::string pattern = "雪\r\n\x1b\xff\\x0A\t";
+  for (bool unicode : {false, true}) {
+    for (const auto mode : {detail::RenderMode::prose, detail::RenderMode::literal}) {
+      const auto rendered = mode == detail::RenderMode::prose ? detail::terminal_text(pattern)
+                                                              : detail::literal_text(pattern);
+      const detail::CursesText expected(rendered, unicode, true, false);
+      EXPECT_EQ(
+          detail::CursesText::bounded(pattern, 1000, detail::UiHistory::omission, unicode, mode)
+              .text,
+          expected.text());
+      EXPECT_EQ(
+          detail::CursesText::bounded(rendered, 1000, detail::UiHistory::omission, unicode).text,
+          expected.text());
+      for (size_t budget = 0; budget < 150; ++budget) {
+        const auto value = detail::CursesText::bounded(std::string(500, '\x1b') + pattern, budget,
+                                                       detail::UiHistory::omission, unicode, mode);
+        EXPECT_LE(value.text.size(), budget);
+        EXPECT_EQ(detail::rendered_prefix(value.text, value.text.size()), value.text.size());
+      }
+    }
+  }
+  const std::string huge(8 * 1024 * 1024, 'x');
+  size_t processed = 0;
+  const auto prepared =
+      detail::CursesText::bounded(huge, detail::UiHistory::byte_limit, detail::UiHistory::omission,
+                                  true, detail::RenderMode::prose, &processed);
+  EXPECT_TRUE(prepared.truncated);
+  EXPECT_LE(processed, detail::UiHistory::byte_limit + 512);
+  detail::UiHistory history;
+  history.add(prepared.text);
+  EXPECT_LE(history.bytes(), detail::UiHistory::byte_limit);
+  EXPECT_EQ(history.lines().back(), detail::UiHistory::omission);
+}
+TEST(UiHistory, ProductionBudgetPreparationAndDirectInsertionAgreeAtEveryEdge) {
+  constexpr auto budget = detail::UiHistory::byte_limit;
+  for (const auto &tail : {std::string("x"), std::string("\n"), std::string("雪"),
+                           std::string("\\xFF"), std::string("🙂\n")}) {
+    for (size_t padding = budget - 8; padding <= budget + 2; ++padding) {
+      const std::string source = std::string(padding, 'a') + tail;
+      const auto prepared =
+          detail::CursesText::bounded(source, budget, detail::UiHistory::omission, true);
+      detail::UiHistory actual, expected;
+      actual.add(prepared.text);
+      expected.add(detail::CursesText(source, true, true, false).text());
+      EXPECT_EQ(actual.lines(), expected.lines()) << padding << " tail=" << tail;
+      EXPECT_EQ(actual.bytes(), expected.bytes());
+      EXPECT_LE(actual.bytes(), budget);
+      EXPECT_EQ(detail::rendered_prefix(prepared.text, prepared.text.size()), prepared.text.size());
+    }
+  }
+  for (const auto mode : {detail::RenderMode::prose, detail::RenderMode::literal}) {
+    const std::string source(budget, '\x1b');
+    const auto prepared =
+        detail::CursesText::bounded(source, budget, detail::UiHistory::omission, false, mode);
+    detail::UiHistory actual, expected;
+    actual.add(prepared.text);
+    expected.add(detail::CursesText(detail::terminal_text(source), false, true, false).text());
+    EXPECT_EQ(actual.lines(), expected.lines());
+    EXPECT_EQ(actual.bytes(), expected.bytes());
+  }
+}
+TEST(UiHistory, PrefixReportsThePreviousCompleteTokenWithoutASecondScan) {
+  const std::string text = "abc\\xFF雪";
+  for (const auto &[limit, expected, previous] : std::vector<std::tuple<size_t, size_t, size_t>>{
+           {0, 0, 0}, {3, 3, 2}, {5, 3, 2}, {7, 7, 3}, {9, 7, 3}, {10, 10, 7}}) {
+    size_t last = 99;
+    EXPECT_EQ(detail::rendered_prefix(text, limit, &last), expected);
+    EXPECT_EQ(last, previous);
+  }
+}
+TEST(UiHistory, PreparedAndDirectInsertionShareExactBudgetAndRowCharges) {
+  for (const std::string &text :
+       {std::string(70, 'x'), std::string(99, 'x'), std::string(100, 'x'),
+        std::string(70, 'x') + "\n", std::string(68, 'x') + "\n" + std::string(100, 'z'),
+        std::string("a\n\nb\n"), std::string("雪\\xFF")}) {
+    for (size_t budget = 0; budget < 160; ++budget) {
+      const auto bounded =
+          detail::CursesText::bounded(text, budget, detail::UiHistory::omission, false);
+      // This fixture is rendered exactly as curses would render in the C locale.
+      const auto prepared = detail::CursesText(text, false, true, false).text();
+      detail::UiHistory direct, pipelined;
+      direct.add(prepared, budget);
+      pipelined.add(bounded.text, budget);
+      EXPECT_EQ(pipelined.lines(), direct.lines()) << "budget " << budget;
+      EXPECT_EQ(pipelined.bytes(), direct.bytes());
+      EXPECT_LE(pipelined.bytes(), budget);
+    }
+  }
+  const auto fitting =
+      detail::CursesText::bounded(std::string(70, 'x'), 100, detail::UiHistory::omission, true);
+  EXPECT_FALSE(fitting.truncated);
+  EXPECT_EQ(fitting.text, std::string(70, 'x'));
+  const auto tiny = detail::CursesText::bounded("a", 2, detail::UiHistory::omission, true);
+  EXPECT_EQ(tiny.text, "a");
+  const auto edge = detail::CursesText::bounded(std::string(68, 'x') + "\n" + std::string(100, 'z'),
+                                                100, detail::UiHistory::omission, true);
+  EXPECT_EQ(edge.text.find("\n\n"), std::string::npos);
+}
+TEST(UiHistory, BoundsBytesBeforeSplittingAndKeepsRecentDecision) {
+  detail::UiHistory history;
+  const std::string huge(2 * 1024 * 1024, 'x');
+  for (int i = 0; i != 30; ++i) {
+    history.add("[Approval request]");
+    history.add(huge, detail::UiHistory::approval_limit - 19);
+    history.add("[Approval denied] request");
+    EXPECT_LE(history.bytes(), detail::UiHistory::byte_limit);
+    EXPECT_LE(history.lines().size(), detail::UiHistory::line_limit);
+    EXPECT_EQ(history.lines().back(), "[Approval denied] request");
+  }
+  for (int i = 0; i != 2000; ++i)
+    history.add("line");
+  EXPECT_EQ(history.lines().size(), detail::UiHistory::line_limit);
+  EXPECT_LE(history.bytes(), detail::UiHistory::byte_limit);
+  detail::UiHistory tokens;
+  for (size_t limit = 35; limit != 60; ++limit) {
+    tokens.add(std::string(28, 'a') + "\\xFF雪\\x00" + huge, limit);
+    EXPECT_LE(tokens.lines().back().size() + 1, limit);
+    for (const auto &line : tokens.lines())
+      EXPECT_EQ(detail::rendered_prefix(line, line.size()), line.size());
+  }
+}
+struct PartialDiagnosticStream : std::streambuf {
+  std::string bytes;
+  bool partial = true, fail_newline = false;
+  size_t records = 0;
+  std::streamsize xsputn(const char *text, std::streamsize count) override {
+    ++records;
+    const auto written = partial ? std::min(count, std::streamsize{2}) : count;
+    bytes.append(text, static_cast<size_t>(written));
+    return written;
+  }
+  int overflow(int character) override {
+    if (fail_newline)
+      return traits_type::eof();
+    bytes += static_cast<char>(character);
+    return character;
+  }
+};
+TEST(DiagnosticWriter, PartialUnterminatedRecordsOweSeparatorButSuccessfulFragmentsDoNot) {
+  for (bool throwing : {false, true}) {
+    PartialDiagnosticStream buffer;
+    std::ostream stream(&buffer);
+    if (throwing)
+      stream.exceptions(std::ios::badbit | std::ios::failbit);
+    detail::DiagnosticWriter writer(stream);
+    try {
+      EXPECT_FALSE(writer.write({"prefix"}, false));
+    } catch (const std::ios_base::failure &) {
+    }
+    buffer.partial = false;
+    EXPECT_TRUE(writer.write({"later"}));
+    EXPECT_EQ(buffer.bytes, "pr\nlater\n");
+    EXPECT_TRUE(writer.write({"fragment"}, false));
+    EXPECT_TRUE(writer.write({"tail"}));
+    EXPECT_EQ(buffer.bytes, "pr\nlater\nfragmenttail\n");
+  }
+}
+TEST(DiagnosticWriter, TurnCleanupKeepsOriginalFailureAfterQuiescenceAndResetsCancellation) {
+  for (bool quitting : {false, true}) {
+    PartialDiagnosticStream buffer;
+    std::ostream stream(&buffer);
+    stream.exceptions(std::ios::badbit | std::ios::failbit);
+    detail::DiagnosticWriter writer(stream);
+    Cancellation cancel;
+    std::atomic<bool> finished{false};
+    auto worker = std::async(std::launch::async, [&] {
+      while (!cancel.requested)
+        std::this_thread::yield();
+      finished = true;
+    });
+    const auto original = std::make_exception_ptr(std::runtime_error("original failure"));
+    unsigned reports = 0;
+    try {
+      detail::recover_turn(
+          original, cancel, quitting, worker,
+          [&] {
+            EXPECT_TRUE(finished);
+            throw std::bad_alloc();
+          },
+          [&] { throw std::runtime_error("drain failure"); },
+          [&](std::string_view text) {
+            if (++reports == 1)
+              (void)writer.write({text});
+            else
+              throw std::bad_alloc(); // Formatting is secondary too.
+          });
+    } catch (...) {
+      EXPECT_EQ(std::current_exception(), original);
+    }
+    EXPECT_TRUE(finished);
+    EXPECT_EQ(reports, 2u);
+    EXPECT_EQ(cancel.requested.load(), quitting);
+    if (!quitting) {
+      EXPECT_NO_THROW(cancel.check());
+    }
+    worker.get();
+  }
+}
+#ifdef CODET_NATIVE_TERMINAL_METRICS
+// Runs between native record admission and delivery, outside every metadata guard.
+void competing_native_record(void *reset) {
+  if (*static_cast<bool *>(reset))
+    detail::reset_standard_diagnostics();
+  auto &metrics = test::native_io_metrics;
+  metrics.vector_partial = true;
+  EXPECT_FALSE(detail::immediate_stderr({"newer failure"}));
+}
+TEST(DiagnosticWriter, OlderCompletionCannotClearNewerFailureOrResetEpoch) {
+  for (bool reset : {false, true}) {
+    detail::reset_standard_diagnostics();
+    testing::internal::CaptureStderr();
+    auto &metrics = test::native_io_metrics;
+    metrics.interrupt_fd = STDERR_FILENO;
+    metrics.before_output = competing_native_record;
+    metrics.output_context = &reset;
+    EXPECT_TRUE(detail::immediate_stderr({"older success"}));
+    metrics = {};
+    EXPECT_TRUE(detail::immediate_stderr({"later"}));
+    const auto bytes = testing::internal::GetCapturedStderr();
+    EXPECT_THAT(bytes, HasSubstr("older success\n\nlater\n"));
+  }
+  detail::reset_standard_diagnostics();
+}
+void intervening_success(void *) {
+  EXPECT_TRUE(detail::immediate_stderr({"intervening"}));
+}
+TEST(DiagnosticWriter, InterveningRecoverySeparatorCannotSuppressAnAdmittedRecord) {
+  detail::reset_standard_diagnostics();
+  testing::internal::CaptureStderr();
+  auto &metrics = test::native_io_metrics;
+  metrics.interrupt_fd = STDERR_FILENO;
+  metrics.vector_partial = true;
+  EXPECT_FALSE(detail::immediate_stderr({"partial"}));
+  metrics.before_output = intervening_success;
+  EXPECT_TRUE(detail::immediate_stderr({"admitted"}));
+  metrics = {};
+  const auto bytes = testing::internal::GetCapturedStderr();
+  EXPECT_THAT(bytes, HasSubstr("intervening\n"));
+  EXPECT_THAT(bytes, HasSubstr("admitted\n"));
+  detail::reset_standard_diagnostics();
+}
+TEST(DiagnosticWriter, ConcurrentFallbackAndNativeBoundarySnapshotsAreSynchronized) {
+  struct Capture {
+    bool active = true;
+    Capture() {
+      testing::internal::CaptureStderr();
+    }
+    ~Capture() {
+      if (active)
+        (void)testing::internal::GetCapturedStderr();
+    }
+    std::string finish() {
+      auto bytes = testing::internal::GetCapturedStderr();
+      active = false;
+      return bytes;
+    }
+  } capture;
+  detail::reset_standard_diagnostics();
+  struct stat identity {};
+  ASSERT_EQ(::fstat(STDERR_FILENO, &identity), 0);
+  const auto boundary = detail::native_line_destinations();
+  boundary.bind(STDOUT_FILENO, identity);
+  std::atomic<bool> start{false};
+  std::thread worker([&] {
+    while (!start.load())
+      std::this_thread::yield();
+    for (unsigned i = 0; i != 100; ++i) {
+      (void)detail::immediate_stderr({"warning"});
+      FileNotice notice("/complete/path", FileNoticeKind::tool_result);
+      emergency_file_diagnostic(notice);
+      (void)detail::write_diagnostic(std::cerr, {"ordinary"});
+    }
+  });
+  start = true;
+  for (unsigned i = 0; i != 1000; ++i) {
+    boundary.open(identity);
+    EXPECT_TRUE(boundary.snapshot(STDOUT_FILENO, identity).available);
+    (void)boundary.separate(identity);
+  }
+  worker.join();
+  EXPECT_THAT(capture.finish(), HasSubstr("/complete/path"));
+  detail::reset_standard_diagnostics();
+}
+TEST(DiagnosticWriter, IndeterminatePipeBoundsDoNotRetryStaleInterruptedErrno) {
+  int descriptors[2];
+  ASSERT_EQ(::pipe(descriptors), 0);
+  const int saved = ::dup(STDERR_FILENO);
+  ASSERT_GE(saved, 0);
+  struct Restore {
+    int saved, read, write;
+    ~Restore() {
+      test::native_io_metrics = {};
+      (void)::dup2(saved, STDERR_FILENO);
+      ::close(saved);
+      ::close(read);
+      ::close(write);
+      detail::reset_standard_diagnostics();
+    }
+  } restore{saved, descriptors[0], descriptors[1]};
+  ASSERT_EQ(::dup2(descriptors[1], STDERR_FILENO), STDERR_FILENO);
+  Cancellation cancel;
+  detail::IoContext io(cancel);
+  for (bool active : {false, true}) {
+    detail::reset_standard_diagnostics();
+    auto &metrics = test::native_io_metrics;
+    metrics = {};
+    metrics.interrupt_fd = STDERR_FILENO;
+    metrics.bounds_interrupted = 1;
+    metrics.bound_indeterminate = true;
+    detail::DiagnosticWriter writer(std::cerr, active ? &io : nullptr);
+    errno = EINTR;
+    EXPECT_TRUE(writer.write({"bound"}));
+    EXPECT_EQ(metrics.bound_queries, 2u);
+    EXPECT_TRUE(writer.write({"bound"}));
+    EXPECT_EQ(metrics.bound_queries, 2u);
+    metrics = {};
+    pollfd readable{descriptors[0], POLLIN, 0};
+    ASSERT_GT(::poll(&readable, 1, 2000), 0);
+    char output[12]{};
+    ASSERT_EQ(::read(descriptors[0], output, sizeof(output)), 12);
+    EXPECT_EQ(std::string(output, sizeof(output)), "bound\nbound\n");
+  }
+}
+TEST(DiagnosticWriter, EmergencyChunksShareEightInterruptionRetriesWithInspectionAndSeparator) {
+  FileNotice notice("/" + std::string(4097, 'a') + "\xff", FileNoticeKind::tool_result);
+  notice.confirmed = true;
+  const auto expected = notice.text() + "\n";
+  for (bool exhausted : {false, true}) {
+    detail::reset_standard_diagnostics();
+    testing::internal::CaptureStderr();
+    auto &metrics = test::native_io_metrics;
+    metrics.interrupt_fd = STDERR_FILENO;
+    metrics.stats_interrupted = 4;
+    metrics.writes_interrupted = exhausted ? 5 : 4;
+    emergency_file_diagnostic(notice);
+    const auto writes = metrics.writes;
+    metrics = {};
+    const auto output = testing::internal::GetCapturedStderr();
+    if (exhausted) {
+      EXPECT_TRUE(output.empty());
+      EXPECT_EQ(writes, 5u);
+    } else {
+      EXPECT_EQ(output, expected);
+      EXPECT_GT(writes, 8u); // Positive progress through every path chunk does not spend retries.
+    }
+  }
+  detail::reset_standard_diagnostics();
+  testing::internal::CaptureStderr();
+  auto &metrics = test::native_io_metrics;
+  metrics.interrupt_fd = STDERR_FILENO;
+  metrics.stats_interrupted = 9;
+  EXPECT_FALSE(detail::immediate_stderr({"must not be written"}));
+  EXPECT_EQ(metrics.inspections, 9u);
+  EXPECT_EQ(metrics.writes, 0u);
+  EXPECT_EQ(metrics.vectors, 0u);
+  metrics = {};
+  EXPECT_EQ(testing::internal::GetCapturedStderr(), "");
+  detail::reset_standard_diagnostics();
+}
+TEST(DiagnosticWriter, ImmediateVectorOutputRetriesInterruptedCallsAndStopsAtItsBudget) {
+  for (unsigned interruptions : {1u, 8u, 9u}) {
+    detail::reset_standard_diagnostics();
+    testing::internal::CaptureStderr();
+    auto &metrics = test::native_io_metrics;
+    metrics.interrupt_fd = STDERR_FILENO;
+    metrics.vectors_interrupted = interruptions;
+    EXPECT_EQ(detail::immediate_stderr({"first", "second"}), interruptions <= 8);
+    EXPECT_EQ(metrics.vectors, std::min(interruptions + 1, 9u));
+    metrics = {};
+    EXPECT_EQ(testing::internal::GetCapturedStderr(), interruptions <= 8 ? "firstsecond\n" : "");
+  }
+  detail::reset_standard_diagnostics();
+}
+TEST(DiagnosticWriter, FailedUnterminatedImmediateWarningRetainsItsConservativeBoundary) {
+  detail::reset_standard_diagnostics();
+  testing::internal::CaptureStderr();
+  auto &metrics = test::native_io_metrics;
+  metrics.interrupt_fd = STDERR_FILENO;
+  metrics.writes_interrupted = 9;
+  EXPECT_FALSE(detail::immediate_stderr({"warning"}, false));
+  metrics = {};
+  EXPECT_TRUE(detail::immediate_stderr({"later"}));
+  EXPECT_EQ(testing::internal::GetCapturedStderr(), "\nlater\n");
+  detail::reset_standard_diagnostics();
+}
+TEST(DiagnosticWriter, InterruptedIdentityInspectionCannotEraseAnAlreadyOwedSeparator) {
+  detail::reset_standard_diagnostics();
+  testing::internal::CaptureStderr();
+  EXPECT_EQ(::write(STDERR_FILENO, "fi", 2), 2);
+  auto &metrics = test::native_io_metrics;
+  metrics.interrupt_fd = STDERR_FILENO;
+  metrics.vectors_interrupted = 9;
+  EXPECT_FALSE(detail::write_diagnostic(std::cerr, {"rst"}));
+  metrics.stats_interrupted = 9;
+  EXPECT_FALSE(detail::immediate_stderr({"inspection fails before delivery"}));
+  metrics = {};
+  EXPECT_TRUE(detail::write_diagnostic(std::cerr, {"later"}));
+  EXPECT_EQ(testing::internal::GetCapturedStderr(), "fi\nlater\n");
+  detail::reset_standard_diagnostics();
+}
+TEST(DiagnosticWriter, ImmediatePipeInspectionReadinessAndWritesShareOneRetryBudget) {
+  int descriptors[2];
+  ASSERT_EQ(::pipe(descriptors), 0);
+  const int saved = ::dup(STDERR_FILENO);
+  ASSERT_GE(saved, 0);
+  struct Restore {
+    int saved, read, write;
+    ~Restore() {
+      test::native_io_metrics = {};
+      (void)::dup2(saved, STDERR_FILENO);
+      ::close(saved);
+      ::close(read);
+      ::close(write);
+      detail::reset_standard_diagnostics();
+    }
+  } restore{saved, descriptors[0], descriptors[1]};
+  ASSERT_EQ(::dup2(descriptors[1], STDERR_FILENO), STDERR_FILENO);
+  detail::reset_standard_diagnostics();
+  auto &metrics = test::native_io_metrics;
+  metrics.interrupt_fd = STDERR_FILENO;
+  metrics.stats_interrupted = metrics.bounds_interrupted = metrics.polls_interrupted =
+      metrics.vectors_interrupted = 2;
+  EXPECT_TRUE(detail::immediate_stderr({"checked pipe"}));
+  EXPECT_EQ(metrics.vectors, 3u);
+  metrics = {};
+  char bytes[64]{};
+  ASSERT_EQ(::read(descriptors[0], bytes, sizeof(bytes)), 13);
+  EXPECT_EQ(std::string(bytes, 13), "checked pipe\n");
+}
+TEST(DiagnosticWriter, InspectionRefreshesFlagsAndCachesPipeBoundsOnlyForTheCurrentDestination) {
+  int first[2], second[2];
+  ASSERT_EQ(::pipe(first), 0);
+  ASSERT_EQ(::pipe(second), 0);
+  const int saved = ::dup(STDERR_FILENO);
+  ASSERT_GE(saved, 0);
+  struct Restore {
+    int saved, first[2], second[2];
+    ~Restore() {
+      test::native_io_metrics = {};
+      (void)::dup2(saved, STDERR_FILENO);
+      ::close(saved);
+      for (int fd : first)
+        ::close(fd);
+      for (int fd : second)
+        ::close(fd);
+      detail::reset_standard_diagnostics();
+    }
+  } restore{saved, {first[0], first[1]}, {second[0], second[1]}};
+  ASSERT_EQ(::dup2(first[1], STDERR_FILENO), STDERR_FILENO);
+  detail::reset_standard_diagnostics();
+  auto &metrics = test::native_io_metrics;
+  metrics.interrupt_fd = STDERR_FILENO;
+  detail::DiagnosticWriter writer(std::cerr);
+  EXPECT_TRUE(writer.write({"first"}));
+  EXPECT_EQ(metrics.inspections, 1u);
+  EXPECT_EQ(metrics.bound_queries, 1u);
+  const int flags = ::fcntl(STDERR_FILENO, F_GETFL);
+  ASSERT_GE(flags, 0);
+  ASSERT_EQ(::fcntl(STDERR_FILENO, F_SETFL, flags | O_NONBLOCK), 0);
+  EXPECT_TRUE(writer.write({"nonblocking"}));
+  ASSERT_EQ(::fcntl(STDERR_FILENO, F_SETFL, flags), 0);
+  EXPECT_TRUE(writer.write({"blocking again"}));
+  EXPECT_EQ(metrics.inspections, 3u);
+  EXPECT_EQ(metrics.bound_queries, 1u);
+  ASSERT_EQ(::dup2(second[1], STDERR_FILENO), STDERR_FILENO);
+  EXPECT_TRUE(writer.write({"new destination"}));
+  EXPECT_EQ(metrics.inspections, 4u);
+  EXPECT_EQ(metrics.bound_queries, 2u);
+}
+#endif
+TEST(DiagnosticWriter, PartialRecordsRetainASeparatorAcrossFailedAttempts) {
+  for (bool mask : {false, true}) {
+    PartialDiagnosticStream buffer;
+    std::ostream stream(&buffer);
+    if (mask)
+      stream.exceptions(std::ios::badbit);
+    detail::DiagnosticWriter writer(stream);
+    if (mask)
+      EXPECT_THROW(writer.write({"first"}), std::ios_base::failure);
+    else
+      EXPECT_FALSE(writer.write({"first"}));
+    buffer.partial = false;
+    buffer.fail_newline = true;
+    if (mask)
+      EXPECT_THROW(writer.write({"must not start"}), std::ios_base::failure);
+    else
+      EXPECT_FALSE(writer.write({"must not start"}));
+    EXPECT_EQ(buffer.records, 1u);
+    buffer.fail_newline = false;
+    EXPECT_TRUE(writer.write({"second"}));
+    EXPECT_EQ(buffer.bytes, "fi\nsecond\n");
+  }
+}
+TEST(DiagnosticWriter, FailedTrailingNewlineIsRepairedBeforeTheNextRecord) {
+  PartialDiagnosticStream buffer;
+  buffer.partial = false;
+  buffer.fail_newline = true;
+  std::ostream stream(&buffer);
+  detail::DiagnosticWriter writer(stream);
+  EXPECT_FALSE(writer.write({"first"}));
+  buffer.fail_newline = false;
+  EXPECT_TRUE(writer.write({"second"}));
+  EXPECT_EQ(buffer.bytes, "first\nsecond\n");
+}
+TEST(DiagnosticWriter, ReplacedDestinationsAndNewInvocationsDiscardStaleSeparators) {
+  struct Refusing : std::stringbuf {
+    bool refuse = true;
+    std::streamsize xsputn(const char *text, std::streamsize count) override {
+      return refuse ? 0 : std::stringbuf::xsputn(text, count);
+    }
+  } failed;
+  std::ostringstream next;
+  struct Restore {
+    std::streambuf *original;
+    ~Restore() {
+      std::cerr.rdbuf(original);
+      detail::recover_diagnostic_stream(std::cerr);
+      detail::reset_standard_diagnostics();
+    }
+  } restore{std::cerr.rdbuf(&failed)};
+  EXPECT_FALSE(detail::write_diagnostic(std::cerr, {"lost"}));
+  std::cerr.rdbuf(next.rdbuf());
+  EXPECT_TRUE(detail::write_diagnostic(std::cerr, {"fresh"}));
+  EXPECT_EQ(next.str(), "fresh\n");
+  std::cerr.rdbuf(&failed);
+  EXPECT_FALSE(detail::write_diagnostic(std::cerr, {"lost"}));
+  failed.refuse = false;
+  detail::reset_standard_diagnostics();
+  EXPECT_TRUE(detail::write_diagnostic(std::cerr, {"new invocation"}));
+  EXPECT_EQ(failed.str(), "new invocation\n");
+}
+TEST(DiagnosticWriter, EmergencyDescriptorStateCannotLeakIntoACapturedStreamOrReboundFd) {
+  int descriptors[2];
+  ASSERT_EQ(::pipe(descriptors), 0);
+  const int saved = ::dup(STDERR_FILENO);
+  ASSERT_GE(saved, 0);
+  std::ostringstream captured;
+  struct Restore {
+    int saved, read, write;
+    std::streambuf *buffer;
+    ~Restore() {
+      (void)::dup2(saved, STDERR_FILENO);
+      ::close(saved);
+      ::close(read);
+      ::close(write);
+      std::cerr.rdbuf(buffer);
+      detail::recover_diagnostic_stream(std::cerr);
+      detail::reset_standard_diagnostics();
+    }
+  } restore{saved, descriptors[0], descriptors[1], std::cerr.rdbuf(captured.rdbuf())};
+  ASSERT_EQ(::fcntl(descriptors[1], F_SETFL, O_NONBLOCK), 0);
+  char bytes[4096]{};
+  while (::write(descriptors[1], bytes, sizeof(bytes)) > 0) {
+  }
+  ASSERT_EQ(errno, EAGAIN);
+  ASSERT_EQ(::dup2(descriptors[1], STDERR_FILENO), STDERR_FILENO);
+  FileNotice notice("/complete/path", FileNoticeKind::tool_result);
+  notice.confirmed = true;
+  emergency_file_diagnostic(notice);
+  EXPECT_TRUE(detail::write_diagnostic(std::cerr, {"captured"}));
+  EXPECT_EQ(captured.str(), "captured\n");
+  ASSERT_EQ(::dup2(saved, STDERR_FILENO), STDERR_FILENO);
+  testing::internal::CaptureStderr();
+  emergency_file_diagnostic(notice);
+  const auto delivered = testing::internal::GetCapturedStderr();
+  EXPECT_EQ(delivered, "Uncommitted tool result preserved at /complete/path\n");
+}
+TEST(DiagnosticWriter, NativeDescriptorFailureKeepsConfiguredExceptionMasksAndRecovers) {
+  const int saved = ::dup(STDERR_FILENO);
+  ASSERT_GE(saved, 0);
+  bool threw = false, recovered = false, mask_preserved = false;
+  {
+    const auto mask = std::cerr.exceptions();
+    struct Restore {
+      int saved;
+      std::ios::iostate mask;
+      ~Restore() {
+        std::cerr.exceptions(std::ios::goodbit);
+        (void)::dup2(saved, STDERR_FILENO);
+        ::close(saved);
+        detail::recover_diagnostic_stream(std::cerr);
+        std::cerr.exceptions(mask);
+        detail::reset_standard_diagnostics();
+      }
+    } restore{saved, mask};
+    ::close(STDERR_FILENO);
+    std::cerr.exceptions(std::ios::badbit);
+    detail::DiagnosticWriter writer(std::cerr);
+    try {
+      (void)writer.write({"unwritable"});
+    } catch (const std::ios_base::failure &) {
+      threw = true;
+    }
+    recovered = std::cerr.good();
+    mask_preserved = std::cerr.exceptions() == std::ios::badbit;
+  }
+  EXPECT_TRUE(threw);
+  EXPECT_TRUE(recovered);
+  EXPECT_TRUE(mask_preserved);
+}
+TEST(DiagnosticWriter, PermissionChangesOnTheSameDescriptorIdentityKeepTheSeparator) {
+  TempDirectory temporary;
+  const auto path = temporary.root / "diagnostic";
+  { std::ofstream create(path); }
+  const int saved = ::dup(STDERR_FILENO);
+  ASSERT_GE(saved, 0);
+  struct Restore {
+    int descriptor;
+    ~Restore() {
+      (void)::dup2(descriptor, STDERR_FILENO);
+      ::close(descriptor);
+      detail::reset_standard_diagnostics();
+      detail::recover_diagnostic_stream(std::cerr);
+    }
+  } restore{saved};
+  const int read_only = ::open(path.c_str(), O_RDONLY);
+  ASSERT_GE(read_only, 0);
+  ASSERT_EQ(::dup2(read_only, STDERR_FILENO), STDERR_FILENO);
+  ::close(read_only);
+  detail::DiagnosticWriter writer(std::cerr);
+  EXPECT_FALSE(writer.write({"indeterminate"}));
+  ASSERT_EQ(::chmod(path.c_str(), 0640), 0);
+  const int writable = ::open(path.c_str(), O_WRONLY | O_APPEND);
+  ASSERT_GE(writable, 0);
+  ASSERT_EQ(::dup2(writable, STDERR_FILENO), STDERR_FILENO);
+  ::close(writable);
+  EXPECT_TRUE(writer.write({"later"}));
+  std::ifstream read(path);
+  EXPECT_EQ(std::string(std::istreambuf_iterator<char>(read), {}), "\nlater\n");
+}
+TEST(DiagnosticWriter, HumanTextEscapesControlsWithoutChangingRawJsonSanitization) {
+  const std::string text =
+      std::string("raw\0\r\x1b]0;title\a\x7f", 16) + "\xc2\x9b\xe2\x80\xae\xe2\x80\xa8\xff";
+  const auto shown = detail::terminal_text(text);
+  EXPECT_EQ(shown,
+            "raw\\x00\\x0D\\x1B]0;title\\x07\\x7F\\xC2\\x9B\\xE2\\x80\\xAE\\xE2\\x80\\xA8\\xFF");
+  const std::string printable = "Jose\xc3\xa9 \xe9\x9b\xaa \xf0\x9f\x90\xb1\n\tpath\\name";
+  EXPECT_EQ(detail::terminal_text(printable), printable);
+  EXPECT_EQ(safe_text("\x1b\r\a"), "\x1b\r\a");
+  EXPECT_EQ(safe_json(Json("\x1b")), "\x1b");
+}
+TEST(DiagnosticWriter, DiagnosticBudgetsAccountForEscapedHumanText) {
+  DiagnosticBuffer buffer(128);
+  const std::string controls(100, '\x1b');
+  buffer.add(controls);
+  std::ostringstream output;
+  buffer.flush(output);
+  EXPECT_LE(output.str().size(), 128u);
+  EXPECT_EQ(output.str().find('\x1b'), std::string::npos);
+  EXPECT_NE(output.str().find("\\x1B"), std::string::npos);
+  std::string received;
+  report_diagnostic([&](const auto &text) { received = text; }, "hook\x1b\r\xff");
+  EXPECT_EQ(received, "hook\\x1B\\x0D\\xFF");
+}
+TEST(DiagnosticWriter, BoundedRenderingKeepsWholeEscapesAndNormalizesOnlyHumanCrLf) {
+  const std::string raw = "A\x1b\xe9\x9b\xaa\r\nB\rC\\x1B\xff";
+  const std::vector<std::string> tokens{"A",     "\\x1B", "\xe9\x9b\xaa", "\n",   "B",
+                                        "\\x0D", "C",     "\\x1B",        "\\xFF"};
+  std::string full;
+  for (const auto &token : tokens)
+    full += token;
+  EXPECT_EQ(detail::terminal_text(raw), full);
+  EXPECT_EQ(safe_text("a\r\nb\r"), "a\r\nb\r");
+  for (size_t limit = 0; limit <= full.size() + 1; ++limit) {
+    std::string expected;
+    for (const auto &token : tokens) {
+      if (token.size() > limit - expected.size())
+        break;
+      expected += token;
+    }
+    const auto rendered = detail::render_terminal_text(raw, limit);
+    EXPECT_EQ(rendered.text, expected) << limit;
+    EXPECT_EQ(rendered.truncated, expected != full) << limit;
+    EXPECT_EQ(full.substr(0, detail::rendered_prefix(full, limit)), expected) << limit;
+  }
+}
+TEST(DiagnosticWriter, LiteralIdentifiersDistinguishControlsAndEscapeLookingBytes) {
+  const std::string raw = "command\r\nnext\t\\x0A 雪";
+  EXPECT_EQ(detail::terminal_text(raw), "command\nnext\t\\x0A 雪");
+  const auto expected = "command\\x0D\\x0Anext\\x09\\x5Cx0A 雪";
+  EXPECT_EQ(detail::literal_text(raw), expected);
+  for (size_t limit = 0; limit <= std::strlen(expected); ++limit) {
+    const auto bounded = detail::render_terminal_text(raw, limit, detail::RenderMode::literal);
+    EXPECT_EQ(bounded.text,
+              std::string(expected).substr(0, detail::rendered_prefix(expected, limit)));
+  }
+}
+TEST(DiagnosticWriter, HumanTextPreservesPrintableAsciiAndEscapesMalformedPrefixesByteForByte) {
+  const auto escaped = [](const std::string &text) {
+    constexpr char hex[] = "0123456789ABCDEF";
+    std::string result;
+    for (const auto character : text) {
+      const auto byte = static_cast<unsigned char>(character);
+      result += "\\x";
+      result += hex[byte >> 4u];
+      result += hex[byte & 15u];
+    }
+    return result;
+  };
+  for (unsigned byte = 0; byte < 128; ++byte) {
+    const std::string text(1, static_cast<char>(byte));
+    EXPECT_EQ(detail::terminal_text(text),
+              byte == '\n' || byte == '\t' || (byte >= 0x20 && byte != 0x7f) ? text
+                                                                             : escaped(text));
+  }
+  for (const std::string bad :
+       {"\xc0\xaf", "\xe0\x80", "\xed\xa0\x80", "\xf0\x80\x80", "\xf4\x90\x80\x80", "\xe2\x82"})
+    EXPECT_EQ(detail::terminal_text(bad + "X"), escaped(bad) + "X");
+}
+struct NoticeStream : std::stringbuf {
+  size_t writes = 0, flushes = 0;
+  bool fail_write = false, fail_flush = false;
+  std::streamsize xsputn(const char *bytes, std::streamsize count) override {
+    ++writes;
+    if (fail_write)
+      return 0;
+    return std::stringbuf::xsputn(bytes, count);
+  }
+  int sync() override {
+    ++flushes;
+    return fail_flush ? -1 : 0;
+  }
+};
+struct RestoreReceiver {
+  StateStore &state;
+  detail::CliDiagnostics &diagnostics;
+  ~RestoreReceiver() {
+    diagnostics.install(state);
+  }
+};
+struct Surface final : detail::CliDiagnosticSurface {
+  bool full;
+  bool &restored;
+  size_t &calls;
+  DiagnosticSink render;
+  Surface(bool fullscreen, bool &closed, size_t &count)
+      : full(fullscreen), restored(closed), calls(count) {}
+  ~Surface() override {
+    restored = true;
+  }
+  bool fullscreen() const override {
+    return full;
+  }
+  void diagnostic(const std::string &text) override {
+    ++calls;
+    if (render)
+      render(text);
+  }
+  bool warning_rendered(detail::RenderedTextView text) noexcept override {
+    try {
+      diagnostic_rendered(text);
+      return true; // This test surface owns no history before its callback returns.
+    } catch (...) {
+      return false;
+    }
+  }
+};
+struct CliDiagnosticsTest : Test {
+  std::ostringstream output;
+  TempDirectory temp;
+  StateStore state{temp.root / "state"};
+  std::shared_ptr<detail::CliDiagnostics> diagnostics =
+      std::make_shared<detail::CliDiagnostics>(output);
+  std::shared_ptr<Surface> terminal;
+  bool restored = false;
+  size_t calls = 0;
+  void SetUp() override {
+    diagnostics->install(state);
+  }
+  void notice(const std::string &path) {
+    auto held = std::make_unique<FileNotice>(path, FileNoticeKind::tool_result);
+    held->confirmed = true;
+    diagnostics->files->submit(std::move(held));
+  }
+};
+TEST_F(CliDiagnosticsTest, NoticesShareThePartialOrdinaryDiagnosticBoundary) {
+  PartialDiagnosticStream buffer;
+  std::ostream stream(&buffer);
+  detail::CliDiagnostics sink(stream);
+  sink.emit("warning");
+  buffer.partial = false;
+  sink.files->submit(std::make_unique<FileNotice>("held-path", FileNoticeKind::tool_result));
+  sink.deliver_files();
+  EXPECT_EQ(buffer.bytes,
+            "wa\nTool result receipt candidate (publication unconfirmed): held-path\n");
+}
+TEST_F(CliDiagnosticsTest, FailedLineNoticeIsRetainedForOneEmergencyAttemptAfterRestoration) {
+  NoticeStream buffer;
+  buffer.fail_write = true;
+  std::ostream stream(&buffer);
+  auto sink = std::make_shared<detail::CliDiagnostics>(stream);
+  RestoreReceiver restore{state, *diagnostics};
+  testing::internal::CaptureStderr();
+  {
+    detail::TerminalDiagnosticsScope<Surface> scope(terminal, sink, state);
+    scope.activate(std::make_shared<Surface>(false, restored, calls));
+    sink->files->submit(std::make_unique<FileNotice>("line-path", FileNoticeKind::tool_result));
+    sink->deliver_files();
+    sink->deliver_files();
+    EXPECT_FALSE(restored);
+    EXPECT_EQ(calls, 0u);
+    EXPECT_TRUE(buffer.str().empty());
+    EXPECT_EQ(buffer.writes, 1u);
+  }
+  sink->restored(state);
+  EXPECT_TRUE(restored);
+  EXPECT_EQ(testing::internal::GetCapturedStderr(),
+            "Tool result receipt candidate (publication unconfirmed): line-path\n");
+}
+TEST_F(CliDiagnosticsTest, LaterLineNoticesRecoverFromInsertionAndFlushFailuresBeforeExit) {
+  for (bool flush_failure : {false, true})
+    for (bool throwing : {false, true}) {
+      NoticeStream buffer;
+      buffer.fail_write = !flush_failure;
+      buffer.fail_flush = flush_failure;
+      std::ostream stream(&buffer);
+      if (throwing)
+        stream.exceptions(std::ios::badbit | std::ios::failbit);
+      auto sink = std::make_shared<detail::CliDiagnostics>(stream);
+      RestoreReceiver restore{state, *diagnostics};
+      testing::internal::CaptureStderr();
+      {
+        detail::TerminalDiagnosticsScope<Surface> scope(terminal, sink, state);
+        scope.activate(std::make_shared<Surface>(false, restored, calls));
+        sink->files->submit(std::make_unique<FileNotice>("failed", FileNoticeKind::tool_result));
+        sink->deliver_files();
+        EXPECT_TRUE(stream.good());
+        const auto writes = buffer.writes;
+        buffer.fail_write = buffer.fail_flush = false;
+        sink->files->submit(std::make_unique<FileNotice>("later", FileNoticeKind::tool_result));
+        sink->deliver_files();
+        EXPECT_GT(buffer.writes, writes);
+        EXPECT_TRUE(stream.good());
+        EXPECT_THAT(buffer.str(), HasSubstr("later\n"));
+        EXPECT_GT(buffer.flushes, 0u);
+        sink->deliver_files();
+      }
+      sink->restored(state);
+      EXPECT_EQ(testing::internal::GetCapturedStderr(),
+                "Tool result receipt candidate (publication unconfirmed): failed\n");
+    }
+}
+TEST_F(CliDiagnosticsTest, StaleStreamErrorsDoNotPreventNewLineWrites) {
+  output.setstate(std::ios::badbit);
+  {
+    detail::TerminalDiagnosticsScope<Surface> scope(terminal, diagnostics, state);
+    scope.activate(std::make_shared<Surface>(false, restored, calls));
+    notice("new-path");
+    diagnostics->deliver_files();
+    EXPECT_TRUE(output.good());
+    EXPECT_THAT(output.str(), HasSubstr("new-path\n"));
+  }
+}
+TEST_F(CliDiagnosticsTest, OrdinaryWritesRecoverAfterFailureWithoutRequiringAnotherNotice) {
+  for (bool throwing : {false, true}) {
+    NoticeStream buffer;
+    std::ostream stream(&buffer);
+    if (throwing)
+      stream.exceptions(std::ios::badbit | std::ios::failbit);
+    detail::CliDiagnostics sink(stream);
+    buffer.fail_write = true;
+    if (throwing)
+      EXPECT_THROW(sink.emit("failed warning"), std::ios_base::failure);
+    else
+      EXPECT_NO_THROW(sink.emit("failed warning"));
+    EXPECT_TRUE(stream.good());
+    buffer.fail_write = false;
+    sink.emit("hook warning");
+    (void)detail::write_diagnostic(stream, {"[", "tool", "]"});
+    const std::string body("raw\0body", 8);
+    EXPECT_TRUE(detail::write_diagnostic(stream, {"codet: ", body}));
+    EXPECT_EQ(buffer.str(), std::string("\nhook warning\n[tool]\ncodet: ") + body + "\n");
+  }
+}
+TEST_F(CliDiagnosticsTest, FailedNoticeDoesNotSuppressLaterOrdinaryStderrDiagnostics) {
+  NoticeStream buffer;
+  struct RestoreStderr {
+    std::streambuf *original;
+    ~RestoreStderr() {
+      std::cerr.rdbuf(original);
+      detail::recover_diagnostic_stream(std::cerr);
+    }
+  } restore{std::cerr.rdbuf(&buffer)};
+  buffer.fail_write = true;
+  EXPECT_THROW(write_file_diagnostic(std::cerr, "failed notice"), Error);
+  EXPECT_TRUE(std::cerr.good());
+  buffer.fail_write = false;
+  report_diagnostic({}, "hook warning");
+  detail::CliDiagnostics sink;
+  sink.emit("later warning");
+  EXPECT_EQ(buffer.str(), "\nhook warning\nlater warning\n");
+}
+TEST_F(CliDiagnosticsTest, NonblockingStderrFailureRecoversCppAndCStreamStateInAFreshProcess) {
+  const auto child = test::start_helper({"--codet-stderr-recovery-helper"});
+  ASSERT_GT(child, 0);
+  int status = 0;
+  ASSERT_TRUE(test::wait_helper(child, status));
+  ASSERT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
+}
+TEST_F(CliDiagnosticsTest, MissingStreamBufferRecoveryCannotMaskTheOriginalFailure) {
+  std::ostream stream(nullptr);
+  EXPECT_FALSE(detail::recover_diagnostic_stream(stream));
+  EXPECT_THROW(stream.exceptions(std::ios::badbit), std::ios_base::failure);
+  EXPECT_FALSE(detail::recover_diagnostic_stream(stream));
+  EXPECT_THROW(write_file_diagnostic(stream, "notice"), std::ios_base::failure);
+  EXPECT_EQ(stream.exceptions(), std::ios::badbit);
+}
+TEST_F(CliDiagnosticsTest, RecoveryPreservesTheOriginalRendererExceptionAndExceptionMask) {
+  const auto original = std::make_exception_ptr(std::logic_error("output failure"));
+  struct ThrowingStream : std::streambuf {
+    const std::exception_ptr &failure;
+    explicit ThrowingStream(const std::exception_ptr &value) : failure(value) {}
+    std::streamsize xsputn(const char *, std::streamsize) override {
+      std::rethrow_exception(failure);
+    }
+  } buffer(original);
+  std::ostream stream(&buffer);
+  stream.exceptions(std::ios::badbit);
+  try {
+    (void)detail::write_diagnostic(stream, {"failed"});
+    FAIL() << "renderer must throw";
+  } catch (...) {
+    EXPECT_EQ(std::current_exception(), original);
+  }
+  EXPECT_TRUE(stream.good());
+  EXPECT_EQ(stream.exceptions(), std::ios::badbit);
+}
+TEST_F(CliDiagnosticsTest, ImmediateFlushFailureUsesEmergencyAndNextNoticeRecovers) {
+  NoticeStream buffer;
+  buffer.fail_flush = true;
+  std::ostream stream(&buffer);
+  detail::CliDiagnostics sink(stream);
+  RestoreReceiver restore{state, *diagnostics};
+  sink.install(state);
+  auto session = state.create();
+  const auto fail = [&](const std::string &id) {
+    ToolCall call{id, "exec_command", Json::object()};
+    state.tool_started(session.id, call);
+    call.name = "wrong";
+    codet::Message result;
+    result.role = "tool";
+    result.tool_call_id = id;
+    EXPECT_THROW(state.complete_tool(session, call, result), Error);
+  };
+  testing::internal::CaptureStderr();
+  fail("failed");
+  const auto emergency = testing::internal::GetCapturedStderr();
+  EXPECT_THAT(emergency, HasSubstr("Uncommitted tool result preserved at "));
+  buffer.fail_flush = false;
+  buffer.str("");
+  fail("recovered");
+  EXPECT_TRUE(stream.good());
+  EXPECT_THAT(buffer.str(), HasSubstr("Uncommitted tool result preserved at "));
+}
+TEST_F(CliDiagnosticsTest, FatalAssertionRestoresTheReceiverBeforeItsLocalStreamIsDestroyed) {
+  TestPartResultArray failures;
+  {
+    ScopedFakeTestPartResultReporter reporter(
+        ScopedFakeTestPartResultReporter::INTERCEPT_ONLY_CURRENT_THREAD, &failures);
+    [&] {
+      std::ostringstream local;
+      detail::CliDiagnostics sink(local);
+      RestoreReceiver restore{state, *diagnostics};
+      sink.install(state);
+      ASSERT_FALSE(true) << "intentional receiver-lifetime assertion";
+    }();
+  }
+  ASSERT_EQ(failures.size(), 1);
+  EXPECT_TRUE(failures.GetTestPartResult(0).fatally_failed());
+  auto session = state.create();
+  ToolCall call{"after-assertion", "exec_command", Json::object()};
+  state.tool_started(session.id, call);
+  call.name = "wrong";
+  codet::Message result;
+  result.role = "tool";
+  result.tool_call_id = call.id;
+  EXPECT_THROW(state.complete_tool(session, call, result), Error);
+  EXPECT_THAT(output.str(), HasSubstr("Uncommitted tool result preserved at "));
+}
+TEST_F(CliDiagnosticsTest, SuccessfulLineNoticeUsesCheckedStreamWithoutFullscreenReplay) {
+  {
+    detail::TerminalDiagnosticsScope<Surface> scope(terminal, diagnostics, state);
+    scope.activate(std::make_shared<Surface>(false, restored, calls));
+    notice("line-path");
+    diagnostics->deliver_files();
+    EXPECT_EQ(output.str(), "Uncommitted tool result preserved at line-path\n");
+    EXPECT_EQ(calls, 0u);
+  }
+  EXPECT_EQ(output.str(), "Uncommitted tool result preserved at line-path\n");
+}
+TEST_F(CliDiagnosticsTest, NestedScopesRestoreThenReplayLiveCleanupAndFullNoticesOnce) {
+  const std::string path = "/Jos\xc3\xa9/" + std::string(2048, 'p');
+  {
+    detail::TerminalDiagnosticsScope<Surface> outer(terminal, diagnostics, state);
+    outer.activate(std::make_shared<Surface>(true, restored, calls));
+    diagnostics->emit("live");
+    notice(path);
+    diagnostics->deliver_files();
+    EXPECT_TRUE(output.str().empty());
+    {
+      detail::TerminalDiagnosticsScope<Surface> cleanup(terminal, diagnostics, state);
+      diagnostics->buffering = true;
+      diagnostics->emit("SessionEnd cleanup");
+    }
+    EXPECT_TRUE(restored);
+    EXPECT_EQ(output.str(),
+              "live\nSessionEnd cleanup\nUncommitted tool result preserved at " + path + "\n");
+  }
+  EXPECT_EQ(output.str(),
+            "live\nSessionEnd cleanup\nUncommitted tool result preserved at " + path + "\n");
+}
+TEST_F(CliDiagnosticsTest, EarlyFailurePreservesExceptionAndRestoresFailedPreview) {
+  const auto original = std::make_exception_ptr(Error("original operation", 42));
+  testing::internal::CaptureStderr();
+  try {
+    detail::TerminalDiagnosticsScope<Surface> scope(terminal, diagnostics, state);
+    scope.activate(std::make_shared<Surface>(true, restored, calls));
+    terminal->render = [](const auto &) { throw std::bad_alloc(); };
+    notice("failed-preview");
+    diagnostics->deliver_files();
+    std::rethrow_exception(original);
+  } catch (...) {
+    EXPECT_EQ(std::current_exception(), original);
+  }
+  EXPECT_TRUE(restored);
+  EXPECT_EQ(calls, 1u);
+  EXPECT_EQ(testing::internal::GetCapturedStderr(),
+            "Uncommitted tool result preserved at failed-preview\n");
+}
+TEST_F(CliDiagnosticsTest, RestorationSwitchesActualReceiptFailuresBackToImmediateDelivery) {
+  auto session = state.create();
+  const auto fail_completion = [&](const std::string &id) {
+    ToolCall call{id, "exec_command", Json::object()};
+    state.tool_started(session.id, call);
+    call.name = "wrong";
+    codet::Message result;
+    result.role = "tool";
+    result.tool_call_id = id;
+    EXPECT_THROW(state.complete_tool(session, call, result), Error);
+  };
+  {
+    detail::TerminalDiagnosticsScope<Surface> scope(terminal, diagnostics, state);
+    scope.activate(std::make_shared<Surface>(true, restored, calls));
+    fail_completion("queued");
+    EXPECT_TRUE(output.str().empty());
+  }
+  EXPECT_TRUE(restored);
+  EXPECT_THAT(output.str(), HasSubstr("Uncommitted tool result preserved at "));
+  output.str("");
+  fail_completion("immediate");
+  EXPECT_THAT(output.str(), HasSubstr("Uncommitted tool result preserved at "));
+  const auto reported = output.str();
+  diagnostics->restored(state);
+  EXPECT_EQ(output.str(), reported);
+}
+struct FailingStream : std::stringbuf {
+  std::string marker;
+  bool fired = false;
+  explicit FailingStream(std::string match) : marker(std::move(match)) {}
+  std::streamsize xsputn(const char *bytes, std::streamsize count) override {
+    if (!fired && std::string(bytes, static_cast<size_t>(count)) == marker) {
+      fired = true;
+      throw std::bad_alloc();
+    }
+    return std::stringbuf::xsputn(bytes, count);
+  }
+};
+TEST_F(CliDiagnosticsTest, ReplayFailureDoesNotSkipAnotherBufferOrFileNotices) {
+  for (const auto *failed : {"live", "cleanup"}) {
+    FailingStream buffer(failed);
+    std::ostream stream(&buffer);
+    stream.exceptions(std::ios::badbit);
+    auto sink = std::make_shared<detail::CliDiagnostics>(stream);
+    RestoreReceiver restore{state, *diagnostics};
+    sink->live.add("live");
+    sink->cleanup.add("cleanup");
+    sink->files->submit(std::make_unique<FileNotice>("retained", FileNoticeKind::repair_backup));
+    sink->restored(state);
+    ASSERT_TRUE(buffer.fired);
+    EXPECT_THAT(buffer.str(), HasSubstr(std::string(failed) == "live" ? "cleanup\n" : "live\n"));
+    EXPECT_THAT(buffer.str(),
+                HasSubstr("Session repair backup candidate (publication unconfirmed): retained\n"));
+    const auto first = buffer.str();
+    sink->restored(state);
+    EXPECT_EQ(buffer.str(), first);
+  }
+}
+TEST_F(CliDiagnosticsTest, PersistentStreamFailureStillFinishesNoticeAndPreservesCleanupException) {
+  struct BrokenStream : std::streambuf {
+    std::streamsize xsputn(const char *, std::streamsize) override {
+      return 0;
+    }
+  } buffer;
+  std::ostream stream(&buffer);
+  stream.exceptions(std::ios::badbit);
+  auto sink = std::make_shared<detail::CliDiagnostics>(stream);
+  RestoreReceiver restore{state, *diagnostics};
+  const auto original = std::make_exception_ptr(Error("SessionEnd failure"));
+  testing::internal::CaptureStderr();
+  try {
+    detail::TerminalDiagnosticsScope<Surface> scope(terminal, sink, state);
+    scope.activate(std::make_shared<Surface>(true, restored, calls));
+    sink->live.add("live");
+    sink->cleanup.add("cleanup");
+    sink->files->submit(std::make_unique<FileNotice>("persistent", FileNoticeKind::repair_backup));
+    std::rethrow_exception(original);
+  } catch (...) {
+    EXPECT_EQ(std::current_exception(), original);
+  }
+  sink->restored(state);
+  EXPECT_TRUE(restored);
+  EXPECT_EQ(testing::internal::GetCapturedStderr(),
+            "Session repair backup candidate (publication unconfirmed): persistent\n");
+}
+} // namespace
+TEST(ProcessHelperSafety, InvalidPidsNeverReachWaitOrSignal) {
+  test::HelperProcessOps ops;
+  ops.wait = +[](pid_t, int *, int) -> pid_t {
+    ADD_FAILURE() << "unexpected wait";
+    return -1;
+  };
+  ops.signal = +[](pid_t, int) {
+    ADD_FAILURE() << "unexpected signal";
+    return -1;
+  };
+  int status = 0;
+  EXPECT_FALSE(test::wait_helper(0, status, ops));
+  EXPECT_FALSE(test::wait_helper(-1, status, ops));
+}
+
+TEST(TurnInput, CompletedInputKeepsActiveCommandPolicyAndRejectsWrongOrigins) {
+  const detail::InputOrigin origin{"session", 7};
+  for (auto phase : {detail::TurnInputPhase::active, detail::TurnInputPhase::completed}) {
+    for (const std::string text :
+         {"/model", "/model next", "/status", "/compact", "/permissions plan"}) {
+      detail::InputLine line{text, {}, false, origin};
+      const auto decision = detail::classify_turn_input(line, nullptr, origin, phase);
+      EXPECT_EQ(decision.action, detail::TurnInputAction::restricted);
+      EXPECT_FALSE(decision.guidance.empty());
+    }
+    detail::InputLine fresh{"/new", {}, false, origin};
+    EXPECT_EQ(detail::classify_turn_input(fresh, nullptr, origin, phase).action,
+              detail::TurnInputAction::new_session);
+    for (auto wrong :
+         {std::optional<detail::InputOrigin>{}, std::optional<detail::InputOrigin>{{"other", 7}},
+          std::optional<detail::InputOrigin>{{"session", 6}}}) {
+      detail::InputLine line{"/new", {}, false, wrong};
+      EXPECT_EQ(detail::classify_turn_input(line, nullptr, origin, phase).action,
+                detail::TurnInputAction::reject_origin);
+    }
+  }
+}
+TEST(TurnInput, ExpiredAnswersNeverBecomeMessagesAndHeldOrderPrecedesSteering) {
+  const detail::InputOrigin origin{"session", 7};
+  detail::InputLine expired{"yes", detail::ApprovalIdentity{"session", "old", 7}, false, origin};
+  const auto rejected =
+      detail::classify_turn_input(expired, nullptr, origin, detail::TurnInputPhase::completed);
+  EXPECT_EQ(rejected.action, detail::TurnInputAction::discard);
+  EXPECT_EQ(rejected.rejection, detail::InputDiscard::expired);
+  detail::InputLine next{"second", {}, false, origin};
+  next.presentation_held = true;
+  EXPECT_EQ(
+      detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::active).action,
+      detail::TurnInputAction::hold);
+  next.presentation_held = false;
+  EXPECT_EQ(
+      detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::active).action,
+      detail::TurnInputAction::steer);
+  EXPECT_EQ(
+      detail::classify_turn_input(next, nullptr, origin, detail::TurnInputPhase::completed).action,
+      detail::TurnInputAction::hold);
+}
+
+TEST(PendingControl, BackspaceConsumesOverflowBeforeTheRetainedPrefix) {
+  for (const std::string command : {"/quit", "/exit"}) {
+    detail::PendingControl<> input;
+    for (char byte : command + "xxx")
+      input.append(byte);
+    for (unsigned i = 0; i != 3; ++i)
+      input.erase();
+    EXPECT_TRUE(input.submit()) << command;
+    EXPECT_FALSE(input.started());
+  }
+  detail::PendingControl<> input;
+  input.append('x');
+  input.erase();
+  EXPECT_TRUE(input.started()); // Ownership lasts through the ignored line boundary.
+  EXPECT_FALSE(input.submit());
+  EXPECT_FALSE(input.started());
+}
+TEST(PendingControl, SaturationCannotCreateAFalseQuitAfterDeletion) {
+  detail::PendingControl<2> input;
+  for (char byte : std::string("/quitxxxxx"))
+    input.append(byte);
+  for (unsigned i = 0; i != 20; ++i)
+    input.erase();
+  EXPECT_FALSE(input.submit());
+  for (char byte : std::string("/quit"))
+    input.append(byte);
+  EXPECT_TRUE(input.submit());
+}
+
+TEST(LineDestinations, PresentationTokenRejectsAnInterveningRecordAndRebinding) {
+  detail::LineDestinations destinations;
+  struct stat tty {};
+  tty.st_mode = S_IFCHR;
+  tty.st_ino = 1;
+  destinations.bind(1, tty);
+  destinations.bind(2, tty);
+  destinations.open(tty);
+  const auto before = destinations.token(1, tty);
+  const auto diagnostic = destinations.admit(2, false);
+  EXPECT_FALSE(destinations.admit(1, true, &before).admitted);
+  destinations.finish(diagnostic, true, true);
+  EXPECT_FALSE(destinations.admit(1, true, &before).admitted);
+  const auto current = destinations.token(1, tty);
+  auto presentation = destinations.admit(1, true, &current);
+  EXPECT_TRUE(presentation.admitted);
+  destinations.finish(presentation, true, true);
+  ++tty.st_ino;
+  destinations.bind(1, tty);
+  EXPECT_FALSE(destinations.admit(1, true, &current).admitted);
+}
+TEST(LineDestinations, SuccessfulFragmentsConcatenateButSeparateFromPresentation) {
+  detail::LineDestinations destinations;
+  struct stat tty {};
+  tty.st_mode = S_IFCHR;
+  destinations.bind(1, tty);
+  destinations.bind(2, tty);
+  auto first = destinations.admit(2, false);
+  destinations.finish(first, true, false);
+  auto second = destinations.admit(2, false);
+  EXPECT_FALSE(second.separator);
+  destinations.finish(second, true, false);
+  const auto presentation = destinations.admit(1, true);
+  EXPECT_TRUE(presentation.separator);
+  destinations.finish(presentation, true, true);
+  const auto next = destinations.admit(2, false);
+  EXPECT_FALSE(next.separator);
+  destinations.finish(next, true, true);
+}
+TEST(LinePrompt, InjectedFragmentEndsBeforeFrozenPresentation) {
+  LineFixture f;
+  f.line->append('a');
+  f.line->append('b');
+  f.input.append('c');
+  if (f.line->before_output(STDERR_FILENO, f.tty))
+    f.output.echo({"\n"});
+  f.output.display({"fragment"}, false);
+  auto submitted = f.line->try_take();
+  ASSERT_TRUE(submitted);
+  EXPECT_EQ(submitted->text, "abc");
+  EXPECT_THAT(f.stream.str(), EndsWith("fragment\ncodet> abc\n"));
+}
+
+TEST(DiagnosticWriter, ExplicitTrailingNewlineClosesAnInjectedFragment) {
+  std::ostringstream stream;
+  detail::DiagnosticWriter writer(stream);
+  EXPECT_TRUE(writer.write({"fragment"}, false));
+  EXPECT_TRUE(writer.write({" ends\n"}, false));
+  const auto receipt = writer.write_receipt({"prompt"}, false, true, true);
+  EXPECT_EQ(receipt.result, detail::DiagnosticResult::success);
+  EXPECT_EQ(stream.str(), "fragment ends\nprompt");
+}
+
+TEST(SubmissionQueue, UnreadSteeringPrecedesHeldInputAndLaterMessages) {
+  for (bool consumed : {false, true}) {
+    Interaction io;
+    io.begin_turn("s");
+    io.submit("A");
+    const auto ticket = detail::SubmissionAccess::reserve(io);
+    detail::SubmissionAccess::commit(io, ticket, "B", true);
+    io.submit("C");
+    if (consumed)
+      EXPECT_EQ(io.take_input(), std::vector<std::string>{"A"});
+    io.end_turn();
+    std::vector<std::string> actual;
+    while (auto next = detail::SubmissionAccess::next(io, "s"))
+      actual.push_back(next->text);
+    EXPECT_EQ(actual, consumed ? (std::vector<std::string>{"B", "C"})
+                               : (std::vector<std::string>{"A", "B", "C"}));
+  }
+}
+TEST(SubmissionQueue, FrozenReservationsCountTowardTheSharedLimit) {
+  Interaction io;
+  io.begin_turn("s");
+  std::vector<uint64_t> reservations;
+  for (unsigned i = 0; i != 100; ++i)
+    reservations.push_back(detail::SubmissionAccess::reserve(io));
+  EXPECT_THROW(detail::SubmissionAccess::reserve(io), Error);
+  EXPECT_THROW(io.submit("extra"), Error);
+  EXPECT_TRUE(io.take_input().empty());
+  detail::SubmissionAccess::abandon(io, reservations.back());
+  reservations.pop_back();
+  const auto command = detail::SubmissionAccess::reserve(io);
+  EXPECT_THROW(detail::SubmissionAccess::commit(io, command, std::string(65537, 'x'), false),
+               Error);
+  detail::SubmissionAccess::commit(io, command, "/custom argument", false, true);
+  for (auto sequence : reservations)
+    detail::SubmissionAccess::abandon(io, sequence);
+  io.end_turn();
+  auto next = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(next);
+  EXPECT_EQ(next->text, "/custom argument");
+  EXPECT_FALSE(detail::SubmissionAccess::next(io, "s"));
+}
+TEST(SubmissionQueue, ReservedPrefixCannotBeOvertakenAndKeepsItsRawCommand) {
+  Interaction io;
+  io.begin_turn("s");
+  const auto first = detail::SubmissionAccess::reserve(io);
+  io.submit("later");
+  EXPECT_TRUE(io.take_input().empty());
+  detail::SubmissionAccess::commit(io, first, "/unknown", false, true);
+  EXPECT_TRUE(io.take_input().empty());
+  io.end_turn();
+  auto a = detail::SubmissionAccess::next(io, "s");
+  auto b = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(a);
+  ASSERT_TRUE(b);
+  EXPECT_EQ(a->text, "/unknown");
+  EXPECT_EQ(b->text, "later");
+}
+TEST(TurnInput, CompleteLocalGrammarAndBoundAnswersShareOnePolicy) {
+  const detail::InputOrigin origin{"session", 7};
+  const Json request = {{"request_id", "r"}, {"codet_session_id", "session"}, {"codet_turn", 7}};
+  for (const std::string text : {"/help", "/model next", "/compact", "/status", "/permissions plan",
+                                 "/sessions", "/name changed", "/export", "/memory consolidate"}) {
+    detail::InputLine ordinary{text, {}, false, origin};
+    EXPECT_EQ(detail::classify_turn_input(ordinary, nullptr, origin, detail::TurnInputPhase::active)
+                  .action,
+              detail::TurnInputAction::restricted)
+        << text;
+    detail::InputLine answer{text, detail::ApprovalIdentity{"session", "r", 7}, false, origin};
+    EXPECT_EQ(detail::classify_turn_input(answer, &request, origin, detail::TurnInputPhase::active)
+                  .action,
+              detail::TurnInputAction::answer)
+        << text;
+  }
+  for (const std::string text : {"/permissionsfoo", "/custom args", "/unknown"}) {
+    detail::InputLine line{text, {}, false, origin};
+    EXPECT_EQ(detail::classify_turn_input(line, nullptr, origin, detail::TurnInputPhase::completed)
+                  .action,
+              detail::TurnInputAction::hold);
+  }
+}
+
+TEST(PendingControl, PartialPrefixNeverGatesIndependentHandoff) {
+  detail::PendingControl<> control;
+  for (char byte : std::string("/qu"))
+    control.append(byte);
+  unsigned attempts = 0;
+  const auto next = [&]() -> std::optional<std::string> {
+    ++attempts;
+    return "frozen";
+  };
+  EXPECT_EQ(control.handoff(false, next), std::optional<std::string>{"frozen"})
+      << "Partial control gated an independent handoff";
+  EXPECT_EQ(attempts, 1u);
+  EXPECT_TRUE(control.started());
+  EXPECT_FALSE(control.handoff(true, next));
+  EXPECT_EQ(attempts, 1u);
+}
+TEST(SubmissionQueue, DeferredBarrierSurvivesStartingTheEarlierFollowup) {
+  Interaction io;
+  io.begin_turn("s");
+  const auto first = detail::SubmissionAccess::reserve(io);
+  detail::SubmissionAccess::commit(io, first, "first", true);
+  const auto second = detail::SubmissionAccess::reserve(io);
+  detail::SubmissionAccess::commit(io, second, "second", false);
+  io.end_turn();
+  ASSERT_TRUE(detail::SubmissionAccess::next(io, "s"));
+  io.begin_turn("s");
+  EXPECT_TRUE(io.take_input().empty()) << "Deferred barrier became steering input";
+  io.end_turn();
+  auto later = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(later);
+  EXPECT_EQ(later->text, "second");
+}
+
+TEST(SubmissionQueue, UnreadSteeringClosesIntoSeparateFollowupTurns) {
+  Interaction io;
+  io.begin_turn("s");
+  for (const std::string text : {"A", "B"}) {
+    const auto ticket = detail::SubmissionAccess::reserve(io);
+    detail::SubmissionAccess::commit(io, ticket, text, false);
+  }
+  io.end_turn();
+  auto first = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(first);
+  EXPECT_EQ(first->text, "A");
+  io.begin_turn("s");
+  std::vector<std::string> incoming;
+  EXPECT_NO_THROW(incoming = io.take_input()) << "Unread steering crossed its originating turn";
+  EXPECT_TRUE(incoming.empty()) << "Unread steering crossed its originating turn";
+  io.end_turn();
+  auto second = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(second);
+  EXPECT_EQ(second->text, "B");
+}
+TEST(TurnInput, SlashIdentifiersNeedResolvedCommandsBeforeDeferral) {
+  const detail::InputOrigin origin{"s", 1};
+  for (const std::string text : {"/tmp/build.log shows the crash", "/tmp.log", "/", "/a/b"}) {
+    detail::InputLine line{text, {}, false, origin};
+    EXPECT_EQ(
+        detail::classify_turn_input(line, nullptr, origin, detail::TurnInputPhase::active).action,
+        detail::TurnInputAction::steer)
+        << text;
+  }
+  detail::InputLine command{"/reveiw args", {}, false, origin};
+  EXPECT_EQ(
+      detail::classify_turn_input(command, nullptr, origin, detail::TurnInputPhase::active).action,
+      detail::TurnInputAction::steer);
+}
+
+TEST(TlsTrust, UnsupportedDirectoryStoresAreAcceptedOnlyForKnownAbsentCapabilities) {
+  for (bool proxy : {false, true})
+    for (auto backend : {detail::DirectoryTrust::present, detail::DirectoryTrust::absent,
+                         detail::DirectoryTrust::unknown}) {
+      std::vector<CURLoption> options;
+      const auto configure = [&] {
+        detail::configure_tls_trust(
+            "selected.pem", {proxy, backend}, [&](CURLoption option, const char *value) {
+              options.push_back(option);
+              if (option == CURLOPT_CAINFO || option == CURLOPT_PROXY_CAINFO) {
+                EXPECT_STREQ(value, "selected.pem");
+                return CURLE_OK;
+              }
+              EXPECT_EQ(value, nullptr);
+              return CURLE_NOT_BUILT_IN;
+            });
+      };
+      if (backend == detail::DirectoryTrust::absent)
+        EXPECT_NO_THROW(configure());
+      else
+        EXPECT_THROW(configure(), detail::PermanentTransportError);
+      EXPECT_EQ(std::count(options.begin(), options.end(), CURLOPT_PROXY_CAINFO), proxy ? 1 : 0);
+    }
+}
+TEST(TlsTrust, RealTrustFailuresNeverFallBackToDefaults) {
+  for (auto failure : {CURLOPT_CAINFO, CURLOPT_PROXY_CAINFO, CURLOPT_CAPATH, CURLOPT_PROXY_CAPATH})
+    EXPECT_THROW(detail::configure_tls_trust("selected.pem", {true, detail::DirectoryTrust::absent},
+                                             [&](CURLoption option, const char *) {
+                                               return option == failure ? CURLE_OUT_OF_MEMORY
+                                                                        : CURLE_OK;
+                                             }),
+                 detail::PermanentTransportError);
+  EXPECT_EQ(detail::directory_trust("Schannel"), detail::DirectoryTrust::absent);
+  EXPECT_EQ(detail::directory_trust("rustls/0.23"), detail::DirectoryTrust::absent);
+  EXPECT_EQ(detail::directory_trust("OpenSSL/3.0"), detail::DirectoryTrust::present);
+  EXPECT_EQ(detail::directory_trust("future-backend"), detail::DirectoryTrust::unknown);
+  EXPECT_EQ(detail::directory_trust("SchannelFuture"), detail::DirectoryTrust::unknown);
+}
+
+TEST(DiagnosticWriter, EmptyInjectedSeparationClosesTheFragmentExactlyOnce) {
+  std::ostringstream output;
+  detail::DiagnosticWriter writer(output);
+  ASSERT_TRUE(writer.write({"fragment"}, false));
+  EXPECT_EQ(writer.write_receipt({}, false, true, true).result, detail::DiagnosticResult::success);
+  EXPECT_EQ(writer.write_receipt({"prompt"}, false, true, true).result,
+            detail::DiagnosticResult::success);
+  EXPECT_EQ(output.str(), "fragment\nprompt") << "Empty separator kept a stale fragment";
+}
+
+TEST(SubmissionQueue, ReservedBarrierSurvivesRejectionOfItsPredecessor) {
+  Interaction io;
+  io.begin_turn("s");
+  const auto first = detail::SubmissionAccess::reserve(io);
+  const auto later = detail::SubmissionAccess::reserve(io);
+  detail::SubmissionAccess::commit(io, later, "later", false);
+  detail::SubmissionAccess::abandon(io, first);
+  EXPECT_TRUE(io.take_input().empty()) << "Rejected prefix lost its reserved barrier";
+  io.end_turn();
+  auto pending = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(pending);
+  EXPECT_EQ(pending->text, "later");
+}
+
+TEST(TlsTrust, ActualBackendVersionsRetainDelimiterAwareCapabilities) {
+  for (const std::string backend : {"rustls-ffi/0.15.0/rustls/0.23.0/aws-lc-rs",
+                                    "crustls/0.8.0/rustls/0.20.0", "BearSSL", "BearSSL/0.6"}) {
+    ASSERT_EQ(detail::directory_trust(backend), detail::DirectoryTrust::absent) << backend;
+    EXPECT_NO_THROW(detail::configure_tls_trust(
+        "selected.pem", {true, detail::directory_trust(backend)},
+        [](CURLoption option, const char *) {
+          return option == CURLOPT_CAPATH || option == CURLOPT_PROXY_CAPATH ? CURLE_NOT_BUILT_IN
+                                                                            : CURLE_OK;
+        }))
+        << backend;
+  }
+  for (const std::string backend : {"BearSSLFuture", "SchannelFuture", "rustls-ffi", "crustls"})
+    EXPECT_EQ(detail::directory_trust(backend), detail::DirectoryTrust::unknown) << backend;
+}
+TEST(SubmissionQueue, InactiveCompatibilityInputCannotBecomeOldTurnSteering) {
+  Interaction io;
+  io.begin_turn("s");
+  io.end_turn();
+  io.submit("between turns");
+  io.begin_turn("s");
+  std::vector<std::string> steering;
+  EXPECT_NO_THROW(steering = io.take_input())
+      << "Inactive compatibility input retained old-turn steering";
+  EXPECT_TRUE(steering.empty());
+  io.end_turn();
+  const auto queued = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(queued);
+  EXPECT_EQ(queued->text, "between turns");
+  EXPECT_FALSE(detail::SubmissionAccess::next(io, "s"));
+}
+
+TEST(InputPreparation, CancellationIsAnOutcomeBeforeDuringAndAfterLookup) {
+  for (unsigned stage = 0; stage != 3; ++stage) {
+    Cancellation cancel;
+    unsigned calls = 0;
+    cancel.requested = stage == 0;
+    const auto result =
+        detail::prepare_submission(cancel, [&]() -> std::optional<detail::PreparedPrompt> {
+          ++calls;
+          if (stage == 1)
+            throw Error("lookup cancelled", 130);
+          cancel.requested = true;
+          return detail::PreparedPrompt{"original", "expanded"};
+        });
+    EXPECT_EQ(result.state, detail::PreparationState::cancelled);
+    EXPECT_FALSE(result.prompt);
+    EXPECT_EQ(calls, stage == 0 ? 0u : 1u);
+  }
+}
+TEST(InputPreparation, LocalErrorsKeepTheirTypeAndAllocationFailuresPropagate) {
+  Cancellation cancel;
+  const auto result =
+      detail::prepare_submission(cancel, []() -> std::optional<detail::PreparedPrompt> {
+        throw std::filesystem::filesystem_error("lookup failure",
+                                                std::make_error_code(std::errc::permission_denied));
+      });
+  EXPECT_EQ(result.state, detail::PreparationState::failed);
+  EXPECT_THROW(std::rethrow_exception(result.failure), std::filesystem::filesystem_error);
+  EXPECT_THROW(
+      detail::prepare_submission(
+          cancel, []() -> std::optional<detail::PreparedPrompt> { throw std::bad_alloc(); }),
+      std::bad_alloc);
+}
+TEST(InputPreparation, ReadyContentKeepsOriginalAndCompletionCanStillBeCollected) {
+  Cancellation cancel;
+  auto worker = std::async(std::launch::deferred, [] { return 42; });
+  const auto result =
+      detail::prepare_submission(cancel, [&]() -> std::optional<detail::PreparedPrompt> {
+        return detail::PreparedPrompt{"original", "expanded"};
+      });
+  EXPECT_EQ(result.state, detail::PreparationState::ready);
+  ASSERT_TRUE(result.prompt);
+  EXPECT_EQ(result.prompt->original, "original");
+  EXPECT_EQ(result.prompt->expanded, "expanded");
+  cancel.requested = true;
+  EXPECT_NO_THROW(
+      (void)detail::prepare_submission(cancel, []() -> std::optional<detail::PreparedPrompt> {
+        ADD_FAILURE() << "Cancelled preparation reached its lookup";
+        return {};
+      }));
+  EXPECT_EQ(worker.get(), 42);
+}
+TEST(SubmissionQueue, MovingOrUnwindingALineReleasesItsReservedEntryExactlyOnce) {
+  Interaction io;
+  io.begin_turn("s");
+  const auto first = detail::SubmissionAccess::reserve(io);
+  io.submit("later");
+  try {
+    detail::InputLine line{"original"};
+    line.admission = first;
+    line.reservation = detail::SubmissionLease(&io, first);
+    auto moved = std::move(line);
+    EXPECT_EQ(moved.text, "original");
+    throw std::bad_alloc();
+  } catch (const std::bad_alloc &) {
+  }
+  io.end_turn();
+  const auto next = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(next) << "Preparation failure leaked its reserved prefix";
+  EXPECT_EQ(next->text, "later");
+  EXPECT_TRUE(io.take_pending("s").empty())
+      << "Reservation cleanup emitted an empty pending notice";
+}
+
+TEST(InputPreparation, NormalizationIsBoundedBeforeAllocatingRepairedContent) {
+  const std::string malformed(65536, static_cast<char>(0x80));
+  EXPECT_EQ(detail::normalized_input_size(malformed, 196608), 196608u);
+  EXPECT_THROW(detail::normalized_input_size(malformed, 196607), Error);
+  EXPECT_EQ(detail::normalized_input(malformed, 196608).size(), 196608u);
+  EXPECT_EQ(detail::normalized_input("literal \\x80", 12), "literal \\x80");
+  EXPECT_THROW(detail::normalized_input_size(std::string(262145, 'x'), 262144), Error);
+}
+TEST(SubmissionQueue, EffectiveBudgetCountsReservedAndCommittedContentExactlyOnce) {
+  Interaction io;
+  io.begin_turn("s");
+  std::vector<uint64_t> tickets;
+  auto expanded = std::make_shared<const detail::PreparedPrompt>(
+      detail::PreparedPrompt{"/review", std::string(detail::expanded_input_limit, 'x')});
+  for (unsigned i = 0; i != 32; ++i) {
+    const auto ticket = detail::SubmissionAccess::reserve(io);
+    tickets.push_back(ticket);
+    detail::SubmissionAccess::charge(io, ticket, expanded->expanded.size(), 0);
+    if (i % 2 == 0)
+      detail::SubmissionAccess::commit(io, ticket, "/review", true, true, expanded);
+  }
+  const auto extra = detail::SubmissionAccess::reserve(io);
+  EXPECT_THROW(detail::SubmissionAccess::charge(io, extra, 1), Error)
+      << "Aggregate effective budget admitted excess content";
+  EXPECT_THROW(io.submit("extra"), Error);
+  detail::SubmissionAccess::abandon(io, tickets.back());
+  detail::SubmissionAccess::charge(io, extra, detail::expanded_input_limit, 0);
+  EXPECT_THROW(detail::SubmissionAccess::charge(io, extra, detail::expanded_input_limit + 1),
+               Error);
+  detail::SubmissionAccess::commit(io, extra, "/review", true, true, expanded);
+  for (auto ticket : tickets)
+    detail::SubmissionAccess::abandon(io, ticket);
+  io.end_turn();
+  unsigned consumed = 0;
+  while (auto next = detail::SubmissionAccess::next(io, "s")) {
+    ASSERT_TRUE(next->prepared);
+    EXPECT_EQ(next->prepared->expanded.size(), detail::expanded_input_limit);
+    ++consumed;
+  }
+  EXPECT_EQ(consumed, 17u);
+  // All charges, including consumed queue entries, have been released.
+  for (unsigned i = 0; i != 100; ++i)
+    io.submit(std::string(detail::raw_input_limit, 'r'));
+  EXPECT_THROW(io.submit("overflow"), Error);
+  EXPECT_EQ(io.take_pending("s").size(), 100u);
+  io.submit("usable");
+  EXPECT_EQ(io.take_pending("s"), (std::vector<std::string>{"usable"}));
+}
+TEST(SubmissionQueue, LeaseAndSteeringConsumptionReleaseEffectiveCharges) {
+  Interaction io;
+  io.begin_turn("s");
+  {
+    const auto ticket = detail::SubmissionAccess::reserve(io);
+    detail::SubmissionLease lease(&io, ticket);
+    detail::SubmissionAccess::charge(io, ticket, detail::expanded_input_limit);
+    EXPECT_THROW(detail::SubmissionAccess::commit(io, ticket, std::string(65537, 'x'), false),
+                 Error);
+  }
+  EXPECT_TRUE(io.take_input().empty());
+  for (unsigned round = 0; round != 3; ++round) {
+    for (unsigned i = 0; i != 42; ++i)
+      io.submit(std::string(detail::raw_input_limit, static_cast<char>(0x80)));
+    EXPECT_THROW(io.submit(std::string(detail::raw_input_limit, static_cast<char>(0x80))), Error);
+    auto steering = io.take_input();
+    EXPECT_EQ(steering.size(), 42u);
+    EXPECT_EQ(steering.front().size(), 196608u);
+  }
+  io.end_turn();
+  EXPECT_TRUE(io.take_pending("s").empty());
+}
+
+TEST(SubmissionQueue, RetainedOriginalsAndNormalizationCannotHideBehindTinyExpansions) {
+  Interaction io;
+  io.begin_turn("s");
+  std::string raw = "/review ";
+  raw.append(65528, static_cast<char>(0x80));
+  size_t owned = 0;
+  unsigned accepted = 0;
+  for (unsigned i = 0; i != 100; ++i) {
+    const auto ticket = detail::SubmissionAccess::reserve(io);
+    detail::SubmissionLease lease(&io, ticket);
+    auto value = std::make_shared<const detail::PreparedPrompt>(detail::PreparedPrompt{raw, "x"});
+    try {
+      detail::SubmissionAccess::commit(io, ticket, raw, true, true, value);
+      owned += detail::normalized_input_size(raw, detail::expanded_input_limit) + raw.size() + 1;
+      ++accepted;
+      lease.release();
+    } catch (const Error &error) {
+      EXPECT_THAT(error.what(), HasSubstr("retained text"));
+      break;
+    }
+  }
+  EXPECT_EQ(accepted, 32u) << "Retained originals bypassed the owned-text budget";
+  EXPECT_LE(owned, detail::retained_input_limit);
+  io.end_turn();
+  EXPECT_EQ(io.take_pending("s").size(), accepted);
+  io.submit("usable after release");
+  EXPECT_EQ(io.take_pending("s"), (std::vector<std::string>{"usable after release"}));
+}
+TEST(SubmissionQueue, IndependentRetainedBudgetChecksExactBoundaryAndReservedCleanup) {
+  Interaction io;
+  io.begin_turn("s");
+  std::vector<detail::SubmissionLease> leases;
+  for (unsigned i = 0; i != 32; ++i) {
+    const auto ticket = detail::SubmissionAccess::reserve(io);
+    leases.emplace_back(&io, ticket);
+    detail::SubmissionAccess::charge(io, ticket, 0, 262144);
+  }
+  const auto extra = detail::SubmissionAccess::reserve(io);
+  detail::SubmissionLease lease(&io, extra);
+  EXPECT_THROW(detail::SubmissionAccess::charge(io, extra, 0, 1), Error);
+  io.end_turn();
+  EXPECT_TRUE(io.take_pending("s").empty()) << "Reserved placeholders escaped cleanup";
+  io.submit("fresh");
+  leases.clear(); // Obsolete leases cannot remove or charge the newer entry.
+  EXPECT_EQ(io.take_pending("s"), (std::vector<std::string>{"fresh"}));
+}
+TEST(SubmissionQueue, SharedPreparedOriginalCountsOneBackingAndStillForcesAFollowup) {
+  Interaction io;
+  io.begin_turn("s");
+  auto command =
+      std::make_shared<const detail::PreparedPrompt>(detail::PreparedPrompt{"/review", "expanded"});
+  auto text = std::shared_ptr<const std::string>(command, &command->original);
+  EXPECT_EQ(detail::SubmissionAccess::retained_size(text, command), 15u);
+  const auto ticket = detail::SubmissionAccess::reserve(io);
+  detail::SubmissionAccess::commit_prepared(io, ticket, text, false, true, command);
+  EXPECT_TRUE(io.take_input().empty()) << "Prepared command became unexpanded steering";
+  io.end_turn();
+  auto next = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(next);
+  EXPECT_EQ(next->text, "/review");
+  EXPECT_EQ(next->prepared.get(), command.get());
+}
+TEST(InputPreparation, LimitMessagesNameTheThresholdActuallyEnforced) {
+  try {
+    (void)detail::normalized_input_size("xx", 1);
+    FAIL();
+  } catch (const Error &error) {
+    EXPECT_STREQ(error.what(), "Normalized input exceeds 1 bytes");
+  }
+  Interaction io;
+  const auto ticket = detail::SubmissionAccess::reserve(io);
+  try {
+    detail::SubmissionAccess::charge(io, ticket, 262145, 0);
+    FAIL();
+  } catch (const Error &error) {
+    EXPECT_THAT(error.what(), HasSubstr("262144-byte per-entry"));
+  }
+}
+
+TEST(InputAttachments, PreparedProviderReceivesOriginalImages) {
+  std::vector<ImageArtifact> images(1);
+  images.front().path = "owned-image";
+  detail::PreparedPrompt command{"/review", "expanded"};
+  unsigned calls = 0;
+  detail::execute_image_submission(
+      "original", &command, std::move(images),
+      [&](const std::string &text, bool verbatim, const detail::PreparedPrompt *value,
+          std::vector<ImageArtifact> received) {
+        ++calls;
+        EXPECT_EQ(text, "original");
+        EXPECT_TRUE(verbatim);
+        EXPECT_EQ(value, &command);
+        ASSERT_EQ(received.size(), 1u) << "Initial images lost their owning turn";
+        EXPECT_EQ(received.front().path, "owned-image");
+      });
+  EXPECT_EQ(calls, 1u);
+}

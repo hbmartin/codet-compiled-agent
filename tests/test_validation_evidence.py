@@ -1498,6 +1498,51 @@ class EvidenceV4(ValidationEvidence):
         with self.assertRaisesRegex(ValueError, 'Prior attempt metadata'):
             history_files(folders)
 
+    def test_native_control_rejects_skipped_integration_and_gtest_targets(self):
+        import evidence_native_controls as controls
+        result=dict(exit=0,log='skipped')
+        def integration(*args):
+            (self.root/'integration-result.json').write_text(json.dumps(dict(tests=1,errors=[],failures=[],skipped=['requires Darwin'])))
+            return result
+        with patch.object(controls,'_run',side_effect=integration):
+            with self.assertRaisesRegex(ValueError,'did not execute cleanly.*requires Darwin'):
+                controls._integration(self.root,self.root/'binary',self.root)
+        def native(*args):
+            (self.root/'result.xml').write_text('<testsuites><testsuite><testcase classname="Portable" name="Image" status="run"><skipped/></testcase></testsuite></testsuites>')
+            return result
+        with patch.object(controls,'_run',side_effect=native):
+            with self.assertRaisesRegex(ValueError,'did not execute exactly'):
+                controls._test(self.root/'binary','Portable.Image',self.root)
+
+    def test_history_preflight_does_not_leak_io_errors(self):
+        from evidence_campaign import history_files
+        try:
+            history_files([self.root/'missing-attempt'])
+        except ValueError as error:
+            self.assertIn('Prior attempt metadata',str(error))
+        except Exception as error:
+            self.fail('Metadata validation leaked an I/O exception: '+type(error).__name__)
+        else:
+            self.fail('Missing history metadata was accepted')
+
+    def test_prior_metadata_errors_are_identifying_value_errors(self):
+        from evidence_campaign import history_files
+        folder=self.root/'malformed-attempt';(folder/'capture').mkdir(parents=True)
+        for name in ('config.json','capture-driver.log','capture/run.json'):
+            (folder/name).write_text('historical metadata')
+        manifest=folder/'manifest.json'
+        with self.assertRaisesRegex(ValueError,'Prior attempt metadata.*manifest.json'):
+            history_files([folder])
+        for data in ('{','{}','[]','{"root": null}','{"root": ""}'):
+            manifest.write_text(data)
+            with self.subTest(data=data),self.assertRaisesRegex(ValueError,'Prior attempt metadata.*manifest.json') as caught:
+                history_files([folder])
+            self.assertIsNotNone(caught.exception.__cause__)
+        manifest.write_text(json.dumps(dict(root=str(self.root))))
+        capture=folder/'capture/broken.json';capture.write_text('{')
+        with self.assertRaisesRegex(ValueError,'Prior attempt metadata.*broken.json'):
+            history_files([folder])
+
     def test_prior_attempt_declared_artifacts_are_preserved_and_digest_checked(self):
         from evidence_campaign import history_files
         folder=self.root/'attempt';(folder/'capture').mkdir(parents=True)

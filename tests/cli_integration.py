@@ -737,10 +737,10 @@ class CliTests(unittest.TestCase):
             message=[m for m in request['body']['messages'] if m['role']=='user'][-1]
             return sum(part.get('type')=='image_url' for part in message['content']) if isinstance(message.get('content'),list) else 0
         for command,starts_turn in (('/help',False),('/status',False),('/model',False),
-                                   ('/compact',False),('/unsafe',False),('/review',True),('',True)):
+                                   ('/compact',False),('/memory consolidate',False),('/unsafe',False),('/review',True),('x'*80000,True),('',True)):
             with self.subTest(command=command),PtyProcess() as resources:
                 before=len(self.server.requests);master,slave=resources.openpty()
-                process=resources.start([BIN,'-C',str(self.workspace),'--ui','line','-i',str(image),command],
+                process=resources.start([BIN,'-C',str(self.workspace),'--ui','line','--permission-mode','accept-edits','-i',str(image),command],
                     stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
                 received=bytearray();collect=partial(collect_pty,self,master,received)
                 expected=b'fixture done' if starts_turn else b'Images discarded'
@@ -751,6 +751,7 @@ class CliTests(unittest.TestCase):
                     self.assertTrue(all(images(r)==0 for r in self.server.requests[before:]),'Local command received initial images')
                 self.assertIn(expected,received,'Initial attachment disposition was not reported')
                 if command=='/compact':collect(lambda received=received:b'No older history to compact.' in received)
+                if command=='/memory consolidate':collect(lambda received=received:b'fixture done' in received)
                 # Empty Enter must not resurrect discarded images or start a provider turn.
                 received.clear()
                 count=len(self.server.requests);os.write(master,b'\n/status\n')
@@ -796,6 +797,68 @@ class CliTests(unittest.TestCase):
                     self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'fixture-recovered-output')
                     os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
                     self.assertEqual(process.returncode,0,received)
+
+    def test_large_fresh_argv_and_libedit_prose_are_not_pending_input(self):
+        large='x'*80000
+        for initial in (True,False):
+            with self.subTest(initial=initial),PtyProcess() as resources:
+                before=len(self.server.requests);master,slave=resources.openpty()
+                process=resources.start([BIN,'-C',str(self.workspace),'--ui','line',*([large] if initial else [])],
+                    stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+                received=bytearray();collect=partial(collect_pty,self,master,received)
+                if not initial:
+                    import fcntl
+                    collect(lambda received=received:b'codet>' in received)
+                    data=(large+'\n').encode();offset=0;deadline=time.monotonic()+20
+                    flags=fcntl.fcntl(master,fcntl.F_GETFL)
+                    fcntl.fcntl(master,fcntl.F_SETFL,flags|os.O_NONBLOCK)
+                    try:
+                        while offset<len(data) and time.monotonic()<deadline:
+                            readable,writable,_=select.select([master],[master],[],.02)
+                            if readable:
+                                try:received.extend(os.read(master,65536))
+                                except BlockingIOError:pass
+                            if writable:
+                                try:offset+=os.write(master,data[offset:offset+4096])
+                                except BlockingIOError:pass
+                        self.assertEqual(offset,len(data),'Fresh libedit paste did not complete')
+                    finally:
+                        fcntl.fcntl(master,fcntl.F_SETFL,flags)
+                collect(lambda before=before,received=received:len(self.server.requests)>before or b'Error: Pending raw input' in received,seconds=20)
+                self.assertNotIn(b'Pending raw input',received,'Fresh prose was rejected by a pending-input limit')
+                collect(lambda received=received:b'fixture done' in received)
+                self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],large,
+                    'Fresh prose was rejected by a pending-input limit')
+                self.assertNotIn(b'limit exceeded',received)
+                os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                self.assertEqual(process.returncode,0,received[-500:])
+
+    def test_failed_pending_preparation_reports_the_rejected_line_and_keeps_worker(self):
+        commands=self.home/'commands';commands.mkdir(parents=True,exist_ok=True)
+        outside=self.root/'outside.md';outside.write_text('unsafe')
+        (commands/'unsafe.md').symlink_to(outside)
+        for ui in ('line','curses'):
+            with self.subTest(ui=ui),PtyProcess() as resources:
+                ready,release=threading.Event(),threading.Event()
+                self.server.signal_gate=(ready,release);self.server.releases.append(release)
+                before=len(self.server.requests);master,slave=resources.openpty()
+                process=resources.start([BIN,'-C',str(self.workspace),'--ui',ui,'fixture-signal-wait'],
+                    stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+                received=bytearray();collect=partial(collect_pty,self,master,received)
+                self.assertTrue(ready.wait(10))
+                os.write(master,b'/unsafe\n')
+                collect(lambda received=received:b'Unsafe custom command path' in received)
+                self.assertIn(b'Pending message not sent: /unsafe',received,
+                    'Preparation failure omitted its pending-input rejection notice')
+                self.assertIsNone(process.poll());release.set()
+                collect(lambda received=received:b'fixture done' in received)
+                self.assertEqual(len(self.server.requests),before+1,'Failed preparation started a turn')
+                os.write(master,b'fixture-recovered-output\n')
+                collect(lambda received=received:b'recovered reply' in received)
+                self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'fixture-recovered-output')
+                self.assertNotIn(b'Pending message not sent: ]',received)
+                os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                self.assertEqual(process.returncode,0,received)
 
     def test_idle_and_initial_preparation_cancellation_return_130(self):
         for initial in (False,True):

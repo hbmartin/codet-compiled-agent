@@ -91,7 +91,7 @@ def freeze_json(value):
 SYSROOT_RECOVERY = " Rebuild with python3 scripts/tiger.py sysroot, then create a fresh Tiger application build."
 
 
-def validated_manifest(data, lock=None):
+def validated_manifest(data, lock):
     try:
         value = json.loads(data)
         if (value['sysroot_format'] != 2 or not isinstance(value['recipe'], dict)
@@ -100,8 +100,8 @@ def validated_manifest(data, lock=None):
                 or not isinstance(value['prefix'], str) or not value['prefix'].startswith('/')
                 or '..' in Path(value['prefix']).parts):
             raise ValueError('Invalid Tiger sysroot recipe manifest.' + SYSROOT_RECOVERY)
-        recipe = compiled_recipe(lock) if lock is not None else None
-        if lock is not None and value['recipe'] != recipe:
+        recipe = compiled_recipe(lock)
+        if value['recipe'] != recipe:
             raise ValueError('Tiger sysroot recipe does not match the dependency lock.' + SYSROOT_RECOVERY)
     except (KeyError, TypeError, json.JSONDecodeError) as error:
         raise ValueError('Invalid Tiger sysroot recipe manifest.' + SYSROOT_RECOVERY) from error

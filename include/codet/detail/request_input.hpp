@@ -26,6 +26,7 @@ struct InputLine {
   bool presentation_held = false;
   uint64_t admission = 0;
   PreparationOutcome preparation;
+  PreparationContext preparation_context = PreparationContext::fresh;
   SubmissionLease reservation;
   InputLine(std::string bytes, std::optional<ApprovalIdentity> identity = {}, bool stale = false,
             std::optional<InputOrigin> source = {})

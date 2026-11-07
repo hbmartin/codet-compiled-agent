@@ -12,8 +12,19 @@ from pathlib import Path
 
 root,module_path,module_name,test_name,output=sys.argv[1:]
 sys.path[:0]=[str(Path(root)/'scripts'),str(Path(root)/'tests')]
-spec=importlib.util.spec_from_file_location(module_name,module_path)
-module=importlib.util.module_from_spec(spec);sys.modules[module_name]=module;spec.loader.exec_module(module)
+temporary=None
+if module_name=='dependency-root':
+    import shutil,tempfile,test_tiger_recovery
+    temporary=tempfile.TemporaryDirectory(prefix='codet configure control ')
+    fixture=Path(temporary.name);(fixture/'cmake').mkdir()
+    for name in ('compiler-identity.cmake','resolve-dependency-root.cmake'):
+        shutil.copy2(Path(root)/'cmake'/name,fixture/'cmake'/name)
+    shutil.copy2(module_path,fixture/'cmake/dependency-root.cmake')
+    (fixture/'.deps').symlink_to((Path(root)/'.deps').resolve(),target_is_directory=True)
+    test_tiger_recovery.ROOT=fixture
+else:
+    spec=importlib.util.spec_from_file_location(module_name,module_path)
+    module=importlib.util.module_from_spec(spec);sys.modules[module_name]=module;spec.loader.exec_module(module)
 if module_name=='package-tiger-portable':
     import test_tiger_packaging
     test_tiger_packaging.portable=module
@@ -31,12 +42,21 @@ exit_code=int(not result.wasSuccessful())
 Path(output).write_text(json.dumps(dict(tests_run=result.testsRun,errors=len(result.errors),skipped=len(result.skipped),
  failure_details=[trace for _,trace in result.failures],failures=len(result.failures),assertion_failure=result.assertion_failure,expected_failures=len(result.expectedFailures),
  unexpected_successes=len(result.unexpectedSuccesses),exit=exit_code)))
+if temporary:temporary.cleanup()
 raise SystemExit(exit_code)
 '''
 
 
 def run_controls(root, folder):
     cases = [
+        ("configure-regeneration", "dependency-root",
+         'elseif(DEFINED CACHE{CODET_DEPENDENCY_ROOT} AND EXISTS "${_codet_dependency_pin}")',
+         'elseif(FALSE AND EXISTS "${_codet_dependency_pin}")',
+         "test_tiger_recovery.DependencyReconfiguration.test_successful_selection_survives_ninja_and_make_regeneration_until_reset"),
+        ("history-preflight", "evidence_campaign",
+         'raise ValueError("Prior attempt metadata is missing: " + str(path))',
+         'raise FileNotFoundError("Prior attempt metadata is missing: " + str(path))',
+         "EvidenceV4.test_history_preflight_does_not_leak_io_errors"),
         ("shared-fixture", "evidence_tool_bench",
          "import evidence_tiger_context_bench\n\n# Select each variant's tooling through the same harness, without modifying its tree.\nif __name__ == \"__main__\":\n    sys.path.insert(0, str(Path(sys.argv[1]) / \"scripts\"))",
          "if __name__ == \"__main__\":\n    sys.path.insert(0, str(Path(sys.argv[1]) / \"scripts\"))\nimport evidence_tiger_context_bench",
@@ -46,7 +66,7 @@ def run_controls(root, folder):
          "pass # Mutant leaves constructor storage behind.",
          "test_tiger_recovery.MeasurementExceptionOwnership.test_constructor_failure_releases_storage_before_the_exception_leaves"),
         ("recipe-admission", "tiger_provenance",
-         "if lock is not None and value['recipe'] != recipe:",
+         "if value['recipe'] != recipe:",
          "if False:", "test_tiger_recovery.RecipeAdmission.test_current_recipe_must_match_before_any_build_directory_is_created"),
         ("root-environment", "dependency_paths",
          'os.environ.get("CODET_DEPENDENCY_ROOT") or root / ".deps"',
@@ -145,8 +165,9 @@ def run_controls(root, folder):
         print("Python control:", name, flush=True)
         directory = folder / ("control-" + name)
         directory.mkdir(exist_ok=True)
-        source = root / "scripts" / (module + ".py")
-        mutant = directory / (module + ".py")
+        suffix = ".cmake" if module == "dependency-root" else ".py"
+        source = root / ("cmake" if module == "dependency-root" else "scripts") / (module + suffix)
+        mutant = directory / (module + suffix)
         mutant.write_text(replace_once(source.read_text(), before, after))
         runs = []
         for label, path in (("baseline", source), ("mutant", mutant)):
@@ -164,7 +185,8 @@ def run_controls(root, folder):
             verify_unittest_result(*runs)
         except ValueError as error:
             raise ValueError("Control " + name + ": " + repr(runs)) from error
-        markers = {"shared-fixture": "Shared fixture inputs differ between variants", "measure-constructor": "Constructor failure retained owned temporary storage", "recipe-admission": "ValueError not raised", "root-environment": "Nonempty environment override was ignored", "measure-cleanup": "RuntimeError not raised",
+        markers = {"history-preflight": "Metadata validation leaked an I/O exception", "configure-regeneration": "Automatic regeneration changed dependency availability",
+                   "shared-fixture": "Shared fixture inputs differ between variants", "measure-constructor": "Constructor failure retained owned temporary storage", "recipe-admission": "ValueError not raised", "root-environment": "Nonempty environment override was ignored", "measure-cleanup": "RuntimeError not raised",
                    "cleanup-original": "Cleanup restoration replaced the original timeout",
                    "cleanup-escalation": "Repeated interruption skipped escalation",
                    "cleanup-inactive": "Leader was reaped before group ownership ended",

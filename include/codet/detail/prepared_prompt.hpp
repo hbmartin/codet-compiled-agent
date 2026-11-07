@@ -6,13 +6,16 @@ namespace codet::detail {
 struct PreparedPrompt {
   std::string original, expanded;
 };
-std::optional<PreparedPrompt> prepare_interactive_prompt(const Config &, FileSystem &,
-                                                         const std::string &);
+std::optional<PreparedPrompt>
+prepare_interactive_prompt(const Config &, FileSystem &, const std::string &,
+                           const std::function<void(size_t)> &reserve = {});
+enum class PreparationContext : uint8_t { fresh, pending };
 enum class PreparationState : uint8_t { unprepared, ready, failed, cancelled };
 struct PreparationOutcome {
   PreparationState state = PreparationState::unprepared;
   std::shared_ptr<const PreparedPrompt> prompt;
   std::exception_ptr failure;
+  std::shared_ptr<const std::string> normalized = {};
 };
 // Expected cancellation belongs to the input phase, not the UI exception boundary.
 template <class Prepare>

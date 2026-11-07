@@ -170,7 +170,7 @@ size_t detail::normalized_input_size(std::string_view text, size_t limit, bool *
     const auto point = decode_text_point(text, offset);
     const auto count = point.valid ? point.consumed : size_t{3};
     if (count > limit - bytes)
-      throw Error("Expanded input exceeds 256 KiB");
+      throw Error("Normalized input exceeds " + std::to_string(limit) + " bytes");
     bytes += count;
     changed = changed || !point.valid;
     offset += point.consumed;
@@ -179,15 +179,18 @@ size_t detail::normalized_input_size(std::string_view text, size_t limit, bool *
     *repaired = changed;
   return bytes;
 }
-std::string detail::normalized_input(const std::string &text, size_t limit) {
-  bool changed = false;
-  const auto size = normalized_input_size(text, limit, &changed);
-  if (!changed)
+std::string detail::normalized_input_known(const std::string &text, size_t bytes, bool repaired) {
+  if (!repaired)
     return text;
   std::string result;
-  result.reserve(size);
+  result.reserve(bytes);
   (void)repair_text(text, result);
   return result;
+}
+std::string detail::normalized_input(const std::string &text, size_t limit) {
+  bool repaired = false;
+  const auto bytes = normalized_input_size(text, limit, &repaired);
+  return normalized_input_known(text, bytes, repaired);
 }
 std::string safe_text(const std::string &text) {
   std::string result;

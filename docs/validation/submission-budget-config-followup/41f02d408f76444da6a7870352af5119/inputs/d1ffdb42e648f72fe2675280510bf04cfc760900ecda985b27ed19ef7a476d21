@@ -1,0 +1,22 @@
+{
+  "binary" : "/Volumes/Pro2T/codet-compiled-agent/build/submission-budget-config/campaign-20261106-04/debug",
+  "build_type" : "Debug",
+  "compilers" : 
+  {
+    "C" : 
+    {
+      "id" : "AppleClang",
+      "path" : "/usr/bin/cc",
+      "version" : "21.0.0.21000401"
+    },
+    "CXX" : 
+    {
+      "id" : "AppleClang",
+      "path" : "/usr/bin/c++",
+      "version" : "21.0.0.21000401"
+    }
+  },
+  "format" : 1,
+  "generator" : "Ninja",
+  "source" : "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent"
+}

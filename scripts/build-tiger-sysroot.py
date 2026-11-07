@@ -33,13 +33,9 @@ def run(args,cwd,env=None):
 SYSROOT_FORMAT = 2
 
 
-def recipe_inputs(lock):
-    return compiled_recipe(lock)
-
-
 def sysroot_fingerprint(root, lock, prefix, flags, toolchain, compiler_digest):
     # Distribution-only CA/document/archive policy never changes compiled dependencies.
-    payload = json.dumps(recipe_inputs(lock), sort_keys=True).encode()
+    payload = json.dumps(compiled_recipe(lock), sort_keys=True).encode()
     for name in ('build-tiger-sysroot.py', 'verified_sources.py', 'dependency_paths.py', 'compiled_recipe.py'):
         payload += (root / 'scripts' / name).read_bytes()
     payload += prefix.encode() + flags.encode() + toolchain.encode() + compiler_digest.encode()
@@ -54,7 +50,7 @@ def main():
     with (BUILD / "sysroot.lock").open("a") as build_lock:
         fcntl.flock(build_lock, fcntl.LOCK_EX)
         lock=json.loads((ROOT/'tiger-dependencies.lock.json').read_text())
-        recipe = recipe_inputs(lock)
+        recipe = compiled_recipe(lock)
         for dep in lock['dependencies']:
           archive=dependency_root(ROOT)/('tiger-'+dep['name']+'.tar')
           if not archive.exists() or hashlib.sha256(archive.read_bytes()).hexdigest()!=dep['sha256']:

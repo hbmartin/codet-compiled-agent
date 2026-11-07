@@ -265,9 +265,13 @@ capture identity and strict input checks; they never emit an unbound result.
 Interactive slash input expands existing custom commands once at submission.
 Unknown names and slash-prefixed paths are prose; built-in commands retain their
 usual meaning. Commands are frozen before prompt hooks run; synchronous filesystem
-lookup has no bounded-latency guarantee. Interactive input is limited to 65,536
-raw bytes, 262,144 normalized expanded bytes per submission, and 8,388,608 effective
-content bytes across at most 100 reserved/queued submissions. Initial images
+lookup has no bounded-latency guarantee. Pending submissions and the cached editor retain their 65,536-byte raw limit;
+fresh argv/libedit prose keeps its previous size behavior. Custom expansions are
+limited to 262,144 normalized bytes. At most 100 reserved/frozen/queued submissions
+may retain 8,388,608 effective provider-content bytes and, independently, 8,388,608
+owned text bytes. The latter counts original, normalized and expanded string
+backings once per entry, excluding object overhead, string capacity and bounded
+presentation buffers; it is not a total process-memory limit. Initial images
 belong to their submission; local commands and failed preparation discard them
 with a best-effort warning. Headless command expansion stays strict. See the interactive slash
 input notes in [MODERN-AGENT.md](docs/MODERN-AGENT.md).
