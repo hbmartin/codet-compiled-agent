@@ -436,5 +436,41 @@ class DependencyReconfiguration(unittest.TestCase):
             result=configure('missing','-UCODET_DEPENDENCY_ROOT');self.assertNotEqual(result.returncode,0)
             result=configure('deps alias');self.assertEqual(result.returncode,0,result.stderr)
 
+    def test_successful_selection_survives_ninja_and_make_regeneration_until_reset(self):
+        for generator in ('Ninja','Unix Makefiles'):
+            with self.subTest(generator=generator), tempfile.TemporaryDirectory(prefix='codet pinned root ') as temporary:
+                folder=Path(temporary);source=folder/'source';source.mkdir();caller=folder/'caller';caller.mkdir()
+                selected=caller/'relative deps';selected.symlink_to((ROOT/'.deps').resolve(),target_is_directory=True)
+                output=folder/'output'
+                text=('cmake_minimum_required(VERSION 3.20)\nproject(probe LANGUAGES NONE)\n'
+                    +'include("'+str(ROOT/'cmake/compiler-identity.cmake')+'")\n'
+                    +'include("'+str(ROOT/'cmake/dependency-root.cmake')+'")\n'
+                    +'if(NOT EXISTS "${CODET_DEPENDENCY_ROOT}/json/CMakeLists.txt")\nmessage(FATAL_ERROR "missing selected dependencies")\nendif()\n'
+                    +'add_custom_target(probe ALL COMMAND "${CMAKE_COMMAND}" -E echo ok)\n')
+                cmake=source/'CMakeLists.txt';cmake.write_text(text)
+                def configure(value,*extra):
+                    return subprocess.run(['cmake','-S',str(source),'-B',str(output),'-G',generator,*extra],cwd=caller,
+                        env=dict(os.environ,CODET_DEPENDENCY_ROOT=value,PWD='/misleading'),capture_output=True,text=True,timeout=30)
+                result=configure('missing');self.assertNotEqual(result.returncode,0)
+                self.assertFalse((output/'CMakeFiles/codet-dependency-selection.json').exists())
+                result=configure('relative deps');self.assertEqual(result.returncode,0,result.stderr)
+                expected=str((ROOT/'.deps').resolve())
+                for value in (None,'different relative root'):
+                    cmake.write_text(cmake.read_text()+'\n# regeneration\n')
+                    env=dict(os.environ);env.pop('CODET_DEPENDENCY_ROOT',None)
+                    if value is not None:env['CODET_DEPENDENCY_ROOT']=value
+                    result=subprocess.run(['cmake','--build',str(output)],cwd=caller,env=env,capture_output=True,text=True,timeout=30)
+                    self.assertEqual(result.returncode,0,result.stderr+result.stdout)
+                    actual=json.loads((output/'CMakeFiles/codet-dependency-selection.json').read_text())
+                    self.assertEqual(actual['root'],expected,'Automatic regeneration changed the selected dependency tree')
+                    self.assertEqual(actual['origin'],'environment')
+                result=configure('missing');self.assertEqual(result.returncode,0,result.stderr)
+                result=configure('missing','-UCODET_DEPENDENCY_ROOT');self.assertNotEqual(result.returncode,0)
+                self.assertFalse((output/'CMakeFiles/codet-dependency-selection.json').exists())
+                result=configure('relative deps');self.assertEqual(result.returncode,0,result.stderr)
+                result=configure('missing','-DCODET_DEPENDENCY_ROOT=relative deps');self.assertEqual(result.returncode,0,result.stderr)
+                self.assertIn('CODET_DEPENDENCY_ROOT:PATH='+expected,(output/'CMakeCache.txt').read_text())
+                result=configure('missing');self.assertEqual(result.returncode,0,result.stderr)
+
 if __name__ == "__main__":
     unittest.main()

@@ -77,9 +77,12 @@ Host configuration also honors `CODET_DEPENDENCY_ROOT`: a nonempty explicit
 CMake/cache setting wins, then a nonempty environment setting, then the source
 checkout's `.deps`. Empty settings use this fallback rather than the launch
 directory. Relative overrides resolve from the actual invoking process directory,
-including explicit CMake cache paths, and are retained as absolute paths. Environment
-and default selections are reevaluated on every configure; explicit cached paths
-remain selected. Older caches do not identify environment-derived values, so they
+including explicit CMake cache paths, and are retained as absolute paths. After successful configuration, environment/default selections are pinned
+in a generated record so automatic regeneration cannot change dependency trees.
+An empty public cache entry marks that record; its selected root remains absolute.
+Change the root with an explicit `-DCODET_DEPENDENCY_ROOT=...`, or use
+`-UCODET_DEPENDENCY_ROOT` to select the current environment/default again. Failed
+first configurations do not pin a derived choice. Older caches do not identify environment-derived values, so they
 are conservatively explicit: clear an old value once with
 `cmake -UCODET_DEPENDENCY_ROOT ...` to resume environment/default selection.
 Application-build admission requires its dependency lock's compiled pins and
