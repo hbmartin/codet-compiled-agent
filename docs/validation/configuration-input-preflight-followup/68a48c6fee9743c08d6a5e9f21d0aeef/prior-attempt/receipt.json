@@ -1,0 +1,195 @@
+{
+  "kind": "preserved-interrupted-capture",
+  "eligible_current": false,
+  "source_ref": "35e1d5549370ab72a1f43a142169021f25af1df0",
+  "explanation": "The separate Python 3.9 integration run observed a pipe notification before collecting already-written PTY bytes. The exact assertion is retained with bounded PTY collection in the next commit. This campaign was interrupted before modifying validation inputs; its records and original log bytes are preserved, without reconstructing absent outcomes.",
+  "run": {
+    "schema_version": 5,
+    "id": "aac558aae554413497e012e4b5cfcd13",
+    "campaign_id": "f957f7eb13f742ee999e9874500e15ae",
+    "manifest_sha256": "1b254e9b84eb6f876348c759fa8e086561895c475ec2ff73810a349e1cd4244c",
+    "canonical_root": "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent",
+    "root_resolution": {
+      "path": "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent",
+      "canonical": "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent",
+      "links": []
+    }
+  },
+  "recorded_outcomes": {
+    "python39-attempt": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "cross-configure": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "cross-build": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "semgrep": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "cross-placeholder": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "python39": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "debug-ctest": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "asan-configure": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "asan-build": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "baseline-build": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "tsan-20": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "tsan-build": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "debug-configure": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "baseline-analysis": {
+      "outcome": "interrupted",
+      "exit": -2
+    },
+    "provision-offline": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "lint": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "debug-build": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "baseline-source": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "python39-tiger": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "asan-ctest": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "focused-20": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "cross-tests": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "python39-integration": {
+      "outcome": "failed",
+      "exit": 1
+    },
+    "runner-tests": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "baseline-configure": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "tsan-configure": {
+      "outcome": "passed",
+      "exit": 0
+    },
+    "baseline-selftest": {
+      "outcome": "passed",
+      "exit": 0
+    }
+  },
+  "archive": {
+    "path": "interrupted-attempt.tar.gz",
+    "sha256": "c53345bb4510a63c07a324877af832b421c0d25d09a8a8cefb6bf6a0dc1f4025",
+    "bytes": 1374002
+  },
+  "members": {
+    "manifest.json": "1b254e9b84eb6f876348c759fa8e086561895c475ec2ff73810a349e1cd4244c",
+    "config.json": "899ba636d6c1d69b9ffc446da128748784bc9ffeee6134c4708f8a4f605acbca",
+    "capture-driver.log": "7eb49185dab63ffaa2fc11cf5df6bae50e73e7ac36e4f0d404197f3672f1be31",
+    "capture/asan-build.json": "d90ec34b1df610dbe8b3adb82f14034bae0a18142ff9108653d814d62352441b",
+    "capture/asan-build.log": "8a2622512ef48e5c382cbaf3d8873fa98bf000a4605797400e84b14161a703b3",
+    "capture/asan-configure.json": "7f6c59fc51f4a17bb7a73fb118745c36eea4e2c6734277b8b0bd7af755babde0",
+    "capture/asan-configure.log": "2efde08fae2a28864fc8a6025c19f3ac4ca174027ae92075bdb6f27591f9d5a5",
+    "capture/asan-ctest.json": "6e0e5a2ea9c482c33241ad6b88f60e25f5b8f97266df44c4ef1bb3b2e17ae3ff",
+    "capture/asan-ctest.log": "3d87b5016ae6d5e76caa1275efb9edff2f88df691e3463a025b1744b962f3a6e",
+    "capture/baseline-analysis.json": "4f09fd879e8ccc6531f61625d0eceb1307d8f40b6812bcb9a3f2aa07cced5f0a",
+    "capture/baseline-analysis.log": "8bb2686d67af5d0197c28c3fb0acc6947b8fa6d0cf57d955181c71d5191908a0",
+    "capture/baseline-build.json": "620dc85d7c80d925b328bf5e47cae2dddc024cf1dd541ecdd8f051f0e5870f04",
+    "capture/baseline-build.log": "892b74a7063fcfe6f717a59f7e9f19fcc92be57e229cde4ce6ca0564c02b2e36",
+    "capture/baseline-configure.json": "c1c43bfbc92a1677facc374185ccb547d69c365e3ca2c77aef52dfff95b7273b",
+    "capture/baseline-configure.log": "c74a7ad84e7adae05cc3fd2b72e4c5849b7efb7b8a385cb295ad9ea24c057a59",
+    "capture/baseline-selftest.json": "c9b829d283bef6d82ed2be18ec7905eddaf2ff41828a8566253a5b811af284cb",
+    "capture/baseline-selftest.log": "740d555865ff458e6ea3a80a11ab83ce36bd761be27466ba58af1b8f395df79b",
+    "capture/baseline-source.json": "e1e5b7e0e3bcdb7585948355f15f12b38787e80c8f20a9772d34bfb730b55289",
+    "capture/baseline-source.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "capture/cross-build.json": "8890dbf505357d81a774e9475a97653c6cad0cc5ec045dab2503c7c26644648c",
+    "capture/cross-build.log": "f5a54fde3a2a65b59ea631619b17f90f7222196fca1043f2f6546052f7216849",
+    "capture/cross-configure.json": "622149164accab7feb7cf55467394063a3a2e0446dafaa54e1ce488fd7abb44e",
+    "capture/cross-configure.log": "1f7eb2d2870cb41e39321812b158f7b5b19ee508ce534562607062be241b581e",
+    "capture/cross-placeholder.json": "8d59e6ac6140d1bc548e72c28c8e007a8c651ba23eee6f582a9727d0b55cb5f1",
+    "capture/cross-placeholder.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "capture/cross-tests.json": "ea878445a83a2a3431b86a6d782d3a350a1cd647e746e6c883800857b847618d",
+    "capture/cross-tests.log": "5703e4131618b577b7a8a0b24fe9336d614fe54b45a5a172ac3c7db25bb02848",
+    "capture/debug-build.json": "bfa157d990aea50156333f4a35e2a332d9ade8c0602d1a0297a32c168adf8c28",
+    "capture/debug-build.log": "d0a9df78cfdc479c2a6d0983e2c60ae804bfca5d9309f2e9b0bb45c4fdbb8b06",
+    "capture/debug-configure.json": "4fabcc636c975e0437fee0b42e6300e31826587cf2d55abfc17e19807686fe45",
+    "capture/debug-configure.log": "d4ea7a3386f5492ca38ecd4aea531447ea0e8c173350782ae9e66a23008d4819",
+    "capture/debug-ctest.json": "bfa798cce11df6ae78ed28e5f9b11791b054a2ccbd3b70e3f79c506427961aac",
+    "capture/debug-ctest.log": "cae57ff3314e484f7e2d7f87ac1d4b3f1117e98c85aa9bf1e30f9f5e14810b65",
+    "capture/focused-20.json": "44c77a2b172fe3d1a839c4fc4361ce7b961be2ce5acb5c42193c58dc933258e7",
+    "capture/focused-20.log": "757605a7aa30c2a90b64ae2ff30c1da40af58bd189ef239353d285ced07e5e8a",
+    "capture/lint.json": "c1c2d2ac70794b5ca7e27b04ef140436eaf8d4d36a7691a7e78739da7433b168",
+    "capture/lint.log": "7479e91ef4c75c160db9ff20b5b95d2ffe6587960b0f49383d23effc0a150d57",
+    "capture/provision-offline.json": "b22d6ef9030c849039b1926dcb85f76ad46aea2e75cce1e4d5f7d16452592b3e",
+    "capture/provision-offline.log": "c7321bbd9a63460d252ad4387ec1b29c82353b104c497af5a86de15d6616f3a2",
+    "capture/python39-attempt.json": "137d932cd9ff5648a1aa89bf26c0ff5c81d9cf1177aec72a70f179c3145d0073",
+    "capture/python39-attempt.log": "b7e811641f0011230d8c748c9c8348c9b2e9df41701e340c2b94736b9a5b8e15",
+    "capture/python39-integration.json": "eb71272e6e60d6686a406add41e5e172e85712dd3870a7bfcf6b1776350d9abc",
+    "capture/python39-integration.log": "289b3865b685b1081c35de4660df33bb72a2eba214f1fde4ab9aa7f324d6a2b1",
+    "capture/python39-tiger.json": "c8ec960436932447cbb06443bbe048b95655a2fa82258a46b8f4a91d36bffd6f",
+    "capture/python39-tiger.log": "30df1dae3d732a8f467cd23badaff5681ca2824db242b84fcdc8b5b532de13b6",
+    "capture/python39.json": "4ccb2ce9a4c342141a9db583d667e90c45a3c958645004218cd030879f38b2e5",
+    "capture/python39.log": "d09cd5b6709247bd0adb57fe6f5db9ae1a45aab73cc64bbfd8cc285ff8f44541",
+    "capture/run.json": "ea600b6a3227214f3571db5922d3800fed3e59f78d69741c5928c26d169799bf",
+    "capture/runner-tests.json": "35b26aea94b500472375fab6a1e9d7c49f26079a651120beff8ba3adab8c9b30",
+    "capture/runner-tests.log": "6bf75d1dfc598776e14df2e16b11f26f433079fca7f5e40cf0d7361049a2c319",
+    "capture/semgrep.json": "1474d501077b8601c65d843a7cfd23dd51e8a702aafc52ec87db89769fa2f70e",
+    "capture/semgrep.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "capture/tsan-20.json": "22e8915553981a0419e375e57c59f6a2befdb48263e5b6ed7b583486141a81d6",
+    "capture/tsan-20.log": "50ea0b9b222e412a31c6e40d076b62741b9fdf278de62a027853dfc0482be987",
+    "capture/tsan-build.json": "9ad3f693c44696b0e9f0dc442c7a9ed166d306f69a2f8f37f3dd10c31dbb8f07",
+    "capture/tsan-build.log": "751e59f26311d11cd43a1eae332534159ef600a1b07d51de312f5003c8985f2e",
+    "capture/tsan-configure.json": "f38c8d5cdb645aa4429b568b95121bf9ce34be31fb6ad50c13fd391849e3d67c",
+    "capture/tsan-configure.log": "e74006c0c6081678200189b73bb0f2ed6856bd32a2c81cd18a31945dc65bb8b4"
+  },
+  "roundtrip_verified": true,
+  "driver_source": "import gzip,hashlib,json,tarfile\nfrom pathlib import Path\nscratch=Path('/Volumes/Pro2T/codet-compiled-agent/build/configuration-input-preflight')\nsource=scratch/'campaign-20261107-01';out=scratch/'prior-attempt';out.mkdir(exist_ok=False)\nfiles=[source/'manifest.json',source/'config.json',source/'capture-driver.log',*sorted((source/'capture').iterdir())]\nfiles=[p for p in files if p.is_file()]\narchive=out/'interrupted-attempt.tar.gz'\ndef digest(p):\n h=hashlib.sha256()\n with p.open('rb') as f:\n  for b in iter(lambda:f.read(65536),b''):h.update(b)\n return h.hexdigest()\nwith archive.open('xb') as f,gzip.GzipFile(filename='',mode='wb',fileobj=f,mtime=0) as zipped,tarfile.open(fileobj=zipped,mode='w|') as tar:\n for p in files:\n  member=tarfile.TarInfo(str(p.relative_to(source)));member.size=p.stat().st_size;member.mode=0o644;member.mtime=0\n  with p.open('rb') as stream:tar.addfile(member,stream)\nwith tarfile.open(archive) as tar:\n for member in tar:\n  if hashlib.sha256(tar.extractfile(member).read()).hexdigest()!=digest(source/member.name):raise ValueError('Archive roundtrip failure')\nrecords={p.stem:json.loads(p.read_text()) for p in (source/'capture').glob('*.json') if p.stem!='run'}\nreceipt=dict(kind='preserved-interrupted-capture',eligible_current=False,source_ref='35e1d5549370ab72a1f43a142169021f25af1df0',\n explanation='The separate Python 3.9 integration run observed a pipe notification before collecting already-written PTY bytes. The exact assertion is retained with bounded PTY collection in the next commit. This campaign was interrupted before modifying validation inputs; its records and original log bytes are preserved, without reconstructing absent outcomes.',\n run=json.loads((source/'capture/run.json').read_text()),\n recorded_outcomes={k:dict(outcome=v['outcome'],exit=v['exit']) for k,v in records.items()},\n archive=dict(path=archive.name,sha256=digest(archive),bytes=archive.stat().st_size),\n members={str(p.relative_to(source)):digest(p) for p in files},roundtrip_verified=True,\n driver_source=Path(__file__).read_text())\n(out/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\\n');print('Preserved',len(records),'actual outcomes,',len(files),'files')\n"
+}
