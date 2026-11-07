@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace codet {
@@ -11,6 +12,8 @@ struct CursesDrawOps;
 struct CliLifecycleOps {
   void (*turn_completed)(void *) noexcept = nullptr;
   void *context = nullptr;
+  void (*preparing)(void *, std::string_view, unsigned) noexcept = nullptr;
+  void (*worker_returned)(void *) noexcept = nullptr;
 };
 int cli_main(const std::vector<std::string> &, Cancellation &, IoContext &);
 int cli_main(const std::vector<std::string> &, Cancellation &, IoContext &, const CursesDrawOps &);

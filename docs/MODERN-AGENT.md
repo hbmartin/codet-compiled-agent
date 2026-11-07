@@ -76,7 +76,18 @@ so a transient change to the writable sysroot cannot select different contents.
 Host configuration also honors `CODET_DEPENDENCY_ROOT`: a nonempty explicit
 CMake/cache setting wins, then a nonempty environment setting, then the source
 checkout's `.deps`. Empty settings use this fallback rather than the launch
-directory. Existing explicit cached paths remain selected on reconfiguration.
+directory. Relative overrides resolve from the actual invoking process directory,
+including explicit CMake cache paths, and are retained as absolute paths. Environment
+and default selections are reevaluated on every configure; explicit cached paths
+remain selected. Older caches do not identify environment-derived values, so they
+are conservatively explicit: clear an old value once with
+`cmake -UCODET_DEPENDENCY_ROOT ...` to resume environment/default selection.
+Application-build admission requires its dependency lock's compiled pins and
+patches to match the sysroot recipe before creating a build directory. Verification
+and packaging compare the archived lock with the archived pinned manifest, never
+reinterpret a frozen build using the current checkout's distribution policy.
+Missing or legacy sysroots require `python3 scripts/tiger.py sysroot`, then a fresh
+application build.
 
 For a portable distribution, explicitly fetch the pinned Mozilla CA data with
 `make fetch-tiger-deps`, then run from the repository root:

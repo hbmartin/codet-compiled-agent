@@ -1,4 +1,5 @@
 #include "codet/core.hpp"
+#include "codet/detail/input_limits.hpp"
 #include "codet/detail/native_output.hpp"
 #include "codet/detail/tls_trust.hpp"
 #include "codet/detail/transport_error.hpp"
@@ -162,6 +163,32 @@ bool repair_text(const std::string &text, std::string &result) {
   return repaired;
 }
 } // namespace
+size_t detail::normalized_input_size(std::string_view text, size_t limit, bool *repaired) {
+  size_t bytes = 0;
+  bool changed = false;
+  for (size_t offset = 0; offset < text.size();) {
+    const auto point = decode_text_point(text, offset);
+    const auto count = point.valid ? point.consumed : size_t{3};
+    if (count > limit - bytes)
+      throw Error("Expanded input exceeds 256 KiB");
+    bytes += count;
+    changed = changed || !point.valid;
+    offset += point.consumed;
+  }
+  if (repaired)
+    *repaired = changed;
+  return bytes;
+}
+std::string detail::normalized_input(const std::string &text, size_t limit) {
+  bool changed = false;
+  const auto size = normalized_input_size(text, limit, &changed);
+  if (!changed)
+    return text;
+  std::string result;
+  result.reserve(size);
+  (void)repair_text(text, result);
+  return result;
+}
 std::string safe_text(const std::string &text) {
   std::string result;
   if (!repair_text(text, result))

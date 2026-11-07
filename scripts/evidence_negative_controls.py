@@ -37,6 +37,23 @@ raise SystemExit(exit_code)
 
 def run_controls(root, folder):
     cases = [
+        ("shared-fixture", "evidence_tool_bench",
+         "import evidence_tiger_context_bench\n\n# Select each variant's tooling through the same harness, without modifying its tree.\nif __name__ == \"__main__\":\n    sys.path.insert(0, str(Path(sys.argv[1]) / \"scripts\"))",
+         "if __name__ == \"__main__\":\n    sys.path.insert(0, str(Path(sys.argv[1]) / \"scripts\"))\nimport evidence_tiger_context_bench",
+         "test_tiger_recovery.MeasurementExceptionOwnership.test_shared_fixture_cannot_be_shadowed_by_the_variant_support_module"),
+        ("measure-constructor", "evidence_tiger_context_bench",
+         "self.temporary.cleanup() # Constructor owns storage until startup returns.",
+         "pass # Mutant leaves constructor storage behind.",
+         "test_tiger_recovery.MeasurementExceptionOwnership.test_constructor_failure_releases_storage_before_the_exception_leaves"),
+        ("recipe-admission", "tiger_provenance",
+         "if lock is not None and value['recipe'] != recipe:",
+         "if False:", "test_tiger_recovery.RecipeAdmission.test_current_recipe_must_match_before_any_build_directory_is_created"),
+        ("root-environment", "dependency_paths",
+         'os.environ.get("CODET_DEPENDENCY_ROOT") or root / ".deps"',
+         'root / ".deps"', "test_tiger_recovery.DependencyReconfiguration.test_nonempty_environment_root_has_exact_precedence"),
+        ("measure-cleanup", "evidence_tool_bench",
+         "if failure is None:", "if sys.exc_info()[0] is None:",
+         "test_tiger_recovery.MeasurementExceptionOwnership.test_caller_exception_does_not_hide_a_successful_measurements_cleanup_failure"),
         ("status", "validation_evidence", 'if check.get("policy", "required") == "required" and (record["outcome"] != "passed" or record["exit"] != 0):',
          'if False:', "ValidationEvidence.test_nonzero_cannot_be_overridden_by_success_log"),
         ("equivalence", "validation_evidence", "equivalent = benchmark[\"production_hashes\"] == value[\"production_hashes\"]",
@@ -147,7 +164,8 @@ def run_controls(root, folder):
             verify_unittest_result(*runs)
         except ValueError as error:
             raise ValueError("Control " + name + ": " + repr(runs)) from error
-        markers = {"cleanup-original": "Cleanup restoration replaced the original timeout",
+        markers = {"shared-fixture": "Shared fixture inputs differ between variants", "measure-constructor": "Constructor failure retained owned temporary storage", "recipe-admission": "ValueError not raised", "root-environment": "Nonempty environment override was ignored", "measure-cleanup": "RuntimeError not raised",
+                   "cleanup-original": "Cleanup restoration replaced the original timeout",
                    "cleanup-escalation": "Repeated interruption skipped escalation",
                    "cleanup-inactive": "Leader was reaped before group ownership ended",
                    "cppcheck-order": "Valid reordered Cppcheck relocation was rejected",

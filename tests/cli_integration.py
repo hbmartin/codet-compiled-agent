@@ -724,6 +724,99 @@ class CliTests(unittest.TestCase):
             if p.poll() is None:p.kill();p.wait(timeout=5)
             os.close(master);os.close(slave)
 
+    @unittest.skipUnless(sys.platform=='darwin','Native image ownership requires the Darwin codec')
+    def test_initial_images_are_owned_by_their_submission(self):
+        import base64
+        image=self.root/'owned.png'
+        image.write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX6kAAAAASUVORK5CYII='))
+        commands=self.home/'commands';commands.mkdir(parents=True,exist_ok=True)
+        (commands/'review.md').write_text('fixture-recovered-output')
+        outside=self.root/'outside.md';outside.write_text('unsafe')
+        (commands/'unsafe.md').symlink_to(outside)
+        def images(request):
+            message=[m for m in request['body']['messages'] if m['role']=='user'][-1]
+            return sum(part.get('type')=='image_url' for part in message['content']) if isinstance(message.get('content'),list) else 0
+        for command,starts_turn in (('/help',False),('/status',False),('/model',False),
+                                   ('/compact',False),('/unsafe',False),('/review',True),('',True)):
+            with self.subTest(command=command),PtyProcess() as resources:
+                before=len(self.server.requests);master,slave=resources.openpty()
+                process=resources.start([BIN,'-C',str(self.workspace),'--ui','line','-i',str(image),command],
+                    stdin=slave,stdout=slave,stderr=slave,env=dict(self.env,TERM='xterm'))
+                received=bytearray();collect=partial(collect_pty,self,master,received)
+                expected=b'fixture done' if starts_turn else b'Images discarded'
+                collect(lambda expected=expected,received=received,process=process,starts_turn=starts_turn:expected in received or (starts_turn and b'recovered reply' in received) or process.poll() is not None)
+                if starts_turn:
+                    self.assertEqual(images(self.server.requests[-1]),1,'Initial images lost their owning turn')
+                else:
+                    self.assertTrue(all(images(r)==0 for r in self.server.requests[before:]),'Local command received initial images')
+                self.assertIn(expected,received,'Initial attachment disposition was not reported')
+                if command=='/compact':collect(lambda received=received:b'No older history to compact.' in received)
+                # Empty Enter must not resurrect discarded images or start a provider turn.
+                received.clear()
+                count=len(self.server.requests);os.write(master,b'\n/status\n')
+                collect(lambda received=received:b'last_turn_usage_this_invocation' in received)
+                self.assertEqual(len(self.server.requests),count)
+                os.write(master,b'fixture-recovered-output\n')
+                collect(lambda count=count:len(self.server.requests)>count)
+                collect(lambda received=received:b'recovered reply' in received)
+                self.assertEqual(images(self.server.requests[-1]),0,'Images leaked into unrelated later input')
+                os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                self.assertEqual(process.returncode,0,received)
+
+    def test_preparation_cancellation_collects_an_already_successful_worker(self):
+        commands=self.home/'commands';commands.mkdir(parents=True,exist_ok=True)
+        (commands/'review.md').write_text('must never reach provider $ARGUMENTS')
+        for ui,stage in getattr(self,'preparation_cases',((ui,stage) for ui in ('line','curses') for stage in range(3))):
+                with self.subTest(ui=ui,stage=stage),PtyProcess() as resources:
+                    before=len(self.server.requests);master,slave=resources.openpty()
+                    arm,trigger=resources.pipe();notice,notify=resources.pipe()
+                    output=self.workspace/('completed-'+ui+str(stage)+'.txt')
+                    helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+                    process=resources.start([helper,'--codet-preparation-helper',str(arm),str(notify),str(stage),'active',
+                        '-C',str(self.workspace),'--ui',ui,'-o',str(output),'initial'],
+                        stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=dict(self.env,TERM='xterm'))
+                    received=bytearray();collect=partial(collect_pty,self,master,received)
+                    def token(expected,collect=collect,notice=notice,received=received):
+                        collect(lambda:bool(select.select([notice],[],[],0)[0]) or b'Error: Interrupted' in received)
+                        self.assertNotIn(b'Error: Interrupted',received,'Preparation cancellation escaped the input phase')
+                        self.assertEqual(os.read(notice,1),expected)
+                    token(b'w') # Agent returned successfully and persisted completion; future still gated.
+                    os.write(master,b'/review frozen\n');token(b'p')
+                    os.write(trigger,b'g');token(b'c')
+                    collect(lambda received=received:b'fixture done' in received)
+                    self.assertNotIn(b'Error: Interrupted',received,'Preparation cancellation escaped the input phase')
+                    self.assertEqual(output.read_text(),'fixture done\n','Preparation cancellation lost completed output')
+                    self.assertNotIn(b'Pending message not sent: ]',received,'Preparation left an empty reservation')
+                    import sqlite3
+                    with sqlite3.connect(self.home/'state.sqlite3') as db:
+                        self.assertEqual(db.execute('SELECT status FROM sessions ORDER BY rowid DESC LIMIT 1').fetchone(),('complete',))
+                    self.assertEqual(len(self.server.requests),before+1,'Cancelled preparation started a provider turn')
+                    os.write(master,b'fixture-recovered-output\n')
+                    collect(lambda received=received:b'recovered reply' in received)
+                    self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'fixture-recovered-output')
+                    os.write(master,b'/quit\n');collect(lambda process=process:process.poll() is not None)
+                    self.assertEqual(process.returncode,0,received)
+
+    def test_idle_and_initial_preparation_cancellation_return_130(self):
+        for initial in (False,True):
+            for ui in ('line','curses'):
+                for stage in range(3):
+                    with self.subTest(initial=initial,ui=ui,stage=stage),PtyProcess() as resources:
+                        before=len(self.server.requests);master,slave=resources.openpty()
+                        arm,trigger=resources.pipe();notice,notify=resources.pipe()
+                        helper=str(pathlib.Path(BIN).with_name('codet_tests'))
+                        process=resources.start([helper,'--codet-preparation-helper',str(arm),str(notify),str(stage),'idle',
+                            '-C',str(self.workspace),'--ui',ui,*(['/review frozen'] if initial else [])],
+                            stdin=slave,stdout=slave,stderr=slave,pass_fds=(arm,notify),env=dict(self.env,TERM='xterm'))
+                        received=bytearray();collect=partial(collect_pty,self,master,received)
+                        if not initial:
+                            collect(lambda received=received:b'codet>' in received)
+                            os.write(master,b'/review frozen\n')
+                        collect(lambda process=process:process.poll() is not None)
+                        self.assertEqual(process.returncode,130,received)
+                        self.assertEqual(len(self.server.requests),before)
+                        self.assertNotIn(b'Error: Interrupted',received)
+
     def test_image_arguments_validate_before_provider_and_allow_image_only(self):
         import base64
         image=self.root/'input.png'
@@ -1392,6 +1485,22 @@ class CliTests(unittest.TestCase):
                 yield process,master,trigger,received,collect,token,release,before
             finally:
                 release.set()
+
+    def test_empty_frozen_submission_cancellation_never_reports_an_empty_notice(self):
+        with self.pending_sequence() as context:
+            process,master,trigger,received,collect,token,release,before=context
+            os.write(trigger,b'h');token(b'r')
+            os.write(master,b'\n');token(b's')
+            os.write(master,b'\x04')
+            os.write(trigger,b'g');release.set()
+            collect(lambda:b'Error: Interrupted' in received or process.poll() is not None)
+            self.assertNotIn(b'Pending message not sent: ]',received,'Empty frozen input emitted an empty pending notice')
+            self.assertIsNone(process.poll())
+            os.write(master,b'fixture-recovered-output\n')
+            collect(lambda:b'recovered reply' in received)
+            self.assertEqual(self.server.requests[-1]['body']['messages'][-1]['content'],'fixture-recovered-output')
+            os.write(master,b'/quit\n');collect(lambda:process.poll() is not None)
+            self.assertEqual(process.returncode,0,received)
 
     def test_partial_pending_controls_never_stall_or_leak_into_messages(self):
         for draft,finish_first in ((b'x',False),(b'ignored-overflow',True)):

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 
+from compiled_recipe import compiled_recipe
 from dependency_paths import dependency_root
 from evidence_inputs import role_hashes
 from process_supervision import run
@@ -87,7 +88,10 @@ def freeze_json(value):
     return value
 
 
-def validated_manifest(data):
+SYSROOT_RECOVERY = " Rebuild with python3 scripts/tiger.py sysroot, then create a fresh Tiger application build."
+
+
+def validated_manifest(data, lock=None):
     try:
         value = json.loads(data)
         if (value['sysroot_format'] != 2 or not isinstance(value['recipe'], dict)
@@ -95,27 +99,34 @@ def validated_manifest(data):
                 or any(not isinstance(x, list) for x in value['recipe'].values())
                 or not isinstance(value['prefix'], str) or not value['prefix'].startswith('/')
                 or '..' in Path(value['prefix']).parts):
-            raise ValueError('Invalid Tiger sysroot recipe manifest')
+            raise ValueError('Invalid Tiger sysroot recipe manifest.' + SYSROOT_RECOVERY)
+        recipe = compiled_recipe(lock) if lock is not None else None
+        if lock is not None and value['recipe'] != recipe:
+            raise ValueError('Tiger sysroot recipe does not match the dependency lock.' + SYSROOT_RECOVERY)
     except (KeyError, TypeError, json.JSONDecodeError) as error:
-        raise ValueError('Invalid Tiger sysroot recipe manifest') from error
+        raise ValueError('Invalid Tiger sysroot recipe manifest.' + SYSROOT_RECOVERY) from error
     return freeze_json(value)
 
 
 def prepare(root, deps, image):
-    folder = root / "build/tiger-builds" / uuid.uuid4().hex
-    folder.mkdir(parents=True)
     before = snapshots(root, deps)
-    manifest = checked_bytes(root / 'build/tiger-sysroot/manifest.json',
-                             before['sysroot']['manifest.json'])
-    validated_manifest(manifest)
+    identity = before['sysroot'].get('manifest.json')
+    if not identity:
+        raise ValueError('Missing Tiger sysroot manifest: ' + str(root / 'build/tiger-sysroot/manifest.json') + '.' + SYSROOT_RECOVERY)
+    manifest = checked_bytes(root / 'build/tiger-sysroot/manifest.json', identity)
+    inputs = distribution_inputs(root, deps)
+    if {name: hashlib.sha256(data).hexdigest() for name, data in inputs.items()} != before['distribution']:
+        raise ValueError('Tiger distribution inputs changed during preparation')
+    validated_manifest(manifest, json.loads(inputs['tiger-dependencies.lock.json']))
     git = ["git", "-C", str(root)]
     commit = subprocess.check_output([*git, "rev-parse", "HEAD"], text=True, timeout=30).strip()
     epoch = int(
         subprocess.check_output([*git, "show", "-s", "--format=%ct", "HEAD"], text=True, timeout=30)
     )
     patch = subprocess.check_output([*git, "diff", "--binary", "HEAD"], timeout=30)
-    inputs = distribution_inputs(root, deps)
     inputs["SOURCE.patch"] = patch
+    folder = root / "build/tiger-builds" / uuid.uuid4().hex
+    folder.mkdir(parents=True)
     index = {name: store(folder, data) for name, data in inputs.items()}
     source_index = {name: store(folder, (root / name).read_bytes()) for name in before["sources"]}
     record = dict(
@@ -350,7 +361,11 @@ def resolve(root, build_id=None, provenance_sha256=None):
     if not manifest_digest or manifest_digest != record['before']['sysroot'].get('manifest.json'):
         raise ValueError('Tiger build lacks a pinned sysroot manifest')
     manifest_bytes = checked_bytes(folder / 'inputs' / manifest_digest, manifest_digest)
-    context = BuildContext(root, folder, digest, data, validated_manifest(manifest_bytes))
+    lock_digest = record['distribution'].get('tiger-dependencies.lock.json')
+    if not lock_digest:
+        raise ValueError('Tiger build lacks an archived dependency lock.' + SYSROOT_RECOVERY)
+    lock = json.loads(checked_bytes(folder / 'inputs' / lock_digest, lock_digest))
+    context = BuildContext(root, folder, digest, data, validated_manifest(manifest_bytes, lock))
     context.verify_sysroot()
     return context
 

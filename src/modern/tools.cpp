@@ -3,6 +3,7 @@
 #include "codet/context.hpp"
 #include "codet/core.hpp"
 #include "codet/detail/diagnostic_stream.hpp"
+#include "codet/detail/input_limits.hpp"
 #include "codet/detail/local_command.hpp"
 #include "codet/detail/prepared_prompt.hpp"
 #include "codet/interaction.hpp"
@@ -2022,7 +2023,8 @@ void Tools::use_session(const std::string &id) {
 }
 namespace {
 std::optional<std::string> custom_expansion(const Config &config, FileSystem &files,
-                                            const std::string &input, bool strict) {
+                                            const std::string &input, bool strict,
+                                            size_t limit = std::numeric_limits<size_t>::max()) {
   const auto name = detail::custom_command_name(input);
   if (name.empty()) {
     if (strict)
@@ -2043,12 +2045,30 @@ std::optional<std::string> custom_expansion(const Config &config, FileSystem &fi
     }
     auto text = files.read(p, 65536);
     const auto args = space == std::string::npos ? "" : input.substr(space + 1);
-    size_t at = 0;
-    while ((at = text.find("$ARGUMENTS", at)) != std::string::npos) {
-      text.replace(at, 10, args);
-      at += args.size();
+    size_t bytes = 0, copied = 0;
+    const auto account = [&](size_t count) {
+      if (count > limit - bytes)
+        throw Error("Expanded custom command exceeds input limit");
+      bytes += count;
+    };
+    for (auto at = text.find("$ARGUMENTS"); at != std::string::npos;
+         at = text.find("$ARGUMENTS", copied)) {
+      account(at - copied);
+      account(args.size());
+      copied = at + 10;
     }
-    return text;
+    account(text.size() - copied);
+    std::string expanded;
+    expanded.reserve(bytes);
+    copied = 0;
+    for (auto at = text.find("$ARGUMENTS"); at != std::string::npos;
+         at = text.find("$ARGUMENTS", copied)) {
+      expanded.append(text, copied, at - copied);
+      expanded += args;
+      copied = at + 10;
+    }
+    expanded.append(text, copied, text.size() - copied);
+    return expanded;
   }
   return {};
 }
@@ -2058,10 +2078,10 @@ std::optional<detail::PreparedPrompt> detail::prepare_interactive_prompt(const C
                                                                          const std::string &input) {
   if (local_command(input) != LocalCommand::none)
     return {};
-  const auto expanded = custom_expansion(config, files, input, false);
+  const auto expanded = custom_expansion(config, files, input, false, expanded_input_limit);
   if (!expanded)
     return {};
-  return PreparedPrompt{input, *expanded};
+  return PreparedPrompt{input, normalized_input(*expanded, expanded_input_limit)};
 }
 std::string Tools::expand_command(const std::string &input) const {
   if (input.empty() || input[0] != '/')

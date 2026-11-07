@@ -1,10 +1,15 @@
 #include "codet/interaction.hpp"
 #include "codet/detail/diagnostic_stream.hpp"
+#include "codet/detail/submission_queue.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <iterator>
 
 namespace codet {
+void detail::abandon_submission(Interaction *owner, uint64_t sequence) noexcept {
+  if (owner && sequence)
+    SubmissionAccess::abandon(*owner, sequence);
+}
 void Interaction::post(Json event) {
   std::lock_guard<std::mutex> lock(mutex_);
   if (events_.size() >= 2048 && event.value("type", "") == "item.updated")
@@ -111,15 +116,31 @@ bool Interaction::input_barrier(std::deque<Input>::const_iterator end) const noe
   return std::any_of(input_.cbegin(), end,
                      [](const auto &line) { return line.kind != InputKind::steering; });
 }
+void Interaction::check_input_capacity(size_t bytes, size_t previous) const {
+  if (bytes > detail::expanded_input_limit ||
+      bytes > detail::queued_input_limit - (input_bytes_ - previous))
+    throw Error("Pending effective input exceeds 8 MiB queue budget");
+}
 void Interaction::submit(const std::string &text) {
   if (text.empty())
     return;
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (input_.size() >= 100 || text.size() > 65536)
+  if (text.size() > detail::raw_input_limit)
     throw Error("Pending user input limit exceeded");
+  auto normalized = detail::normalized_input(text, detail::expanded_input_limit);
+  const auto bytes = normalized.size();
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (input_.size() >= detail::queued_input_count)
+    throw Error("Pending user input limit exceeded");
+  check_input_capacity(bytes);
   const bool held = !active_ || input_barrier(input_.cend());
-  input_.push_back({session_, safe_text(text), turn_, ++next_input_,
-                    held ? InputKind::followup : InputKind::steering});
+  input_.push_back({session_,
+                    std::move(normalized),
+                    turn_,
+                    ++next_input_,
+                    held ? InputKind::followup : InputKind::steering,
+                    {},
+                    bytes});
+  input_bytes_ += bytes;
   changed_.notify_all();
 }
 std::vector<std::string> Interaction::take_input() {
@@ -134,6 +155,8 @@ std::vector<std::string> Interaction::take_input() {
       throw Error("Queued input belongs to another session or turn");
     out.push_back(end->text);
   }
+  for (auto entry = input_.begin(); entry != end; ++entry)
+    input_bytes_ -= entry->charged_bytes;
   input_.erase(input_.begin(), end);
   return out;
 }
@@ -167,6 +190,7 @@ std::vector<std::string> Interaction::take_pending(const std::string &session) {
   for (const auto &input : input_)
     out.push_back(input.text);
   input_.clear();
+  input_bytes_ = 0;
   return out;
 }
 bool Interaction::sleep(int64_t milliseconds, const Cancellation &cancel) {

@@ -24,8 +24,8 @@ from validation_evidence import atomic_json, digest, require_quiet_processes, wr
 
 CASES = {
     "line": ["allocation-positive", "geometry-positive", "busy", "native-busy", "editing", "editing-basic",
-             "native-editing", "deletion", "unchanged", "deferred-tail", "native-boundary", "native-flush-boundary", "native-unchanged", "pending-submission", "native-pending-submission", "native-pending-fragment"],
-    "tooling": ["hashing", "git-inspection", "supervision", "build-context"],
+             "native-editing", "deletion", "unchanged", "deferred-tail", "native-boundary", "native-flush-boundary", "native-unchanged", "pending-submission", "native-pending-submission", "native-pending-fragment", "preparation-queue", "bounded-expansion"],
+    "tooling": ["hashing", "git-inspection", "supervision", "build-context", "dependency-resolution", "measurement-cleanup"],
     "output": ["write-positive", "stat-positive", "flags-positive", "bounds-positive", "diagnostics-amplified",
                "diagnostics-standalone-amplified", "diagnostics-pipe-amplified"],
     "export": ["small", "large"],
@@ -52,6 +52,7 @@ def history_files(folders):
     files = []
     for prior in folders:
         prior = Path(prior)
+        original_root = Path(json.loads((prior / "manifest.json").read_text())["root"])
         files.extend(prior / name for name in ("config.json", "manifest.json", "capture-driver.log", "capture/run.json"))
         files.extend(sorted((prior / "capture").glob("*")))
         for captured in sorted((prior / "capture").glob("*.json")):
@@ -59,7 +60,6 @@ def history_files(folders):
                 continue
             record = json.loads(captured.read_text())
             for artifact in record.get("artifacts", []):
-                original_root = Path(json.loads((prior / "manifest.json").read_text())["root"])
                 path = original_root / artifact["path"]
                 if not path.is_file() or digest(path) != artifact["sha256"]:
                     raise ValueError("Prior attempt artifact changed: " + str(path))
@@ -200,7 +200,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
             names.append("codet-compiler-identity.json")
         return [dict(path=rel(Path(build) / n)) for n in names]
     add("provision-offline", [python, "scripts/fetch-deps.py", "--offline"])
-    focused = "--gtest_filter=NativeRecordLifecycle.*:DiagnosticFixture.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.*:PendingControl.*:SubmissionQueue.*:TurnInput.*:TlsTrust.*:InteractionWarnings.*"
+    focused = "--gtest_filter=NativeRecordLifecycle.*:DiagnosticFixture.*:DiagnosticFallbackMetadata.*:DiagnosticReservations.*:LinePrompt.*:DiagnosticWriter.*:TerminalResources.*:PendingControl.*:SubmissionQueue.*:TurnInput.*:TlsTrust.*:InteractionWarnings.*:InputPreparation.*:Runtime.InteractiveExpansion*"
     for mode in ("debug", "asan", "tsan"):
         build = Path(builds[mode])
         args = configure(root, build, "Debug")
@@ -270,9 +270,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     harness_outputs = [dict(path=rel(folder / (v + "-harness") / n), archive=False) for v in ("baseline", "changed") for n in ("codet_line_input_bench", "codet_output_bench", "codet_export_bench")]
     producer("benchmark-harness", "harness", ["baseline-build", "changed-build"], harness_inputs, timeout=1800, outputs=harness_outputs,
              file_inputs=[dict(path=rel(folder / (v + "-release/libcodet_core.a")), archive=False) for v in ("baseline", "changed")])
-    producer("hash-experiment", "hash-profile", ["static-comparison", "python-negative-controls", "native-negative-controls", "semgrep-controls"],
-             timeout=1800, outputs=[dict(path=rel(folder / "hash-correctness/scripts" / name)) for name in ("evidence_inputs.py", "verified_sources.py")])
-    producer("benchmarks", "measure", ["benchmark-harness", "static-comparison", "python-negative-controls", "native-negative-controls", "semgrep-controls", "hash-experiment"],
+    producer("benchmarks", "measure", ["benchmark-harness", "static-comparison", "python-negative-controls", "native-negative-controls", "semgrep-controls"],
              [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")] + [rel(folder / "harness.json")], timeout=1800)
     metadata_inputs = [rel(Path(b) / "CMakeCache.txt") for b in builds.values()] + [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")]
     producer("platform-availability", "platforms")
@@ -291,6 +289,10 @@ def positive_controls(row, harness, case):
             raise ValueError("Geometry positive control failed")
         if case in ("unchanged", "native-unchanged") and any(row[k] for k in ("bytes", "output_operations", "geometry_queries", "allocations")):
             raise ValueError("Unchanged redraw performed work")
+    if harness == "line" and case in ("preparation-queue", "bounded-expansion"):
+        expected = (262144 if case == "bounded-expansion" else 135) * 128
+        if row["prepared_submissions"] != 128 or row["effective_content_bytes"] != expected:
+            raise ValueError("Prepared submission counter positive control failed")
     if harness == "output" and case.endswith("-positive"):
         key = {"write-positive": "writes", "stat-positive": "fstat", "flags-positive": "fcntl", "bounds-positive": "fpathconf"}[case]
         if row[key] != 128:

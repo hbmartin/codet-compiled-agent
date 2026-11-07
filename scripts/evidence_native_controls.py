@@ -38,6 +38,7 @@ path=Path(root)/'tests/cli_integration.py'
 sys.path.insert(0,str(path.parent));sys.argv=[str(path),binary]
 spec=importlib.util.spec_from_file_location('pending_native_control',path)
 module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
+if target=='CliTests.test_preparation_cancellation_collects_an_already_successful_worker':module.CliTests.preparation_cases=(('line',0),)
 if target=='CliTests.test_frozen_submission_obeys_turn_outcome_and_services_controls':module.CliTests.pending_outcomes=('quit',)
 if target=='CliTests.test_completed_result_is_saved_and_displayed_before_late_close':module.CliTests.completed_closes=(b'\x04',)
 if target=='CliTests.test_late_signals_preserve_result_and_return_to_usable_prompt':module.CliTests.late_stops=(module.signal.SIGTERM,)
@@ -102,6 +103,21 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native mutant linking failed: " + repr(linked))
         return source, binary, compiled, linked
     cases = [
+        ("command-filesystem", "tests/cli_diagnostics_test.cpp", "include/codet/detail/prepared_prompt.hpp",
+         "cancel.requested ? PreparationState::cancelled : PreparationState::failed",
+         "cancel.requested ? PreparationState::cancelled : PreparationState::ready",
+         "InputPreparation.LocalErrorsKeepTheirTypeAndAllocationFailuresPropagate"),
+        ("reservation-release", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_lease.hpp",
+         "  ~SubmissionLease() {", "  ~SubmissionLease() { return;",
+         "SubmissionQueue.MovingOrUnwindingALineReleasesItsReservedEntryExactlyOnce"),
+        ("aggregate-budget", "src/modern/interaction.cpp", "src/modern/interaction.cpp",
+         "bytes > detail::queued_input_limit - (input_bytes_ - previous)",
+         "(false && bytes > detail::queued_input_limit - (input_bytes_ - previous))",
+         "SubmissionQueue.EffectiveBudgetCountsReservedAndCommittedContentExactlyOnce"),
+        ("expansion-budget", "src/modern/tools.cpp", "src/modern/tools.cpp",
+         "custom_expansion(config, files, input, false, expanded_input_limit)",
+         "custom_expansion(config, files, input, false)",
+         "Runtime.InteractiveExpansionLimitsSubstitutionBeforeConstructingOversizedContent"),
         ("pty-final-drain", "tests/terminal_resources_test.cpp", "tests/terminal_resources_test.cpp",
          "else if (finished)\n      break;", "else if (done)\n      break;",
          "TerminalResources.CompletionAfterTimedOutPollStillDrainsFinalOutput"),
@@ -194,7 +210,9 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native control baseline failed: " + target)
         source, binary, compiled, linked = compile_mutant(directory, binary_target, "control-tests", entry_name, source_name, before, after)
         mutant = _test(binary, target, directory)
-        markers = {"pty-final-drain": "Final helper bytes were lost after completion", "deferred": "deferred", "pending-visible": "Frozen submitted line was not displayed",
+        markers = {"command-filesystem": "Expected equality", "reservation-release": "Preparation failure leaked its reserved prefix",
+                   "aggregate-budget": "Aggregate effective budget admitted excess content", "expansion-budget": "Expanded custom command exceeds input limit",
+                   "pty-final-drain": "Final helper bytes were lost after completion", "deferred": "deferred", "pending-visible": "Frozen submitted line was not displayed",
                    "pending-interruption": "Value of: submitted", "separator": 'read()', "printer": "Expected equality of these values", "pid-guard": "unexpected wait",
                    "refresh": "Refresh after failed drawing", "inspection": "handle->read",
                    "submission-allocation": "Allocation consumed a line without pending ownership",
@@ -230,12 +248,28 @@ def run_controls(root, folder, build, ninja):
         raise ValueError("Pending keyboard mutant did not fail its intended assertion: " + repr(mutant))
     results.append(dict(name="pending-keyboard", target="CliTests.test_frozen_submission_obeys_turn_outcome_and_services_controls", mutation=dict(before=before, after=after, original_sha256=digest(root / "src/modern/cli.cpp"), mutant_sha256=digest(source)), binary_sha256=digest(binary), baseline=baseline, compile=compiled, link=linked, mutant=mutant))
     review_controls = [
+        ("empty-rejection", "CliTests.test_empty_frozen_submission_cancellation_never_reports_an_empty_notice",
+         '    if (text.empty())\n      return;\n    try {\n      std::string message = "[Pending message not sent: ";',
+         '    try {\n      std::string message = "[Pending message not sent: ";',
+         "Empty frozen input emitted an empty pending notice"),
+        ("command-isolation", "CliTests.test_unsafe_command_preserves_later_messages_and_expands_once",
+         '    if (line.preparation.state == detail::PreparationState::failed) {',
+         '    if (false && line.preparation.state == detail::PreparationState::failed) {',
+         "Unsafe custom command path: /unsafe"),
+        ("preparation-cancellation", "CliTests.test_preparation_cancellation_collects_an_already_successful_worker",
+         '    if (line.preparation.state == detail::PreparationState::cancelled) {',
+         '    if (line.preparation.state == detail::PreparationState::cancelled) { std::rethrow_exception(line.preparation.failure);',
+         "Preparation cancellation escaped the input phase"),
+        ("image-ownership", "CliTests.test_initial_images_are_owned_by_their_submission",
+         'run(text, true, line.preparation.prompt.get(), std::move(images));',
+         'run(text, true, line.preparation.prompt.get(), {});',
+         "Initial images lost their owning turn"),
         ("command-freeze", "CliTests.test_known_command_content_is_frozen_before_deferred_presentation",
          'line_ ? line_->try_take(prepare_submission_)', 'line_ ? line_->try_take()',
          "Frozen command content changed before handoff"),
         ("command-prose-freeze", "CliTests.test_unknown_command_stays_prose_if_created_after_enter",
-         'if (line.prepared || line.discarded || line.request ||',
-         'if ((line.prepared && false) || line.discarded || line.request ||',
+         'if (line.preparation.state != detail::PreparationState::unprepared || line.discarded ||',
+         'if ((line.preparation.state != detail::PreparationState::unprepared && false) || line.discarded ||',
          "Submitted prose was reinterpreted as a later command"),
         ("pending-control-owner", "CliTests.test_partial_pending_controls_never_stall_or_leak_into_messages",
          '    if (line_ && (line_->submission_pending() || pending_control_.started())) {',
@@ -262,9 +296,11 @@ def run_controls(root, folder, build, ninja):
         baseline = _integration(root, build / "codet", directory, target)
         if baseline["exit"] or baseline["assertions"]:
             raise ValueError("Review control baseline failed: " + target)
-        source, binary, compiled, linked = compile_mutant(directory, "codet_tests", "codet_tests", "src/modern/cli.cpp", "src/modern/cli.cpp", before, after)
+        binary_target = "codet" if name == "image-ownership" else "codet_tests"
+        source, binary, compiled, linked = compile_mutant(directory, binary_target, binary_target, "src/modern/cli.cpp", "src/modern/cli.cpp", before, after)
         placeholder = directory / "codet"
-        shutil.copy2(build / "codet", placeholder)
+        if binary_target != "codet":
+            shutil.copy2(build / "codet", placeholder)
         mutant = _integration(root, placeholder, directory, target)
         if mutant["exit"] != 1 or not mutant["assertions"] or not all(marker in assertion for assertion in mutant["assertions"]):
             raise ValueError("Review mutant did not fail its intended assertion: " + target + repr(mutant))

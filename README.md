@@ -264,5 +264,10 @@ capture identity and strict input checks; they never emit an unbound result.
 
 Interactive slash input expands existing custom commands once at submission.
 Unknown names and slash-prefixed paths are prose; built-in commands retain their
-usual meaning. Headless command expansion stays strict. See the interactive slash
+usual meaning. Commands are frozen before prompt hooks run; synchronous filesystem
+lookup has no bounded-latency guarantee. Interactive input is limited to 65,536
+raw bytes, 262,144 normalized expanded bytes per submission, and 8,388,608 effective
+content bytes across at most 100 reserved/queued submissions. Initial images
+belong to their submission; local commands and failed preparation discard them
+with a best-effort warning. Headless command expansion stays strict. See the interactive slash
 input notes in [MODERN-AGENT.md](docs/MODERN-AGENT.md).

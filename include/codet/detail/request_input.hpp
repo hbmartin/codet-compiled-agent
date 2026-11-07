@@ -1,6 +1,8 @@
 #pragma once
 #include "codet/detail/approval_identity.hpp"
 #include "codet/detail/local_command.hpp"
+#include "codet/detail/prepared_prompt.hpp"
+#include "codet/detail/submission_lease.hpp"
 namespace codet::detail {
 enum class InputDiscard : uint8_t { unfinished, expired };
 inline std::string_view discard_message(InputDiscard reason) noexcept {
@@ -23,9 +25,8 @@ struct InputLine {
   std::optional<InputOrigin> origin;
   bool presentation_held = false;
   uint64_t admission = 0;
-  bool prepared = false;
-  std::shared_ptr<const PreparedPrompt> expansion;
-  std::exception_ptr preparation_error;
+  PreparationOutcome preparation;
+  SubmissionLease reservation;
   InputLine(std::string bytes, std::optional<ApprovalIdentity> identity = {}, bool stale = false,
             std::optional<InputOrigin> source = {})
       : text(std::move(bytes)), request(std::move(identity)), discarded(stale),

@@ -199,7 +199,7 @@ class DependencyInputs(DistributionFixture):
                     env=dict(os.environ,CODET_DEPENDENCY_ROOT=override),capture_output=True,text=True,timeout=30)
             output=folder/'default';result=configure(output,'')
             self.assertEqual(result.returncode,0,result.stderr)
-            self.assertIn('CODET_DEPENDENCY_ROOT:PATH='+str(ROOT/'.deps'),(output/'CMakeCache.txt').read_text())
+            self.assertEqual((output/'CMakeFiles/codet-dependency-root.txt').read_text(),str((ROOT/'.deps').resolve()))
             output=folder/'selected';result=configure(output,str(selected))
             self.assertNotEqual(result.returncode,0)
             self.assertIn('Missing pinned googletest',result.stderr)
@@ -207,12 +207,12 @@ class DependencyInputs(DistributionFixture):
             self.assertEqual(result.returncode,0,result.stderr)
             result=configure(output,str(folder/'another missing location'))
             self.assertEqual(result.returncode,0,result.stderr)
-            self.assertIn('CODET_DEPENDENCY_ROOT:PATH='+str(ROOT/'.deps'),(output/'CMakeCache.txt').read_text())
+            self.assertIn('CODET_DEPENDENCY_ROOT:PATH='+str((ROOT/'.deps').resolve()),(output/'CMakeCache.txt').read_text())
 
     def test_recipe_cache_has_no_distribution_metadata_and_rejects_unknown_lock_formats(self):
         from test_tiger_packaging import load_script
         module=load_script('build-tiger-sysroot')
-        for name in ('build-tiger-sysroot.py','verified_sources.py','dependency_paths.py'):
+        for name in ('build-tiger-sysroot.py','verified_sources.py','dependency_paths.py','compiled_recipe.py'):
             self.write('scripts/'+name,'stable build helper')
         lock=dict(format=1,dependencies=[],patches=[],ca_bundle=dict(version='old'),tigerports_revision='old')
         stage=self.root/'build/tiger-sysroot'
@@ -234,7 +234,7 @@ class DependencyInputs(DistributionFixture):
     def test_sysroot_cache_ignores_distribution_policy_but_tracks_build_inputs(self):
         from test_tiger_packaging import load_script
         module=load_script("build-tiger-sysroot")
-        for name in ("build-tiger-sysroot.py","verified_sources.py","dependency_paths.py"):
+        for name in ("build-tiger-sysroot.py","verified_sources.py","dependency_paths.py","compiled_recipe.py"):
             self.write("scripts/"+name,"build input "+name)
         lock=dict(format=1,dependencies=[dict(name="curl",sha256="a"*64)],patches=[],ca_bundle=dict(version="old"))
         def key():
@@ -283,6 +283,158 @@ class ContextMeasurement(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"scoped counters"):
             verify_tooling_metrics(row)
 
+
+
+class MeasurementExceptionOwnership(unittest.TestCase):
+
+    def test_shared_fixture_cannot_be_shadowed_by_the_variant_support_module(self):
+        with tempfile.TemporaryDirectory(prefix='codet shared fixture ') as temporary:
+            root=Path(temporary);scripts=root/'scripts';scripts.mkdir()
+            (scripts/'evidence_tiger_context_bench.py').write_text("class ContextWorkload:\n    counts={}\n    def start(self):pass\n    def perform(self):return {'variant-only':b'wrong fixture'}\n    def close(self):pass\n")
+            marker=root/'core-selected'
+            core=(ROOT/'scripts/tiger_provenance.py').read_text()
+            (scripts/'tiger_provenance.py').write_text(core+'\nPath('+repr(str(marker))+').write_text("variant core")\n')
+            output=root/'measurement.json'
+            import evidence_tool_bench
+            harness=root/'harness';harness.mkdir()
+            entry=harness/'evidence_tool_bench.py';entry.write_bytes(Path(evidence_tool_bench.__file__).read_bytes())
+            (harness/'evidence_tiger_context_bench.py').write_bytes((ROOT/'scripts/evidence_tiger_context_bench.py').read_bytes())
+            result=subprocess.run([sys.executable,str(entry),str(root),'HEAD','build-context',str(output)],
+                capture_output=True,text=True,timeout=30,env=dict(os.environ,PYTHONPATH=str(ROOT/'scripts')))
+            self.assertEqual(result.returncode,0,'Shared support snapshot was not used: '+result.stderr)
+            row=json.loads(output.read_text())
+            self.assertEqual(row['files'],2,'Shared fixture inputs differ between variants')
+            self.assertTrue(marker.exists(),'Shared fixture did not select the variant core')
+
+    def test_constructor_failure_releases_storage_before_the_exception_leaves(self):
+        import evidence_tiger_context_bench
+        native=tempfile.TemporaryDirectory;created=[]
+        def temporary(*args,**kwargs):
+            value=native(*args,**kwargs);created.append(Path(value.name));return value
+        failure=RuntimeError('constructor setup failed')
+        with patch.object(evidence_tiger_context_bench.tempfile,'TemporaryDirectory',temporary),patch.object(Path,'write_text',side_effect=failure):
+            try:evidence_tiger_context_bench.ContextWorkload()
+            except RuntimeError as error:
+                self.assertIs(error,failure)
+                self.assertTrue(created)
+                self.assertFalse(created[0].exists(),'Constructor failure retained owned temporary storage')
+            else:self.fail('Constructor failure was not propagated')
+    def test_caller_exception_does_not_hide_a_successful_measurements_cleanup_failure(self):
+        import evidence_tiger_context_bench
+        import evidence_tool_bench
+        class Context:
+            counts={}
+            def start(self):pass
+            def perform(self):return {'notice':'frozen'}
+            def close(self):raise RuntimeError('close failed')
+        with patch.object(evidence_tiger_context_bench,'ContextWorkload',Context):
+            try:raise ValueError('unrelated outer handler')
+            except ValueError:
+                with self.assertRaisesRegex(RuntimeError,'close failed'):
+                    evidence_tool_bench.measure(ROOT,'HEAD','build-context')
+
+    def test_measurement_exception_keeps_identity_when_cleanup_also_fails(self):
+        import evidence_tiger_context_bench
+        import evidence_tool_bench
+        failure=ValueError('primary measurement failure')
+        class Context:
+            counts={}
+            def start(self):pass
+            def perform(self):raise failure
+            def close(self):raise RuntimeError('secondary close failure')
+        with patch.object(evidence_tiger_context_bench,'ContextWorkload',Context):
+            with self.assertRaises(ValueError) as caught:
+                evidence_tool_bench.measure(ROOT,'HEAD','build-context')
+        self.assertIs(caught.exception,failure)
+
+class RecipeAdmission(DistributionFixture):
+    def test_current_recipe_must_match_before_any_build_directory_is_created(self):
+        lockfile=self.root/'tiger-dependencies.lock.json';original=json.loads(lockfile.read_text())
+        for field,entry in (('dependencies',dict(name='openssl',version='changed',sha256='a'*64)),
+                            ('patches',dict(name='curl',path='new.patch',sha256='b'*64))):
+            with self.subTest(field=field):
+                lock=json.loads(json.dumps(original));lock[field].append(entry);lockfile.write_text(json.dumps(lock))
+                before=set((self.root/'build/tiger-builds').iterdir())
+                with patch.object(provenance.subprocess,'check_output',side_effect=self.git):
+                    with self.assertRaisesRegex(ValueError,'recipe does not match.*tiger.py sysroot'):
+                        provenance.prepare(self.root,self.deps,'image')
+                self.assertEqual(set((self.root/'build/tiger-builds').iterdir()),before,
+                                 'Recipe preflight allocated a build directory')
+        lock=dict(original,format=9);lockfile.write_text(json.dumps(lock))
+        with self.assertRaisesRegex(ValueError,'Unsupported Tiger dependency lock format'):
+            provenance.prepare(self.root,self.deps,'image')
+
+    def test_distribution_changes_do_not_invalidate_a_compiled_recipe(self):
+        lockfile=self.root/'tiger-dependencies.lock.json';lock=json.loads(lockfile.read_text())
+        lock['ca_bundle']['version']='new distribution';lock['tigerports_revision']='new provenance'
+        lockfile.write_text(json.dumps(lock))
+        with patch.object(provenance.subprocess,'check_output',side_effect=self.git):
+            folder=provenance.prepare(self.root,self.deps,'image')
+        self.assertTrue((folder/'provenance.json').is_file())
+
+    def test_archived_lock_is_checked_instead_of_the_live_checkout(self):
+        lockfile=self.root/'tiger-dependencies.lock.json';lock=json.loads(lockfile.read_text())
+        lock['dependencies']=[dict(name='curl',version='new')];lockfile.write_text(json.dumps(lock))
+        self.assertEqual(provenance.resolve(self.root).manifest['recipe']['dependencies'],())
+        record=json.loads((self.folder/'provenance.json').read_text())
+        digest=provenance.store(self.folder,lockfile.read_bytes())
+        record['distribution']['tiger-dependencies.lock.json']=digest
+        record['before']['distribution']['tiger-dependencies.lock.json']=digest
+        record['after']=record['before']
+        provenance.atomic_json(self.folder/'provenance.json',record)
+        provenance.atomic_json(self.root/'build/tiger-current.json',dict(build_id=self.folder.name,
+            sha256=provenance.file_hash(self.folder/'provenance.json')))
+        with self.assertRaisesRegex(ValueError,'recipe does not match'):
+            provenance.resolve(self.root)
+
+    def test_missing_and_legacy_manifests_have_recovery_guidance_without_directories(self):
+        manifest=self.root/'build/tiger-sysroot/manifest.json'
+        for value in (None,b'{"lock":{},"prefix":"/opt/tigr"}'):
+            with self.subTest(value=value):
+                if value is None:manifest.unlink()
+                else:manifest.write_bytes(value)
+                before=set((self.root/'build/tiger-builds').iterdir())
+                with self.assertRaisesRegex(ValueError,'Tiger sysroot.*tiger.py sysroot'):
+                    provenance.prepare(self.root,self.deps,'image')
+                self.assertEqual(set((self.root/'build/tiger-builds').iterdir()),before)
+
+class DependencyReconfiguration(unittest.TestCase):
+    def test_nonempty_environment_root_has_exact_precedence(self):
+        from dependency_paths import dependency_root
+        with tempfile.TemporaryDirectory(prefix='codet root precedence ') as temporary:
+            selected=Path(temporary)/'selected'
+            with patch.dict(os.environ,CODET_DEPENDENCY_ROOT=str(selected)):
+                self.assertEqual(dependency_root(ROOT),selected.resolve(),'Nonempty environment override was ignored')
+            with patch.dict(os.environ,CODET_DEPENDENCY_ROOT=''):
+                self.assertEqual(dependency_root(ROOT),(ROOT/'.deps').resolve())
+
+    def test_environment_reconfiguration_and_relative_cwd_resolution(self):
+        with tempfile.TemporaryDirectory(prefix='codet root reconfigure ') as temporary:
+            folder=Path(temporary);caller=folder/'caller';caller.mkdir();output=folder/'build'
+            alias=caller/'deps alias';alias.symlink_to((ROOT/'.deps').resolve(),target_is_directory=True)
+            def configure(value,*options):
+                return subprocess.run(['cmake','-S',str(ROOT),'-B',str(output),'-DCODET_FOUNDATION_ONLY=ON',*options],
+                    cwd=caller,env=dict(os.environ,CODET_DEPENDENCY_ROOT=value,PWD='/misleading'),
+                    capture_output=True,text=True,timeout=30)
+            result=configure('missing')
+            self.assertNotEqual(result.returncode,0)
+            self.assertNotIn('CODET_DEPENDENCY_ROOT:PATH=',(output/'CMakeCache.txt').read_text(),
+                             'An environment default was persisted as an explicit override')
+            result=configure('deps alias');self.assertEqual(result.returncode,0,result.stderr)
+            expected=str((ROOT/'.deps').resolve())
+            self.assertEqual((output/'CMakeFiles/codet-dependency-root.txt').read_text(),expected,
+                             'CMake did not resolve the root from invocation cwd')
+            code='import sys;sys.path.insert(0,'+repr(str(ROOT/'scripts'))+');from dependency_paths import dependency_root;from pathlib import Path;print(dependency_root(Path('+repr(str(ROOT))+')))'
+            actual=subprocess.check_output([sys.executable,'-c',code],cwd=caller,
+                env=dict(os.environ,CODET_DEPENDENCY_ROOT='deps alias',PWD='/misleading'),text=True,timeout=30).strip()
+            self.assertEqual(actual,expected)
+            result=configure('missing','-DCODET_DEPENDENCY_ROOT=deps alias')
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn('CODET_DEPENDENCY_ROOT:PATH='+expected,(output/'CMakeCache.txt').read_text())
+            result=configure('still missing');self.assertEqual(result.returncode,0,result.stderr)
+            # Old caches cannot reveal whether their nonempty value was explicit or derived.
+            result=configure('missing','-UCODET_DEPENDENCY_ROOT');self.assertNotEqual(result.returncode,0)
+            result=configure('deps alias');self.assertEqual(result.returncode,0,result.stderr)
 
 if __name__ == "__main__":
     unittest.main()

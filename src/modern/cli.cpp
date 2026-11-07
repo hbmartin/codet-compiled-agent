@@ -584,7 +584,11 @@ public:
   Interaction *input_queue_ = nullptr;
   std::function<void(detail::InputLine &)> prepare_submission_;
   void submission_preparer(std::function<void(detail::InputLine &)> prepare) {
-    prepare_submission_ = std::move(prepare);
+    prepare_submission_ = [this, prepare = std::move(prepare)](detail::InputLine &line) {
+      if (!line.admission)
+        line.admission = admission_; // The terminal still owns a deferred presentation's ticket.
+      prepare(line);
+    };
   }
   uint64_t admission_ = 0;
   void reserve_submission() {
@@ -597,8 +601,10 @@ public:
       }
   }
   std::optional<detail::InputLine> admitted(std::optional<detail::InputLine> line) {
-    if (line)
+    if (line) {
       line->admission = std::exchange(admission_, 0);
+      line->reservation = detail::SubmissionLease(input_queue_, line->admission);
+    }
     return line;
   }
   void input_queue(Interaction *queue) noexcept {
@@ -631,6 +637,8 @@ public:
       pending_not_sent(line->text, immediate);
   }
   void pending_not_sent(std::string_view text, bool immediate = false) noexcept {
+    if (text.empty())
+      return;
     try {
       std::string message = "[Pending message not sent: ";
       message.append(text);
@@ -1201,7 +1209,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   config.effort = resolve_effort(config, session.id.empty() ? nullptr : &session);
   validate_effort(config);
   const auto selected_effort = saved_effort(config, session.id.empty() ? nullptr : &session);
-  auto pending_images = input_images(config, files, *native_images(), o.images, cancel);
+  auto initial_images = input_images(config, files, *native_images(), o.images, cancel);
   if (o.command == "resume" || o.command == "fork")
     provider_preflight();
   if (o.command == "fork")
@@ -1337,38 +1345,56 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
                            .dump()});
   };
   const auto prepare_line = [&](detail::InputLine &line) {
-    if (line.prepared || line.discarded || line.request ||
-        detail::local_command(line.text) != detail::LocalCommand::none)
+    if (line.preparation.state != detail::PreparationState::unprepared || line.discarded ||
+        line.request || detail::local_command(line.text) != detail::LocalCommand::none)
       return;
-    try {
-      cancel.check();
-      auto snapshot = detail::prepare_interactive_prompt(config, files, line.text);
-      cancel.check();
-      if (snapshot)
-        line.expansion = std::make_shared<const detail::PreparedPrompt>(std::move(*snapshot));
-      line.prepared = true;
-    } catch (const std::bad_alloc &) {
-      throw;
-    } catch (const Error &error) {
-      if (cancel.requested || error.code == 130)
-        throw;
-      line.preparation_error = std::current_exception();
-      line.prepared = true;
-    } catch (const std::exception &) {
-      line.preparation_error = std::current_exception();
-      line.prepared = true;
+    if (lifecycle.preparing)
+      lifecycle.preparing(lifecycle.context, line.text, 0);
+    line.preparation = detail::prepare_submission(cancel, [&] {
+      if (line.text.size() > detail::raw_input_limit)
+        throw Error("Pending user input limit exceeded");
+      if (lifecycle.preparing)
+        lifecycle.preparing(lifecycle.context, line.text, 1);
+      auto value = detail::prepare_interactive_prompt(config, files, line.text);
+      if (lifecycle.preparing)
+        lifecycle.preparing(lifecycle.context, line.text, 2);
+      const auto bytes = detail::normalized_input_size(value ? value->expanded : line.text,
+                                                       detail::expanded_input_limit);
+      if (line.admission)
+        detail::SubmissionAccess::charge(*interaction, line.admission, bytes);
+      return value;
+    });
+  };
+  const auto preparation_ready = [&](detail::InputLine &line) {
+    prepare_line(line);
+    if (line.preparation.state == detail::PreparationState::cancelled) {
+      cancel.requested = true;
+      if (!line.text.empty())
+        terminal->pending_not_sent(line.text);
+      return false;
     }
+    if (line.preparation.state == detail::PreparationState::failed) {
+      detail::secondary_diagnostic([&] {
+        try {
+          std::rethrow_exception(line.preparation.failure);
+        } catch (const std::exception &error) {
+          terminal->say(std::string("Error: ") + error.what());
+        }
+      });
+      return false;
+    }
+    return true;
   };
   if (terminal)
     terminal->submission_preparer(prepare_line);
-  auto execute_agent = [&](const std::string &text, bool steering,
-                           const detail::PreparedPrompt *prepared) -> int {
+  auto execute_agent = [&](const std::string &text, bool verbatim,
+                           const detail::PreparedPrompt *prepared,
+                           const std::vector<ImageArtifact> &images) -> int {
     if (!terminal) {
       const auto result =
           compacting ? agent.compact(session, cancel)
-          : prepared
-              ? detail::AgentAccess::run(agent, session, *prepared, cancel, schema, pending_images)
-              : agent.run(session, text, cancel, schema, !steering, pending_images);
+          : prepared ? detail::AgentAccess::run(agent, session, *prepared, cancel, schema, images)
+                     : agent.run(session, text, cancel, schema, !verbatim, images);
       publish_result(result);
       return 0;
     }
@@ -1433,34 +1459,14 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       auto action = detail::classify_turn_input(
           line, phase == detail::TurnInputPhase::active && pending ? &*pending : nullptr, origin,
           phase);
-      struct Release {
-        Interaction &io;
-        uint64_t sequence = 0;
-        ~Release() {
-          detail::SubmissionAccess::abandon(io, sequence);
-        }
-      } release{*interaction, line.admission};
       std::shared_ptr<const detail::PreparedPrompt> expansion;
       if (action.action == detail::TurnInputAction::steer ||
           action.action == detail::TurnInputAction::hold) {
-        try {
-          prepare_line(line);
-          if (line.preparation_error)
-            std::rethrow_exception(line.preparation_error);
-          expansion = line.expansion;
-          if (expansion)
-            action.action = detail::TurnInputAction::idle_command;
-        } catch (const std::bad_alloc &) {
-          throw;
-        } catch (const Error &error) {
-          if (cancel.requested || error.code == 130)
-            throw;
-          terminal->say(std::string("Error: ") + error.what());
+        if (!preparation_ready(line))
           return;
-        } catch (const std::exception &error) {
-          terminal->say(std::string("Error: ") + error.what());
-          return;
-        }
+        expansion = line.preparation.prompt;
+        if (expansion)
+          action.action = detail::TurnInputAction::idle_command;
       }
       switch (action.action) {
       case detail::TurnInputAction::quit:
@@ -1505,6 +1511,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
                                            action.action == detail::TurnInputAction::hold,
                                            action.action == detail::TurnInputAction::idle_command,
                                            std::move(expansion));
+          line.reservation.release();
         } catch (const Error &error) {
           terminal->pending_not_sent(line.text);
           terminal->say(error.what());
@@ -1520,10 +1527,13 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     try {
       terminal->begin_active(cancel);
       work = std::async(std::launch::async, [&] {
-        return compacting ? agent.compact(session, cancel)
-               : prepared ? detail::AgentAccess::run(agent, session, *prepared, cancel, schema,
-                                                     pending_images)
-                          : agent.run(session, text, cancel, schema, !steering, pending_images);
+        auto result =
+            compacting ? agent.compact(session, cancel)
+            : prepared ? detail::AgentAccess::run(agent, session, *prepared, cancel, schema, images)
+                       : agent.run(session, text, cancel, schema, !verbatim, images);
+        if (lifecycle.worker_returned)
+          lifecycle.worker_returned(lifecycle.context);
+        return result;
       });
       while (work.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
         deliver();
@@ -1594,24 +1604,18 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       for (const auto &text : interaction->take_pending(session.id))
         terminal->pending_not_sent(text);
   };
-  auto run = [&](const std::string &text, bool steering = false,
-                 const detail::PreparedPrompt *prepared = nullptr) {
+  auto run = [&](const std::string &text, bool verbatim = false,
+                 const detail::PreparedPrompt *prepared = nullptr,
+                 std::vector<ImageArtifact> images = {}) {
+    const auto owned_images = std::move(images);
     struct DeliverFiles {
       detail::CliDiagnostics &diagnostics;
       ~DeliverFiles() {
         diagnostics.deliver_files();
       }
     } deliver_files{*diagnostics};
-    struct ClearImages {
-      std::vector<ImageArtifact> &images;
-      bool clear;
-      ~ClearImages() {
-        if (clear)
-          images.clear();
-      }
-    } clear_images{pending_images, !compacting};
     try {
-      const int status = execute_agent(text, steering, prepared);
+      const int status = execute_agent(text, verbatim, prepared, owned_images);
       pending_input(status == 0 && !quit_requested);
       return status;
     } catch (const Error &e) {
@@ -1658,44 +1662,43 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     if (!consolidation_input.empty())
       prompt += "\n\nAdditional consolidation instructions:\n" + consolidation_input;
   }
-  const auto interactive_run = [&](const std::string &text, detail::InputLine *frozen = nullptr) {
+  const auto discard_images = [&](std::vector<ImageArtifact> &images) {
+    if (images.empty())
+      return;
+    images.clear();
+    detail::secondary_diagnostic([&] {
+      terminal->say("[Images discarded: this input did not start an image-bearing turn.]");
+    });
+  };
+  const auto interactive_run = [&](const std::string &text, detail::InputLine *frozen,
+                                   std::vector<ImageArtifact> images) {
     auto line = frozen ? std::move(*frozen) : detail::InputLine{text};
-    try {
-      prepare_line(line);
-      if (line.preparation_error)
-        std::rethrow_exception(line.preparation_error);
-    } catch (const std::bad_alloc &) {
-      throw;
-    } catch (const Error &error) {
-      if (cancel.requested || error.code == 130)
-        throw;
-      terminal->say(std::string("Error: ") + error.what());
-      return;
-    } catch (const std::exception &error) {
-      terminal->say(std::string("Error: ") + error.what());
-      return;
-    }
-    run(text, true, line.expansion.get());
+    if (preparation_ready(line))
+      run(text, true, line.preparation.prompt.get(), std::move(images));
+    else
+      discard_images(images);
   };
   if (!interactive) {
 
-    if (prompt.empty() && pending_images.empty() && o.command == "fork") {
+    if (prompt.empty() && initial_images.empty() && o.command == "fork") {
       output.required({Json({{"type", "thread.started"}, {"thread_id", session.id}}).dump()});
       return 0;
     }
-    if (prompt.empty() && pending_images.empty())
+    if (prompt.empty() && initial_images.empty())
       throw Error("Headless mode requires a prompt, stdin or an image", 2);
-    return run(prompt);
+    return run(prompt, false, nullptr, std::move(initial_images));
   }
-  bool initial_pending = !prompt.empty() || !pending_images.empty();
+  bool initial_pending = !prompt.empty() || !initial_images.empty();
   while (!cancel.requested && !quit_requested) {
     std::optional<std::string> input;
     std::optional<detail::InputLine> idle_line;
+    std::vector<ImageArtifact> images;
     const auto queued = initial_pending ? std::optional<detail::QueuedSubmission>{}
                                         : detail::SubmissionAccess::next(*interaction, session.id);
     if (initial_pending) {
       initial_pending = false;
       input = prompt;
+      images.swap(initial_images);
     } else if (queued) {
       input = queued->text;
       run(*input, true, queued->prepared.get());
@@ -1710,9 +1713,11 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     }
     if (!input)
       break;
-    if (input->empty() && pending_images.empty())
+    if (input->empty() && images.empty())
       continue;
     const auto local = detail::local_command(*input);
+    if (local != detail::LocalCommand::none && local != detail::LocalCommand::memory)
+      discard_images(images);
     if (local == detail::LocalCommand::quit)
       break;
     if (local == detail::LocalCommand::help) {
@@ -1839,7 +1844,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
                "consolidate files in " +
                (config.home / "memory").string() + "; report changes.";
     }
-    interactive_run(*input, idle_line ? &*idle_line : nullptr);
+    interactive_run(*input, idle_line ? &*idle_line : nullptr, std::move(images));
   }
   if (cancel.requested || quit_requested)
     detail::secondary_diagnostic([&] {

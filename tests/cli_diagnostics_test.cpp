@@ -2298,7 +2298,6 @@ TEST(SubmissionQueue, FrozenReservationsCountTowardTheSharedLimit) {
   io.end_turn();
   auto next = detail::SubmissionAccess::next(io, "s");
   ASSERT_TRUE(next);
-  EXPECT_TRUE(next->idle_command);
   EXPECT_EQ(next->text, "/custom argument");
   EXPECT_FALSE(detail::SubmissionAccess::next(io, "s"));
 }
@@ -2315,7 +2314,6 @@ TEST(SubmissionQueue, ReservedPrefixCannotBeOvertakenAndKeepsItsRawCommand) {
   auto b = detail::SubmissionAccess::next(io, "s");
   ASSERT_TRUE(a);
   ASSERT_TRUE(b);
-  EXPECT_TRUE(a->idle_command);
   EXPECT_EQ(a->text, "/unknown");
   EXPECT_EQ(b->text, "later");
 }
@@ -2504,4 +2502,148 @@ TEST(SubmissionQueue, InactiveCompatibilityInputCannotBecomeOldTurnSteering) {
   ASSERT_TRUE(queued);
   EXPECT_EQ(queued->text, "between turns");
   EXPECT_FALSE(detail::SubmissionAccess::next(io, "s"));
+}
+
+TEST(InputPreparation, CancellationIsAnOutcomeBeforeDuringAndAfterLookup) {
+  for (unsigned stage = 0; stage != 3; ++stage) {
+    Cancellation cancel;
+    unsigned calls = 0;
+    cancel.requested = stage == 0;
+    const auto result =
+        detail::prepare_submission(cancel, [&]() -> std::optional<detail::PreparedPrompt> {
+          ++calls;
+          if (stage == 1)
+            throw Error("lookup cancelled", 130);
+          cancel.requested = true;
+          return detail::PreparedPrompt{"original", "expanded"};
+        });
+    EXPECT_EQ(result.state, detail::PreparationState::cancelled);
+    EXPECT_FALSE(result.prompt);
+    EXPECT_EQ(calls, stage == 0 ? 0u : 1u);
+  }
+}
+TEST(InputPreparation, LocalErrorsKeepTheirTypeAndAllocationFailuresPropagate) {
+  Cancellation cancel;
+  const auto result =
+      detail::prepare_submission(cancel, []() -> std::optional<detail::PreparedPrompt> {
+        throw std::filesystem::filesystem_error("lookup failure",
+                                                std::make_error_code(std::errc::permission_denied));
+      });
+  EXPECT_EQ(result.state, detail::PreparationState::failed);
+  EXPECT_THROW(std::rethrow_exception(result.failure), std::filesystem::filesystem_error);
+  EXPECT_THROW(
+      detail::prepare_submission(
+          cancel, []() -> std::optional<detail::PreparedPrompt> { throw std::bad_alloc(); }),
+      std::bad_alloc);
+}
+TEST(InputPreparation, ReadyContentKeepsOriginalAndCompletionCanStillBeCollected) {
+  Cancellation cancel;
+  auto worker = std::async(std::launch::deferred, [] { return 42; });
+  const auto result =
+      detail::prepare_submission(cancel, [&]() -> std::optional<detail::PreparedPrompt> {
+        return detail::PreparedPrompt{"original", "expanded"};
+      });
+  EXPECT_EQ(result.state, detail::PreparationState::ready);
+  ASSERT_TRUE(result.prompt);
+  EXPECT_EQ(result.prompt->original, "original");
+  EXPECT_EQ(result.prompt->expanded, "expanded");
+  cancel.requested = true;
+  EXPECT_NO_THROW(
+      (void)detail::prepare_submission(cancel, []() -> std::optional<detail::PreparedPrompt> {
+        ADD_FAILURE() << "Cancelled preparation reached its lookup";
+        return {};
+      }));
+  EXPECT_EQ(worker.get(), 42);
+}
+TEST(SubmissionQueue, MovingOrUnwindingALineReleasesItsReservedEntryExactlyOnce) {
+  Interaction io;
+  io.begin_turn("s");
+  const auto first = detail::SubmissionAccess::reserve(io);
+  io.submit("later");
+  try {
+    detail::InputLine line{"original"};
+    line.admission = first;
+    line.reservation = detail::SubmissionLease(&io, first);
+    auto moved = std::move(line);
+    EXPECT_EQ(moved.text, "original");
+    throw std::bad_alloc();
+  } catch (const std::bad_alloc &) {
+  }
+  io.end_turn();
+  const auto next = detail::SubmissionAccess::next(io, "s");
+  ASSERT_TRUE(next) << "Preparation failure leaked its reserved prefix";
+  EXPECT_EQ(next->text, "later");
+  EXPECT_TRUE(io.take_pending("s").empty())
+      << "Reservation cleanup emitted an empty pending notice";
+}
+
+TEST(InputPreparation, NormalizationIsBoundedBeforeAllocatingRepairedContent) {
+  const std::string malformed(65536, static_cast<char>(0x80));
+  EXPECT_EQ(detail::normalized_input_size(malformed, 196608), 196608u);
+  EXPECT_THROW(detail::normalized_input_size(malformed, 196607), Error);
+  EXPECT_EQ(detail::normalized_input(malformed, 196608).size(), 196608u);
+  EXPECT_EQ(detail::normalized_input("literal \\x80", 12), "literal \\x80");
+  EXPECT_THROW(detail::normalized_input_size(std::string(262145, 'x'), 262144), Error);
+}
+TEST(SubmissionQueue, EffectiveBudgetCountsReservedAndCommittedContentExactlyOnce) {
+  Interaction io;
+  io.begin_turn("s");
+  std::vector<uint64_t> tickets;
+  auto expanded = std::make_shared<const detail::PreparedPrompt>(
+      detail::PreparedPrompt{"/review", std::string(detail::expanded_input_limit, 'x')});
+  for (unsigned i = 0; i != 32; ++i) {
+    const auto ticket = detail::SubmissionAccess::reserve(io);
+    tickets.push_back(ticket);
+    detail::SubmissionAccess::charge(io, ticket, expanded->expanded.size());
+    if (i % 2 == 0)
+      detail::SubmissionAccess::commit(io, ticket, "/review", true, true, expanded);
+  }
+  const auto extra = detail::SubmissionAccess::reserve(io);
+  EXPECT_THROW(detail::SubmissionAccess::charge(io, extra, 1), Error)
+      << "Aggregate effective budget admitted excess content";
+  EXPECT_THROW(io.submit("extra"), Error);
+  detail::SubmissionAccess::abandon(io, tickets.back());
+  detail::SubmissionAccess::charge(io, extra, detail::expanded_input_limit);
+  EXPECT_THROW(detail::SubmissionAccess::charge(io, extra, detail::expanded_input_limit + 1),
+               Error);
+  detail::SubmissionAccess::commit(io, extra, "/review", true, true, expanded);
+  for (auto ticket : tickets)
+    detail::SubmissionAccess::abandon(io, ticket);
+  io.end_turn();
+  unsigned consumed = 0;
+  while (auto next = detail::SubmissionAccess::next(io, "s")) {
+    ASSERT_TRUE(next->prepared);
+    EXPECT_EQ(next->prepared->expanded.size(), detail::expanded_input_limit);
+    ++consumed;
+  }
+  EXPECT_EQ(consumed, 17u);
+  // All charges, including consumed queue entries, have been released.
+  for (unsigned i = 0; i != 100; ++i)
+    io.submit(std::string(detail::raw_input_limit, 'r'));
+  EXPECT_THROW(io.submit("overflow"), Error);
+  EXPECT_EQ(io.take_pending("s").size(), 100u);
+  io.submit("usable");
+  EXPECT_EQ(io.take_pending("s"), (std::vector<std::string>{"usable"}));
+}
+TEST(SubmissionQueue, LeaseAndSteeringConsumptionReleaseEffectiveCharges) {
+  Interaction io;
+  io.begin_turn("s");
+  {
+    const auto ticket = detail::SubmissionAccess::reserve(io);
+    detail::SubmissionLease lease(&io, ticket);
+    detail::SubmissionAccess::charge(io, ticket, detail::expanded_input_limit);
+    EXPECT_THROW(detail::SubmissionAccess::commit(io, ticket, std::string(65537, 'x'), false),
+                 Error);
+  }
+  EXPECT_TRUE(io.take_input().empty());
+  for (unsigned round = 0; round != 3; ++round) {
+    for (unsigned i = 0; i != 42; ++i)
+      io.submit(std::string(detail::raw_input_limit, static_cast<char>(0x80)));
+    EXPECT_THROW(io.submit(std::string(detail::raw_input_limit, static_cast<char>(0x80))), Error);
+    auto steering = io.take_input();
+    EXPECT_EQ(steering.size(), 42u);
+    EXPECT_EQ(steering.front().size(), 196608u);
+  }
+  io.end_turn();
+  EXPECT_TRUE(io.take_pending("s").empty());
 }

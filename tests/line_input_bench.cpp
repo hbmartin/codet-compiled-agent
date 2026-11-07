@@ -1,7 +1,10 @@
 // Identical host-only harness for fetched main and this follow-up. No production counters.
 #include "codet/detail/line_prompt.hpp"
+#include "codet/detail/prepared_prompt.hpp"
+#include "codet/detail/submission_queue.hpp"
 #include "codet/interaction.hpp"
 #include "descriptor_bench_metrics.hpp"
+#include "temp.hpp"
 #ifdef __APPLE__
 #include <util.h>
 #else
@@ -140,6 +143,7 @@ int main(int argc, char **argv) {
     return 2;
   (void)std::setlocale(LC_ALL, "C");
   const std::string mode = argv[1];
+  const bool preparation = mode == "preparation-queue" || mode == "bounded-expansion";
   const bool native = mode == "native-busy" || mode == "native-editing" ||
                       mode == "native-boundary" || mode == "native-flush-boundary" ||
                       mode == "native-rebind" || mode == "native-unchanged" ||
@@ -182,6 +186,20 @@ int main(int argc, char **argv) {
       return 3;
   }
   Cancellation cancel;
+  TempDirectory fixture;
+  Config configuration;
+  configuration.home = fixture.root;
+  NativeFileSystem filesystem;
+  std::string command_input;
+  if (preparation) {
+    fs::create_directories(fixture.root / "commands");
+    filesystem.atomic_write(fixture.root / "commands/review.md",
+                            mode == "bounded-expansion" ? "$ARGUMENTS$ARGUMENTS$ARGUMENTS$ARGUMENTS"
+                                                          "$ARGUMENTS$ARGUMENTS$ARGUMENTS$ARGUMENTS"
+                                                        : "frozen $ARGUMENTS");
+    command_input = "/review " + std::string(mode == "bounded-expansion" ? 32768u : 128u, 'a');
+  }
+  size_t effective_content_bytes = 0, prepared_submissions = 0;
   detail::IoContext io(cancel);
   Discard discard;
   std::ostream stream(&discard);
@@ -210,7 +228,8 @@ int main(int argc, char **argv) {
   };
   if (mode == "warning-failed-idle")
     interaction.warn(Interaction::Warning::exec_stop);
-  const size_t count = warnings                                              ? 100000
+  const size_t count = preparation                                           ? 128
+                       : warnings                                            ? 100000
                        : editing                                             ? 20480
                        : (mode == "unchanged" || mode == "native-unchanged") ? 10000
                        : native                                              ? 100
@@ -221,7 +240,25 @@ int main(int argc, char **argv) {
   observing = test::descriptor_bench::observing = true;
   const auto start = std::chrono::steady_clock::now();
   for (size_t i = 0; i < count; ++i) {
-    if (warnings) {
+    if (preparation) {
+      auto value = detail::prepare_interactive_prompt(configuration, filesystem, command_input);
+      if (!value || value->original != command_input ||
+          value->expanded != (mode == "bounded-expansion" ? std::string(262144, 'a')
+                                                          : "frozen " + std::string(128, 'a')))
+        return 7;
+      const auto length = value->expanded.size();
+      interaction.begin_turn("fixture");
+      const auto ticket = detail::SubmissionAccess::reserve(interaction);
+      detail::SubmissionAccess::commit(
+          interaction, ticket, command_input, true, true,
+          std::make_shared<const detail::PreparedPrompt>(std::move(*value)));
+      interaction.end_turn();
+      const auto next = detail::SubmissionAccess::next(interaction, "fixture");
+      if (!next || !next->prepared || next->prepared->expanded.size() != length)
+        return 8;
+      effective_content_bytes += length;
+      ++prepared_submissions;
+    } else if (warnings) {
       if (mode == "warning-new")
         interaction.warn(Interaction::Warning::exec_stop);
       drain_new(interaction, consume, 0);
@@ -287,6 +324,8 @@ int main(int argc, char **argv) {
                   {"fpathconf", test::descriptor_bench::bounds.load()},
                   {"prepared_input_bytes", input.input().rebuilt_bytes() - initial},
                   {"warning_attempts", warning_attempts},
+                  {"effective_content_bytes", effective_content_bytes},
+                  {"prepared_submissions", prepared_submissions},
                   {"iterations", count}})
                 .dump()
          << '\n';
