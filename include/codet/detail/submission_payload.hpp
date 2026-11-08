@@ -82,6 +82,13 @@ private:
   SubmissionPreparation(std::shared_ptr<const std::string> original, Inspection inspected)
       : original_(std::move(original)), normalized_bytes_(inspected.normalized),
         repaired_(inspected.repaired) {}
+  PreparedSubmission plain(bool barrier) const {
+    auto normalized = repaired_ ? std::make_shared<const std::string>(
+                                      normalized_input_known(*original_, normalized_bytes_, true))
+                                : original_;
+    auto execution = std::make_shared<const PreparedPrompt>(original_, normalized);
+    return PreparedSubmission{std::move(normalized), std::move(execution), barrier};
+  }
 
 public:
   static void validate_raw(std::string_view text) {
@@ -119,8 +126,10 @@ public:
       throw Error("Prepared command belongs to another input");
     auto original =
         expansion ? expansion->original_storage() : std::make_shared<const std::string>(text);
-    return SubmissionPreparation(std::move(original), inspected)
-        .finish(std::move(expansion), command, reserve);
+    const SubmissionPreparation inspected_input(std::move(original), inspected);
+    if (!expansion)
+      return inspected_input.plain(command); // Complete budgets were checked before allocation.
+    return inspected_input.finish(std::move(expansion), command, reserve);
   }
   size_t retained_size(size_t expansion = 0) const {
     return PreparedSubmission::add(
@@ -131,30 +140,29 @@ public:
                             Reserve reserve) const {
     if (command && !barrier)
       throw Error("Prepared expansion requires a command barrier");
-    auto original = original_;
-    if (command) {
-      if (command->original_storage().get() != original_.get() && command->original != *original_)
-        throw Error("Prepared command belongs to another input");
-      original = command->original_storage();
-      if (!command->validated_expansion()) {
-        bool repaired = false;
-        const auto size = normalized_input_size(command->expanded, expanded_input_limit, &repaired);
-        reserve(size, retained_size(size));
-        if (repaired)
-          command = std::make_shared<const PreparedPrompt>(
-              original, std::make_shared<const std::string>(
-                            normalized_input_known(command->expanded, size, true)));
-      }
+    if (!command) {
+      reserve(normalized_bytes_, retained_size());
+      return plain(barrier);
     }
-    const auto effective = command ? command->expanded.size() : normalized_bytes_;
+    auto original = original_;
+    if (command->original_storage().get() != original_.get() && command->original != *original_)
+      throw Error("Prepared command belongs to another input");
+    original = command->original_storage();
+    if (!command->validated_expansion()) {
+      bool repaired = false;
+      const auto size = normalized_input_size(command->expanded, expanded_input_limit, &repaired);
+      reserve(size, retained_size(size));
+      if (repaired)
+        command = std::make_shared<const PreparedPrompt>(
+            original, std::make_shared<const std::string>(
+                          normalized_input_known(command->expanded, size, true)));
+    }
+    const auto effective = command->expanded.size();
     reserve(effective,
-            retained_size(command && command->expanded_storage().get() != original.get() ? effective
-                                                                                         : 0));
+            retained_size(command->expanded_storage().get() != original.get() ? effective : 0));
     auto normalized = repaired_ ? std::make_shared<const std::string>(
                                       normalized_input_known(*original, normalized_bytes_, true))
                                 : original;
-    if (!command)
-      command = std::make_shared<const PreparedPrompt>(original, normalized);
     return PreparedSubmission{std::move(normalized), std::move(command), barrier};
   }
 };
