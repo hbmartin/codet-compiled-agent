@@ -68,11 +68,16 @@ def verify_preparation_metrics(row, *, variant=None):
     if row.get("preparation_metric_version") not in (1, 2) or any(type(row.get(k)) is not int or row[k] < 0 for k in fields) or row["iterations"] != 128:
         raise ValueError("Invalid preparation measurement counters")
     workload = row.get("workload")
-    workloads = ("allocation-positive", "saturated-count", "saturated-effective", "saturated-retained",
+    workloads = ("allocation-positive", "preflight-checks", "saturated-count", "saturated-effective", "saturated-retained",
                  "cli-preparation", "compatibility-preparation", "normalization")
     if not isinstance(workload, str) or workload not in workloads:
         raise ValueError("Invalid preparation workload: " + repr(workload))
     if row["preparation_metric_version"] == 2:
+        if type(row.get("advisory_budget_checks")) is not int or row["advisory_budget_checks"] < 0:
+            raise ValueError("Invalid preparation advisory budget-check counter")
+        if workload == "preflight-checks" and (row["advisory_budget_checks"] not in (128, 256) or
+                row["prepared_submissions"] != 128 or row["effective_content_bytes"] != 640):
+            raise ValueError("Preparation advisory-check control failed")
         role = row.get("variant") if variant is None else variant
         if role not in ("baseline", "changed") or ("variant" in row and row["variant"] != role):
             raise ValueError("Invalid preparation variant")

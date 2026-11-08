@@ -1351,9 +1351,6 @@ class HashMetricScope(unittest.TestCase):
             self.assertGreaterEqual(value['peak_traced_bytes'],value['retained_traced_bytes'])
             self.assertGreater(value['retained_traced_blocks'],0)
 
-if __name__ == "__main__":
-    unittest.main()
-
 class EvidenceV4(ValidationEvidence):
     def test_string_vector_is_rejected_at_load(self):
         self.checks[0]['argv'] = 'python3'
@@ -1917,7 +1914,7 @@ class PreparationRecovery(unittest.TestCase):
     @staticmethod
     def row(**changes):
         value = dict(harness='preparation', workload='saturated-count', variant='changed',
-                     preparation_metric_version=2, iterations=128, allocations=256, allocated_bytes=18000,
+                     preparation_metric_version=2, advisory_budget_checks=128, iterations=128, allocations=256, allocated_bytes=18000,
                      payload_sized_allocations=0, rejections=128, prepared_submissions=0,
                      distinct_command_wrappers=0, effective_content_bytes=0)
         value.update(changes)
@@ -1968,3 +1965,7 @@ class PreparationRecovery(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'not unique'):
                 generate(ambiguous, output)
             self.assertEqual(output.read_bytes(), previous)
+
+
+if __name__ == "__main__":
+    unittest.main()

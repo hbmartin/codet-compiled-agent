@@ -7,7 +7,7 @@
 
 namespace {
 bool observing = false;
-size_t allocations = 0, allocated = 0, large_allocations = 0;
+size_t allocations = 0, allocated = 0, large_allocations = 0, preflight_calls = 0;
 void *allocate(size_t size) {
   if (observing) {
     ++allocations;
@@ -67,7 +67,20 @@ int main(int argc, char **argv) {
   const auto start = std::chrono::steady_clock::now();
   observing = true;
   for (unsigned n = 0; n != 128; ++n) {
-    if (mode == "allocation-positive") {
+    if (mode == "preflight-checks") {
+      detail::SubmissionAccess::submit(queue, "small", [&](const auto &borrowed) {
+        return detail::SubmissionPreparation::from_raw(
+            borrowed, false, {}, [&](size_t bytes, size_t retained) {
+              ++preflight_calls;
+              detail::SubmissionAccess::preflight(queue, bytes, retained);
+            });
+      });
+      const auto input = queue.take_input();
+      if (input.size() != 1 || input.front() != "small")
+        return 7;
+      ++prepared;
+      content_bytes += input.front().size();
+    } else if (mode == "allocation-positive") {
       auto *value = ::operator new(65536);
       ::operator delete(value);
     } else if (mode.compare(0, 10, "saturated-") == 0) {
@@ -109,6 +122,7 @@ int main(int argc, char **argv) {
   std::ofstream(argv[2]) << Json({{"case", mode},
                                   {"preparation_metric_version", 2},
                                   {"iterations", 128},
+                                  {"advisory_budget_checks", preflight_calls},
                                   {"allocations", allocations},
                                   {"allocated_bytes", allocated},
                                   {"payload_sized_allocations", large_allocations},

@@ -49,8 +49,27 @@ raise SystemExit(exit_code)
 
 def run_controls(root, folder):
     cases = [
+        ("orphan-receipt", "dependency-root",
+         'DEFINED CACHE{_CODET_DEPENDENCY_VALUE} OR DEFINED CACHE{_CODET_DEPENDENCY_TOKEN})',
+         'DEFINED CACHE{_CODET_DEPENDENCY_VALUE} OR DEFINED CACHE{_CODET_DEPENDENCY_TOKEN} OR EXISTS "${pin}")',
+         "test_tiger_recovery.DependencyReconfiguration.test_orphan_receipt_does_not_own_a_fresh_explicit_cache"),
+        ("receipt-override", "dependency-root", 'if(explicit OR NOT owned)', 'if(NOT owned)',
+         "test_tiger_recovery.DependencyReconfiguration.test_explicit_override_retires_a_bad_current_receipt_before_validation"),
+        ("unset-properties", "dependency-root",
+         'set_property(CACHE CODET_DEPENDENCY_ROOT PROPERTY ${property} "${saved_${property}}")\n      endif()',
+         'set_property(CACHE CODET_DEPENDENCY_ROOT PROPERTY ${property} "${saved_${property}}")\n      else()\n        set_property(CACHE CODET_DEPENDENCY_ROOT PROPERTY ${property})\n      endif()',
+         "test_tiger_recovery.DependencyReconfiguration.test_inspection_preserves_unset_properties_and_readable_owned_help"),
+        ("preparation-workload", "evidence_benchmarks", 'workload = row.get("workload")',
+         'workload = row.get("workload") or "saturated-count"',
+         "PreparationRecovery.test_workload_validation_has_an_identifying_error"),
+        ("preparation-allocations", "evidence_benchmarks",
+         'if role == "changed" and workload.startswith("saturated-") and row["payload_sized_allocations"]:',
+         'if False:', "PreparationRecovery.test_new_counter_contract_rejects_payload_allocations_and_duplicate_wrappers"),
+        ("preparation-wrappers", "evidence_benchmarks",
+         'if role == "changed" and workload == "cli-preparation" and row["distinct_command_wrappers"] != row["prepared_submissions"]:',
+         'if False:', "PreparationRecovery.test_new_counter_contract_rejects_payload_allocations_and_duplicate_wrappers"),
         ("explicit-intent", "dependency-root",
-         'NOT cache_type STREQUAL "PATH" OR NOT cache_help STREQUAL marker OR',
+         'NOT cache_type STREQUAL "PATH" OR\n      (NOT cache_help STREQUAL marker AND NOT cache_help STREQUAL readable_marker) OR',
          'FALSE OR',
          "test_tiger_recovery.DependencyReconfiguration.test_equal_explicit_overrides_replace_derived_ownership_after_failure_or_success"),
         ("obsolete-pin", "dependency-root",
@@ -212,7 +231,11 @@ def run_controls(root, folder):
             verify_unittest_result(*runs)
         except ValueError as error:
             raise ValueError("Control " + name + ": " + repr(runs)) from error
-        markers = {"explicit-intent": "Equal explicit override lost", "obsolete-pin": "Obsolete pin silently rediscovered",
+        markers = {"orphan-receipt": "Orphan receipt blocked explicit override",
+                   "receipt-override": "Explicit replacement parsed retired receipt",
+                   "unset-properties": "Inspection set formerly absent",
+                   "preparation-workload": "ValueError not raised", "preparation-allocations": "ValueError not raised",
+                   "preparation-wrappers": "ValueError not raised", "explicit-intent": "Equal explicit override lost", "obsolete-pin": "Obsolete pin silently rediscovered",
                    "literal-receipt": "Receipt evaluated literal", "configuration-counters": "ValueError not raised",
                    "configure-success": "Failed configuration committed a derived choice",
                    "configure-empty-reset": "Empty reset retained the prior derived selection",

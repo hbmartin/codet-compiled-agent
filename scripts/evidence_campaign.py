@@ -23,7 +23,7 @@ from process_supervision import run as supervised_run
 from validation_evidence import atomic_json, digest, require_quiet_processes, write_artifact
 
 CASES = {
-    "preparation": ["allocation-positive", "saturated-count", "saturated-effective", "saturated-retained", "cli-preparation", "compatibility-preparation", "normalization"],
+    "preparation": ["allocation-positive", "preflight-checks", "saturated-count", "saturated-effective", "saturated-retained", "cli-preparation", "compatibility-preparation", "normalization"],
     "line": ["allocation-positive", "geometry-positive", "busy", "native-busy", "editing", "editing-basic",
              "native-editing", "deletion", "unchanged", "deferred-tail", "native-boundary", "native-flush-boundary", "native-unchanged", "pending-submission", "native-pending-submission", "native-pending-fragment", "preparation-queue", "bounded-expansion"],
     "tooling": ["hashing", "git-inspection", "supervision", "build-context", "dependency-resolution", "configuration-selection", "measurement-cleanup"],

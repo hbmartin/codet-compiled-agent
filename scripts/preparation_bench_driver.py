@@ -10,7 +10,7 @@ from evidence_benchmarks import verify_preparation_metrics
 from evidence_harness import cli_preparation_adapter
 from process_supervision import run
 
-WORKLOADS = ("allocation-positive", "saturated-count", "saturated-effective", "saturated-retained",
+WORKLOADS = ("allocation-positive", "preflight-checks", "saturated-count", "saturated-effective", "saturated-retained",
              "cli-preparation", "compatibility-preparation", "normalization")
 
 
