@@ -1,6 +1,7 @@
 """Actual configure artifacts and pinned package operations; no PPC execution."""
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -526,7 +527,7 @@ class DependencyReconfiguration(unittest.TestCase):
                     _,output,_,configure=self.dependency_probe(Path(d),generator)
                     for explicit in (True,False):
                         args=['-DCODET_DEPENDENCY_ROOT=/root-A'] if explicit else [reset]
-                        result=configure('/root-A',*args);self.assertEqual(result.returncode,0,result.stderr)
+                        result=configure('/root-A',*args);self.assertEqual(result.returncode,0,'Equal explicit override lost its command-line intent: '+result.stderr)
                         self.assertEqual((output/'CMakeFiles/codet-dependency-root.txt').read_text(),'/root-A',
                                          'Empty reset retained the prior derived selection')
                         result=configure('/root-B',reset);self.assertEqual(result.returncode,0,
@@ -599,7 +600,7 @@ class DependencyReconfiguration(unittest.TestCase):
                         # Even a same-valued normal variable must not hide explicit cache intent.
                         (source/'CMakeLists.txt').write_text(text.replace('include(','set(CODET_DEPENDENCY_ROOT "/normal-B")\ninclude(',1))
                         result=configure('/environment-B',declaration+'/root-A')
-                        self.assertEqual(result.returncode,0,result.stderr)
+                        self.assertEqual(result.returncode,0,'Equal explicit override lost its command-line intent: '+result.stderr)
                         self.assertEqual((output/'CMakeFiles/codet-dependency-root.txt').read_text(),'/root-A',
                                          'Equal explicit override lost its command-line intent')
                         self.assertIn('_CODET_DEPENDENCY_ORIGIN:INTERNAL=explicit',(output/'CMakeCache.txt').read_text())
@@ -611,7 +612,7 @@ class DependencyReconfiguration(unittest.TestCase):
                 self.assertEqual(configure('/root-A').returncode,0)
                 cache=output/'CMakeCache.txt';value=cache.read_text()
                 value=value.replace('CODET_DEPENDENCY_ROOT:PATH=/root-A','CODET_DEPENDENCY_ROOT:PATH=')
-                value=value.replace('_CODET_DEPENDENCY_VERSION:INTERNAL=2','_CODET_DEPENDENCY_VERSION:INTERNAL=1')
+                value=value.replace('_CODET_DEPENDENCY_VERSION:INTERNAL=3','_CODET_DEPENDENCY_VERSION:INTERNAL=1')
                 cache.write_text(value)
                 result=configure('/root-B')
                 self.assertNotEqual(result.returncode,0,'Obsolete pin silently rediscovered another tree')
@@ -676,7 +677,7 @@ class DependencyReconfiguration(unittest.TestCase):
             _, output, _, configure = self.dependency_probe(Path(d), 'Ninja')
             self.assertEqual(configure('/root-A', '-DCODET_DEPENDENCY_ROOT=/explicit-A').returncode, 0)
             cache = output / 'CMakeCache.txt'
-            cache.write_text(cache.read_text().replace('_CODET_DEPENDENCY_VERSION:INTERNAL=2', '_CODET_DEPENDENCY_VERSION:INTERNAL=1'))
+            cache.write_text(cache.read_text().replace('_CODET_DEPENDENCY_VERSION:INTERNAL=3', '_CODET_DEPENDENCY_VERSION:INTERNAL=1'))
             result = configure('/root-B', '-DCODET_DEPENDENCY_ROOT=/explicit-B')
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('Obsolete dependency selection cache metadata', result.stderr)
@@ -696,13 +697,23 @@ class DependencyReconfiguration(unittest.TestCase):
             cache = output / 'CMakeCache.txt'
             self.assertIn('empty or -U resets selection', cache.read_text())
             # Existing current-format token-only help retains its derived ownership.
-            cache.write_text(cache.read_text().replace('Offline dependency sources; empty or -U resets selection. Codet derived', 'Codet derived'))
+            before = cache.read_text()
+            pattern = r'(?m)(?://[^\n]*\n)+(?=CODET_DEPENDENCY_ROOT:PATH=)'
+            blocks = re.findall(pattern, before)
+            self.assertEqual(len(blocks), 1, 'Expected exactly one public help block')
+            help_text = ' '.join(line[2:].strip() for line in blocks[0].splitlines())
+            self.assertEqual(help_text, 'Offline dependency sources; empty or -U resets selection. Codet derived dependency selection [' + token + ']')
+            rewritten, count = re.subn(pattern, '//Codet derived dependency selection [' + token + ']\n', before)
+            self.assertEqual(count, 1, 'Legacy marker mutation did not apply exactly once')
+            self.assertNotEqual(rewritten, before, 'Legacy marker mutation changed no bytes')
+            cache.write_text(rewritten)
             checks = ('foreach(p ADVANCED STRINGS)\nget_property(was_set CACHE CODET_DEPENDENCY_ROOT PROPERTY ${p} SET)\n'
                       'if(was_set)\nmessage(FATAL_ERROR "Inspection set formerly absent ${p}")\nendif()\nendforeach()\n')
             (source / 'CMakeLists.txt').write_text(text + checks)
             for _ in range(2):
                 result = configure('/root-B')
                 self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(pin.exists(), 'Legacy help spelling lost derived ownership')
                 self.assertEqual(json.loads(pin.read_text())['token'], token, 'Current help spelling changed ownership')
                 value = cache.read_text()
                 self.assertNotIn('CODET_DEPENDENCY_ROOT-ADVANCED:', value)
@@ -720,7 +731,76 @@ class DependencyReconfiguration(unittest.TestCase):
                     value=json.loads((output/'CMakeFiles/codet-dependency-selection.json').read_text())
                     self.assertEqual(value['root'],str(selected),'Receipt evaluated literal generator-expression text')
                     self.assertEqual(value['source'],str(source))
-                    self.assertEqual(value['format'],2)
+                    self.assertEqual(value['format'],3)
+
+    def test_private_metadata_corruption_never_creates_explicit_intent(self):
+        faults = {'TOKEN': 'bad!', 'VALUE': 'relative', 'ORIGIN': 'explicit'}
+        for field, replacement in list(faults.items()) + [('TOKEN', None)]:
+            with self.subTest(field=field, replacement=replacement), tempfile.TemporaryDirectory() as d:
+                _, output, _, configure = self.dependency_probe(Path(d), 'Ninja')
+                self.assertEqual(configure('/root-A').returncode, 0)
+                pin = output / 'CMakeFiles/codet-dependency-selection.json'
+                previous = pin.read_bytes()
+                cache = output / 'CMakeCache.txt'
+                pattern = r'(?m)^_CODET_DEPENDENCY_' + field + r':INTERNAL=[^\n]*\n'
+                changed, count = re.subn(pattern, '' if replacement is None else
+                    '_CODET_DEPENDENCY_' + field + ':INTERNAL=' + replacement + '\n', cache.read_text())
+                self.assertEqual(count, 1)
+                cache.write_text(changed)
+                result = configure('/root-B')
+                self.assertNotEqual(result.returncode, 0, 'Private corruption became explicit intent')
+                self.assertIn('CMakeCache.txt', result.stderr)
+                self.assertIn('-UCODET_DEPENDENCY_ROOT', result.stderr)
+                self.assertEqual(pin.read_bytes(), previous)
+                recovered = configure('/root-B', '-DCODET_DEPENDENCY_ROOT:PATH=/root-A')
+                self.assertEqual(recovered.returncode, 0, recovered.stderr)
+
+    def test_missing_success_artifact_fails_and_explicit_replacement_recovers(self):
+        for missing in ('codet-dependency-selection.json', 'codet-dependency-success.json'):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as d:
+                _, output, _, configure = self.dependency_probe(Path(d), 'Ninja')
+                self.assertEqual(configure('/root-A').returncode, 0)
+                (output / 'CMakeFiles' / missing).unlink()
+                result = configure('/root-B')
+                self.assertNotEqual(result.returncode, 0, 'Lost success artifact silently switched roots')
+                self.assertIn('Incomplete dependency selection success records', result.stderr)
+                self.assertEqual((output / 'CMakeFiles/codet-dependency-root.txt').read_text(), '/root-A')
+                result = configure('/root-B', '-DCODET_DEPENDENCY_ROOT=/explicit')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse((output / 'CMakeFiles/codet-dependency-success.json').exists())
+                self.assertFalse((output / 'CMakeFiles/codet-dependency-selection.json').exists())
+
+    def test_success_witness_binds_receipt_bytes_and_identity(self):
+        import hashlib
+        for field in ('receipt_sha256', 'root', 'source', 'origin', 'token', 'format'):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as d:
+                _, output, _, configure = self.dependency_probe(Path(d), 'Ninja')
+                self.assertEqual(configure('/root-A').returncode, 0)
+                witness = output / 'CMakeFiles/codet-dependency-success.json'
+                pin = output / 'CMakeFiles/codet-dependency-selection.json'
+                value = json.loads(witness.read_text())
+                self.assertEqual(value['receipt_sha256'], hashlib.sha256(pin.read_bytes()).hexdigest())
+                value[field] = 2 if field == 'format' else 'different'
+                witness.write_text(json.dumps(value))
+                result = configure('/root-B')
+                self.assertNotEqual(result.returncode, 0, 'Mismatched success witness was accepted')
+                self.assertIn('codet-dependency-success.json', result.stderr)
+                result = configure('/root-B', '-UCODET_DEPENDENCY_ROOT')
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_provisional_retry_has_no_success_artifacts_and_orphans_do_not_own_cache(self):
+        with tempfile.TemporaryDirectory() as d:
+            source, output, text, configure = self.dependency_probe(Path(d), 'Ninja')
+            (source / 'CMakeLists.txt').write_text(text + 'message(SEND_ERROR "not committed")\n')
+            self.assertNotEqual(configure('/root-A').returncode, 0)
+            for name in ('selection', 'success'):
+                self.assertFalse((output / ('CMakeFiles/codet-dependency-' + name + '.json')).exists())
+            (source / 'CMakeLists.txt').write_text(text)
+            self.assertEqual(configure('/root-B').returncode, 0)
+            (output / 'CMakeCache.txt').unlink()
+            result = configure('/root-C', '-DCODET_DEPENDENCY_ROOT=/explicit')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((output / 'CMakeFiles/codet-dependency-success.json').exists())
 
 if __name__ == "__main__":
     unittest.main()

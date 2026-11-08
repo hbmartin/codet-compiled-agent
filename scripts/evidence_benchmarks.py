@@ -5,6 +5,7 @@ import statistics
 import subprocess
 from pathlib import Path
 
+from preparation_metrics import CHANGED_ADVISORY_CHECKS, METRIC_VERSION, WORKLOADS
 from validation_evidence import digest, production_hashes, validation_hashes
 
 
@@ -60,27 +61,35 @@ def verify_tooling_metrics(row):
             raise ValueError('Build-context scoped counters or controls are invalid')
 
 
-def verify_preparation_metrics(row, *, variant=None):
+_ROW_VARIANT = object()
+
+
+def verify_preparation_metrics(row, *, variant=_ROW_VARIANT, historical=False):
     if row.get("harness") != "preparation":
         return
     fields = ("iterations", "allocations", "allocated_bytes", "payload_sized_allocations", "rejections",
               "prepared_submissions", "distinct_command_wrappers", "effective_content_bytes")
-    if row.get("preparation_metric_version") not in (1, 2) or any(type(row.get(k)) is not int or row[k] < 0 for k in fields) or row["iterations"] != 128:
+    version = row.get("preparation_metric_version")
+    if (type(version) is not int or version not in ((1, 2) if historical else (METRIC_VERSION,)) or
+            any(type(row.get(k)) is not int or row[k] < 0 for k in fields) or row["iterations"] != 128):
         raise ValueError("Invalid preparation measurement counters")
     workload = row.get("workload")
-    workloads = ("allocation-positive", "preflight-checks", "saturated-count", "saturated-effective", "saturated-retained",
-                 "cli-preparation", "compatibility-preparation", "normalization")
-    if not isinstance(workload, str) or workload not in workloads:
+    if not isinstance(workload, str) or workload not in WORKLOADS:
         raise ValueError("Invalid preparation workload: " + repr(workload))
-    if row["preparation_metric_version"] == 2:
+    if variant is not _ROW_VARIANT and variant not in ("baseline", "changed"):
+        raise ValueError("Invalid preparation variant")
+    role = row.get("variant") if variant is _ROW_VARIANT else variant
+    if (role not in ("baseline", "changed") and not (historical and version == 1 and role is None)) or (
+            "variant" in row and row["variant"] != role):
+        raise ValueError("Invalid preparation variant")
+    if version == 2:
         if type(row.get("advisory_budget_checks")) is not int or row["advisory_budget_checks"] < 0:
             raise ValueError("Invalid preparation advisory budget-check counter")
-        if workload == "preflight-checks" and (row["advisory_budget_checks"] not in (128, 256) or
-                row["prepared_submissions"] != 128 or row["effective_content_bytes"] != 640):
-            raise ValueError("Preparation advisory-check control failed")
-        role = row.get("variant") if variant is None else variant
-        if role not in ("baseline", "changed") or ("variant" in row and row["variant"] != role):
-            raise ValueError("Invalid preparation variant")
+        if workload == "preflight-checks":
+            if row["prepared_submissions"] != 128 or row["effective_content_bytes"] != 640:
+                raise ValueError("Preparation advisory-check control failed")
+            if not historical and role == "changed" and row["advisory_budget_checks"] != CHANGED_ADVISORY_CHECKS:
+                raise ValueError("Changed preparation requires 256 advisory budget checks")
         if role == "changed" and workload.startswith("saturated-") and row["payload_sized_allocations"]:
             raise ValueError("Changed saturated preparation allocated payload-sized backing")
         if role == "changed" and workload == "cli-preparation" and row["distinct_command_wrappers"] != row["prepared_submissions"]:
@@ -97,7 +106,7 @@ def verify_preparation_metrics(row, *, variant=None):
         raise ValueError("Normalization content control failed")
 
 
-def verify_samples(rows, summary, workloads, *, sets=2, measured=5):
+def verify_samples(rows, summary, workloads, *, sets=2, measured=5, historical=False):
     expected = {(s, harness, workload, variant) for s in range(1, sets + 1)
                 for harness, names in workloads.items() for workload in names
                 for variant in ("baseline", "changed")}
@@ -108,7 +117,7 @@ def verify_samples(rows, summary, workloads, *, sets=2, measured=5):
     seen = set()
     for row in rows:
         verify_tooling_metrics(row)
-        verify_preparation_metrics(row)
+        verify_preparation_metrics(row, historical=historical)
         key = (row["set"], row["harness"], row["workload"], row["variant"])
         if type(row["set"]) is not int or key not in grouped:
             raise ValueError("Unexpected benchmark group")

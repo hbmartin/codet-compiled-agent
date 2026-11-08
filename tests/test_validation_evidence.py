@@ -1875,7 +1875,7 @@ class PreparationMeasurement(unittest.TestCase):
         excerpt, adapter = cli_preparation_adapter(source)
         self.assertIn(excerpt, source.read_text())
         self.assertIn(excerpt, adapter)
-        self.assertIn('prepare_input_submission', excerpt)
+        self.assertIn('prepare_input_line', excerpt)
         import hashlib
 
         from evidence_harness import verify_cli_adapter
@@ -1899,15 +1899,15 @@ class PreparationMeasurement(unittest.TestCase):
         row = dict(harness='preparation',workload='allocation-positive',preparation_metric_version=1,
                    iterations=128,allocations=128,allocated_bytes=8388608,payload_sized_allocations=128,
                    rejections=0,prepared_submissions=0,distinct_command_wrappers=0,effective_content_bytes=0)
-        verify_preparation_metrics(row)
+        verify_preparation_metrics(row, historical=True)
         for key in ('iterations','allocations','allocated_bytes','payload_sized_allocations'):
             with self.subTest(key=key),self.assertRaisesRegex(ValueError,'preparation|Preparation'):
-                verify_preparation_metrics(dict(row,**{key:0}))
+                verify_preparation_metrics(dict(row,**{key:0}), historical=True)
         for workload,changes in [('saturated-count',dict(rejections=127)),
                                  ('cli-preparation',dict(prepared_submissions=128,distinct_command_wrappers=0,effective_content_bytes=1664)),
                                  ('normalization',dict(effective_content_bytes=1))]:
             with self.subTest(workload=workload),self.assertRaisesRegex(ValueError,'preparation|Preparation|Normalization'):
-                verify_preparation_metrics(dict(row,workload=workload,**changes))
+                verify_preparation_metrics(dict(row,workload=workload,**changes), historical=True)
 
 
 class PreparationRecovery(unittest.TestCase):
@@ -1947,7 +1947,7 @@ class PreparationRecovery(unittest.TestCase):
 
     def test_historical_counters_remain_observations(self):
         from evidence_benchmarks import verify_preparation_metrics
-        verify_preparation_metrics(self.row(preparation_metric_version=1, payload_sized_allocations=256))
+        verify_preparation_metrics(self.row(preparation_metric_version=1, payload_sized_allocations=256), historical=True)
 
     def test_adapter_driver_rewrites_only_after_production_excerpt_changes(self):
         from preparation_bench_driver import generate
@@ -1958,13 +1958,99 @@ class PreparationRecovery(unittest.TestCase):
             stamp = output.stat().st_mtime_ns
             generate(source, output)
             self.assertEqual(output.stat().st_mtime_ns, stamp)
-            self.assertIn('prepare_input_submission', output.read_text())
+            self.assertIn('prepare_input_line', output.read_text())
+            changed = Path(directory) / 'changed.cpp'
+            original = source.read_text()
+            self.assertEqual(original.count('interaction.get(), cancel, [&](unsigned stage)'), 1)
+            changed.write_text(original.replace('interaction.get(), cancel, [&](unsigned stage)',
+                'interaction.get(), cancel, [&](unsigned stage /* valid excerpt change */)', 1))
+            from preparation_adapter import cli_preparation_adapter
+            expected = cli_preparation_adapter(changed)[1]
+            self.assertNotEqual(expected, output.read_text())
+            generate(changed, output)
+            self.assertEqual(output.read_text(), expected, 'Valid excerpt change did not rewrite the adapter')
             ambiguous = Path(directory) / 'cli.cpp'
             ambiguous.write_text(source.read_text() + '\n  const auto prepare_line = duplicate;')
             previous = output.read_bytes()
             with self.assertRaisesRegex(ValueError, 'not unique'):
                 generate(ambiguous, output)
             self.assertEqual(output.read_bytes(), previous)
+
+    def test_live_metric_contract_cannot_be_downgraded_or_change_role(self):
+        from evidence_benchmarks import verify_preparation_metrics
+        for version in (1, True, 1.0, 2.0, None, 3):
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError, 'preparation measurement counters'):
+                verify_preparation_metrics(self.row(preparation_metric_version=version, payload_sized_allocations=256))
+        for role in ('', 'other', None):
+            with self.subTest(role=role), self.assertRaisesRegex(ValueError, 'preparation variant'):
+                verify_preparation_metrics(self.row(), variant=role)
+        for count in (128, 0, 255, 257):
+            with self.subTest(count=count), self.assertRaisesRegex(ValueError, '256 advisory'):
+                verify_preparation_metrics(self.row(workload='preflight-checks', advisory_budget_checks=count,
+                    prepared_submissions=128, effective_content_bytes=640))
+        verify_preparation_metrics(self.row(workload='preflight-checks', advisory_budget_checks=256,
+            prepared_submissions=128, effective_content_bytes=640))
+        # Rejected experiments remain auditable only through explicit historical interpretation.
+        verify_preparation_metrics(self.row(workload='preflight-checks', advisory_budget_checks=128,
+            prepared_submissions=128, effective_content_bytes=640), historical=True)
+
+    def test_adapter_interruption_preserves_previous_complete_header(self):
+        from contextlib import contextmanager
+
+        import preparation_adapter
+        from preparation_adapter import generate
+        source = Path(__file__).resolve().parents[1] / 'src/modern/cli.cpp'
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'adapter.hpp'
+            output.write_text('previous complete header')
+            factory = preparation_adapter.tempfile.NamedTemporaryFile
+            @contextmanager
+            def interrupted(**options):
+                with factory(**options) as stream:
+                    class Partial:
+                        name = stream.name
+                        def write(self, content):
+                            stream.write(content[:23])
+                            raise OSError('injected interrupted adapter write')
+                    yield Partial()
+            with patch('preparation_adapter.tempfile.NamedTemporaryFile', interrupted):
+                with self.assertRaisesRegex(OSError, 'interrupted adapter write'):
+                    generate(source, output)
+            self.assertEqual(output.read_text(), 'previous complete header', 'Interrupted write truncated the adapter')
+            self.assertEqual([p.name for p in Path(directory).iterdir()], ['adapter.hpp'])
+            with patch('preparation_adapter.os.replace', side_effect=OSError('replace failure')):
+                with self.assertRaisesRegex(OSError, 'replace failure'):
+                    generate(source, output)
+            self.assertEqual(output.read_text(), 'previous complete header')
+            generate(source, output)
+            self.assertIn('prepare_input_line', output.read_text())
+
+    def test_adapter_imports_no_evidence_stack_and_normal_build_has_no_generator(self):
+        root = Path(__file__).resolve().parents[1]
+        script = "import sys;sys.path.insert(0," + repr(str(root / 'scripts')) + ");import preparation_bench_driver;print(','.join(sorted(n for n in sys.modules if n.startswith('evidence_'))))"
+        self.assertEqual(subprocess.check_output([sys.executable, '-c', script], text=True, timeout=5).strip(), '')
+        cmake = (root / 'CMakeLists.txt').read_text()
+        self.assertIn('add_executable(codet_preparation_bench tests/preparation_bench.cpp)', cmake)
+        self.assertNotIn('set(preparation_adapter', cmake)
+        self.assertNotIn('adapter --source', cmake)
+
+    def test_native_control_patterns_match_their_current_production_locations(self):
+        import ast
+        root = Path(__file__).resolve().parents[1]
+        tree = ast.parse((root / 'scripts/evidence_native_controls.py').read_text())
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'run_controls')
+        registries = {}
+        for node in function.body:
+            if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name) and node.targets[0].id in ('cases', 'review_controls'):
+                registries[node.targets[0].id] = ast.literal_eval(node.value)
+        self.assertEqual(set(registries), {'cases', 'review_controls'})
+        for name, _, source, before, _, _ in registries['cases']:
+            with self.subTest(control=name):
+                self.assertEqual((root / source).read_text().count(before), 1, 'Native mutation no longer matches its production site: ' + name)
+        for name, _, before, _, _, *override in registries['review_controls']:
+            source = override[0] if override else 'src/modern/cli.cpp'
+            with self.subTest(control=name):
+                self.assertEqual((root / source).read_text().count(before), 1, 'Integration mutation no longer matches its production site: ' + name)
 
 
 if __name__ == "__main__":

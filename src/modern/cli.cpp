@@ -1366,19 +1366,10 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
                            .dump()});
   };
   const auto prepare_line = [&](detail::InputLine &line) {
-    if (line.preparation.state != detail::PreparationState::unprepared || line.discarded ||
-        line.request || detail::local_command(line.text()) != detail::LocalCommand::none)
-      return;
-    if (lifecycle.preparing)
-      lifecycle.preparing(lifecycle.context, line.text(), 0);
-    const bool pending_input = line.preparation_context == detail::PreparationContext::pending;
-    if (pending_input && line.text().empty())
-      return;
-    line.preparation = detail::prepare_input_submission(
-        config, files, line, interaction.get(), cancel, [&](unsigned stage) {
-          if (lifecycle.preparing)
-            lifecycle.preparing(lifecycle.context, line.text(), stage);
-        });
+    detail::prepare_input_line(config, files, line, interaction.get(), cancel, [&](unsigned stage) {
+      if (lifecycle.preparing)
+        lifecycle.preparing(lifecycle.context, line.text(), stage);
+    });
   };
   const auto preparation_ready = [&](detail::InputLine &line) {
     prepare_line(line);
