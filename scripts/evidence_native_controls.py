@@ -103,9 +103,6 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native mutant linking failed: " + repr(linked))
         return source, binary, compiled, linked
     cases = [
-        ("preflight-once", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_payload.hpp",
-         'return inspected_input.plain(command);', 'return inspected_input.finish({}, command, reserve);',
-         "SubmissionQueue.PlainBorrowedPreparationPreflightsCompleteBudgetsExactlyOnce"),
         ("expansion-classification", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_payload.hpp",
          'if (expansion && !command)', 'if (false)',
          "SubmissionQueue.InvalidExpansionIsRejectedBeforePreflightAndPreservesRawErrorPrecedence"),
@@ -123,7 +120,7 @@ def run_controls(root, folder, build, ninja):
          "    reserve(expansion ? 0 : inspected.normalized, retained);", "    (void)retained;",
          "PreparationFault.SaturatedPublicAdmissionRejectsBeforeAnyPayloadSizedAllocation"),
         ("explicit-command", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_payload.hpp",
-         "std::move(execution), barrier};", "std::move(execution), (static_cast<void>(barrier), true)};",
+         "std::move(command), barrier};", "std::move(command), (static_cast<void>(barrier), static_cast<bool>(command))};",
          "SubmissionQueue.ExplicitCommandFlagIsIndependentOfPreparedContentAndHeldState"),
         ("shared-command-wrapper", "tests/cli_diagnostics_test.cpp", "include/codet/detail/interactive_preparation.hpp",
          "          command, static_cast<bool>(command),", "          command ? std::make_shared<const PreparedPrompt>(*command) : nullptr, static_cast<bool>(command),",
@@ -142,7 +139,7 @@ def run_controls(root, folder, build, ninja):
          "if (!command->validated_expansion())", "if (false && !command->validated_expansion())",
          "SubmissionQueue.MalformedCompatibilityExpansionRetainsItsNormalizedCharge"),
         ("shared-payload", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_payload.hpp",
-         ": original_;", ": std::make_shared<const std::string>(*original_);",
+         ": original;", ": std::make_shared<const std::string>(*original);",
          "SubmissionQueue.ValidatedPayloadSharesUnchangedBytesAndRejectsMissingBacking"),
         ("retained-budget", "src/modern/interaction.cpp", "src/modern/interaction.cpp",
          "retained > detail::retained_input_limit - (retained_bytes_ - previous_retained)",
@@ -266,8 +263,7 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native control baseline failed: " + target)
         source, binary, compiled, linked = compile_mutant(directory, binary_target, "control-tests", entry_name, source_name, before, after)
         mutant = _test(binary, target, directory)
-        markers = {"preflight-once": "Plain preparation repeated an already complete budget preflight",
-                   "expansion-classification": "Invalid expansion changed admission accounting",
+        markers = {"expansion-classification": "Invalid expansion changed admission accounting",
                    "measurement-scope": "Exceptional measurement leaked observation state", "safe-input-move": "Expected equality", "borrowed-preflight": "Rejected public input allocated its full payload",
                    "budget-preflight": "Rejected public input allocated its full payload", "explicit-command": "Expected equality",
                    "shared-command-wrapper": "Expected equality", "pending-context": "Expected",

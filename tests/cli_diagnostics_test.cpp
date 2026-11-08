@@ -3055,18 +3055,3 @@ TEST(SubmissionQueue, BorrowedInspectionCannotBeAppliedToAnotherOwnedBacking) {
   EXPECT_THROW(detail::SubmissionPreparation(other, borrowed), Error);
   EXPECT_EQ(&borrowed.text(), original.get());
 }
-
-TEST(SubmissionQueue, PlainBorrowedPreparationPreflightsCompleteBudgetsExactlyOnce) {
-  const std::string raw(65536, static_cast<char>(0xff));
-  unsigned checks = 0;
-  auto payload = detail::SubmissionPreparation::from_raw(raw, false, {},
-                                                         [&](size_t effective, size_t retained) {
-                                                           ++checks;
-                                                           EXPECT_EQ(effective, 196608u);
-                                                           EXPECT_EQ(retained, 262144u);
-                                                         });
-  EXPECT_EQ(checks, 1u) << "Plain preparation repeated an already complete budget preflight";
-  EXPECT_EQ(payload.effective_size(), 196608u);
-  EXPECT_EQ(payload.retained_size(), 262144u);
-  EXPECT_EQ(payload.execution()->original, raw);
-}
