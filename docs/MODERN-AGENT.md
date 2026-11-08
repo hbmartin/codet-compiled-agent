@@ -94,7 +94,12 @@ Explicit cache assignments replace ownership metadata, so repeating an identical
 `$<...>` text in paths is preserved in receipts rather than evaluated.
 An orphan receipt does not own a newly created cache. A nonempty explicit override
 replaces a current receipt before that receipt is parsed; ordinary reuse still
-requires a valid matching receipt and independent generation-success witness. Either artifact missing alone stops configuration; reset and reapply the desired root to recover. Coherent provisional metadata with both artifacts absent may rediscover after a failed first configure. Deleting both success artifacts is indistinguishable from that provisional state. A corrupt current receipt produces an identifying reset diagnostic. Missing
+requires a valid matching receipt and independent generation-success witness.
+Either artifact missing alone stops configuration; reset and reapply the desired
+root to recover. Coherent provisional metadata with both artifacts absent may
+rediscover after a failed first configure. Deleting both success artifacts is
+indistinguishable from that provisional state. A corrupt current receipt produces
+an identifying reset diagnostic. Missing
 dependencies report the selected root; provisioning must use that same root,
 for example `CODET_DEPENDENCY_ROOT=/absolute/path python3 scripts/fetch-deps.py`.
 The sysroot cache conservatively includes build-helper bytes. PR #63's helper

@@ -527,7 +527,7 @@ class DependencyReconfiguration(unittest.TestCase):
                     _,output,_,configure=self.dependency_probe(Path(d),generator)
                     for explicit in (True,False):
                         args=['-DCODET_DEPENDENCY_ROOT=/root-A'] if explicit else [reset]
-                        result=configure('/root-A',*args);self.assertEqual(result.returncode,0,result.stderr)
+                        result=configure('/root-A',*args);self.assertEqual(result.returncode,0,'Equal explicit override lost its command-line intent: '+result.stderr)
                         self.assertEqual((output/'CMakeFiles/codet-dependency-root.txt').read_text(),'/root-A',
                                          'Empty reset retained the prior derived selection')
                         result=configure('/root-B',reset);self.assertEqual(result.returncode,0,
@@ -600,7 +600,7 @@ class DependencyReconfiguration(unittest.TestCase):
                         # Even a same-valued normal variable must not hide explicit cache intent.
                         (source/'CMakeLists.txt').write_text(text.replace('include(','set(CODET_DEPENDENCY_ROOT "/normal-B")\ninclude(',1))
                         result=configure('/environment-B',declaration+'/root-A')
-                        self.assertEqual(result.returncode,0,result.stderr)
+                        self.assertEqual(result.returncode,0,'Equal explicit override lost its command-line intent: '+result.stderr)
                         self.assertEqual((output/'CMakeFiles/codet-dependency-root.txt').read_text(),'/root-A',
                                          'Equal explicit override lost its command-line intent')
                         self.assertIn('_CODET_DEPENDENCY_ORIGIN:INTERNAL=explicit',(output/'CMakeCache.txt').read_text())
@@ -713,6 +713,7 @@ class DependencyReconfiguration(unittest.TestCase):
             for _ in range(2):
                 result = configure('/root-B')
                 self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(pin.exists(), 'Legacy help spelling lost derived ownership')
                 self.assertEqual(json.loads(pin.read_text())['token'], token, 'Current help spelling changed ownership')
                 value = cache.read_text()
                 self.assertNotIn('CODET_DEPENDENCY_ROOT-ADVANCED:', value)
