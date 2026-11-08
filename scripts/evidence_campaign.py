@@ -236,7 +236,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
         instructions = [dict(path=rel(build / "CTestTestfile.cmake"))] if isolation else []
         add(mode + "-configure", args, ["provision-offline"], outputs=configured_outputs(build) + instructions)
         add(mode + "-build", [native["cmake"], "--build", build, "-j4"], [mode + "-configure"],
-            outputs=configured_outputs(build) + instructions + [dict(path=rel(build / n), archive=False) for n in ("codet", "codet_tests", "codet_publication_fault_tests", "libcodet_core.a", "libcodet_text.a", "deps/schema/libnlohmann_json_schema_validator.a", "lib/libgtest.a", "lib/libgmock.a")])
+            outputs=configured_outputs(build) + instructions + [dict(path=rel(build / n), archive=False) for n in ("codet", "codet_tests", "codet_publication_fault_tests", "codet_preparation_bench", "libcodet_core.a", "libcodet_text.a", "deps/schema/libnlohmann_json_schema_validator.a", "lib/libgtest.a", "lib/libgmock.a")])
         if mode != "tsan":
             add(mode + "-ctest", [native["ctest"], "--test-dir", build, "--output-on-failure", "-j2"], [mode + "-build"], timeout=1200,
                 artifacts=[isolation] if isolation else [],
