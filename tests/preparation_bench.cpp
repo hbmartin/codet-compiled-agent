@@ -1,5 +1,9 @@
-// Shared host harness; cli_prepare_adapter.hpp contains each verified variant's CLI lambda.
+// Historical evidence harnesses select a checked adapter; normal builds call production directly.
+#ifdef CODET_TEST_PREPARATION_ADAPTER
 #include "cli_prepare_adapter.hpp"
+#else
+#include "codet/detail/interactive_preparation.hpp"
+#endif
 #include "temp.hpp"
 #include <cstdlib>
 #include <fstream>
@@ -94,7 +98,12 @@ int main(int argc, char **argv) {
       line.preparation_context = detail::PreparationContext::pending;
       line.admission = detail::SubmissionAccess::reserve(queue);
       line.reservation = detail::SubmissionLease(&queue, line.admission);
+#ifdef CODET_TEST_PREPARATION_ADAPTER
       const auto result = codet::test::cli_prepare(config, files, line, queue, Cancellation{});
+#else
+      detail::prepare_input_line(config, files, line, &queue, Cancellation{}, [](unsigned) {});
+      const auto &result = line.preparation;
+#endif
       if (result.state != detail::PreparationState::ready || !result.submission || !result.prompt)
         return 3;
       ++prepared;

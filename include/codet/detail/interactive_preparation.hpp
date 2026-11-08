@@ -1,4 +1,5 @@
 #pragma once
+#include "codet/detail/local_command.hpp"
 #include "codet/detail/request_input.hpp"
 #include "codet/detail/submission_queue.hpp"
 
@@ -45,5 +46,17 @@ PreparationOutcome prepare_input_submission(const Config &config, FileSystem &fi
   if (result.state == PreparationState::ready)
     result.submission = std::move(payload);
   return result;
+}
+// Ordinary builds and the CLI share this facade, including its lifecycle guards.
+template <class Observe>
+void prepare_input_line(const Config &config, FileSystem &files, InputLine &line,
+                        Interaction *interaction, const Cancellation &cancel, Observe observe) {
+  if (line.preparation.state != PreparationState::unprepared || line.discarded || line.request ||
+      local_command(line.text()) != LocalCommand::none)
+    return;
+  observe(0);
+  if (line.preparation_context == PreparationContext::pending && line.text().empty())
+    return;
+  line.preparation = prepare_input_submission(config, files, line, interaction, cancel, observe);
 }
 } // namespace codet::detail

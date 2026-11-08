@@ -6,23 +6,14 @@ import tempfile
 import time
 from pathlib import Path
 
-from evidence_benchmarks import verify_preparation_metrics
-from evidence_harness import cli_preparation_adapter
-from process_supervision import run
-
-WORKLOADS = ("allocation-positive", "preflight-checks", "saturated-count", "saturated-effective", "saturated-retained",
-             "cli-preparation", "compatibility-preparation", "normalization")
-
-
-def generate(source, output):
-    _, adapter = cli_preparation_adapter(Path(source))
-    output = Path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    if not output.exists() or output.read_text() != adapter:
-        output.write_text(adapter)
+from preparation_adapter import generate
 
 
 def smoke(binary):
+    from evidence_benchmarks import verify_preparation_metrics
+    from preparation_metrics import METRIC_VERSION, WORKLOADS
+    from process_supervision import run
+
     deadline = time.monotonic() + 60
     with tempfile.TemporaryDirectory(prefix="codet-preparation-smoke-") as directory:
         for workload in WORKLOADS:
@@ -32,7 +23,7 @@ def smoke(binary):
                 raise ValueError("Preparation smoke deadline expired")
             run([str(binary), workload, str(output)], check=True, timeout=min(30, remaining))
             row = json.loads(output.read_text())
-            if row.get("case") != workload or row.get("preparation_metric_version") != 2:
+            if row.get("case") != workload or (type(row.get("preparation_metric_version")) is not int or row["preparation_metric_version"] != METRIC_VERSION):
                 raise ValueError("Preparation smoke returned wrong workload or metric version")
             verify_preparation_metrics(dict(row, harness="preparation", workload=workload), variant="changed")
 

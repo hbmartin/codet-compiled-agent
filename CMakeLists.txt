@@ -134,16 +134,8 @@ if(CODET_BUILD_TESTS)
     codet_first_party(codet_sanitization_bench)
     target_link_libraries(codet_sanitization_bench PRIVATE codet_core ${CMAKE_DL_LIBS})
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
-    set(preparation_adapter "${CMAKE_BINARY_DIR}/generated/preparation/cli_prepare_adapter.hpp")
-    add_custom_command(OUTPUT "${preparation_adapter}"
-      COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/scripts/preparation_bench_driver.py"
-        adapter --source "${CMAKE_SOURCE_DIR}/src/modern/cli.cpp" --output "${preparation_adapter}"
-      DEPENDS src/modern/cli.cpp scripts/preparation_bench_driver.py scripts/evidence_harness.py
-        scripts/evidence_inputs.py scripts/evidence_benchmarks.py scripts/process_supervision.py scripts/validation_evidence.py
-      VERBATIM)
-    add_executable(codet_preparation_bench tests/preparation_bench.cpp "${preparation_adapter}")
+    add_executable(codet_preparation_bench tests/preparation_bench.cpp)
     codet_first_party(codet_preparation_bench)
-    target_include_directories(codet_preparation_bench PRIVATE "${CMAKE_BINARY_DIR}/generated/preparation")
     target_link_libraries(codet_preparation_bench PRIVATE codet_core ${CMAKE_DL_LIBS})
     add_test(NAME codet.preparation-bench COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/scripts/preparation_bench_driver.py"
       smoke $<TARGET_FILE:codet_preparation_bench>)
