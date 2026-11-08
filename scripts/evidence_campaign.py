@@ -23,7 +23,7 @@ from process_supervision import run as supervised_run
 from validation_evidence import atomic_json, digest, require_quiet_processes, write_artifact
 
 CASES = {
-    "preparation": ["allocation-positive", "saturated-count", "saturated-effective", "saturated-retained", "cli-preparation", "compatibility-preparation", "normalization"],
+    "preparation": ["allocation-positive", "preflight-checks", "saturated-count", "saturated-effective", "saturated-retained", "cli-preparation", "compatibility-preparation", "normalization"],
     "line": ["allocation-positive", "geometry-positive", "busy", "native-busy", "editing", "editing-basic",
              "native-editing", "deletion", "unchanged", "deferred-tail", "native-boundary", "native-flush-boundary", "native-unchanged", "pending-submission", "native-pending-submission", "native-pending-fragment", "preparation-queue", "bounded-expansion"],
     "tooling": ["hashing", "git-inspection", "supervision", "build-context", "dependency-resolution", "configuration-selection", "measurement-cleanup"],
@@ -236,7 +236,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
         instructions = [dict(path=rel(build / "CTestTestfile.cmake"))] if isolation else []
         add(mode + "-configure", args, ["provision-offline"], outputs=configured_outputs(build) + instructions)
         add(mode + "-build", [native["cmake"], "--build", build, "-j4"], [mode + "-configure"],
-            outputs=configured_outputs(build) + instructions + [dict(path=rel(build / n), archive=False) for n in ("codet", "codet_tests", "codet_publication_fault_tests", "libcodet_core.a", "libcodet_text.a", "deps/schema/libnlohmann_json_schema_validator.a", "lib/libgtest.a", "lib/libgmock.a")])
+            outputs=configured_outputs(build) + instructions + [dict(path=rel(build / n), archive=False) for n in ("codet", "codet_tests", "codet_publication_fault_tests", "codet_preparation_bench", "libcodet_core.a", "libcodet_text.a", "deps/schema/libnlohmann_json_schema_validator.a", "lib/libgtest.a", "lib/libgmock.a")])
         if mode != "tsan":
             add(mode + "-ctest", [native["ctest"], "--test-dir", build, "--output-on-failure", "-j2"], [mode + "-build"], timeout=1200,
                 artifacts=[isolation] if isolation else [],
@@ -299,7 +299,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     return folder / "manifest.json"
 
 
-def positive_controls(row, harness, case):
+def positive_controls(row, harness, case, variant=None):
     if harness == "line":
         if case == "allocation-positive" and (row["allocations"], row["allocated_bytes"]) != (1000, 32000):
             raise ValueError("Allocation positive control failed")
@@ -313,7 +313,7 @@ def positive_controls(row, harness, case):
             raise ValueError("Prepared submission counter positive control failed")
     if harness == "preparation":
         from evidence_benchmarks import verify_preparation_metrics
-        verify_preparation_metrics(dict(row, harness=harness, workload=case))
+        verify_preparation_metrics(dict(row, harness=harness, workload=case), variant=variant)
     if harness == "output" and case.endswith("-positive"):
         key = {"write-positive": "writes", "stat-positive": "fstat", "flags-positive": "fcntl", "bounds-positive": "fpathconf"}[case]
         if row[key] != 128:
@@ -367,7 +367,7 @@ def measure(config):
                         row = json.loads(result.read_text())
                         if row.get("case") != case:
                             raise ValueError("Benchmark returned a different workload")
-                        positive_controls(row, harness, case)
+                        positive_controls(row, harness, case, variant)
                         row.update(set=number, sample=sample, variant=variant, harness=harness, workload=case, warmup=sample == 0)
                         rows.append(row)
                         invocations.append(dict(argv=argv, exit=run.returncode, stderr=run.stderr, result_sha256=digest(result)))

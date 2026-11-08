@@ -103,6 +103,13 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native mutant linking failed: " + repr(linked))
         return source, binary, compiled, linked
     cases = [
+        ("expansion-classification", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_payload.hpp",
+         'if (expansion && !command)', 'if (false)',
+         "SubmissionQueue.InvalidExpansionIsRejectedBeforePreflightAndPreservesRawErrorPrecedence"),
+        ("measurement-scope", "tests/publication_fault_test.cpp", "tests/publication_fault_test.cpp",
+         '~AllocationMeasurement() {\n    measure_allocations = previous_;\n  }',
+         '~AllocationMeasurement() { (void)previous_; }',
+         "PreparationFault.MeasurementRestoresItsOwnStateAcrossNestedAndExceptionalScopes"),
         ("safe-input-move", "tests/cli_diagnostics_test.cpp", "include/codet/detail/request_input.hpp",
          "      original_ = std::move(other.original_);", '      original_ = std::make_shared<const std::string>("mutated");',
          "InputPreparation.MoveAssignmentKeepsFrozenIdentityAndExactlyOneLease"),
@@ -122,11 +129,11 @@ def run_controls(root, folder, build, ninja):
          "if (line.admission && (!pending || !interaction))", "if (false)",
          "InputPreparation.InvalidAdmissionContextAndRawFailurePrecedenceAreDeterministic"),
         ("raw-precedence", "tests/cli_diagnostics_test.cpp", "include/codet/detail/interactive_preparation.hpp",
-         "    if (pending)\n      SubmissionPreparation::validate_raw(line.text());", "    (void)pending;",
+         "    if (pending)\n      borrowed.emplace(line.text());", "    (void)pending;",
          "InputPreparation.InvalidAdmissionContextAndRawFailurePrecedenceAreDeterministic"),
         ("atomic-submit", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_queue.hpp",
-         "    const auto payload = prepare(text); // No queue state is visible during preparation.\n    insert(io, payload);",
-         "    const auto ticket = reserve(io); SubmissionLease lease(&io, ticket);\n    const auto payload = prepare(text);\n    commit_prepared(io, ticket, payload, false); lease.release();",
+         "    const auto payload = prepare(borrowed); // No queue state is visible during preparation.\n    insert(io, payload);",
+         "    const auto ticket = reserve(io); SubmissionLease lease(&io, ticket);\n    const auto payload = prepare(borrowed);\n    commit_prepared(io, ticket, payload, false); lease.release();",
          "SubmissionQueue.PublicPreparationExposesNoReservationAcrossTurnCleanup"),
         ("normalized-expansion-charge", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_payload.hpp",
          "if (!command->validated_expansion())", "if (false && !command->validated_expansion())",
@@ -256,7 +263,8 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native control baseline failed: " + target)
         source, binary, compiled, linked = compile_mutant(directory, binary_target, "control-tests", entry_name, source_name, before, after)
         mutant = _test(binary, target, directory)
-        markers = {"safe-input-move": "Expected equality", "borrowed-preflight": "Rejected public input allocated its full payload",
+        markers = {"expansion-classification": "Invalid expansion changed admission accounting",
+                   "measurement-scope": "Exceptional measurement leaked observation state", "safe-input-move": "Expected equality", "borrowed-preflight": "Rejected public input allocated its full payload",
                    "budget-preflight": "Rejected public input allocated its full payload", "explicit-command": "Expected equality",
                    "shared-command-wrapper": "Expected equality", "pending-context": "Expected",
                    "raw-precedence": "Expected", "atomic-submit": "Atomic compatibility submit exposed an intermediate reservation",

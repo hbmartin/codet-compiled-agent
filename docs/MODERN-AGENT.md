@@ -92,7 +92,9 @@ empty markers; they never silently select another tree. Use
 Explicit cache assignments replace ownership metadata, so repeating an identical
 `-D` value still overrides a provisional or committed derived selection. Literal
 `$<...>` text in paths is preserved in receipts rather than evaluated.
-A corrupt current receipt produces an identifying reset diagnostic. Missing
+An orphan receipt does not own a newly created cache. A nonempty explicit override
+replaces a current receipt before that receipt is parsed; ordinary reuse still
+requires a valid matching receipt. A corrupt current receipt produces an identifying reset diagnostic. Missing
 dependencies report the selected root; provisioning must use that same root,
 for example `CODET_DEPENDENCY_ROOT=/absolute/path python3 scripts/fetch-deps.py`.
 The sysroot cache conservatively includes build-helper bytes. PR #63's helper

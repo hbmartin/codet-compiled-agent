@@ -1,0 +1,76 @@
+{
+  "kind": "postpublication-lossless-transport",
+  "transport_version": 2,
+  "capture_run_id": "1e8d1c6f2a2644b5a01a82f2d9260b7a",
+  "argv": [
+    "/Volumes/Pro2T/codet-compiled-agent/build/configuration-recovery-preflight/transport-bundles.py",
+    "--bundle",
+    "/Volumes/Pro2T/codet-compiled-agent/build/configuration-recovery-preflight/final-attempt-published",
+    "--destination",
+    "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent/docs/validation/configuration-recovery-preflight-followup/1e8d1c6f2a2644b5a01a82f2d9260b7a",
+    "--audit",
+    "/Volumes/Pro2T/codet-compiled-agent/build/configuration-recovery-preflight/final-relocated-audit.json",
+    "--supplement",
+    "correctness=/Volumes/Pro2T/codet-compiled-agent/build/configuration-recovery-preflight/correctness-published",
+    "--supplement",
+    "consolidation=/Volumes/Pro2T/codet-compiled-agent/build/configuration-recovery-preflight/consolidation-published",
+    "--supplement-audit",
+    "correctness=/Volumes/Pro2T/codet-compiled-agent/build/configuration-recovery-preflight/correctness-relocated-audit.json",
+    "--supplement-audit",
+    "consolidation=/Volumes/Pro2T/codet-compiled-agent/build/configuration-recovery-preflight/consolidation-relocated-audit.json"
+  ],
+  "bundles": {
+    "main": {
+      "sha256": "bf32acf7b96e5f5a0a6a8162120e0725e4b02fc5fa658105717b5837abdbf9a4",
+      "bytes": 9898141,
+      "prefix": "1e8d1c6f2a2644b5a01a82f2d9260b7a",
+      "expanded_files": 533,
+      "expanded_bytes": 383145944,
+      "inventory_sha256": "14203af10c75fbaea88f7b7a388451c2834a8acb2f4d79cb775d17d3510b0556",
+      "all_members_roundtrip_verified": true,
+      "path": "audit-bundle.tar.gz",
+      "eligible_current": false,
+      "measurement_samples": 0
+    },
+    "correctness": {
+      "sha256": "689a0e216ebbb66d75cc2926e32face833fb7b15e84ad9e6fccb19937a29872c",
+      "bytes": 2723058,
+      "prefix": "8ddfdc846d5a48c8878e6e34d0ddf2dc",
+      "expanded_files": 368,
+      "expanded_bytes": 14381603,
+      "inventory_sha256": "080f562340ed01534d34e2ee5353639cdc4b35bcdba7d2893fa96396523bf453",
+      "all_members_roundtrip_verified": true,
+      "path": "supplements/correctness/audit-bundle.tar.gz",
+      "purpose": "Limited measurement campaign; not full validation acceptance"
+    },
+    "consolidation": {
+      "sha256": "34c5a4d4bf80e87e0b3c51335d1b38ca2d3d45ed76d333adca3c81e10a60d5ab",
+      "bytes": 2649118,
+      "prefix": "b0ec47e6c343492897926178f2d1d1b6",
+      "expanded_files": 357,
+      "expanded_bytes": 14066663,
+      "inventory_sha256": "1571955d2b49908a5839596bc721479837b0d4bfbdd83e1d3dd89738a1a27286",
+      "all_members_roundtrip_verified": true,
+      "path": "supplements/consolidation/audit-bundle.tar.gz",
+      "purpose": "Limited measurement campaign; not full validation acceptance"
+    }
+  },
+  "files": {
+    "audit-bundle.tar.gz": "bf32acf7b96e5f5a0a6a8162120e0725e4b02fc5fa658105717b5837abdbf9a4",
+    "manifest.json": "eac26f65c500b76169ab4c2e8698ea1e70d048d6d51eb0b32a9965c8d01f81ca",
+    "measurements.json": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+    "offline-audit.json": "afe7558cd215193b85a7153dc486a8c2b7017bb54b3895c1cce9e3dcbd7f3a9a",
+    "supplements/consolidation/audit-bundle.tar.gz": "34c5a4d4bf80e87e0b3c51335d1b38ca2d3d45ed76d333adca3c81e10a60d5ab",
+    "supplements/consolidation/manifest.json": "2972bc88d56e8186823d23f07a5e0896ffac185fda82ef3955fb4b2a4da08e57",
+    "supplements/consolidation/medians.csv": "b4a954a244993fd3b616bae5b521522db142f782eb27063b8a6a1b82f76396ca",
+    "supplements/consolidation/offline-audit.json": "8cfbe6ffdd08cf15f43afd138eae3682c18168d53925d9210e1177dccde970b9",
+    "supplements/consolidation/samples.csv": "8e53a55ac823014d228293b970f821e88a8bfc649082ac307eb8befbed77285f",
+    "supplements/correctness/audit-bundle.tar.gz": "689a0e216ebbb66d75cc2926e32face833fb7b15e84ad9e6fccb19937a29872c",
+    "supplements/correctness/manifest.json": "a6c015410b08f2806e2837e3d923ba0b436d9e6cbb13a1db8494c29def5bbb75",
+    "supplements/correctness/medians.csv": "1add892bdcb548f8d7cd955dea4638aae4e010ee25a3b46ad1df815b32712c4d",
+    "supplements/correctness/offline-audit.json": "ed6ebe8dafff75ffab2c04ef23d84ca7a48410cf038733b3655ef9d0e316defd",
+    "supplements/correctness/samples.csv": "e0e49a4bc53d39b140beb63c2e7a2d8cb3d93f6d5daa280677dc29bf8b4434b4"
+  },
+  "note": "Expanded bundles and reports remain byte-for-byte unchanged. No outcomes are reconstructed or merged.",
+  "driver_source": "\"\"\"Lossless carrier for already published audit bundles; does not grant campaign acceptance.\"\"\"\nimport argparse\nimport ctypes\nimport gzip\nimport hashlib\nimport json\nimport os\nimport re\nimport shutil\nimport sys\nimport tarfile\nimport tempfile\nfrom pathlib import Path\n\n\ndef digest_stream(stream):\n    result = hashlib.sha256()\n    for block in iter(lambda: stream.read(65536), b''):\n        result.update(block)\n    return result.hexdigest()\n\n\ndef digest(path):\n    with path.open('rb') as stream:\n        return digest_stream(stream)\n\n\ndef members(root):\n    paths = sorted(root.rglob('*'))\n    if any(path.is_symlink() for path in paths):\n        raise ValueError('Transport input contains a symlink')\n    return {str(path.relative_to(root)): digest(path) for path in paths if path.is_file()}\n\n\ndef pack(root, output, prefix):\n    before = members(root)\n    inventory = json.loads((root / 'inventory.json').read_text())\n    if {key: value for key, value in before.items() if key != 'inventory.json'} != inventory:\n        raise ValueError('Transport input differs from its published audit inventory')\n    with output.open('xb') as raw, gzip.GzipFile(filename='', mode='wb', fileobj=raw, mtime=0) as zipped, tarfile.open(fileobj=zipped, mode='w|', format=tarfile.PAX_FORMAT) as archive:\n        for name in sorted(before):\n            path = root / name\n            info = tarfile.TarInfo(prefix + '/' + name)\n            info.size = path.stat().st_size\n            info.mode = 0o644\n            info.mtime = info.uid = info.gid = 0\n            info.uname = info.gname = ''\n            with path.open('rb') as source:\n                archive.addfile(info, source)\n    actual = {}\n    with tarfile.open(output) as archive:\n        for member in archive:\n            if not member.isfile() or not member.name.startswith(prefix + '/') or '..' in Path(member.name).parts:\n                raise ValueError('Invalid transport member')\n            name = member.name[len(prefix) + 1:]\n            if name in actual:\n                raise ValueError('Duplicate transport member')\n            with archive.extractfile(member) as source:\n                actual[name] = digest_stream(source)\n    if actual != before or members(root) != before:\n        raise ValueError('Transport round-trip changed expanded bytes')\n    return dict(sha256=digest(output), bytes=output.stat().st_size, prefix=prefix,\n                expanded_files=len(before), expanded_bytes=sum((root / name).stat().st_size for name in before),\n                inventory_sha256=before['inventory.json'], all_members_roundtrip_verified=True)\n\n\ndef exclusive(source, destination):\n    library = ctypes.CDLL(None, use_errno=True)\n    if sys.platform == 'darwin':\n        rename = library.renamex_np\n        rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]\n        args = [os.fsencode(source), os.fsencode(destination), 4]\n    elif sys.platform.startswith('linux'):\n        rename = library.renameat2\n        rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]\n        args = [-100, os.fsencode(source), -100, os.fsencode(destination), 1]\n    else:\n        raise ValueError('Exclusive carrier publication unsupported on this host')\n    rename.restype = ctypes.c_int\n    if rename(*args):\n        code = ctypes.get_errno()\n        raise OSError(code, os.strerror(code), str(destination))\n\n\ndef named(values):\n    result = {}\n    for value in values:\n        label, path = value.split('=', 1)\n        if not re.fullmatch(r'[a-z0-9-]+', label) or label in result:\n            raise ValueError('Invalid or duplicate supplement label')\n        result[label] = Path(path).resolve()\n    return result\n\n\ndef publish(options):\n    bundle = options.bundle.resolve()\n    destination = options.destination.absolute()\n    if destination.exists() or destination.is_symlink():\n        raise ValueError('Transport destination already exists: ' + str(destination))\n    run = json.loads((bundle / 'capture/run.json').read_text())['id']\n    if not re.fullmatch(r'[0-9a-f]{32}', run):\n        raise ValueError('Invalid capture run identity')\n    supplements, audits = named(options.supplement), named(options.supplement_audit)\n    if set(supplements) != set(audits):\n        raise ValueError('Supplement audit coverage mismatch')\n    destination.parent.mkdir(parents=True, exist_ok=True)\n    with tempfile.TemporaryDirectory(prefix='.transport-', dir=destination.parent) as temporary:\n        stage = Path(temporary) / 'bundle'\n        stage.mkdir()\n        records = {'main': pack(bundle, stage / 'audit-bundle.tar.gz', run)}\n        records['main']['path'] = 'audit-bundle.tar.gz'\n        for label, source in supplements.items():\n            folder = stage / 'supplements' / label\n            folder.mkdir(parents=True)\n            identity = json.loads((source / 'capture/run.json').read_text())['id']\n            if not re.fullmatch(r'[0-9a-f]{32}', identity):\n                raise ValueError('Invalid supplement capture identity')\n            record = pack(source, folder / 'audit-bundle.tar.gz', identity)\n            record.update(path='supplements/' + label + '/audit-bundle.tar.gz',\n                          purpose='Limited measurement campaign; not full validation acceptance')\n            records[label] = record\n            receipt = json.loads(audits[label].read_text())\n            if receipt['bundle_inventory_sha256'] != record['inventory_sha256'] or not (receipt['audit'].get('verified') or receipt['audit'].get('integrity_verified')):\n                raise ValueError('Supplement audit does not match its input bundle')\n            shutil.copyfile(audits[label], folder / 'offline-audit.json')\n            for name in ('samples.csv', 'medians.csv'):\n                shutil.copyfile(source / 'measurements/benchmarks/measure.json' / name, folder / name)\n            shutil.copyfile(source / 'manifest.json', folder / 'manifest.json')\n        receipt = json.loads(options.audit.read_text())\n        if receipt['bundle_inventory_sha256'] != records['main']['inventory_sha256'] or not (receipt['audit'].get('verified') or receipt['audit'].get('integrity_verified')):\n            raise ValueError('Main audit does not match its input bundle')\n        previews = {'manifest.json': bundle / 'manifest.json', 'offline-audit.json': options.audit,\n                    'measurements.json': bundle / 'measurements.json'}\n        for name in ('samples.csv', 'medians.csv'):\n            source = bundle / 'measurements/benchmarks/measure.json' / name\n            if source.exists():\n                previews[name] = source\n        for name, source in previews.items():\n            shutil.copyfile(source, stage / name)\n        report = json.loads((bundle / 'report.json').read_text())\n        records['main'].update(eligible_current=report.get('eligible_current', True),\n                               measurement_samples=report.get('measurement_samples'))\n        result = dict(kind='postpublication-lossless-transport', transport_version=2,\n                      capture_run_id=run, argv=sys.argv, bundles=records, files=members(stage),\n                      note='Expanded bundles and reports remain byte-for-byte unchanged. No outcomes are reconstructed or merged.',\n                      driver_source=Path(__file__).read_text())\n        (stage / 'transport.json').write_text(json.dumps(result, indent=2) + '\\n')\n        exclusive(stage, destination)\n    return result\n\n\ndef main():\n    parser = argparse.ArgumentParser(description=__doc__)\n    parser.add_argument('--bundle', required=True, type=Path)\n    parser.add_argument('--destination', required=True, type=Path)\n    parser.add_argument('--audit', required=True, type=Path)\n    parser.add_argument('--supplement', action='append', default=[])\n    parser.add_argument('--supplement-audit', action='append', default=[])\n    options = parser.parse_args()\n    try:\n        print(json.dumps(publish(options)['bundles'], indent=2))\n    except (OSError, ValueError, KeyError) as error:\n        parser.exit(1, str(error) + '\\n')\n\n\nif __name__ == '__main__':\n    main()\n"
+}

@@ -2740,13 +2740,14 @@ TEST(SubmissionQueue, PublicPreparationExposesNoReservationAcrossTurnCleanup) {
   std::exception_ptr failure;
   std::thread producer([&] {
     try {
-      detail::SubmissionAccess::submit(io, "message", [&](const std::string &raw) {
-        ready.set_value();
-        if (go.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
-          throw Error("Submission test gate did not open");
-        return detail::SubmissionPreparation(std::make_shared<const std::string>(raw))
-            .finish({}, false, [](size_t, size_t) {});
-      });
+      detail::SubmissionAccess::submit(
+          io, "message", [&](const detail::SubmissionPreparation::RawInput &raw) {
+            ready.set_value();
+            if (go.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
+              throw Error("Submission test gate did not open");
+            return detail::SubmissionPreparation(std::make_shared<const std::string>(raw.text()))
+                .finish({}, false, [](size_t, size_t) {});
+          });
     } catch (...) {
       failure = std::current_exception();
     }
@@ -2871,6 +2872,19 @@ TEST(SubmissionQueue, ExplicitCommandFlagIsIndependentOfPreparedContentAndHeldSt
         auto expansion =
             expanded ? std::make_shared<const detail::PreparedPrompt>("original", "expanded")
                      : nullptr;
+        if (expanded && !command) {
+          EXPECT_THROW(
+              detail::SubmissionAccess::commit(io, ticket, "original", held, command, expansion),
+              Error);
+          EXPECT_TRUE(io.take_input().empty()) << "Rejected expansion reached steering";
+          EXPECT_NO_THROW(detail::SubmissionAccess::charge(io, ticket, 0, 0));
+          detail::SubmissionAccess::abandon(io, ticket);
+          io.submit("later");
+          EXPECT_EQ(io.take_input(), (std::vector<std::string>{"later"}));
+          io.end_turn();
+          EXPECT_TRUE(io.take_pending("session").empty());
+          continue;
+        }
         detail::SubmissionAccess::commit(io, ticket, "original", held, command, expansion);
         const auto incoming = io.take_input();
         EXPECT_EQ(incoming.size(), command || held ? 0u : 1u)
@@ -2891,6 +2905,30 @@ TEST(SubmissionQueue, ExplicitCommandFlagIsIndependentOfPreparedContentAndHeldSt
         }
       }
 }
+TEST(SubmissionQueue, InvalidExpansionIsRejectedBeforePreflightAndPreservesRawErrorPrecedence) {
+  auto raw = std::make_shared<const std::string>("original");
+  auto expansion = std::make_shared<const detail::PreparedPrompt>(raw, raw);
+  unsigned charges = 0;
+  const auto reserve = [&](size_t, size_t) { ++charges; };
+  try {
+    (void)detail::SubmissionPreparation::from_raw(*raw, false, expansion, reserve);
+    FAIL() << "Non-command expansion was accepted";
+  } catch (const Error &error) {
+    EXPECT_STREQ(error.what(), "Prepared expansion requires a command barrier");
+  }
+  EXPECT_EQ(charges, 0u) << "Invalid expansion changed admission accounting";
+  EXPECT_THROW(detail::SubmissionPreparation(raw).finish(expansion, false, reserve), Error);
+  EXPECT_EQ(charges, 0u);
+  try {
+    (void)detail::SubmissionPreparation::from_raw(std::string(65537, 'x'), false, expansion,
+                                                  reserve);
+    FAIL() << "Oversized raw input was accepted";
+  } catch (const Error &error) {
+    EXPECT_STREQ(error.what(), "Pending raw input exceeds 65536-byte limit");
+  }
+  EXPECT_EQ(charges, 0u);
+}
+
 TEST(InputPreparation, SharedProductionPreparationKeepsOneFrozenCommandAndRawHookBytes) {
   TempDirectory temporary;
   NativeFileSystem files;
@@ -2972,14 +3010,15 @@ TEST(SubmissionQueue, FinalAdmissionRechecksCapacityAfterBorrowedPreparation) {
   std::exception_ptr failure;
   std::thread producer([&] {
     try {
-      detail::SubmissionAccess::submit(io, "message", [&](const std::string &raw) {
-        auto payload =
-            detail::SubmissionPreparation::from_raw(raw, false, {}, [](size_t, size_t) {});
-        ready.set_value();
-        if (go.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
-          throw Error("Submission capacity gate did not open");
-        return payload;
-      });
+      detail::SubmissionAccess::submit(
+          io, "message", [&](const detail::SubmissionPreparation::RawInput &raw) {
+            auto payload =
+                detail::SubmissionPreparation::from_raw(raw, false, {}, [](size_t, size_t) {});
+            ready.set_value();
+            if (go.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
+              throw Error("Submission capacity gate did not open");
+            return payload;
+          });
     } catch (...) {
       failure = std::current_exception();
     }
@@ -3006,4 +3045,13 @@ TEST(SubmissionQueue, FinalAdmissionRechecksCapacityAfterBorrowedPreparation) {
   io.begin_turn("after");
   io.submit("usable");
   EXPECT_EQ(io.take_input(), (std::vector<std::string>{"usable"}));
+}
+
+TEST(SubmissionQueue, BorrowedInspectionCannotBeAppliedToAnotherOwnedBacking) {
+  const auto original = std::make_shared<const std::string>("raw");
+  const auto other = std::make_shared<const std::string>("raw");
+  const detail::SubmissionPreparation::RawInput borrowed(*original);
+  EXPECT_NO_THROW(detail::SubmissionPreparation(original, borrowed));
+  EXPECT_THROW(detail::SubmissionPreparation(other, borrowed), Error);
+  EXPECT_EQ(&borrowed.text(), original.get());
 }
