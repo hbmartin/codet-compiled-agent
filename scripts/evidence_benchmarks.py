@@ -61,7 +61,10 @@ def verify_tooling_metrics(row):
             raise ValueError('Build-context scoped counters or controls are invalid')
 
 
-def verify_preparation_metrics(row, *, variant=None, historical=False):
+_ROW_VARIANT = object()
+
+
+def verify_preparation_metrics(row, *, variant=_ROW_VARIANT, historical=False):
     if row.get("harness") != "preparation":
         return
     fields = ("iterations", "allocations", "allocated_bytes", "payload_sized_allocations", "rejections",
@@ -73,7 +76,9 @@ def verify_preparation_metrics(row, *, variant=None, historical=False):
     workload = row.get("workload")
     if not isinstance(workload, str) or workload not in WORKLOADS:
         raise ValueError("Invalid preparation workload: " + repr(workload))
-    role = row.get("variant") if variant is None else variant
+    if variant is not _ROW_VARIANT and variant not in ("baseline", "changed"):
+        raise ValueError("Invalid preparation variant")
+    role = row.get("variant") if variant is _ROW_VARIANT else variant
     if (role not in ("baseline", "changed") and not (historical and version == 1 and role is None)) or (
             "variant" in row and row["variant"] != role):
         raise ValueError("Invalid preparation variant")

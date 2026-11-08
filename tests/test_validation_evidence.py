@@ -1983,7 +1983,7 @@ class PreparationRecovery(unittest.TestCase):
                 verify_preparation_metrics(self.row(preparation_metric_version=version, payload_sized_allocations=256))
         for role in ('', 'other', None):
             with self.subTest(role=role), self.assertRaisesRegex(ValueError, 'preparation variant'):
-                verify_preparation_metrics(self.row(), variant=role if role is not None else 'baseline')
+                verify_preparation_metrics(self.row(), variant=role)
         for count in (128, 0, 255, 257):
             with self.subTest(count=count), self.assertRaisesRegex(ValueError, '256 advisory'):
                 verify_preparation_metrics(self.row(workload='preflight-checks', advisory_budget_checks=count,
