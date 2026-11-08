@@ -128,14 +128,13 @@ void Interaction::check_input_capacity(size_t bytes, size_t retained, size_t pre
 void Interaction::submit(const std::string &text) {
   if (text.empty())
     return;
-  if (text.size() > detail::raw_input_limit)
-    throw Error("Pending raw input exceeds 65536-byte limit");
-  detail::SubmissionAccess::submit(*this, text, [this](const std::string &raw) {
-    return detail::SubmissionPreparation::from_raw(
-        raw, false, {}, [&](size_t bytes, size_t retained) {
-          detail::SubmissionAccess::preflight(*this, bytes, retained);
-        });
-  });
+  detail::SubmissionAccess::submit(
+      *this, text, [this](const detail::SubmissionPreparation::RawInput &raw) {
+        return detail::SubmissionPreparation::from_raw(
+            raw, false, {}, [&](size_t bytes, size_t retained) {
+              detail::SubmissionAccess::preflight(*this, bytes, retained);
+            });
+      });
 }
 std::vector<std::string> Interaction::take_input() {
   std::lock_guard<std::mutex> lock(mutex_);

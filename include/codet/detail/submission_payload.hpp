@@ -51,6 +51,21 @@ public:
 };
 // Inspect once, then use the same validated sizes for allocation and admission.
 class SubmissionPreparation {
+public:
+  // Borrow only for the synchronous preparation call; retained content owns its backing.
+  class RawInput {
+    const std::string *text_;
+
+  public:
+    explicit RawInput(const std::string &text) : text_(&text) {
+      validate_raw(text);
+    }
+    const std::string &text() const noexcept {
+      return *text_;
+    }
+  };
+
+private:
   std::shared_ptr<const std::string> original_;
   struct Inspection {
     size_t normalized;
@@ -58,8 +73,8 @@ class SubmissionPreparation {
   };
   size_t normalized_bytes_;
   bool repaired_;
-  static Inspection inspect(std::string_view text) {
-    validate_raw(text);
+  static Inspection inspect(const RawInput &raw) {
+    const auto &text = raw.text();
     Inspection result{};
     result.normalized = normalized_input_size(text, expanded_input_limit, &result.repaired);
     return result;
@@ -76,16 +91,27 @@ public:
       throw Error("Pending raw input exceeds 65536-byte limit");
   }
   explicit SubmissionPreparation(const std::shared_ptr<const std::string> &original)
-      : SubmissionPreparation(original, inspect(PreparedPrompt::checked(original))) {}
+      : SubmissionPreparation(original, RawInput(PreparedPrompt::checked(original))) {}
+  SubmissionPreparation(const std::shared_ptr<const std::string> &original, const RawInput &raw)
+      : SubmissionPreparation(original, inspect(raw)) {
+    if (&raw.text() != original.get())
+      throw Error("Borrowed input belongs to another backing");
+  }
   // Borrow while inspecting. Only accepted size preflights may allocate owned content.
   template <class Reserve>
   static PreparedSubmission from_raw(const std::string &text, bool command,
                                      std::shared_ptr<const PreparedPrompt> expansion,
                                      Reserve reserve) {
-    validate_raw(text);
+    return from_raw(RawInput(text), command, std::move(expansion), reserve);
+  }
+  template <class Reserve>
+  static PreparedSubmission from_raw(const RawInput &raw, bool command,
+                                     std::shared_ptr<const PreparedPrompt> expansion,
+                                     Reserve reserve) {
     if (expansion && !command)
       throw Error("Prepared expansion requires a command barrier");
-    const auto inspected = inspect(text);
+    const auto &text = raw.text();
+    const auto inspected = inspect(raw);
     const auto retained =
         PreparedSubmission::add(text.size(), inspected.repaired ? inspected.normalized : 0);
     reserve(expansion ? 0 : inspected.normalized, retained);

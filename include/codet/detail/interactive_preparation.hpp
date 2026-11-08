@@ -11,8 +11,9 @@ PreparationOutcome prepare_input_submission(const Config &config, FileSystem &fi
   const bool pending = line.preparation_context == PreparationContext::pending;
   std::shared_ptr<const PreparedSubmission> payload;
   auto result = prepare_submission(cancel, [&] {
+    std::optional<SubmissionPreparation::RawInput> borrowed;
     if (pending)
-      SubmissionPreparation::validate_raw(line.text());
+      borrowed.emplace(line.text());
     if (line.admission && (!pending || !interaction))
       throw Error("Pending admission has incompatible preparation context");
     if (line.admission_failure)
@@ -21,7 +22,7 @@ PreparationOutcome prepare_input_submission(const Config &config, FileSystem &fi
       throw Error("Pending submission has no admission");
     std::optional<SubmissionPreparation> inspected;
     if (pending) {
-      inspected.emplace(line.original_storage());
+      inspected.emplace(line.original_storage(), *borrowed);
       SubmissionAccess::charge(*interaction, line.admission, 0, inspected->retained_size());
     }
     observe(1);

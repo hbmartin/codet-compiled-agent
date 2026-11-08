@@ -106,9 +106,9 @@ public:
   }
   template <class Prepare>
   static void submit(Interaction &io, const std::string &text, Prepare prepare) {
-    SubmissionPreparation::validate_raw(text);
+    const SubmissionPreparation::RawInput borrowed(text);
     preflight(io);
-    const auto payload = prepare(text); // No queue state is visible during preparation.
+    const auto payload = prepare(borrowed); // No queue state is visible during preparation.
     insert(io, payload);
   }
   // Raw compatibility callers use exactly the same payload preparation as the UI.

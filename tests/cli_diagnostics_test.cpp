@@ -2740,13 +2740,14 @@ TEST(SubmissionQueue, PublicPreparationExposesNoReservationAcrossTurnCleanup) {
   std::exception_ptr failure;
   std::thread producer([&] {
     try {
-      detail::SubmissionAccess::submit(io, "message", [&](const std::string &raw) {
-        ready.set_value();
-        if (go.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
-          throw Error("Submission test gate did not open");
-        return detail::SubmissionPreparation(std::make_shared<const std::string>(raw))
-            .finish({}, false, [](size_t, size_t) {});
-      });
+      detail::SubmissionAccess::submit(
+          io, "message", [&](const detail::SubmissionPreparation::RawInput &raw) {
+            ready.set_value();
+            if (go.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
+              throw Error("Submission test gate did not open");
+            return detail::SubmissionPreparation(std::make_shared<const std::string>(raw.text()))
+                .finish({}, false, [](size_t, size_t) {});
+          });
     } catch (...) {
       failure = std::current_exception();
     }
@@ -3009,14 +3010,15 @@ TEST(SubmissionQueue, FinalAdmissionRechecksCapacityAfterBorrowedPreparation) {
   std::exception_ptr failure;
   std::thread producer([&] {
     try {
-      detail::SubmissionAccess::submit(io, "message", [&](const std::string &raw) {
-        auto payload =
-            detail::SubmissionPreparation::from_raw(raw, false, {}, [](size_t, size_t) {});
-        ready.set_value();
-        if (go.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
-          throw Error("Submission capacity gate did not open");
-        return payload;
-      });
+      detail::SubmissionAccess::submit(
+          io, "message", [&](const detail::SubmissionPreparation::RawInput &raw) {
+            auto payload =
+                detail::SubmissionPreparation::from_raw(raw, false, {}, [](size_t, size_t) {});
+            ready.set_value();
+            if (go.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
+              throw Error("Submission capacity gate did not open");
+            return payload;
+          });
     } catch (...) {
       failure = std::current_exception();
     }
@@ -3043,4 +3045,13 @@ TEST(SubmissionQueue, FinalAdmissionRechecksCapacityAfterBorrowedPreparation) {
   io.begin_turn("after");
   io.submit("usable");
   EXPECT_EQ(io.take_input(), (std::vector<std::string>{"usable"}));
+}
+
+TEST(SubmissionQueue, BorrowedInspectionCannotBeAppliedToAnotherOwnedBacking) {
+  const auto original = std::make_shared<const std::string>("raw");
+  const auto other = std::make_shared<const std::string>("raw");
+  const detail::SubmissionPreparation::RawInput borrowed(*original);
+  EXPECT_NO_THROW(detail::SubmissionPreparation(original, borrowed));
+  EXPECT_THROW(detail::SubmissionPreparation(other, borrowed), Error);
+  EXPECT_EQ(&borrowed.text(), original.get());
 }
