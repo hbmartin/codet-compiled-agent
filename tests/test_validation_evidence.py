@@ -2034,6 +2034,24 @@ class PreparationRecovery(unittest.TestCase):
         self.assertNotIn('set(preparation_adapter', cmake)
         self.assertNotIn('adapter --source', cmake)
 
+    def test_native_control_patterns_match_their_current_production_locations(self):
+        import ast
+        root = Path(__file__).resolve().parents[1]
+        tree = ast.parse((root / 'scripts/evidence_native_controls.py').read_text())
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'run_controls')
+        registries = {}
+        for node in function.body:
+            if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name) and node.targets[0].id in ('cases', 'review_controls'):
+                registries[node.targets[0].id] = ast.literal_eval(node.value)
+        self.assertEqual(set(registries), {'cases', 'review_controls'})
+        for name, _, source, before, _, _ in registries['cases']:
+            with self.subTest(control=name):
+                self.assertEqual((root / source).read_text().count(before), 1, 'Native mutation no longer matches its production site: ' + name)
+        for name, _, before, _, _, *override in registries['review_controls']:
+            source = override[0] if override else 'src/modern/cli.cpp'
+            with self.subTest(control=name):
+                self.assertEqual((root / source).read_text().count(before), 1, 'Integration mutation no longer matches its production site: ' + name)
+
 
 if __name__ == "__main__":
     unittest.main()
