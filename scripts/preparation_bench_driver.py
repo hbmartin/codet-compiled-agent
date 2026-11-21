@@ -1,4 +1,4 @@
-"""Generate the checked CLI adapter and smoke-test the host preparation benchmark."""
+"""Smoke-test production preparation or explicitly generate a historical adapter."""
 import argparse
 import json
 import subprocess

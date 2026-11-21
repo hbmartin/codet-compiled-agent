@@ -27,7 +27,7 @@ CASES = {
     "preparation": list(WORKLOADS),
     "line": ["allocation-positive", "geometry-positive", "busy", "native-busy", "editing", "editing-basic",
              "native-editing", "deletion", "unchanged", "deferred-tail", "native-boundary", "native-flush-boundary", "native-unchanged", "pending-submission", "native-pending-submission", "native-pending-fragment", "preparation-queue", "bounded-expansion"],
-    "tooling": ["hashing", "git-inspection", "supervision", "build-context", "dependency-resolution", "configuration-selection", "measurement-cleanup"],
+    "tooling": ["hashing", "git-inspection", "supervision", "build-context", "dependency-resolution", "configuration-selection", "measurement-cleanup", "historical-samples"],
     "output": ["write-positive", "stat-positive", "flags-positive", "bounds-positive", "diagnostics-amplified",
                "diagnostics-standalone-amplified", "diagnostics-pipe-amplified"],
     "export": ["small", "large"],
@@ -105,6 +105,14 @@ def discover_python39(override=None, preferred="python3.9"):
     return "python3.9-unavailable"
 
 
+def replay_builds(value):
+    required = {"debug", "asan", "tsan", "cross"}
+    if (not isinstance(value, dict) or set(value) not in (required, required | {"make"}) or
+            any(not isinstance(v, str) or not v for v in value.values())):
+        raise ValueError("Invalid replay build declaration")
+    return dict(make="make-preparation", **value) if "make" not in value else dict(value)
+
+
 def prepare(root, folder, baseline=None, check_python=None, python39=None, analysis_python=None,
             ci_run=None, clang_tidy=None, cppcheck=None, template_path=None, prior_attempt=None, ca_bundle=None, hash_correctness_ref=None):
     from evidence_inputs import executable
@@ -122,9 +130,8 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
         raise ValueError("Unsupported replay template version")
     if set(template) != {"schema_version", "baseline", "builds", "python39", "benchmark"}:
         raise ValueError("Unknown or missing replay template setting")
-    if (set(template["builds"]) != {"debug", "asan", "tsan", "cross"} or
-            any(not isinstance(v, str) or not v for v in template["builds"].values()) or
-            set(template["benchmark"]) != {"sets", "measured_per_set"} or
+    build_settings = replay_builds(template["builds"])
+    if (set(template["benchmark"]) != {"sets", "measured_per_set"} or
             any(type(v) is not int or v < 1 for v in template["benchmark"].values())):
         raise ValueError("Invalid replay build or benchmark declaration")
     tools = {}
@@ -164,8 +171,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
             tool("go", go if go.exists() else "go", "version")
     baseline = command([native["git"], "-C", root, "rev-parse", (baseline or template["baseline"]) + "^{commit}"])
     folder.mkdir(parents=True, exist_ok=True)
-    builds = {name: str(folder / relative) for name, relative in template["builds"].items()}
-    builds["make"] = str(folder / "make-preparation")
+    builds = {name: str(folder / relative) for name, relative in build_settings.items()}
     if any(Path(value).exists() for value in builds.values()):
         raise ValueError("Managed build directory already exists")
     environment = dict(PATH=os.pathsep.join(dict.fromkeys([str(Path(t["path"]).parent) for t in tools.values()] + os.defpath.split(os.pathsep))),
@@ -302,6 +308,9 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     producer("benchmarks", "measure", ["benchmark-harness", "static-comparison", "python-negative-controls", "native-negative-controls", "semgrep-controls"],
              [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")] + [rel(folder / "harness.json")], timeout=1800)
     metadata_inputs = [rel(Path(b) / "CMakeCache.txt") for b in builds.values()] + [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")]
+    from evidence_historical import PACKAGE
+    historical_inputs = [PACKAGE + "/" + name for name in ("audit-bundle.tar.gz", "transport.json")]
+    producer("historical-audit", "historical-audit", ["runner-tests"], historical_inputs)
     producer("platform-availability", "platforms")
     producer("build-metadata", "build-info", ["debug-build", "asan-build", "tsan-build", "cross-build", "baseline-build", "changed-build", "make-build"], metadata_inputs)
     if ci_run:
@@ -310,7 +319,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     return folder / "manifest.json"
 
 
-def positive_controls(row, harness, case, variant=None):
+def positive_controls(row, harness, case, variant):
     if harness == "line":
         if case == "allocation-positive" and (row["allocations"], row["allocated_bytes"]) != (1000, 32000):
             raise ValueError("Allocation positive control failed")
@@ -431,6 +440,10 @@ def produce(config_path, action, *, output=None):
         inputs.extend(input_name(root, p) for p in paths)
         payload = dict(label="Prior campaign attempts; original failed/interrupted outcomes, historical only, never a required-check substitute",
                        files=[dict(path=input_name(root, p), sha256=digest(p)) for p in paths])
+    elif action == "historical-audit":
+        from evidence_historical import PACKAGE, audit_package
+        inputs.extend(PACKAGE + "/" + name for name in ("audit-bundle.tar.gz", "transport.json"))
+        payload = audit_package(root / PACKAGE, folder / "historical-audit-expanded")
     elif action == "archive":
         source = folder / "baseline-src"
         if source.exists():
@@ -598,7 +611,7 @@ def main():
     replay.add_argument("--cppcheck")
     producer = sub.add_parser("produce")
     producer.add_argument("config", type=Path)
-    producer.add_argument("kind", choices=("archive", "harness", "platforms", "semgrep-controls", "analysis", "analysis-baseline", "analysis-changed", "measure", "negative-controls", "native-negative-controls", "cross-placeholder", "build-info", "ci", "history", "hash-profile"))
+    producer.add_argument("kind", choices=("archive", "harness", "platforms", "semgrep-controls", "analysis", "analysis-baseline", "analysis-changed", "measure", "negative-controls", "native-negative-controls", "cross-placeholder", "build-info", "ci", "history", "hash-profile", "historical-audit"))
     producer.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.action == "prepare":
