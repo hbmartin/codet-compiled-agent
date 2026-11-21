@@ -605,13 +605,12 @@ class DependencyReconfiguration(unittest.TestCase):
                                          'Equal explicit override lost its command-line intent')
                         self.assertIn('_CODET_DEPENDENCY_ORIGIN:INTERNAL=explicit',(output/'CMakeCache.txt').read_text())
 
-    def test_obsolete_empty_markers_require_reset_and_do_not_rediscover(self):
+    def test_obsolete_owned_markers_require_reset_and_do_not_rediscover(self):
         for reset in ('-UCODET_DEPENDENCY_ROOT','-DCODET_DEPENDENCY_ROOT='):
             with self.subTest(reset=reset),tempfile.TemporaryDirectory() as d:
                 _,output,_,configure=self.dependency_probe(Path(d),'Ninja')
                 self.assertEqual(configure('/root-A').returncode,0)
                 cache=output/'CMakeCache.txt';value=cache.read_text()
-                value=value.replace('CODET_DEPENDENCY_ROOT:PATH=/root-A','CODET_DEPENDENCY_ROOT:PATH=')
                 value=value.replace('_CODET_DEPENDENCY_VERSION:INTERNAL=3','_CODET_DEPENDENCY_VERSION:INTERNAL=1')
                 cache.write_text(value)
                 result=configure('/root-B')
@@ -732,6 +731,99 @@ class DependencyReconfiguration(unittest.TestCase):
                     self.assertEqual(value['root'],str(selected),'Receipt evaluated literal generator-expression text')
                     self.assertEqual(value['source'],str(source))
                     self.assertEqual(value['format'],3)
+
+    @staticmethod
+    def edit_public_root(output, value):
+        cache = output / 'CMakeCache.txt'
+        previous = cache.read_text()
+        changed, count = re.subn(r'(?m)^CODET_DEPENDENCY_ROOT:PATH=[^\n]*$',
+                                lambda _: 'CODET_DEPENDENCY_ROOT:PATH=' + value, previous)
+        if count != 1 or changed == previous:
+            raise AssertionError('GUI fixture must edit exactly one public value')
+        cache.write_text(changed)
+
+    def test_gui_value_change_validates_prior_commitment_then_becomes_explicit(self):
+        for generator in ('Ninja', 'Unix Makefiles'):
+            with self.subTest(generator=generator), tempfile.TemporaryDirectory(prefix='codet GUI root ') as d:
+                source, output, text, configure = self.dependency_probe(Path(d), generator)
+                self.assertEqual(configure('/root-A').returncode, 0)
+                self.edit_public_root(output, '/GUI-root-B')
+                # A genuine explicit value still outranks a scoped normal variable.
+                (source / 'CMakeLists.txt').write_text(text.replace('include(', 'set(CODET_DEPENDENCY_ROOT /scoped)\ninclude(', 1))
+                result = configure('/environment-C')
+                self.assertEqual(result.returncode, 0, 'GUI value edit was rejected: ' + result.stderr)
+                self.assertEqual((output / 'CMakeFiles/codet-dependency-root.txt').read_text(), '/GUI-root-B')
+                cache = (output / 'CMakeCache.txt').read_text()
+                self.assertIn('_CODET_DEPENDENCY_ORIGIN:INTERNAL=explicit', cache)
+                for name in ('selection', 'success'):
+                    self.assertFalse((output / ('CMakeFiles/codet-dependency-' + name + '.json')).exists())
+                self.assertEqual(configure('/environment-D').returncode, 0)
+                self.assertEqual((output / 'CMakeFiles/codet-dependency-root.txt').read_text(), '/GUI-root-B')
+
+    def test_gui_empty_value_resets_even_managed_or_damaged_state(self):
+        for generator in ('Ninja', 'Unix Makefiles'):
+            for damaged in (False, True):
+                with self.subTest(generator=generator, damaged=damaged), tempfile.TemporaryDirectory() as d:
+                    _, output, _, configure = self.dependency_probe(Path(d), generator)
+                    self.assertEqual(configure('/root-A').returncode, 0)
+                    if damaged:
+                        (output / 'CMakeFiles/codet-dependency-success.json').write_text('{bad')
+                        cache = output / 'CMakeCache.txt'
+                        cache.write_text(cache.read_text().replace('_CODET_DEPENDENCY_VERSION:INTERNAL=3', '_CODET_DEPENDENCY_VERSION:INTERNAL=1'))
+                    self.edit_public_root(output, '')
+                    result = configure('/environment-B')
+                    self.assertEqual(result.returncode, 0, 'GUI empty value did not reset selection: ' + result.stderr)
+                    self.assertEqual((output / 'CMakeFiles/codet-dependency-root.txt').read_text(), '/environment-B')
+                    self.assertEqual(json.loads((output / 'CMakeFiles/codet-dependency-selection.json').read_text())['root'], '/environment-B')
+
+    def test_ambiguous_gui_change_fails_without_promoting_private_corruption(self):
+        for fault in ('receipt-missing', 'witness-missing', 'both-missing', 'receipt-malformed',
+                      'witness-malformed', 'private-value', 'private-token', 'private-origin', 'receipt-mismatch', 'provisional'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as d:
+                source, output, text, configure = self.dependency_probe(Path(d), 'Ninja')
+                if fault == 'provisional':
+                    (source / 'CMakeLists.txt').write_text(text + 'message(SEND_ERROR "not committed")\n')
+                self.assertEqual(configure('/root-A').returncode, 1 if fault == 'provisional' else 0)
+                (source / 'CMakeLists.txt').write_text(text)
+                pin = output / 'CMakeFiles/codet-dependency-selection.json'
+                witness = output / 'CMakeFiles/codet-dependency-success.json'
+                if fault in ('receipt-missing', 'both-missing'):
+                    pin.unlink()
+                if fault in ('witness-missing', 'both-missing'):
+                    witness.unlink()
+                if fault in ('receipt-malformed', 'witness-malformed'):
+                    (pin if fault.startswith('receipt') else witness).write_text('{bad')
+                if fault == 'receipt-mismatch':
+                    value = json.loads(pin.read_text()); value['root'] = '/other'; pin.write_text(json.dumps(value))
+                if fault.startswith('private-'):
+                    key, value = {'private-value': ('VALUE', '/other'), 'private-token': ('TOKEN', 'bad!'),
+                                  'private-origin': ('ORIGIN', 'explicit')}[fault]
+                    cache = output / 'CMakeCache.txt'
+                    changed, count = re.subn(r'(?m)^_CODET_DEPENDENCY_' + key + r':INTERNAL=[^\n]*$',
+                        '_CODET_DEPENDENCY_' + key + ':INTERNAL=' + value, cache.read_text())
+                    self.assertEqual(count, 1); cache.write_text(changed)
+                self.edit_public_root(output, '/GUI-B')
+                result = configure('/environment-C')
+                self.assertNotEqual(result.returncode, 0, 'Ambiguous GUI edit became explicit intent')
+                self.assertIn('-UCODET_DEPENDENCY_ROOT', result.stderr)
+                self.assertIn('-DCODET_DEPENDENCY_ROOT=', result.stderr)
+                result = configure('/environment-C', '-DCODET_DEPENDENCY_ROOT:PATH=/GUI-B')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((output / 'CMakeFiles/codet-dependency-root.txt').read_text(), '/GUI-B')
+
+    def test_deleting_both_success_records_preserves_documented_recovery_boundary(self):
+        for directory in (False, True):
+            with self.subTest(directory=directory), tempfile.TemporaryDirectory() as d:
+                _, output, _, configure = self.dependency_probe(Path(d), 'Ninja')
+                self.assertEqual(configure('/root-A').returncode, 0)
+                if directory:
+                    shutil.rmtree(output / 'CMakeFiles')
+                else:
+                    for name in ('selection', 'success'):
+                        (output / ('CMakeFiles/codet-dependency-' + name + '.json')).unlink()
+                result = configure('/root-B')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((output / 'CMakeFiles/codet-dependency-root.txt').read_text(), '/root-B')
 
     def test_private_metadata_corruption_never_creates_explicit_intent(self):
         faults = {'TOKEN': 'bad!', 'VALUE': 'relative', 'ORIGIN': 'explicit'}
