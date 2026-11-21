@@ -19,11 +19,12 @@ from evidence_benchmarks import (
     verify_samples,
 )
 from modern_sources import application_sources
+from preparation_metrics import WORKLOADS
 from process_supervision import run as supervised_run
 from validation_evidence import atomic_json, digest, require_quiet_processes, write_artifact
 
 CASES = {
-    "preparation": ["allocation-positive", "preflight-checks", "saturated-count", "saturated-effective", "saturated-retained", "cli-preparation", "compatibility-preparation", "normalization"],
+    "preparation": list(WORKLOADS),
     "line": ["allocation-positive", "geometry-positive", "busy", "native-busy", "editing", "editing-basic",
              "native-editing", "deletion", "unchanged", "deferred-tail", "native-boundary", "native-flush-boundary", "native-unchanged", "pending-submission", "native-pending-submission", "native-pending-fragment", "preparation-queue", "bounded-expansion"],
     "tooling": ["hashing", "git-inspection", "supervision", "build-context", "dependency-resolution", "configuration-selection", "measurement-cleanup"],
@@ -164,6 +165,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     baseline = command([native["git"], "-C", root, "rev-parse", (baseline or template["baseline"]) + "^{commit}"])
     folder.mkdir(parents=True, exist_ok=True)
     builds = {name: str(folder / relative) for name, relative in template["builds"].items()}
+    builds["make"] = str(folder / "make-preparation")
     if any(Path(value).exists() for value in builds.values()):
         raise ValueError("Managed build directory already exists")
     environment = dict(PATH=os.pathsep.join(dict.fromkeys([str(Path(t["path"]).parent) for t in tools.values()] + os.defpath.split(os.pathsep))),
@@ -202,17 +204,18 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
         names = [rel(config_path)] + list(inputs)
         add(name, [python, "scripts/evidence_campaign.py", "produce", config_path, action], requires,
             timeout=timeout, artifacts=[dict(path=rel(folder / (action + ".json")), kind=action, inputs=names)], **extra)
-    def configure(source, build, kind):
-        argv = [native["cmake"], "-S", source, "-B", build, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=" + kind,
-                "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", "-DCMAKE_MAKE_PROGRAM=" + native["ninja"], "-DCODET_DEPENDENCY_ROOT=" + str(root / ".deps"),
+    def configure(source, build, kind, generator="Ninja"):
+        argv = [native["cmake"], "-S", source, "-B", build, "-G", generator, "-DCMAKE_BUILD_TYPE=" + kind,
+                "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", "-DCMAKE_MAKE_PROGRAM=" + native["ninja" if generator == "Ninja" else "make"], "-DCODET_DEPENDENCY_ROOT=" + str(root / ".deps"),
                 "-DCMAKE_C_COMPILER=" + native["cc"], "-DCMAKE_CXX_COMPILER=" + native["c++"],
                 "-DPython3_EXECUTABLE=" + python]
         if sys.platform == "darwin":
             argv += ["-DCMAKE_OSX_SYSROOT=" + config["sdk"]["path"], "-DCMAKE_OSX_ARCHITECTURES=" + platform.machine(),
                      "-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion -Wno-error=unused-result"]
         return argv
-    def configured_outputs(build, compiler_metadata=True):
-        names = ["CMakeCache.txt", "compile_commands.json", "build.ninja", "generated/prompts.hpp", "generated/core_contract.hpp"]
+    def configured_outputs(build, compiler_metadata=True, generator="Ninja"):
+        names = ["CMakeCache.txt", "compile_commands.json", "generated/prompts.hpp", "generated/core_contract.hpp"]
+        names.extend(["build.ninja"] if generator == "Ninja" else ["Makefile", "CMakeFiles/Makefile2"])
         if compiler_metadata:
             names.extend(("codet-compiler-identity.json", "CMakeFiles/codet-dependency-root.txt"))
         return [dict(path=rel(Path(build) / n)) for n in names]
@@ -245,6 +248,14 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
                 directory_inputs=["licenses"] + config["dependency_roots"])
         else:
             add("tsan-20", [build / "codet_tests", focused, "--gtest_repeat=20"], [mode + "-build"])
+    make_build = Path(builds["make"])
+    make_outputs = configured_outputs(make_build, generator="Unix Makefiles")
+    add("make-configure", configure(root, make_build, "Debug", "Unix Makefiles"), ["provision-offline"], outputs=make_outputs)
+    add("make-build", [native["cmake"], "--build", make_build, "--target", "codet_preparation_bench", "-j4"], ["make-configure"],
+        outputs=make_outputs + [dict(path=rel(make_build / n), archive=False) for n in
+            ("codet_preparation_bench", "libcodet_core.a", "deps/schema/libnlohmann_json_schema_validator.a")])
+    add("make-preparation-smoke", [python, "scripts/preparation_bench_driver.py", "smoke", make_build / "codet_preparation_bench"], ["make-build"])
+    add("make-preparation-unchanged", [python, "scripts/preparation_bench_driver.py", "unchanged", "--cmake", native["cmake"], make_build], ["make-build"])
     debug = Path(builds["debug"])
     add("focused-20", [debug / "codet_tests", focused, "--gtest_repeat=20"], ["debug-build"])
     add("python39", [python39, "-m", "unittest", "discover", "-s", "tests", "-p", "test_validation_evidence.py", "-v"], python_version=[3, 9])
@@ -292,7 +303,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
              [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")] + [rel(folder / "harness.json")], timeout=1800)
     metadata_inputs = [rel(Path(b) / "CMakeCache.txt") for b in builds.values()] + [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")]
     producer("platform-availability", "platforms")
-    producer("build-metadata", "build-info", ["debug-build", "asan-build", "tsan-build", "cross-build", "baseline-build", "changed-build"], metadata_inputs)
+    producer("build-metadata", "build-info", ["debug-build", "asan-build", "tsan-build", "cross-build", "baseline-build", "changed-build", "make-build"], metadata_inputs)
     if ci_run:
         producer("ubuntu", "ci", timeout=1800)
     atomic_json(folder / "manifest.json", dict(schema_version=5, root=str(root), baseline=baseline, single_attempt=True, environment=environment, tools=tools, checks=checks))

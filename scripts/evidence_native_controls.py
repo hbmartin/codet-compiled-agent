@@ -103,6 +103,10 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native mutant linking failed: " + repr(linked))
         return source, binary, compiled, linked
     cases = [
+        ("shared-facade-guards", "tests/cli_diagnostics_test.cpp", "include/codet/detail/interactive_preparation.hpp",
+         "line.preparation.state != PreparationState::unprepared || line.discarded || line.request ||",
+         "line.discarded || line.request ||",
+         "InputPreparation.SharedFacadePreservesGuardsLifecycleAndSinglePreparation"),
         ("expansion-classification", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_payload.hpp",
          'if (expansion && !command)', 'if (false)',
          "SubmissionQueue.InvalidExpansionIsRejectedBeforePreflightAndPreservesRawErrorPrecedence"),
@@ -263,7 +267,7 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native control baseline failed: " + target)
         source, binary, compiled, linked = compile_mutant(directory, binary_target, "control-tests", entry_name, source_name, before, after)
         mutant = _test(binary, target, directory)
-        markers = {"expansion-classification": "Invalid expansion changed admission accounting",
+        markers = {"shared-facade-guards": "Shared facade bypassed its guards", "expansion-classification": "Invalid expansion changed admission accounting",
                    "measurement-scope": "Exceptional measurement leaked observation state", "safe-input-move": "Expected equality", "borrowed-preflight": "Rejected public input allocated its full payload",
                    "budget-preflight": "Rejected public input allocated its full payload", "explicit-command": "Expected equality",
                    "shared-command-wrapper": "Expected equality", "pending-context": "Expected",
@@ -347,12 +351,12 @@ def run_controls(root, folder, build, ninja):
          'line_ ? line_->try_take([](detail::InputLine &line) { line.preparation_context = detail::PreparationContext::pending; })',
          "Frozen command content changed before handoff"),
         ("command-prose-freeze", "CliTests.test_unknown_command_stays_prose_if_created_after_enter",
-         'if (line.preparation.state != detail::PreparationState::unprepared || line.discarded ||',
-         'if ((line.preparation.state != detail::PreparationState::unprepared && false) || line.discarded ||',
-         "Submitted prose was reinterpreted as a later command"),
+         'if (line.preparation.state != PreparationState::unprepared || line.discarded ||',
+         'if ((line.preparation.state != PreparationState::unprepared && false) || line.discarded ||',
+         "Submitted prose was reinterpreted as a later command", "include/codet/detail/interactive_preparation.hpp"),
         ("pending-control-owner", "CliTests.test_partial_pending_controls_never_stall_or_leak_into_messages",
-         '    if (line_ && (line_->submission_pending() || pending_control_.started())) {',
-         '    if (line_ && line_->submission_pending()) {', "Extra pending input became a user message"),
+         '    if (line) {\n      line->admission = std::exchange(admission_, 0);',
+         '    if (line) {\n      pending_control_.clear();\n      line->admission = std::exchange(admission_, 0);', "Extra pending input became a user message"),
         ("completed-quit", "CliTests.test_completed_turn_honors_frozen_quit_and_drops_earlier_followups",
          '        quit_requested = true;\n        if (phase == detail::TurnInputPhase::active)',
          '        quit_requested = phase == detail::TurnInputPhase::active;\n        if (phase == detail::TurnInputPhase::active)',

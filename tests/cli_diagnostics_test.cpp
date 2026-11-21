@@ -27,6 +27,7 @@
 #include <gtest/gtest.h>
 #include <sstream>
 #include <thread>
+#include <type_traits>
 
 using namespace codet;
 using namespace testing;
@@ -3054,4 +3055,46 @@ TEST(SubmissionQueue, BorrowedInspectionCannotBeAppliedToAnotherOwnedBacking) {
   EXPECT_NO_THROW(detail::SubmissionPreparation(original, borrowed));
   EXPECT_THROW(detail::SubmissionPreparation(other, borrowed), Error);
   EXPECT_EQ(&borrowed.text(), original.get());
+}
+
+TEST(InputPreparation, BorrowedRawInputAcceptsOnlySurvivingLvalues) {
+  using Raw = detail::SubmissionPreparation::RawInput;
+  static_assert(std::is_constructible_v<Raw, std::string &>);
+  static_assert(std::is_constructible_v<Raw, const std::string &>);
+  static_assert(!std::is_constructible_v<Raw, std::string &&>);
+  static_assert(!std::is_constructible_v<Raw, const std::string &&>);
+  const std::string text = "surviving input";
+  const Raw raw(text);
+  EXPECT_EQ(&raw.text(), &text);
+}
+
+TEST(InputPreparation, SharedFacadePreservesGuardsLifecycleAndSinglePreparation) {
+  TempDirectory temporary;
+  NativeFileSystem files;
+  Config config;
+  config.cwd = temporary.root;
+  config.home = temporary.root;
+  Interaction io;
+  detail::InputLine prose{"ordinary input"};
+  std::vector<unsigned> stages;
+  auto prepare = [&](detail::InputLine &line) {
+    detail::prepare_input_line(config, files, line, &io, Cancellation{},
+                               [&](unsigned stage) { stages.push_back(stage); });
+  };
+  prepare(prose);
+  EXPECT_EQ(prose.preparation.state, detail::PreparationState::ready);
+  EXPECT_EQ(stages, (std::vector<unsigned>{0, 1, 2}));
+  stages.clear();
+  prepare(prose);
+  detail::InputLine builtin{"/status"};
+  prepare(builtin);
+  detail::InputLine discarded{"discarded"};
+  discarded.discarded = true;
+  prepare(discarded);
+  EXPECT_TRUE(stages.empty()) << "Shared facade bypassed its guards";
+  detail::InputLine empty{""};
+  empty.preparation_context = detail::PreparationContext::pending;
+  prepare(empty);
+  EXPECT_EQ(stages, (std::vector<unsigned>{0}));
+  EXPECT_EQ(empty.preparation.state, detail::PreparationState::unprepared);
 }

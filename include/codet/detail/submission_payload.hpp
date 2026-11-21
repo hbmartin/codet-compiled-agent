@@ -60,6 +60,8 @@ public:
     explicit RawInput(const std::string &text) : text_(&text) {
       validate_raw(text);
     }
+    RawInput(std::string &&) = delete;
+    RawInput(const std::string &&) = delete;
     const std::string &text() const noexcept {
       return *text_;
     }

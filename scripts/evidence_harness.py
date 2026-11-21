@@ -7,36 +7,11 @@ import subprocess
 from pathlib import Path
 
 from evidence_inputs import sha256
+from preparation_adapter import cli_preparation_adapter, generate
 from process_supervision import run as supervised_run
 
 PROGRAMS = dict(line="codet_line_input_bench", output="codet_output_bench", export="codet_export_bench", preparation="codet_preparation_bench")
 
-
-def cli_preparation_adapter(source):
-    text = source.read_text()
-    begin = "  const auto prepare_line = "
-    end = "\n  const auto preparation_ready"
-    if text.count(begin) != 1 or text.count(end) != 1:
-        raise ValueError("CLI preparation excerpt is not unique")
-    excerpt = text[text.index(begin):text.index(end)]
-    adapter = '''#pragma once
-#include "codet/detail/cli.hpp"
-#include "codet/detail/request_input.hpp"
-#include "codet/detail/submission_queue.hpp"
-#if __has_include("codet/detail/interactive_preparation.hpp")
-#include "codet/detail/interactive_preparation.hpp"
-#endif
-namespace codet::test {
-inline detail::PreparationOutcome cli_prepare(Config &config, FileSystem &files,
-    detail::InputLine &line, Interaction &queue, const Cancellation &cancel) {
-  struct Borrowed {
-    Interaction *value;
-    Interaction *get() const { return value; }
-    Interaction &operator*() const { return *value; }
-  } interaction{&queue};
-  detail::CliLifecycleOps lifecycle;
-''' + excerpt + "\n  prepare_line(line);\n  return line.preparation;\n}\n}\n"
-    return excerpt, adapter
 
 
 def verify_cli_adapter(record):
@@ -66,7 +41,7 @@ def build_harnesses(root, folder, names, ninja):
         source = (folder / "baseline-src" if variant == "baseline" else root) / "src/modern/cli.cpp"
         excerpt, adapter = cli_preparation_adapter(source)
         adapter_path = directory / "cli_prepare_adapter.hpp"
-        adapter_path.write_text(adapter)
+        generate(source, adapter_path)
         adapter_record = dict(source=str(source), source_sha256=sha256(source),
                               excerpt_sha256=hashlib.sha256(excerpt.encode()).hexdigest(),
                               adapter=str(adapter_path), adapter_sha256=sha256(adapter_path))
@@ -80,6 +55,8 @@ def build_harnesses(root, folder, names, ninja):
             compile_argv[compile_argv.index("-o") + 1] = str(obj)
             compile_argv[compile_argv.index(entry["file"])] = str(snapshot / "tests" / ("preparation_bench.cpp" if name == "preparation" else Path(entry["file"]).name))
             compile_argv[1:1] = ["-I" + str(directory), "-I" + str(snapshot / "tests")]
+            if name == "preparation":
+                compile_argv.insert(1, "-DCODET_TEST_PREPARATION_ADAPTER=1")
             lines = subprocess.check_output([ninja, "-C", str(build), "-t", "commands", original_target], text=True, timeout=30).splitlines()
             link = shlex.split(lines[-1])
             if "&&" in link:
