@@ -5,7 +5,12 @@ import statistics
 import subprocess
 from pathlib import Path
 
-from preparation_metrics import CHANGED_ADVISORY_CHECKS, METRIC_VERSION, WORKLOADS
+from preparation_metrics import (
+    CHANGED_ADVISORY_CHECKS,
+    METRIC_VERSION,
+    V2_ADVISORY_CHECKS,
+    WORKLOADS,
+)
 from validation_evidence import digest, production_hashes, validation_hashes
 
 
@@ -53,6 +58,11 @@ def verify_tooling_metrics(row):
         raise ValueError('Supervision must record five owned processes, no files or Git commands')
     if row.get('workload') in ('hashing', 'git-inspection') and row['owned_processes']:
         raise ValueError('Hash/Git workloads cannot claim owned processes')
+    if row.get('workload') == 'historical-samples':
+        if (type(row.get('historical_sample_audits')) is not int or row['historical_sample_audits'] != 32 or
+                type(row.get('historical_rows')) is not int or row['historical_rows'] != 768 or
+                row['files'] or row['owned_processes'] or row['check_output_calls']):
+            raise ValueError('Historical sample audit counters are invalid')
     if row.get('workload') == 'build-context':
         if (row.get('context_metric_version') != 1 or row['owned_processes'] or
                 row.get('context_resolutions') not in (1, 3) or row.get('sysroot_snapshots') not in (2, 3) or
@@ -89,7 +99,9 @@ def verify_preparation_metrics(row, *, variant=_ROW_VARIANT, historical=False):
             if row["prepared_submissions"] != 128 or row["effective_content_bytes"] != 640:
                 raise ValueError("Preparation advisory-check control failed")
             if not historical and role == "changed" and row["advisory_budget_checks"] != CHANGED_ADVISORY_CHECKS:
-                raise ValueError("Changed preparation requires 256 advisory budget checks")
+                raise ValueError(f"Changed preparation requires {CHANGED_ADVISORY_CHECKS} advisory budget checks")
+            if (historical or role == "baseline") and row["advisory_budget_checks"] not in V2_ADVISORY_CHECKS:
+                raise ValueError("Preparation version-2 advisory-check positive control failed")
         if role == "changed" and workload.startswith("saturated-") and row["payload_sized_allocations"]:
             raise ValueError("Changed saturated preparation allocated payload-sized backing")
         if role == "changed" and workload == "cli-preparation" and row["distinct_command_wrappers"] != row["prepared_submissions"]:

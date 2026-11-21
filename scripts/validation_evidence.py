@@ -373,12 +373,15 @@ def main():
     parser.add_argument("folder", type=Path, nargs="?")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--benchmark", type=Path)
+    parser.add_argument("--historical", action="store_true", help="Verify historical integrity only; cannot grant current eligibility")
     args = parser.parse_args()
+    if args.historical and args.operation != "verify-bundle":
+        parser.error("--historical is only valid for verify-bundle")
     if args.operation == "verify-bundle":
         from evidence_bundle import verify_bundle
-        result = verify_bundle(args.manifest)
+        result = verify_bundle(args.manifest, historical=args.historical)
         print(json.dumps(result, indent=2))
-        return 0 if result.get("verified") and result.get("eligible_current") else 1
+        return 0 if result.get("verified") and (args.historical or result.get("eligible_current")) else 1
     if args.folder is None:
         parser.error("capture/publish/bundle requires a folder")
     if args.operation == "capture":
