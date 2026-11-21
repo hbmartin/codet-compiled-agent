@@ -107,6 +107,9 @@ def run_controls(root, folder, build, ninja):
          "line.preparation.state != PreparationState::unprepared || line.discarded || line.request ||",
          "line.discarded || line.request ||",
          "InputPreparation.SharedFacadePreservesGuardsLifecycleAndSinglePreparation"),
+        ("shared-request-guard", "tests/cli_diagnostics_test.cpp", "include/codet/detail/interactive_preparation.hpp",
+         "line.discarded || line.request ||", "line.discarded ||",
+         "InputPreparation.SharedFacadePreservesGuardsLifecycleAndSinglePreparation"),
         ("expansion-classification", "tests/cli_diagnostics_test.cpp", "include/codet/detail/submission_payload.hpp",
          'if (expansion && !command)', 'if (false)',
          "SubmissionQueue.InvalidExpansionIsRejectedBeforePreflightAndPreservesRawErrorPrecedence"),
@@ -267,7 +270,7 @@ def run_controls(root, folder, build, ninja):
             raise ValueError("Native control baseline failed: " + target)
         source, binary, compiled, linked = compile_mutant(directory, binary_target, "control-tests", entry_name, source_name, before, after)
         mutant = _test(binary, target, directory)
-        markers = {"shared-facade-guards": "Shared facade bypassed its guards", "expansion-classification": "Invalid expansion changed admission accounting",
+        markers = {"shared-request-guard": "Shared facade prepared a request-bound answer", "shared-facade-guards": "Shared facade bypassed its guards", "expansion-classification": "Invalid expansion changed admission accounting",
                    "measurement-scope": "Exceptional measurement leaked observation state", "safe-input-move": "Expected equality", "borrowed-preflight": "Rejected public input allocated its full payload",
                    "budget-preflight": "Rejected public input allocated its full payload", "explicit-command": "Expected equality",
                    "shared-command-wrapper": "Expected equality", "pending-context": "Expected",

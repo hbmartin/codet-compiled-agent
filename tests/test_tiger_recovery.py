@@ -752,13 +752,13 @@ class DependencyReconfiguration(unittest.TestCase):
                 (source / 'CMakeLists.txt').write_text(text.replace('include(', 'set(CODET_DEPENDENCY_ROOT /scoped)\ninclude(', 1))
                 result = configure('/environment-C')
                 self.assertEqual(result.returncode, 0, 'GUI value edit was rejected: ' + result.stderr)
-                self.assertEqual((output / 'CMakeFiles/codet-dependency-root.txt').read_text(), '/GUI-root-B')
+                self.assertEqual((output / 'CMakeFiles/codet-dependency-root.txt').read_text(), '/GUI-root-B', 'GUI value edit was rejected or ignored')
                 cache = (output / 'CMakeCache.txt').read_text()
                 self.assertIn('_CODET_DEPENDENCY_ORIGIN:INTERNAL=explicit', cache)
                 for name in ('selection', 'success'):
                     self.assertFalse((output / ('CMakeFiles/codet-dependency-' + name + '.json')).exists())
                 self.assertEqual(configure('/environment-D').returncode, 0)
-                self.assertEqual((output / 'CMakeFiles/codet-dependency-root.txt').read_text(), '/GUI-root-B')
+                self.assertEqual((output / 'CMakeFiles/codet-dependency-root.txt').read_text(), '/GUI-root-B', 'GUI value edit was rejected or ignored')
 
     def test_gui_empty_value_resets_even_managed_or_damaged_state(self):
         for generator in ('Ninja', 'Unix Makefiles'):
