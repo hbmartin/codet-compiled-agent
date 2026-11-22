@@ -8,6 +8,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path
 
 from clang_plist import resolve_files
@@ -131,21 +132,32 @@ def resolve_build_layout(folder, settings):
     reserved = {name: folder / name for name in (*MANAGED_WORKSPACES, *MANAGED_FILES,
                 *(action + ".json" for action in PRODUCER_ACTIONS))}
     paths = {}
+    locations = {name: (path,) for name, path in reserved.items()}
+    def identity(path):
+        # A conservative portable namespace, independent of the host filesystem.
+        return tuple(unicodedata.normalize("NFC", unicodedata.normalize("NFC", part).casefold())
+                     for part in path.parts)
     def overlap(first, second):
-        return first == second or first in second.parents or second in first.parents
+        first, second = identity(first), identity(second)
+        return first[:len(second)] == second or second[:len(first)] == first
+    prefixes = tuple(identity(Path(prefix))[0] for prefix in CONTROL_PREFIXES)
     for name, specification in replay_builds(settings).items():
         path = (folder / specification).resolve()
         if folder not in path.parents:
             raise ValueError("Replay build path escapes campaign for " + name + ": " + specification)
-        relative = path.relative_to(folder)
-        if relative.parts[0].startswith(CONTROL_PREFIXES):
-            raise ValueError("Replay build path uses reserved control workspace for " + name)
-        for other, target in {**reserved, **paths}.items():
-            if overlap(path, target):
-                raise ValueError("Replay build path collision: " + name + " with " + other)
+        candidates = (folder / specification, path)
+        for candidate in candidates:
+            relative = candidate.relative_to(folder)
+            if identity(relative)[0].startswith(prefixes):
+                raise ValueError("Replay build path uses reserved control workspace for " + name)
+            for other, targets in locations.items():
+                for target in targets:
+                    if overlap(candidate, target):
+                        raise ValueError("Replay build path collision: " + name + " with " + other)
         if path.exists() or path.is_symlink():
             raise ValueError("Managed build directory already exists: " + str(path))
         paths[name] = path
+        locations[name] = candidates
     return {name: str(path) for name, path in paths.items()}
 
 

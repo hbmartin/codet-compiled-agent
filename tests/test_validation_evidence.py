@@ -2440,13 +2440,37 @@ class PreparationRecovery(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'collision'):
                 campaign.resolve_build_layout(folder, dict(base, make='same'))
 
+    def test_portable_layout_aliases_are_rejected_without_side_effects(self):
+        import evidence_campaign as campaign
+        base = dict(debug='debug', asan='asan', tsan='tsan', cross='cross')
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d) / 'new campaign'
+            for name in ('Debug', 'DEBUG/child', 'Home', 'CAPTURE', 'BASELINE-RELEASE',
+                         'Manifest.JSON', 'HARNESS.JSON', 'CONTROL-example', 'Native-Control-x', 'SEMGREP-CONTROL-x'):
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'build path'):
+                    campaign.resolve_build_layout(folder, dict(base, make=name))
+                self.assertFalse(folder.exists(), 'Portable layout rejection created campaign files')
+            for first, second in (('café', 'cafe\u0301'), ('Straße', 'STRASSE'),
+                                  ('custom/café', 'CUSTOM/cafe\u0301/nested')):
+                with self.subTest(first=first, second=second), self.assertRaisesRegex(ValueError, 'collision'):
+                    campaign.resolve_build_layout(folder, dict(base, debug=first, make=second))
+            good = campaign.resolve_build_layout(folder, dict(base, debug='custom café/debug', make='other space/make'))
+            self.assertEqual(good['make'], str((folder / 'other space/make').resolve()))
+            # Submitted aliases are forbidden even if an existing symlink resolves elsewhere.
+            folder.mkdir(); (folder / 'Home').symlink_to(folder / 'unused', target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, 'collision'):
+                campaign.resolve_build_layout(folder, base | dict(make='Home/build'))
+            (folder / 'redirect').symlink_to(folder / 'DEBUG', target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, 'collision'):
+                campaign.resolve_build_layout(folder, base | dict(make='redirect/child'))
+
     def test_invalid_layout_precedes_tool_probes_and_campaign_creation(self):
         import evidence_campaign as campaign
         root = Path(__file__).resolve().parents[1]
         template = json.loads((root / 'checks/validation-replay.json').read_text())
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'template.json'
-            template['builds']['make'] = 'debug'
+            template['builds']['make'] = 'Debug'
             path.write_text(json.dumps(template))
             folder = Path(d) / 'new'
             with patch.object(campaign, 'command', side_effect=AssertionError('unexpected tool probe')):
