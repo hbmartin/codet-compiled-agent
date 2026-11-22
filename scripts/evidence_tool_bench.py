@@ -21,6 +21,7 @@ from validation_evidence import production_hashes
 
 def measure(root, ref, workload, repository=None):
     calls = git_calls = process_inspections = cmake_calls = 0
+    historical_sample_audits = historical_rows = 0
     context = None
     if workload == "build-context":
         context = evidence_tiger_context_bench.ContextWorkload()
@@ -113,6 +114,8 @@ def measure(root, ref, workload, repository=None):
                 audited = verify_samples(rows, summary, {"preparation": ["allocation-positive"]}, historical=True)
                 if audited["samples"] != 24 or audited["measured_samples"] != 20:
                     raise ValueError("Historical sample audit positive control failed")
+                historical_sample_audits += 1
+                historical_rows += audited["samples"]
                 hashes[str(number)] = True
         elif workload == "measurement-cleanup":
             from tempfile import TemporaryDirectory
@@ -152,7 +155,7 @@ def measure(root, ref, workload, repository=None):
                 check_output_calls=calls, git_commands=git_calls,
                 process_inspection_commands=process_inspections,
                 **(dict(configuration_metric_version=1,cmake_commands=cmake_calls,configuration_checks=len(hashes)) if workload=="configuration-selection" else {}),
-                **(dict(historical_sample_audits=32, historical_rows=768) if workload == "historical-samples" else {}),
+                **(dict(historical_sample_audits=historical_sample_audits, historical_rows=historical_rows) if workload == "historical-samples" else {}),
                 metric_version=2, retained_traced_blocks=sum(s.count for s in stats), retained_traced_bytes=retained, peak_traced_bytes=peak)
 
 

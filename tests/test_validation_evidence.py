@@ -2295,6 +2295,50 @@ class PreparationRecovery(unittest.TestCase):
             with self.subTest(control=name):
                 self.assertEqual((root / source).read_text().count(before), 1, 'Integration mutation no longer matches its production site: ' + name)
 
+    def test_adapter_byte_identity_repairs_all_line_endings(self):
+        import preparation_adapter
+        source = Path(__file__).resolve().parents[1] / 'src/modern/cli.cpp'
+        expected = preparation_adapter.cli_preparation_adapter(source)[1].encode('utf-8')
+        with tempfile.TemporaryDirectory() as d:
+            output = Path(d) / 'adapter.hpp'
+            for ending in (b'\n', b'\r\n', b'\r'):
+                with self.subTest(ending=ending):
+                    output.write_bytes(expected.replace(b'\n', ending))
+                    output.chmod(0o640)
+                    try:
+                        value = preparation_adapter.generate(source, output)
+                    except ValueError as error:
+                        self.fail('Byte-different adapter was not repaired: ' + str(error))
+                    self.assertEqual(output.read_bytes(), expected, 'Byte-different adapter was left in place')
+                    self.assertEqual(value['adapter_sha256'], evidence.digest(output))
+                    self.assertEqual(output.stat().st_mode & 0o777, 0o640)
+                    stamp = output.stat().st_mtime_ns
+                    preparation_adapter.generate(source, output)
+                    self.assertEqual(output.stat().st_mtime_ns, stamp)
+            def corrupt(path, content):
+                path.write_text('different complete bytes')
+            with patch.object(preparation_adapter, '_write_adapter', corrupt):
+                output.write_text('old')
+                with self.assertRaisesRegex(ValueError, 'changed during generation'):
+                    preparation_adapter.generate(source, output)
+
+
+    def test_historical_sample_work_counters_observe_completed_calls(self):
+        from evidence_benchmarks import verify_samples, verify_tooling_metrics
+        from evidence_tool_bench import measure
+        with patch('evidence_benchmarks.verify_samples', wraps=verify_samples) as observed:
+            value = measure(Path(__file__).resolve().parents[1], 'unused', 'historical-samples')
+        self.assertEqual(value['historical_sample_audits'], 32, 'Completed audit work did not match the required workload')
+        self.assertEqual(value['historical_sample_audits'], observed.call_count, 'Audit counter was not observed')
+        self.assertEqual(value['historical_rows'], sum(len(call.args[0]) for call in observed.call_args_list), 'Row counter was not observed')
+        value.update(harness='tooling', workload='historical-samples')
+        verify_tooling_metrics(value)
+        with patch('evidence_benchmarks.verify_samples', side_effect=RuntimeError('failed audit')) as failed:
+            with self.assertRaisesRegex(RuntimeError, 'failed audit'):
+                measure(Path(__file__).resolve().parents[1], 'unused', 'historical-samples')
+        self.assertEqual(failed.call_count, 1)
+
+
 
 if __name__ == "__main__":
     unittest.main()
