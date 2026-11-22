@@ -2218,7 +2218,10 @@ class PreparationRecovery(unittest.TestCase):
             from preparation_adapter import cli_preparation_adapter
             expected = cli_preparation_adapter(changed)[1]
             self.assertNotEqual(expected, output.read_text())
-            generate(changed, output)
+            try:
+                generate(changed, output)
+            except ValueError as error:
+                self.fail('Valid excerpt change did not rewrite the adapter: ' + str(error))
             self.assertEqual(output.read_text(), expected, 'Valid excerpt change did not rewrite the adapter')
             ambiguous = Path(directory) / 'cli.cpp'
             ambiguous.write_text(source.read_text() + '\n  const auto prepare_line = duplicate;')
