@@ -907,7 +907,7 @@ class DependencyReconfiguration(unittest.TestCase):
             result = configure('/environment-B')
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('identity disagreement', result.stderr, 'Private cache disagreement blamed an intact receipt')
-            for value in ('CMakeCache.txt', '_CODET_DEPENDENCY_VALUE', 'codet-dependency-selection.json'):
+            for value in ('CMakeCache.txt', '_CODET_DEPENDENCY_VALUE', 'codet-dependency-selection.json', 'codet-dependency-success.json'):
                 self.assertIn(value, result.stderr)
             self.assertEqual(pin.read_bytes(), original)
 
@@ -949,6 +949,24 @@ class DependencyReconfiguration(unittest.TestCase):
                     for expected in ('CMakeCache.txt', field + ' vs _CODET_DEPENDENCY_' + cache_field, 'and ' + str(record)):
                         self.assertIn(expected, diagnostic, 'Identity disagreement lost the compared record or field')
 
+    def test_all_record_disagreements_are_collected_with_readable_fields(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, output, _, configure = self.dependency_probe(Path(d), 'Ninja')
+            self.assertEqual(configure('/root-A').returncode, 0)
+            for kind in ('selection', 'success'):
+                path = output / ('CMakeFiles/codet-dependency-' + kind + '.json')
+                value = json.loads(path.read_text()); value.update(root='/changed', origin='other')
+                path.write_text(json.dumps(value))
+            result = configure('/root-B')
+            diagnostic = ' '.join(result.stderr.split())
+            self.assertNotEqual(result.returncode, 0)
+            for name in ('selection', 'success'):
+                self.assertIn('and ' + str(output / ('CMakeFiles/codet-dependency-' + name + '.json')), diagnostic,
+                              'Identity disagreement omitted a conflicting generated record')
+            self.assertIn('root vs _CODET_DEPENDENCY_VALUE, origin vs _CODET_DEPENDENCY_ORIGIN', diagnostic,
+                          'Identity disagreement did not join field descriptions')
+            self.assertNotIn('_CODET_DEPENDENCY_VALUE;origin', diagnostic)
+
     def test_restore_configure_generate_then_edit_recovers_provisional_gui_value(self):
         for prefix in ('short', 'long path ' * 8):
             with self.subTest(prefix=prefix), tempfile.TemporaryDirectory(prefix=prefix) as d:
@@ -959,7 +977,7 @@ class DependencyReconfiguration(unittest.TestCase):
                 self.edit_public_root(output, '/GUI-B')
                 rejected = configure('/root-C')
                 self.assertNotEqual(rejected.returncode, 0)
-                self.assertIn('Restore the previous derived root, then Configure and run Generate before editing again',
+                self.assertIn("Restore the previous derived root '/root-A', then Configure and run Generate before editing again",
                               ' '.join(rejected.stderr.split()), 'Rejected GUI edit lacks ordered recovery')
                 self.edit_public_root(output, '/root-A')
                 self.assertEqual(configure('/root-C').returncode, 0)

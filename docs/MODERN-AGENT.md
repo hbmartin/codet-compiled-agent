@@ -105,7 +105,7 @@ GUI value edits preserving managed help and PATH type become explicit only after
 the previous private metadata and both success records validate. Ambiguous edits
 require a reset or an explicit selection. Configure alone in cmake-gui or ccmake
 does not write the success records. If an edit was already rejected, restore the
-previous derived value, Configure, Generate, and then edit again (ccmake may need
+previous derived value shown in the error, Configure, Generate, and then edit again (ccmake may need
 a second Configure before enabling `g`). Before the first edit, Generate after a
 successful initial Configure. If this cannot succeed, run plain `cmake` or
 `ccmake` with `-DCODET_DEPENDENCY_ROOT=/absolute/path`. The `cmake-gui` executable
