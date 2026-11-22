@@ -139,7 +139,7 @@ def measure(root, ref, workload, repository=None):
             hashes = {}
             with TemporaryDirectory(prefix="codet-extraction-measure-") as directory:
                 destination = Path(directory) / "verified"
-                audited = audit_package(root / PACKAGE, destination)
+                audited = audit_package((repository or root) / PACKAGE, destination)
                 if not audited["strict_rejected"] or not audited["historical_result"]["verified"] or audited["historical_result"]["eligible_current"]:
                     raise ValueError("Extraction measurement positive control failed")
                 extraction_files, extraction_bytes = audited["expanded_files"], audited["expanded_bytes"]

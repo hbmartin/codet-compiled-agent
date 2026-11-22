@@ -49,6 +49,9 @@ raise SystemExit(exit_code)
 
 def run_controls(root, folder):
     cases = [
+        ("shared-extraction-carrier", "evidence_tool_bench",
+         'audited = audit_package((repository or root) / PACKAGE, destination)',
+         'audited = audit_package(root / PACKAGE, destination)', "ReplayIntegrity.test_extraction_measurement_observes_completed_audit_work"),
         ("measurement-carrier", "evidence_campaign",
          '    elif action == "measure":\n        if "historical-extraction" in config.get("cases", {}).get("tooling", []):\n            from evidence_historical import PACKAGE\n            inputs.extend(PACKAGE + "/" + name for name in ("audit-bundle.tar.gz", "transport.json"))',
          '    elif action == "measure":', "PreparationRecovery.test_measurement_envelope_binds_declared_carrier_inputs"),
@@ -310,7 +313,7 @@ def run_controls(root, folder):
             verify_unittest_result(*runs)
         except ValueError as error:
             raise ValueError("Control " + name + ": " + repr(runs)) from error
-        markers = {"measurement-carrier": "Measurement producer omitted declared carrier inputs", "gui-guidance": "Missing Configure-only GUI recovery guidance", "cache-disagreement": "Private cache disagreement blamed an intact receipt",
+        markers = {"shared-extraction-carrier": "Extraction benchmark ignored shared declared carrier", "measurement-carrier": "Measurement producer omitted declared carrier inputs", "gui-guidance": "Missing Configure-only GUI recovery guidance", "cache-disagreement": "Private cache disagreement blamed an intact receipt",
                    "historical-work": "Completed audit work did not match the required workload", "adapter-bytes": "Byte-different adapter was not repaired",
                    "layout-collision": "ValueError not raised", "layout-containment": "Expected explicit campaign containment rejection", "carrier-counts": "Expected positive-integer carrier field validation: archive.bytes",
                    "portable-layout": "Portable path alias was admitted", "historical-signals": "Cooperative extraction signal skipped cleanup",

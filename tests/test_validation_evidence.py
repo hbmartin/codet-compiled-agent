@@ -936,9 +936,15 @@ except BaseException as error:
         from evidence_benchmarks import verify_tooling_metrics
         from evidence_tool_bench import measure
         package, metadata = self.carrier_fixture()
-        with patch.object(historical, 'PACKAGE', str(package)), patch.object(historical, 'audit_package', wraps=historical.audit_package) as observed:
-            value = measure(self.root, 'unused', 'historical-extraction')
+        variant = self.root / 'immutable variant'; variant.mkdir()
+        self.assertFalse((variant / 'carrier').exists())
+        with patch.object(historical, 'PACKAGE', 'carrier'), patch.object(historical, 'audit_package', wraps=historical.audit_package) as observed:
+            try:
+                value = measure(variant, 'unused', 'historical-extraction', self.root)
+            except (OSError, ValueError) as error:
+                self.fail('Extraction benchmark ignored shared declared carrier: ' + str(error))
         self.assertEqual(observed.call_count, 1)
+        self.assertEqual(observed.call_args.args[0], package)
         self.assertEqual(value['expanded_files'], metadata['expanded']['files'])
         self.assertEqual(value['expanded_bytes'], metadata['expanded']['bytes'])
         value.update(harness='tooling', workload='historical-extraction')
