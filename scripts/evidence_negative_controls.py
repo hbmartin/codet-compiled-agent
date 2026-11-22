@@ -49,6 +49,10 @@ raise SystemExit(exit_code)
 
 def run_controls(root, folder):
     cases = [
+        ("gui-guidance", "dependency-root", 'Configure alone does not create these records:', 'A prior commitment is required:',
+         "test_tiger_recovery.DependencyReconfiguration.test_configure_only_recovery_guidance_and_explicit_gui_entry"),
+        ("cache-disagreement", "dependency-root", 'Dependency selection identity disagreement between', 'Invalid dependency selection record',
+         "test_tiger_recovery.DependencyReconfiguration.test_private_absolute_value_disagreement_names_cache_and_records"),
         ("gui-value", "dependency-root",
          'if(NOT cache_value STREQUAL "$CACHE{_CODET_DEPENDENCY_VALUE}")', 'if(FALSE)',
          "test_tiger_recovery.DependencyReconfiguration.test_gui_value_change_validates_prior_commitment_then_becomes_explicit"),
@@ -56,7 +60,7 @@ def run_controls(root, folder):
          'if(NOT cached OR cache_value STREQUAL "")', 'if(NOT cached)',
          "test_tiger_recovery.DependencyReconfiguration.test_gui_empty_value_resets_even_managed_or_damaged_state"),
         ("gui-ambiguous", "dependency-root",
-         'message(FATAL_ERROR "Ambiguous dependency selection edit in ${cache}: no matching prior commitment in ${pin} and ${witness}; ${reset_hint}")',
+         'message(FATAL_ERROR "Ambiguous dependency selection edit in ${cache}: no matching prior commitment in ${pin} and ${witness}. Configure alone does not create these records: after a successful Configure, run Generate before editing the derived root. If Generate is unavailable, relaunch cmake-gui/ccmake with -DCODET_DEPENDENCY_ROOT=<path>, or in cmake-gui remove the entry and Add Entry with type PATH and the desired value; ${reset_hint}")',
          'set(committed FALSE)',
          "test_tiger_recovery.DependencyReconfiguration.test_ambiguous_gui_change_fails_without_promoting_private_corruption"),
         ("historical-mode", "evidence_bundle",
@@ -279,7 +283,11 @@ def run_controls(root, folder):
             verify_unittest_result(*runs)
         except ValueError as error:
             raise ValueError("Control " + name + ": " + repr(runs)) from error
-        markers = {"gui-value": "GUI value edit was rejected", "gui-empty": "GUI empty value did not reset selection",
+        markers = {"gui-guidance": "Missing Configure-only GUI recovery guidance", "cache-disagreement": "Private cache disagreement blamed an intact receipt",
+                   "historical-work": "Completed audit work did not match the required workload", "adapter-bytes": "Byte-different adapter was not repaired",
+                   "layout-collision": "ValueError not raised", "layout-containment": "does not match", "carrier-counts": "does not match",
+                   "carrier-staging": "Failed historical extraction left a final tree", "carrier-publication": "OSError not raised",
+                   "gui-value": "GUI value edit was rejected", "gui-empty": "GUI empty value did not reset selection",
                    "gui-ambiguous": "Ambiguous GUI edit became explicit intent", "historical-mode": "Historical metric interpretation was not exposed",
                    "historical-eligibility": "Historical auditing granted current campaign eligibility", "historical-advisory": "ValueError not raised",
                    "adapter-mode": "New adapter ignored the process umask", "private-ownership": "Private corruption became explicit intent",
