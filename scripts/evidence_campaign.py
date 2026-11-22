@@ -28,7 +28,7 @@ CASES = {
     "preparation": list(WORKLOADS),
     "line": ["allocation-positive", "geometry-positive", "busy", "native-busy", "editing", "editing-basic",
              "native-editing", "deletion", "unchanged", "deferred-tail", "native-boundary", "native-flush-boundary", "native-unchanged", "pending-submission", "native-pending-submission", "native-pending-fragment", "preparation-queue", "bounded-expansion"],
-    "tooling": ["hashing", "git-inspection", "supervision", "build-context", "dependency-resolution", "configuration-selection", "measurement-cleanup", "historical-samples"],
+    "tooling": ["hashing", "git-inspection", "supervision", "build-context", "dependency-resolution", "configuration-selection", "measurement-cleanup", "historical-samples", "campaign-layout", "historical-extraction"],
     "output": ["write-positive", "stat-positive", "flags-positive", "bounds-positive", "diagnostics-amplified",
                "diagnostics-standalone-amplified", "diagnostics-pipe-amplified"],
     "export": ["small", "large"],
@@ -353,11 +353,11 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     harness_outputs.extend(dict(path=rel(folder / (v + "-harness/cli_prepare_adapter.hpp"))) for v in ("baseline", "changed"))
     producer("benchmark-harness", "harness", ["baseline-build", "changed-build"], harness_inputs, timeout=1800, outputs=harness_outputs,
              file_inputs=[dict(path=rel(folder / (v + "-release/libcodet_core.a")), archive=False) for v in ("baseline", "changed")])
-    producer("benchmarks", "measure", ["benchmark-harness", "static-comparison", "python-negative-controls", "native-negative-controls", "semgrep-controls"],
-             [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")] + [rel(folder / "harness.json")], timeout=1800)
-    metadata_inputs = [rel(Path(b) / "CMakeCache.txt") for b in builds.values()] + [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")]
     from evidence_historical import PACKAGE
     historical_inputs = [PACKAGE + "/" + name for name in ("audit-bundle.tar.gz", "transport.json")]
+    producer("benchmarks", "measure", ["benchmark-harness", "static-comparison", "python-negative-controls", "native-negative-controls", "semgrep-controls"],
+             [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")] + [rel(folder / "harness.json")] + historical_inputs, timeout=1800)
+    metadata_inputs = [rel(Path(b) / "CMakeCache.txt") for b in builds.values()] + [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")]
     producer("historical-audit", "historical-audit", ["runner-tests"], historical_inputs)
     producer("platform-availability", "platforms")
     producer("build-metadata", "build-info", ["debug-build", "asan-build", "tsan-build", "cross-build", "baseline-build", "changed-build", "make-build"], metadata_inputs)

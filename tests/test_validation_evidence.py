@@ -931,6 +931,21 @@ except BaseException as error:
             self.assertEqual(signal.getsignal(signal.SIGTERM), previous)
             temporary.cleanup()
 
+    def test_extraction_measurement_observes_completed_audit_work(self):
+        import evidence_historical as historical
+        from evidence_benchmarks import verify_tooling_metrics
+        from evidence_tool_bench import measure
+        package, metadata = self.carrier_fixture()
+        with patch.object(historical, 'PACKAGE', str(package)), patch.object(historical, 'audit_package', wraps=historical.audit_package) as observed:
+            value = measure(self.root, 'unused', 'historical-extraction')
+        self.assertEqual(observed.call_count, 1)
+        self.assertEqual(value['expanded_files'], metadata['expanded']['files'])
+        self.assertEqual(value['expanded_bytes'], metadata['expanded']['bytes'])
+        value.update(harness='tooling', workload='historical-extraction')
+        verify_tooling_metrics(value)
+        with self.assertRaisesRegex(ValueError, 'Extraction work counters'):
+            verify_tooling_metrics(dict(value, historical_extractions=0))
+
     def test_historical_count_metadata_is_validated_before_staging(self):
         import copy
 
@@ -943,7 +958,7 @@ except BaseException as error:
                     if value is None: metadata[section].pop(field)
                     else: metadata[section][field] = value
                     evidence.atomic_json(package / 'transport.json', metadata)
-                    with self.assertRaisesRegex(ValueError, section + r'\.' + field):
+                    with self.assertRaisesRegex(ValueError, section + r'\.' + field, msg='Expected positive-integer carrier field validation: ' + section + '.' + field):
                         audit_package(package, self.root / 'invalid')
                     self.assertFalse((self.root / 'invalid').exists())
                     self.assertFalse(list(self.root.glob('.historical-*')))
@@ -2521,7 +2536,7 @@ class PreparationRecovery(unittest.TestCase):
             self.assertEqual(good['make'], str((folder / 'custom space/make').resolve()))
             folder.mkdir(); outside = Path(d) / 'outside'; outside.mkdir()
             (folder / 'alias').symlink_to(outside, target_is_directory=True)
-            with self.assertRaisesRegex(ValueError, 'escapes campaign'):
+            with self.assertRaisesRegex(ValueError, 'escapes campaign', msg='Expected explicit campaign containment rejection'):
                 campaign.resolve_build_layout(folder, dict(base, make='alias/make'))
             (folder / 'same').symlink_to(folder / 'debug', target_is_directory=True)
             with self.assertRaisesRegex(ValueError, 'collision'):
@@ -2534,22 +2549,42 @@ class PreparationRecovery(unittest.TestCase):
             folder = Path(d) / 'new campaign'
             for name in ('Debug', 'DEBUG/child', 'Home', 'CAPTURE', 'BASELINE-RELEASE',
                          'Manifest.JSON', 'HARNESS.JSON', 'CONTROL-example', 'Native-Control-x', 'SEMGREP-CONTROL-x'):
-                with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'build path'):
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'build path', msg='Portable path alias was admitted'):
                     campaign.resolve_build_layout(folder, dict(base, make=name))
                 self.assertFalse(folder.exists(), 'Portable layout rejection created campaign files')
             for first, second in (('café', 'cafe\u0301'), ('Straße', 'STRASSE'),
                                   ('custom/café', 'CUSTOM/cafe\u0301/nested')):
-                with self.subTest(first=first, second=second), self.assertRaisesRegex(ValueError, 'collision'):
+                with self.subTest(first=first, second=second), self.assertRaisesRegex(ValueError, 'collision', msg='Portable path alias was admitted'):
                     campaign.resolve_build_layout(folder, dict(base, debug=first, make=second))
             good = campaign.resolve_build_layout(folder, dict(base, debug='custom café/debug', make='other space/make'))
             self.assertEqual(good['make'], str((folder / 'other space/make').resolve()))
             # Submitted aliases are forbidden even if an existing symlink resolves elsewhere.
             folder.mkdir(); (folder / 'Home').symlink_to(folder / 'unused', target_is_directory=True)
-            with self.assertRaisesRegex(ValueError, 'collision'):
+            with self.assertRaisesRegex(ValueError, 'collision', msg='Portable path alias was admitted'):
                 campaign.resolve_build_layout(folder, base | dict(make='Home/build'))
             (folder / 'redirect').symlink_to(folder / 'DEBUG', target_is_directory=True)
-            with self.assertRaisesRegex(ValueError, 'collision'):
+            with self.assertRaisesRegex(ValueError, 'collision', msg='Portable path alias was admitted'):
                 campaign.resolve_build_layout(folder, base | dict(make='redirect/child'))
+
+    def test_layout_measurement_records_completed_resolutions(self):
+        import evidence_campaign as campaign
+        from evidence_benchmarks import verify_tooling_metrics
+        from evidence_tool_bench import measure
+        with patch.object(campaign, 'resolve_build_layout', wraps=campaign.resolve_build_layout) as observed:
+            value = measure(Path(__file__).resolve().parents[1], 'unused', 'campaign-layout')
+        self.assertEqual(value['layout_checks'], observed.call_count)
+        self.assertEqual(value['build_locations'], 5 * observed.call_count)
+        value.update(harness='tooling', workload='campaign-layout')
+        verify_tooling_metrics(value)
+        with self.assertRaisesRegex(ValueError, 'Layout work counters'):
+            verify_tooling_metrics(dict(value, layout_checks=0))
+
+    def test_control_marker_rejects_unrelated_regex_assertions(self):
+        from evidence_negative_controls import require_assertion_marker
+        marker = 'Expected explicit campaign containment rejection'
+        with self.assertRaisesRegex(ValueError, 'missed its intended assertion'):
+            require_assertion_marker('layout-containment', dict(failure_details=['AssertionError: other regex does not match']), marker)
+        require_assertion_marker('layout-containment', dict(failure_details=['AssertionError: ' + marker]), marker)
 
     def test_invalid_layout_precedes_tool_probes_and_campaign_creation(self):
         import evidence_campaign as campaign

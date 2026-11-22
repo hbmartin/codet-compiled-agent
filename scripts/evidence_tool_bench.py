@@ -23,6 +23,7 @@ def measure(root, ref, workload, repository=None):
     calls = git_calls = process_inspections = cmake_calls = 0
     historical_sample_audits = historical_rows = 0
     context = None
+    layout_checks = extraction_files = extraction_bytes = 0
     if workload == "build-context":
         context = evidence_tiger_context_bench.ContextWorkload()
     native = subprocess.check_output
@@ -117,6 +118,34 @@ def measure(root, ref, workload, repository=None):
                 historical_sample_audits += 1
                 historical_rows += audited["samples"]
                 hashes[str(number)] = True
+        elif workload == "campaign-layout":
+            from tempfile import TemporaryDirectory
+
+            from evidence_campaign import resolve_build_layout
+            hashes = {}
+            with TemporaryDirectory(prefix="codet-layout-measure-") as directory:
+                campaign = Path(directory) / "new campaign"
+                settings = dict(debug="custom/debug", asan="asan", tsan="tsan", cross="cross", make="other space/make")
+                for number in range(128):
+                    locations = resolve_build_layout(campaign, settings)
+                    if set(locations) != set(settings) or campaign.exists():
+                        raise ValueError("Layout measurement positive control failed")
+                    layout_checks += 1
+                    hashes[str(number)] = locations
+        elif workload == "historical-extraction":
+            from tempfile import TemporaryDirectory
+
+            from evidence_historical import PACKAGE, audit_package
+            hashes = {}
+            with TemporaryDirectory(prefix="codet-extraction-measure-") as directory:
+                destination = Path(directory) / "verified"
+                audited = audit_package(root / PACKAGE, destination)
+                if not audited["strict_rejected"] or not audited["historical_result"]["verified"] or audited["historical_result"]["eligible_current"]:
+                    raise ValueError("Extraction measurement positive control failed")
+                extraction_files, extraction_bytes = audited["expanded_files"], audited["expanded_bytes"]
+                hashes["audited"] = audited["archive_sha256"]
+            if Path(directory).exists():
+                raise ValueError("Extraction measurement retained owned storage")
         elif workload == "measurement-cleanup":
             from tempfile import TemporaryDirectory
             hashes = {}
@@ -156,6 +185,8 @@ def measure(root, ref, workload, repository=None):
                 process_inspection_commands=process_inspections,
                 **(dict(configuration_metric_version=1,cmake_commands=cmake_calls,configuration_checks=len(hashes)) if workload=="configuration-selection" else {}),
                 **(dict(historical_sample_audits=historical_sample_audits, historical_rows=historical_rows) if workload == "historical-samples" else {}),
+                **(dict(layout_metric_version=1, layout_checks=layout_checks, build_locations=layout_checks * 5) if workload == "campaign-layout" else {}),
+                **(dict(extraction_metric_version=1, historical_extractions=len(hashes), expanded_files=extraction_files, expanded_bytes=extraction_bytes) if workload == "historical-extraction" else {}),
                 metric_version=2, retained_traced_blocks=sum(s.count for s in stats), retained_traced_bytes=retained, peak_traced_bytes=peak)
 
 
