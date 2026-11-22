@@ -844,6 +844,93 @@ class ReplayIntegrity(unittest.TestCase):
         self.assertTrue(result['historical_result']['verified'])
         self.assertTrue(destination.is_dir())
 
+    def test_historical_extraction_and_audit_unwind_real_signals(self):
+        import os
+        import select
+        import signal
+
+        import evidence_historical as historical
+        package, _ = self.carrier_fixture()
+        sibling = self.root / '.historical-active'; sibling.mkdir()
+        (sibling / 'owner').write_text('another invocation')
+        code = r"""import importlib.util,json,signal,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[1]);sys.dont_write_bytecode=True
+spec=importlib.util.spec_from_file_location('evidence_historical',sys.argv[2])
+h=importlib.util.module_from_spec(spec);spec.loader.exec_module(h)
+prior=signal.getsignal(signal.SIGTERM)
+def gate():
+ print('READY',flush=True);signal.pause()
+native_copy=h.shutil.copyfileobj
+def copy(source,output):
+ gate();return native_copy(source,output)
+native_verify=h.verify_bundle
+def verify(*args,**kwargs):
+ if kwargs.get('historical'):gate()
+ return native_verify(*args,**kwargs)
+if sys.argv[5]=='extraction':h.shutil.copyfileobj=copy
+else:h.verify_bundle=verify
+try:h.audit_package(sys.argv[3],sys.argv[4])
+except BaseException as error:
+ value=dict(error=type(error).__name__,restored=signal.getsignal(signal.SIGTERM)==prior,
+            staging=[p.name for p in Path(sys.argv[4]).parent.glob('.historical-*') if p.name!='.historical-active'],
+            final=Path(sys.argv[4]).exists())
+ print('REPORT:'+json.dumps(value),flush=True)
+"""
+        for phase in ('extraction', 'verification'):
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                with self.subTest(phase=phase, signal=sig):
+                    destination = self.root / ('interrupted-' + phase + str(sig))
+                    process = subprocess.Popen([sys.executable, '-c', code, str(Path(__file__).resolve().parents[1] / 'scripts'),
+                        str(historical.__file__), str(package), str(destination), phase],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+                    try:
+                        self.assertTrue(select.select([process.stdout], [], [], 15)[0], 'Historical signal fixture never reached owned staging')
+                        self.assertEqual(process.stdout.readline().strip(), 'READY')
+                        os.kill(process.pid, sig)
+                        stdout, stderr = process.communicate(timeout=10)
+                    finally:
+                        if process.poll() is None:
+                            os.killpg(process.pid, signal.SIGKILL); process.wait(timeout=5)
+                    self.assertIn('REPORT:', stdout, 'Cooperative extraction signal skipped cleanup: ' + stderr)
+                    report = json.loads(stdout.split('REPORT:', 1)[1])
+                    self.assertEqual(report['error'], 'KeyboardInterrupt')
+                    self.assertTrue(report['restored'], 'Historical extraction retained its SIGTERM handler')
+                    self.assertFalse(report['staging'], 'Cooperative extraction signal retained owned staging')
+                    self.assertFalse(report['final'])
+                    self.assertEqual((sibling / 'owner').read_text(), 'another invocation')
+                    result = historical.audit_package(package, destination)
+                    self.assertTrue(result['historical_result']['verified'])
+
+    def test_historical_cleanup_preserves_primary_failure_and_restores_handlers(self):
+        import signal
+
+        import evidence_historical as historical
+        primary = KeyboardInterrupt('primary extraction interruption')
+        cleanup = OSError('secondary cleanup failure')
+        native = historical.tempfile.TemporaryDirectory
+        previous = signal.getsignal(signal.SIGTERM)
+        with native() as folder:
+            temporary = native(dir=folder)
+            with patch.object(historical.tempfile, 'TemporaryDirectory', return_value=temporary):
+                with patch.object(temporary, 'cleanup', side_effect=cleanup):
+                    with self.assertRaises(KeyboardInterrupt) as caught:
+                        with historical.historical_staging(folder):
+                            raise primary
+            self.assertIs(caught.exception, primary)
+            self.assertIn('secondary cleanup failure', primary.historical_cleanup['failure'])
+            self.assertEqual(signal.getsignal(signal.SIGTERM), previous)
+            temporary.cleanup()
+            temporary = native(dir=folder)
+            with patch.object(historical.tempfile, 'TemporaryDirectory', return_value=temporary):
+                with patch.object(temporary, 'cleanup', side_effect=cleanup):
+                    with self.assertRaises(OSError) as caught:
+                        with historical.historical_staging(folder):
+                            pass
+            self.assertIs(caught.exception, cleanup)
+            self.assertEqual(signal.getsignal(signal.SIGTERM), previous)
+            temporary.cleanup()
+
     def test_historical_count_metadata_is_validated_before_staging(self):
         import copy
 

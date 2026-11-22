@@ -3,10 +3,12 @@ import json
 import shutil
 import tarfile
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from evidence_bundle import rename_exclusive, safe_member, valid_digest, verify_bundle
 from evidence_inputs import sha256
+from process_supervision import cleanup_interruptions, interruption
 
 PACKAGE = "docs/validation/configuration-input-preflight-followup/68a48c6fee9743c08d6a5e9f21d0aeef"
 
@@ -36,6 +38,33 @@ def carrier_metadata(package, destination):
     return archive_path, archive, expanded, signature
 
 
+
+@contextmanager
+def historical_staging(parent):
+    """Own one staging tree across cooperative signals; SIGKILL cannot unwind it."""
+    with interruption():
+        temporary = tempfile.TemporaryDirectory(prefix=".historical-", dir=parent)
+        failure = None
+        observation = dict(interruptions=[])
+        try:
+            yield temporary.name
+        except BaseException as error:
+            failure = error
+            raise
+        finally:
+            with cleanup_interruptions(observation):
+                try:
+                    temporary.cleanup()
+                except BaseException as cleanup:
+                    if failure is None:
+                        raise
+                    observation["failure"] = repr(cleanup)
+            if failure is not None:
+                failure.historical_cleanup = observation
+            elif observation["interruptions"]:
+                raise KeyboardInterrupt("Interrupted during historical staging cleanup")
+
+
 def audit_package(package, destination):
     package, destination = Path(package), Path(destination)
     archive, archive_info, expanded, signature = carrier_metadata(package, destination)
@@ -44,7 +73,7 @@ def audit_package(package, destination):
     if destination.exists() or destination.is_symlink():
         raise FileExistsError("Historical audit destination already exists: " + str(destination))
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".historical-", dir=destination.parent) as temporary:
+    with historical_staging(destination.parent) as temporary:
         stage = Path(temporary) / "expanded"
         stage.mkdir()
         prefix = expanded["prefix"]
