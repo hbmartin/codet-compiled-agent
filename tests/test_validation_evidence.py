@@ -2339,6 +2339,43 @@ class PreparationRecovery(unittest.TestCase):
         self.assertEqual(failed.call_count, 1)
 
 
+    def test_managed_build_layout_rejects_collisions_before_side_effects(self):
+        import evidence_campaign as campaign
+        base = dict(debug='debug', asan='asan', tsan='tsan', cross='cross')
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d) / 'new campaign'
+            for specification in ('debug', './debug', 'debug/nested', '.', '../escape', '/absolute',
+                                  'home', 'home/nested', 'baseline-release', 'baseline-release/nested',
+                                  'manifest.json', 'harness.json', 'control-example/nested'):
+                with self.subTest(specification=specification), self.assertRaisesRegex(ValueError, 'build path'):
+                    campaign.resolve_build_layout(folder, dict(base, make=specification))
+                self.assertFalse(folder.exists(), 'Layout rejection created campaign files')
+            good = campaign.resolve_build_layout(folder, dict(base, make='custom space/make'))
+            self.assertEqual(good['make'], str((folder / 'custom space/make').resolve()))
+            folder.mkdir(); outside = Path(d) / 'outside'; outside.mkdir()
+            (folder / 'alias').symlink_to(outside, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, 'escapes campaign'):
+                campaign.resolve_build_layout(folder, dict(base, make='alias/make'))
+            (folder / 'same').symlink_to(folder / 'debug', target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, 'collision'):
+                campaign.resolve_build_layout(folder, dict(base, make='same'))
+
+
+    def test_invalid_layout_precedes_tool_probes_and_campaign_creation(self):
+        import evidence_campaign as campaign
+        root = Path(__file__).resolve().parents[1]
+        template = json.loads((root / 'checks/validation-replay.json').read_text())
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'template.json'
+            template['builds']['make'] = 'debug'
+            path.write_text(json.dumps(template))
+            folder = Path(d) / 'new'
+            with patch.object(campaign, 'command', side_effect=AssertionError('unexpected tool probe')):
+                with self.assertRaisesRegex(ValueError, 'build path collision'):
+                    campaign.prepare(root, folder, template_path=path)
+            self.assertFalse(folder.exists())
+
+
 
 if __name__ == "__main__":
     unittest.main()
