@@ -2579,6 +2579,29 @@ class PreparationRecovery(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Layout work counters'):
             verify_tooling_metrics(dict(value, layout_checks=0))
 
+    def test_measurement_envelope_binds_declared_carrier_inputs(self):
+        import os
+
+        import evidence_campaign as campaign
+        from evidence_historical import PACKAGE
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d).resolve(); folder = root / 'campaign'; folder.mkdir()
+            names = ['campaign/config.json', 'campaign/harness.json', 'campaign/baseline-release/CMakeCache.txt',
+                     'campaign/changed-release/CMakeCache.txt', PACKAGE + '/audit-bundle.tar.gz', PACKAGE + '/transport.json']
+            for name in names:
+                path = root / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text('fixture input')
+            config = folder / 'config.json'; config.write_text(json.dumps(dict(root=str(root), folder=str(folder), cases=dict(tooling=['historical-extraction']))))
+            spec = dict(path='campaign/measure.json', kind='measure', inputs=names)
+            context = evidence._context(root, dict(id='1'*32, campaign_id='2'*32), 'benchmarks', {}, {})
+            context['declared_artifacts'] = [spec]
+            with patch.dict(os.environ, CODET_EVIDENCE_CONTEXT=json.dumps(context)), patch.object(campaign, 'measure', return_value=dict(fixture=True)):
+                try:
+                    campaign.produce(config, 'measure')
+                except ValueError as error:
+                    self.fail('Measurement producer omitted declared carrier inputs: ' + str(error))
+            value = evidence.validate_artifact(root / spec['path'], spec, context)
+            self.assertEqual(set(value['input_hashes']), set(names), 'Measurement carrier input coverage changed')
+
     def test_control_marker_rejects_unrelated_regex_assertions(self):
         from evidence_negative_controls import require_assertion_marker
         marker = 'Expected explicit campaign containment rejection'

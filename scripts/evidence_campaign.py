@@ -577,6 +577,9 @@ def produce(config_path, action, *, output=None):
         inputs.extend(input_name(root, folder / (v + "-release") / n) for v in ("baseline", "changed") for n in ("compile_commands.json", "build.ninja", "libcodet_core.a"))
         payload = build_harnesses(root, folder, HARNESS_FILES, config["tools"]["ninja"]["path"])
     elif action == "measure":
+        if "historical-extraction" in config.get("cases", {}).get("tooling", []):
+            from evidence_historical import PACKAGE
+            inputs.extend(PACKAGE + "/" + name for name in ("audit-bundle.tar.gz", "transport.json"))
         inputs.append(input_name(root, folder / "harness.json"))
         inputs.extend(input_name(root, folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed"))
         payload = measure(config)
