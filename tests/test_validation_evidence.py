@@ -844,63 +844,148 @@ class ReplayIntegrity(unittest.TestCase):
         self.assertTrue(result['historical_result']['verified'])
         self.assertTrue(destination.is_dir())
 
-    def test_historical_extraction_and_audit_unwind_real_signals(self):
+    def historical_signal_case(self, phase, sig=None, ignored=False, parent_exits=False):
         import os
         import select
         import signal
 
         import evidence_historical as historical
-        package, _ = self.carrier_fixture()
-        sibling = self.root / '.historical-active'; sibling.mkdir()
-        (sibling / 'owner').write_text('another invocation')
-        code = r"""import importlib.util,json,signal,sys
+        package, _ = self.carrier_fixture() if not (self.root / 'carrier').exists() else (self.root / 'carrier', None)
+        code = r"""import importlib.util,json,os,signal,sys,time
 from pathlib import Path
 sys.path.insert(0,sys.argv[1]);sys.dont_write_bytecode=True
 spec=importlib.util.spec_from_file_location('evidence_historical',sys.argv[2])
 h=importlib.util.module_from_spec(spec);spec.loader.exec_module(h)
-prior=signal.getsignal(signal.SIGTERM)
-def gate():
- print('READY',flush=True);signal.pause()
+if sys.argv[6]=='ignored':signal.signal(signal.SIGINT,signal.SIG_IGN)
+signal.signal(signal.SIGINT,signal.default_int_handler)
+prior={s:signal.getsignal(s) for s in (signal.SIGINT,signal.SIGTERM)}
+def gate(release=False):
+ print('READY:'+str(os.getpid()),flush=True)
+ deadline=time.monotonic()+5
+ while time.monotonic()<deadline:
+  if release:
+   import select
+   if select.select([sys.stdin],[],[],.05)[0] and sys.stdin.readline().strip()=='go':return
+  else:time.sleep(.05)
+ raise RuntimeError('Historical signal fixture deadline expired')
 native_copy=h.shutil.copyfileobj
+native_verify=h.verify_bundle
+native_rename=h.rename_exclusive
+native_cleanup=h.tempfile.TemporaryDirectory.cleanup
+cleanup_gated=False
 def copy(source,output):
  gate();return native_copy(source,output)
-native_verify=h.verify_bundle
 def verify(*args,**kwargs):
  if kwargs.get('historical'):gate()
  return native_verify(*args,**kwargs)
+def rename(stage,destination):
+ if sys.argv[5]=='rename':gate(True)
+ native_rename(stage,destination)
+ if sys.argv[5]=='published':gate(True)
+def cleanup(temporary):
+ global cleanup_gated
+ if not cleanup_gated:cleanup_gated=True;gate(True)
+ return native_cleanup(temporary)
 if sys.argv[5]=='extraction':h.shutil.copyfileobj=copy
-else:h.verify_bundle=verify
-try:h.audit_package(sys.argv[3],sys.argv[4])
-except BaseException as error:
- value=dict(error=type(error).__name__,restored=signal.getsignal(signal.SIGTERM)==prior,
-            staging=[p.name for p in Path(sys.argv[4]).parent.glob('.historical-*') if p.name!='.historical-active'],
-            final=Path(sys.argv[4]).exists())
- print('REPORT:'+json.dumps(value),flush=True)
+elif sys.argv[5]=='verification':h.verify_bundle=verify
+elif sys.argv[5]=='cleanup':h.tempfile.TemporaryDirectory.cleanup=cleanup
+else:h.rename_exclusive=rename
+try:
+ result=h.audit_package(sys.argv[3],sys.argv[4]);value=dict(result=result)
+except BaseException as error:value=dict(error=type(error).__name__,message=str(error))
+value.update(restored=all(signal.getsignal(s)==handler for s,handler in prior.items()),
+ staging=[p.name for p in Path(sys.argv[4]).parent.glob('.historical-*') if p.name!='.historical-active'],
+ final=Path(sys.argv[4]).exists())
+print('REPORT:'+json.dumps(value),flush=True)
 """
-        for phase in ('extraction', 'verification'):
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            parent = Path(directory)
+            sibling = parent / '.historical-active'; sibling.mkdir()
+            (sibling / 'owner').write_text('another invocation')
+            destination = parent / 'result'
+            argv = [sys.executable, '-c', code, str(Path(__file__).resolve().parents[1] / 'scripts'),
+                    str(historical.__file__), str(package), str(destination), phase, 'ignored' if ignored else 'normal']
+            if parent_exits:
+                driver = 'import json,subprocess,sys;subprocess.Popen(json.loads(sys.argv[1]),stdin=subprocess.DEVNULL,start_new_session=True)'
+                argv = [sys.executable, '-c', driver, json.dumps(argv)]
+            process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       text=True, start_new_session=True)
+            child = None
+            try:
+                self.assertTrue(select.select([process.stdout], [], [], 15)[0], 'Historical signal fixture never reached owned staging')
+                ready = process.stdout.readline().strip()
+                self.assertTrue(ready.startswith('READY:'), ready)
+                child = int(ready.split(':', 1)[1])
+                if sig is not None:
+                    os.kill(child, sig)
+                    if phase in ('rename', 'published', 'cleanup'):
+                        process.stdin.write('go\n'); process.stdin.flush()
+                stdout, stderr = process.communicate(timeout=10)
+            finally:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL); process.wait(timeout=5)
+                    if child is not None and child != process.pid:
+                        try:os.killpg(child, signal.SIGKILL)
+                        except ProcessLookupError:pass
+            self.assertIn('REPORT:', stdout, 'Cooperative extraction signal skipped cleanup: ' + stderr)
+            report = json.loads(stdout.split('REPORT:', 1)[1])
+            self.assertTrue(report['restored'], 'Historical extraction retained its signal handler')
+            self.assertFalse(report['staging'], 'Cooperative extraction signal retained owned staging')
+            self.assertEqual((sibling / 'owner').read_text(), 'another invocation')
+            if report['final']:
+                self.assertTrue(report['result']['publication']['committed'], 'Published extraction lost its committed receipt')
+                with self.assertRaises(FileExistsError):historical.audit_package(package, destination)
+            else:
+                result = historical.audit_package(package, destination)
+                self.assertTrue(result['historical_result']['verified'])
+            return report
+
+    def test_historical_extraction_and_audit_unwind_real_signals(self):
+        import signal
+        for ignored in (False, True):
+            for phase in ('extraction', 'verification'):
+                for sig in (signal.SIGTERM, signal.SIGINT):
+                    with self.subTest(phase=phase, signal=sig, inherited_ignored=ignored):
+                        report = self.historical_signal_case(phase, sig, ignored)
+                        self.assertEqual(report.get('error'), 'KeyboardInterrupt', 'Child SIGINT disposition was not restored')
+                        self.assertFalse(report['final'])
+
+    def test_historical_signal_gate_is_bounded_even_after_parent_exit(self):
+        for parent_exits in (False, True):
+            with self.subTest(parent_exits=parent_exits):
+                report = self.historical_signal_case('extraction', parent_exits=parent_exits)
+                self.assertEqual(report.get('error'), 'RuntimeError')
+                self.assertEqual(report.get('message'), 'Historical signal fixture deadline expired', 'Historical gate lost its own deadline')
+                self.assertFalse(report['final'])
+
+    def test_historical_publication_defers_signals_through_commit_and_cleanup(self):
+        import signal
+        for phase in ('rename', 'published', 'cleanup'):
             for sig in (signal.SIGTERM, signal.SIGINT):
                 with self.subTest(phase=phase, signal=sig):
-                    destination = self.root / ('interrupted-' + phase + str(sig))
-                    process = subprocess.Popen([sys.executable, '-c', code, str(Path(__file__).resolve().parents[1] / 'scripts'),
-                        str(historical.__file__), str(package), str(destination), phase],
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
-                    try:
-                        self.assertTrue(select.select([process.stdout], [], [], 15)[0], 'Historical signal fixture never reached owned staging')
-                        self.assertEqual(process.stdout.readline().strip(), 'READY')
-                        os.kill(process.pid, sig)
-                        stdout, stderr = process.communicate(timeout=10)
-                    finally:
-                        if process.poll() is None:
-                            os.killpg(process.pid, signal.SIGKILL); process.wait(timeout=5)
-                    self.assertIn('REPORT:', stdout, 'Cooperative extraction signal skipped cleanup: ' + stderr)
-                    report = json.loads(stdout.split('REPORT:', 1)[1])
-                    self.assertEqual(report['error'], 'KeyboardInterrupt')
-                    self.assertTrue(report['restored'], 'Historical extraction retained its SIGTERM handler')
-                    self.assertFalse(report['staging'], 'Cooperative extraction signal retained owned staging')
-                    self.assertFalse(report['final'])
-                    self.assertEqual((sibling / 'owner').read_text(), 'another invocation')
-                    result = historical.audit_package(package, destination)
-                    self.assertTrue(result['historical_result']['verified'])
+                    report = self.historical_signal_case(phase, sig)
+                    self.assertNotIn('error', report, 'Committed publication was reported as an interruption')
+                    self.assertTrue(report['final'])
+                    self.assertEqual(report['result']['publication']['interruptions'], [dict(signal=int(sig))],
+                                     'Committed publication lost its interruption observation')
+
+    def test_historical_published_cleanup_failure_keeps_receipt_and_exception(self):
+        import evidence_historical as historical
+        package, _ = self.carrier_fixture()
+        destination = self.root / 'published'
+        native = historical.tempfile.TemporaryDirectory.cleanup
+        error = OSError('genuine published cleanup failure')
+        calls = []
+        def fail_once(temporary):
+            calls.append(temporary)
+            if len(calls) == 1:raise error
+            return native(temporary)
+        with patch.object(historical.tempfile.TemporaryDirectory, 'cleanup', fail_once):
+            with self.assertRaises(OSError) as caught:historical.audit_package(package, destination)
+        self.assertIs(caught.exception, error)
+        self.assertTrue(error.historical_publication['publication']['committed'])
+        self.assertTrue(destination.exists())
+        for temporary in calls:native(temporary)
 
     def test_historical_cleanup_preserves_primary_failure_and_restores_handlers(self):
         import signal

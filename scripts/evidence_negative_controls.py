@@ -79,7 +79,7 @@ def run_controls(root, folder):
          "PreparationRecovery.test_managed_build_layout_rejects_collisions_before_side_effects"),
         ("carrier-counts", "evidence_historical", 'type(section.get(field)) is not int or ', '',
          "ReplayIntegrity.test_historical_count_metadata_is_validated_before_staging"),
-        ("carrier-staging", "evidence_historical", 'stage = Path(temporary) / "expanded"', 'stage = destination',
+        ("carrier-staging", "evidence_historical", 'stage = Path(owner.path) / "expanded"', 'stage = destination',
          "ReplayIntegrity.test_historical_extraction_failure_is_transactional_and_retryable"),
         ("carrier-publication", "evidence_historical", 'rename_exclusive(stage, destination)', 'shutil.move(str(stage), str(destination))',
          "ReplayIntegrity.test_historical_publication_race_preserves_existing_destination"),

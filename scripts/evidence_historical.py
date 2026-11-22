@@ -39,29 +39,53 @@ def carrier_metadata(package, destination):
 
 
 
+class HistoricalStage:
+    """One invocation's staging and irrevocable publication receipt."""
+    def __init__(self, path):
+        self.path = path
+        self.result = None
+        self.observation = dict(interruptions=[])
+
+    def publish(self, stage, destination, result):
+        # The signal handlers cannot raise between successful rename and receipt
+        # ownership. No I/O lock is held, and a failed rename remains a failure.
+        with cleanup_interruptions(self.observation):
+            rename_exclusive(stage, destination)
+            self.result = result
+            result["publication"] = dict(committed=True, destination=str(destination),
+                                         interruptions=self.observation["interruptions"])
+
+
 @contextmanager
 def historical_staging(parent):
-    """Own one staging tree across cooperative signals; SIGKILL cannot unwind it."""
+    """Own staging; cooperative signals after publication record commitment."""
     with interruption():
         temporary = tempfile.TemporaryDirectory(prefix=".historical-", dir=parent)
+        owner = HistoricalStage(temporary.name)
         failure = None
-        observation = dict(interruptions=[])
         try:
-            yield temporary.name
+            yield owner
         except BaseException as error:
-            failure = error
-            raise
+            if owner.result is not None and isinstance(error, KeyboardInterrupt):
+                owner.observation["interruptions"].append(dict(exception=type(error).__name__))
+            else:
+                failure = error
+                if owner.result is not None:
+                    error.historical_publication = owner.result
+                raise
         finally:
-            with cleanup_interruptions(observation):
+            with cleanup_interruptions(owner.observation):
                 try:
                     temporary.cleanup()
                 except BaseException as cleanup:
                     if failure is None:
+                        if owner.result is not None:
+                            cleanup.historical_publication = owner.result
                         raise
-                    observation["failure"] = repr(cleanup)
+                    owner.observation["failure"] = repr(cleanup)
             if failure is not None:
-                failure.historical_cleanup = observation
-            elif observation["interruptions"]:
+                failure.historical_cleanup = owner.observation
+            elif owner.observation["interruptions"] and owner.result is None:
                 raise KeyboardInterrupt("Interrupted during historical staging cleanup")
 
 
@@ -73,8 +97,8 @@ def audit_package(package, destination):
     if destination.exists() or destination.is_symlink():
         raise FileExistsError("Historical audit destination already exists: " + str(destination))
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with historical_staging(destination.parent) as temporary:
-        stage = Path(temporary) / "expanded"
+    with historical_staging(destination.parent) as owner:
+        stage = Path(owner.path) / "expanded"
         stage.mkdir()
         prefix = expanded["prefix"]
         files, size, seen = 0, 0, set()
@@ -104,6 +128,7 @@ def audit_package(package, destination):
         result = verify_bundle(bundle, historical=True)
         if not result["verified"] or result["eligible_current"] or not result.get("historical"):
             raise ValueError("Historical audit did not preserve acceptance boundaries")
-        rename_exclusive(stage, destination)
-    return dict(archive_sha256=signature, expanded_files=files, expanded_bytes=size,
-                strict_rejected=True, strict_error=strict_error, historical_result=result)
+        receipt = dict(archive_sha256=signature, expanded_files=files, expanded_bytes=size,
+                       strict_rejected=True, strict_error=strict_error, historical_result=result)
+        owner.publish(stage, destination, receipt)
+    return receipt
