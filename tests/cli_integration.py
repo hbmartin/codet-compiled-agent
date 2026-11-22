@@ -825,7 +825,13 @@ class CliTests(unittest.TestCase):
                     token(b'w') # Agent returned successfully and persisted completion; future still gated.
                     os.write(master,b'/review frozen\n');token(b'p')
                     os.write(trigger,b'g');token(b'c')
-                    collect(lambda received=received:b'fixture done' in received)
+                    # Streamed answer text can precede publication. Keep the callback gated
+                    # until we prove that the output-file assertion cannot run prematurely.
+                    self.assertFalse(output.exists(),'Preparation fixture did not gate final publication')
+                    os.write(trigger,b'o')
+                    collect(lambda notice=notice:bool(select.select([notice],[],[],0)[0]))
+                    self.assertEqual(os.read(notice,1),b'f','Preparation fixture did not gate final publication')
+                    collect(lambda received=received,output=output:b'fixture done' in received and output.exists())
                     self.assertNotIn(b'Error: Interrupted',received,'Preparation cancellation escaped the input phase')
                     self.assertEqual(output.read_text(),'fixture done\n','Preparation cancellation lost completed output')
                     self.assertNotIn(b'Pending message not sent: ]',received,'Preparation left an empty reservation')

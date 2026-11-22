@@ -103,16 +103,18 @@ function(_codet_select_dependency)
       _codet_dependency_record("${pin}" selection format root origin source token)
       _codet_dependency_record("${witness}" success format root origin source token receipt_sha256)
       foreach(prefix selection success)
-        if(NOT ${prefix}_format EQUAL 3 OR NOT ${prefix}_source STREQUAL CMAKE_SOURCE_DIR OR
-           NOT ${prefix}_root STREQUAL "$CACHE{_CODET_DEPENDENCY_VALUE}" OR
-           NOT ${prefix}_origin STREQUAL "$CACHE{_CODET_DEPENDENCY_ORIGIN}" OR
-           NOT ${prefix}_token STREQUAL "$CACHE{_CODET_DEPENDENCY_TOKEN}")
+        if(NOT ${prefix}_format EQUAL 3 OR NOT ${prefix}_source STREQUAL CMAKE_SOURCE_DIR)
           if(prefix STREQUAL "selection")
             set(invalid "${pin}")
           else()
             set(invalid "${witness}")
           endif()
           message(FATAL_ERROR "Invalid or obsolete dependency selection record ${invalid}; ${reset_hint}")
+        endif()
+        if(NOT ${prefix}_root STREQUAL "$CACHE{_CODET_DEPENDENCY_VALUE}" OR
+           NOT ${prefix}_origin STREQUAL "$CACHE{_CODET_DEPENDENCY_ORIGIN}" OR
+           NOT ${prefix}_token STREQUAL "$CACHE{_CODET_DEPENDENCY_TOKEN}")
+          message(FATAL_ERROR "Dependency selection identity disagreement between ${cache} (_CODET_DEPENDENCY_VALUE, _CODET_DEPENDENCY_ORIGIN, _CODET_DEPENDENCY_TOKEN) and ${pin} / ${witness}; ${reset_hint}")
         endif()
       endforeach()
       file(SHA256 "${pin}" receipt_sha256)
@@ -125,7 +127,7 @@ function(_codet_select_dependency)
       # GUI editors retain public type/help. Only an intact prior commitment can
       # distinguish their value change from private-value corruption.
       if(NOT committed)
-        message(FATAL_ERROR "Ambiguous dependency selection edit in ${cache}: no matching prior commitment in ${pin} and ${witness}; ${reset_hint}")
+        message(FATAL_ERROR "Ambiguous dependency selection edit in ${cache}: no matching prior commitment in ${pin} and ${witness}. Configure alone does not create these records: after a successful Configure, run Generate before editing the derived root. If Generate is unavailable, relaunch cmake-gui/ccmake with -DCODET_DEPENDENCY_ROOT=<path>, or in cmake-gui remove the entry and Add Entry with type PATH and the desired value; ${reset_hint}")
       endif()
       set(explicit TRUE)
       file(REMOVE "${pin}" "${witness}")

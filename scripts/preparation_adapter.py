@@ -43,7 +43,7 @@ def _write_adapter(output, adapter):
     try:
         if previous_mode is not None:
             os.fchmod(descriptor, previous_mode)
-        output_stream = os.fdopen(descriptor, "w", encoding="utf-8")
+        output_stream = os.fdopen(descriptor, "w", encoding="utf-8", newline="\n")
         descriptor = None  # The stream owns the descriptor from this point.
         with output_stream as stream:
             stream.write(adapter)
@@ -60,8 +60,12 @@ def generate(source, output):
     text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
     excerpt, adapter = _extract(text)
     output.parent.mkdir(parents=True, exist_ok=True)
-    if not (output.exists() and output.read_text() == adapter):
+    expected = adapter.encode("utf-8")
+    if not (output.exists() and output.read_bytes() == expected):
         _write_adapter(output, adapter)
+    actual = output.read_bytes()
+    if actual != expected:
+        raise ValueError("CLI preparation adapter changed during generation")
     return dict(source=str(source), source_sha256=hashlib.sha256(raw).hexdigest(),
                 excerpt_sha256=hashlib.sha256(excerpt.encode()).hexdigest(),
-                adapter=str(output), adapter_sha256=hashlib.sha256(adapter.encode()).hexdigest())
+                adapter=str(output), adapter_sha256=hashlib.sha256(actual).hexdigest())

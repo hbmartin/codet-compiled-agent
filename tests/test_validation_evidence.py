@@ -798,6 +798,84 @@ class ReplayIntegrity(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'lookup path'):
             audit_package(package, self.root / 'outside-path')
 
+
+    def carrier_fixture(self):
+        import tarfile
+        bundle = self.historical_measurement_bundle()
+        package = self.root / 'carrier'; package.mkdir()
+        archive = package / 'audit-bundle.tar.gz'
+        run = json.loads((bundle / 'capture/run.json').read_text())['id']
+        members = sorted(p for p in bundle.rglob('*') if p.is_file())
+        with tarfile.open(archive, 'w:gz') as stream:
+            for path in members:
+                stream.add(path, arcname=run + '/' + str(path.relative_to(bundle)), recursive=False)
+        metadata = dict(capture_run_id=run, archive=dict(path=archive.name, sha256=evidence.digest(archive), bytes=archive.stat().st_size),
+            expanded=dict(prefix=run, files=len(members), bytes=sum(p.stat().st_size for p in members), inventory_sha256=evidence.digest(bundle / 'inventory.json')))
+        evidence.atomic_json(package / 'transport.json', metadata)
+        return package, metadata
+
+    def test_historical_extraction_failure_is_transactional_and_retryable(self):
+        import evidence_historical as historical
+        package, metadata = self.carrier_fixture()
+        destination = self.root / 'expanded'
+        native = historical.shutil.copyfileobj
+        copied = []
+        error = RuntimeError('injected extraction failure')
+        def fail_second(source, output):
+            if copied:
+                raise error
+            copied.append(True); return native(source, output)
+        for _attempt in range(2):
+            copied.clear()
+            with patch.object(historical.shutil, 'copyfileobj', fail_second):
+                with self.assertRaises(RuntimeError) as failed:
+                    historical.audit_package(package, destination)
+            self.assertIs(failed.exception, error)
+            self.assertFalse(destination.exists(), 'Failed historical extraction left a final tree')
+            self.assertFalse(list(self.root.glob('.historical-*')), 'Failed historical staging was not released')
+        for error in (ValueError('injected verification failure'), KeyboardInterrupt('injected interruption')):
+            with patch.object(historical, 'verify_bundle', side_effect=error):
+                with self.assertRaises(type(error)) as failed:
+                    historical.audit_package(package, destination)
+            self.assertIs(failed.exception, error)
+            self.assertFalse(destination.exists())
+            self.assertFalse(list(self.root.glob('.historical-*')))
+        result = historical.audit_package(package, destination)
+        self.assertTrue(result['historical_result']['verified'])
+        self.assertTrue(destination.is_dir())
+
+    def test_historical_count_metadata_is_validated_before_staging(self):
+        import copy
+
+        from evidence_historical import audit_package
+        package, original = self.carrier_fixture()
+        for section, field in (('archive', 'bytes'), ('expanded', 'files'), ('expanded', 'bytes')):
+            for value in (None, True, False, '1', 1.0, 0, -1):
+                with self.subTest(section=section, field=field, value=value):
+                    metadata = copy.deepcopy(original)
+                    if value is None: metadata[section].pop(field)
+                    else: metadata[section][field] = value
+                    evidence.atomic_json(package / 'transport.json', metadata)
+                    with self.assertRaisesRegex(ValueError, section + r'\.' + field):
+                        audit_package(package, self.root / 'invalid')
+                    self.assertFalse((self.root / 'invalid').exists())
+                    self.assertFalse(list(self.root.glob('.historical-*')))
+
+    def test_historical_publication_race_preserves_existing_destination(self):
+        import evidence_historical as historical
+        package, _ = self.carrier_fixture()
+        destination = self.root / 'expanded'
+        native = historical.rename_exclusive
+        def race(stage, target):
+            target.mkdir(); (target / 'winner').write_text('untouched')
+            return native(stage, target)
+        with patch.object(historical, 'rename_exclusive', race):
+            with self.assertRaises(OSError):
+                historical.audit_package(package, destination)
+        self.assertEqual((destination / 'winner').read_text(), 'untouched')
+        self.assertEqual([p.name for p in destination.iterdir()], ['winner'])
+        self.assertFalse(list(self.root.glob('.historical-*')))
+
     def test_historical_v2_experiment_remains_auditable_but_not_acceptable(self):
         from evidence_bundle import verify_bundle
         target = self.historical_measurement_bundle(version=2, advisory=128)
@@ -2140,7 +2218,10 @@ class PreparationRecovery(unittest.TestCase):
             from preparation_adapter import cli_preparation_adapter
             expected = cli_preparation_adapter(changed)[1]
             self.assertNotEqual(expected, output.read_text())
-            generate(changed, output)
+            try:
+                generate(changed, output)
+            except ValueError as error:
+                self.fail('Valid excerpt change did not rewrite the adapter: ' + str(error))
             self.assertEqual(output.read_text(), expected, 'Valid excerpt change did not rewrite the adapter')
             ambiguous = Path(directory) / 'cli.cpp'
             ambiguous.write_text(source.read_text() + '\n  const auto prepare_line = duplicate;')
@@ -2295,6 +2376,83 @@ class PreparationRecovery(unittest.TestCase):
             with self.subTest(control=name):
                 self.assertEqual((root / source).read_text().count(before), 1, 'Integration mutation no longer matches its production site: ' + name)
 
+
+    def test_adapter_byte_identity_repairs_all_line_endings(self):
+        import preparation_adapter
+        source = Path(__file__).resolve().parents[1] / 'src/modern/cli.cpp'
+        expected = preparation_adapter.cli_preparation_adapter(source)[1].encode('utf-8')
+        with tempfile.TemporaryDirectory() as d:
+            output = Path(d) / 'adapter.hpp'
+            for ending in (b'\n', b'\r\n', b'\r'):
+                with self.subTest(ending=ending):
+                    output.write_bytes(expected.replace(b'\n', ending))
+                    output.chmod(0o640)
+                    try:
+                        value = preparation_adapter.generate(source, output)
+                    except ValueError as error:
+                        self.fail('Byte-different adapter was not repaired: ' + str(error))
+                    self.assertEqual(output.read_bytes(), expected, 'Byte-different adapter was left in place')
+                    self.assertEqual(value['adapter_sha256'], evidence.digest(output))
+                    self.assertEqual(output.stat().st_mode & 0o777, 0o640)
+                    stamp = output.stat().st_mtime_ns
+                    preparation_adapter.generate(source, output)
+                    self.assertEqual(output.stat().st_mtime_ns, stamp)
+            def corrupt(path, content):
+                path.write_text('different complete bytes')
+            with patch.object(preparation_adapter, '_write_adapter', corrupt):
+                output.write_text('old')
+                with self.assertRaisesRegex(ValueError, 'changed during generation'):
+                    preparation_adapter.generate(source, output)
+
+    def test_historical_sample_work_counters_observe_completed_calls(self):
+        from evidence_benchmarks import verify_samples, verify_tooling_metrics
+        from evidence_tool_bench import measure
+        with patch('evidence_benchmarks.verify_samples', wraps=verify_samples) as observed:
+            value = measure(Path(__file__).resolve().parents[1], 'unused', 'historical-samples')
+        self.assertEqual(value['historical_sample_audits'], 32, 'Completed audit work did not match the required workload')
+        self.assertEqual(value['historical_sample_audits'], observed.call_count, 'Audit counter was not observed')
+        self.assertEqual(value['historical_rows'], sum(len(call.args[0]) for call in observed.call_args_list), 'Row counter was not observed')
+        value.update(harness='tooling', workload='historical-samples')
+        verify_tooling_metrics(value)
+        with patch('evidence_benchmarks.verify_samples', side_effect=RuntimeError('failed audit')) as failed:
+            with self.assertRaisesRegex(RuntimeError, 'failed audit'):
+                measure(Path(__file__).resolve().parents[1], 'unused', 'historical-samples')
+        self.assertEqual(failed.call_count, 1)
+
+    def test_managed_build_layout_rejects_collisions_before_side_effects(self):
+        import evidence_campaign as campaign
+        base = dict(debug='debug', asan='asan', tsan='tsan', cross='cross')
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d) / 'new campaign'
+            for specification in ('debug', './debug', 'debug/nested', '.', '../escape', '/absolute',
+                                  'home', 'home/nested', 'baseline-release', 'baseline-release/nested',
+                                  'manifest.json', 'harness.json', 'control-example/nested'):
+                with self.subTest(specification=specification), self.assertRaisesRegex(ValueError, 'build path'):
+                    campaign.resolve_build_layout(folder, dict(base, make=specification))
+                self.assertFalse(folder.exists(), 'Layout rejection created campaign files')
+            good = campaign.resolve_build_layout(folder, dict(base, make='custom space/make'))
+            self.assertEqual(good['make'], str((folder / 'custom space/make').resolve()))
+            folder.mkdir(); outside = Path(d) / 'outside'; outside.mkdir()
+            (folder / 'alias').symlink_to(outside, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, 'escapes campaign'):
+                campaign.resolve_build_layout(folder, dict(base, make='alias/make'))
+            (folder / 'same').symlink_to(folder / 'debug', target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, 'collision'):
+                campaign.resolve_build_layout(folder, dict(base, make='same'))
+
+    def test_invalid_layout_precedes_tool_probes_and_campaign_creation(self):
+        import evidence_campaign as campaign
+        root = Path(__file__).resolve().parents[1]
+        template = json.loads((root / 'checks/validation-replay.json').read_text())
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'template.json'
+            template['builds']['make'] = 'debug'
+            path.write_text(json.dumps(template))
+            folder = Path(d) / 'new'
+            with patch.object(campaign, 'command', side_effect=AssertionError('unexpected tool probe')):
+                with self.assertRaisesRegex(ValueError, 'build path collision'):
+                    campaign.prepare(root, folder, template_path=path)
+            self.assertFalse(folder.exists())
 
 if __name__ == "__main__":
     unittest.main()

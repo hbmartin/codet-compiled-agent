@@ -894,5 +894,96 @@ class DependencyReconfiguration(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse((output / 'CMakeFiles/codet-dependency-success.json').exists())
 
+    def test_private_absolute_value_disagreement_names_cache_and_records(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, output, _, configure = self.dependency_probe(Path(d), 'Ninja')
+            self.assertEqual(configure('/root-A').returncode, 0)
+            pin = output / 'CMakeFiles/codet-dependency-selection.json'
+            original = pin.read_bytes()
+            cache = output / 'CMakeCache.txt'
+            changed, count = re.subn(r'(?m)^_CODET_DEPENDENCY_VALUE:INTERNAL=.*$',
+                '_CODET_DEPENDENCY_VALUE:INTERNAL=/wrong-private-value', cache.read_text())
+            self.assertEqual(count, 1); cache.write_text(changed)
+            result = configure('/environment-B')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('identity disagreement', result.stderr, 'Private cache disagreement blamed an intact receipt')
+            for value in ('CMakeCache.txt', '_CODET_DEPENDENCY_VALUE', 'codet-dependency-selection.json', 'codet-dependency-success.json'):
+                self.assertIn(value, result.stderr)
+            self.assertEqual(pin.read_bytes(), original)
+
+    def test_configure_only_recovery_guidance_and_explicit_gui_entry(self):
+        with tempfile.TemporaryDirectory() as d:
+            source, output, text, configure = self.dependency_probe(Path(d), 'Ninja')
+            (source / 'CMakeLists.txt').write_text(text + 'message(SEND_ERROR "provisional")\n')
+            self.assertNotEqual(configure('/root-A').returncode, 0)
+            (source / 'CMakeLists.txt').write_text(text)
+            self.edit_public_root(output, '/GUI-B')
+            result = configure('/environment-C')
+            self.assertNotEqual(result.returncode, 0)
+            for phrase in ('Configure alone', 'run Generate', 'relaunch cmake-gui/ccmake', 'Add Entry'):
+                self.assertIn(phrase, result.stderr.replace('\n', ' '), 'Missing Configure-only GUI recovery guidance')
+            cache = output / 'CMakeCache.txt'
+            changed, count = re.subn(r'(?m)^//.*Codet derived dependency selection.*\n(?=CODET_DEPENDENCY_ROOT:PATH=)',
+                '//Explicit GUI dependency sources\n', cache.read_text())
+            # CMake wraps long cache help. Remove its entire comment block instead.
+            if not count:
+                changed, count = re.subn(r'(?m)(?://[^\n]*\n)+(?=CODET_DEPENDENCY_ROOT:PATH=)',
+                    '//Explicit GUI dependency sources\n', cache.read_text())
+            self.assertEqual(count, 1); cache.write_text(changed)
+            result = configure('/environment-C')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((output / 'CMakeFiles/codet-dependency-root.txt').read_text(), '/GUI-B')
+
+    @unittest.skipUnless(shutil.which('ccmake'), 'ccmake is unavailable for the optional real Configure-only fixture')
+    def test_real_ccmake_configure_only_retains_strict_recovery(self):
+        import fcntl
+        import pty
+        import select
+        import signal
+        import struct
+        import termios
+        import time
+
+        def run(source, output, selected):
+            master, slave = pty.openpty()
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 48, 240, 0, 0))
+            process = subprocess.Popen([shutil.which('ccmake'), '-S', str(source), '-B', str(output), '-G', 'Ninja'],
+                stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
+                env=dict(os.environ, TERM='xterm', CODET_DEPENDENCY_ROOT=selected))
+            os.close(slave)
+            data = bytearray(); sent = dismissed = quitting = False; offset = 0
+            deadline = time.monotonic() + 15
+            try:
+                while process.poll() is None and time.monotonic() < deadline:
+                    if select.select([master], [], [], .05)[0]:
+                        try: data.extend(os.read(master, 65536))
+                        except OSError: break
+                    if not sent and b'[c] Configure' in data:
+                        offset = len(data); os.write(master, b'c'); sent = True
+                    tail = data[offset:]
+                    if sent and not dismissed and b'Press [e]' in tail:
+                        os.write(master, b'e'); dismissed = True; offset = len(data)
+                    elif sent and not quitting and b'Quit without generating' in tail:
+                        os.write(master, b'q'); quitting = True
+                self.assertTrue(quitting, 'ccmake did not complete its Configure-only UI gates: ' + repr(bytes(data[-1500:])))
+                process.wait(timeout=3)
+            finally:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL); process.wait(timeout=3)
+                os.close(master)
+            return data.decode(errors='replace')
+
+        with tempfile.TemporaryDirectory(prefix='codet configure only ') as d:
+            source, output, _, configure = self.dependency_probe(Path(d), 'Ninja')
+            self.assertIn('Configuring done', run(source, output, '/root-A'))
+            for kind in ('selection', 'success'):
+                self.assertFalse((output / ('CMakeFiles/codet-dependency-' + kind + '.json')).exists())
+            self.edit_public_root(output, '/GUI-B')
+            transcript = run(source, output, '/environment-C')
+            for phrase in ('Ambiguous dependency selection edit', 'Configure alone', 'run Generate'):
+                self.assertIn(phrase, transcript, 'Configure-only GUI failure lacks recovery guidance')
+            self.assertEqual(configure('/environment-C', '-DCODET_DEPENDENCY_ROOT=/GUI-B').returncode, 0)
+            self.assertEqual((output / 'CMakeFiles/codet-dependency-root.txt').read_text(), '/GUI-B')
+
 if __name__ == "__main__":
     unittest.main()

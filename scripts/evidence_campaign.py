@@ -35,6 +35,14 @@ CASES = {
 HARNESS_FILES = ["tests/preparation_bench.cpp", "tests/line_input_bench.cpp", "tests/output_bench.cpp", "tests/export_bench.cpp",
                  "tests/descriptor_bench_metrics.hpp", "tests/native_stat_interposer.hpp", "tests/native_symbol.hpp", "tests/temp.hpp", "scripts/evidence_tool_bench.py", "scripts/evidence_tiger_context_bench.py"]
 TOOLS = ("clang-tidy", "cppcheck", "clang-analyzer")
+PRODUCER_ACTIONS = ("archive", "harness", "platforms", "semgrep-controls", "analysis", "analysis-baseline", "analysis-changed", "measure", "negative-controls", "native-negative-controls", "cross-placeholder", "build-info", "ci", "history", "hash-profile", "historical-audit")
+MANAGED_WORKSPACES = ("home", "tmp", "capture", "baseline-src", "baseline-release", "changed-release",
+                      "baseline-harness", "changed-harness", "harness-src", "historical-audit-expanded",
+                      "host-prefix", "hash-correctness")
+MANAGED_FILES = ("config.json", "manifest.json", "baseline.tar", "measurement.json", "semgrep.log",
+                 "host-placeholder.c", "host-placeholder.o", "capture-driver.log")
+CONTROL_PREFIXES = ("control-", "native-control-", "semgrep-control-")
+
 
 
 def command(argv, *, cwd=None, timeout=30, env=None):
@@ -110,7 +118,35 @@ def replay_builds(value):
     if (not isinstance(value, dict) or set(value) not in (required, required | {"make"}) or
             any(not isinstance(v, str) or not v for v in value.values())):
         raise ValueError("Invalid replay build declaration")
-    return dict(make="make-preparation", **value) if "make" not in value else dict(value)
+    settings = dict(make="make-preparation", **value) if "make" not in value else dict(value)
+    for name, specification in settings.items():
+        path = Path(specification)
+        if path.is_absolute() or ".." in path.parts or not path.parts or "\\" in specification:
+            raise ValueError("Invalid replay build path for " + name + ": " + specification)
+    return settings
+
+
+def resolve_build_layout(folder, settings):
+    folder = Path(folder).resolve()
+    reserved = {name: folder / name for name in (*MANAGED_WORKSPACES, *MANAGED_FILES,
+                *(action + ".json" for action in PRODUCER_ACTIONS))}
+    paths = {}
+    def overlap(first, second):
+        return first == second or first in second.parents or second in first.parents
+    for name, specification in replay_builds(settings).items():
+        path = (folder / specification).resolve()
+        if folder not in path.parents:
+            raise ValueError("Replay build path escapes campaign for " + name + ": " + specification)
+        relative = path.relative_to(folder)
+        if relative.parts[0].startswith(CONTROL_PREFIXES):
+            raise ValueError("Replay build path uses reserved control workspace for " + name)
+        for other, target in {**reserved, **paths}.items():
+            if overlap(path, target):
+                raise ValueError("Replay build path collision: " + name + " with " + other)
+        if path.exists() or path.is_symlink():
+            raise ValueError("Managed build directory already exists: " + str(path))
+        paths[name] = path
+    return {name: str(path) for name, path in paths.items()}
 
 
 def prepare(root, folder, baseline=None, check_python=None, python39=None, analysis_python=None,
@@ -131,6 +167,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     if set(template) != {"schema_version", "baseline", "builds", "python39", "benchmark"}:
         raise ValueError("Unknown or missing replay template setting")
     build_settings = replay_builds(template["builds"])
+    builds = resolve_build_layout(folder, build_settings)
     if (set(template["benchmark"]) != {"sets", "measured_per_set"} or
             any(type(v) is not int or v < 1 for v in template["benchmark"].values())):
         raise ValueError("Invalid replay build or benchmark declaration")
@@ -152,6 +189,8 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     python39 = tool("python39", discover_python39(python39, template["python39"]), optional=True)
     native = {n: tool(n, n, version=None if n == "ar" and sys.platform == "darwin" else "--version")
               for n in ("git", "cmake", "ctest", "ninja", "make", "tar", "ar", "cc", "c++")}
+    if shutil.which("ccmake"):
+        tool("ccmake", "ccmake")
     for name in ("pkg-config", "ranlib", "ld", "strip", "ps"):
         if shutil.which(name):
             tool(name, shutil.which("ps", path=os.defpath) if name == "ps" else name, version=None if sys.platform == "darwin" and name != "pkg-config" else "--version")
@@ -171,9 +210,6 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
             tool("go", go if go.exists() else "go", "version")
     baseline = command([native["git"], "-C", root, "rev-parse", (baseline or template["baseline"]) + "^{commit}"])
     folder.mkdir(parents=True, exist_ok=True)
-    builds = {name: str(folder / relative) for name, relative in build_settings.items()}
-    if any(Path(value).exists() for value in builds.values()):
-        raise ValueError("Managed build directory already exists")
     environment = dict(PATH=os.pathsep.join(dict.fromkeys([str(Path(t["path"]).parent) for t in tools.values()] + os.defpath.split(os.pathsep))),
                        LANG="en_US.UTF-8" if sys.platform == "darwin" else "C.UTF-8",
                        HOME=str(folder / "home"), TMPDIR=str(folder / "tmp"))
@@ -187,7 +223,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
                   hash_correctness_ref=command([native["git"], "-C", root, "rev-parse", (hash_correctness_ref or baseline) + "^{commit}"]),
                   ca_bundle=dict(path=str(ca_bundle), sha256=digest(ca_bundle)) if ca_bundle else None,
                   dependency_roots=[".deps/" + n for n in ("googletest", "json", "tomlplusplus", "json-schema-validator")],
-                  builds=builds, validated_ref=command([native["git"], "-C", root, "rev-parse", "HEAD"]),
+                  builds=builds, build_specs=build_settings, validated_ref=command([native["git"], "-C", root, "rev-parse", "HEAD"]),
                   ci_run=ci_run, analyzer_env=analyzer_env, check_python=python, python39=python39,
                   analysis_python=analysis_python, prior_attempts=[str((root / path).resolve()) for path in
                       ([prior_attempt] if isinstance(prior_attempt, (str, Path)) else prior_attempt or [])],
@@ -611,7 +647,7 @@ def main():
     replay.add_argument("--cppcheck")
     producer = sub.add_parser("produce")
     producer.add_argument("config", type=Path)
-    producer.add_argument("kind", choices=("archive", "harness", "platforms", "semgrep-controls", "analysis", "analysis-baseline", "analysis-changed", "measure", "negative-controls", "native-negative-controls", "cross-placeholder", "build-info", "ci", "history", "hash-profile", "historical-audit"))
+    producer.add_argument("kind", choices=PRODUCER_ACTIONS)
     producer.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.action == "prepare":

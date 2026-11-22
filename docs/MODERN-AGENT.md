@@ -86,8 +86,9 @@ error can retain a validated selection. Automatic Ninja/Make regeneration reuses
 committed selections regardless of its shell environment. Both an explicit empty
 `-DCODET_DEPENDENCY_ROOT=` and `-UCODET_DEPENDENCY_ROOT` reset discovery.
 Selection ownership and receipt metadata use internal version 3. Old owned records
-are not migrated and stop configuration with reset instructions, including obsolete
-empty markers; they never silently select another tree. Use
+are not migrated: nonempty owned records stop configuration with reset instructions.
+Empty public values and `-U` reset before version validation, including obsolete
+empty markers, and rediscover from the current environment/default. Use
 `-UCODET_DEPENDENCY_ROOT` (or an untyped empty override) or recreate an old build directory.
 Explicit cache assignments replace ownership metadata, so repeating an identical
 `-D` value still overrides a provisional or committed derived selection. Literal
@@ -102,7 +103,14 @@ indistinguishable from that provisional state, including when their entire
 `CMakeFiles/` directory is deleted. Neither file proves that generation completed.
 GUI value edits preserving managed help and PATH type become explicit only after
 the previous private metadata and both success records validate. Ambiguous edits
-require a reset or an explicit `-D` assignment. Clearing the GUI value resets
+require a reset or an explicit `-D` assignment. Configure alone in cmake-gui or
+ccmake does not write the success records: after a successful initial Configure,
+run Generate before editing the derived value (ccmake may require a second
+Configure before enabling `g`). If the initial Configure fails or Generate is
+unavailable, relaunch with `-DCODET_DEPENDENCY_ROOT=/absolute/path`. Alternatively,
+in cmake-gui remove `CODET_DEPENDENCY_ROOT`, then use Add Entry with the same name,
+type PATH, the desired absolute value, and an ordinary descriptive help string;
+this makes the selection explicit. Do not change private metadata. Clearing the GUI value resets
 discovery even if its help and type remain unchanged. A corrupt current receipt produces
 an identifying reset diagnostic. Missing
 dependencies report the selected root; provisioning must use that same root,
