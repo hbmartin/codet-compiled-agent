@@ -3092,6 +3092,17 @@ TEST(InputPreparation, SharedFacadePreservesGuardsLifecycleAndSinglePreparation)
   discarded.discarded = true;
   prepare(discarded);
   EXPECT_TRUE(stages.empty()) << "Shared facade bypassed its guards";
+  detail::InputLine bound{"yes", detail::ApprovalIdentity{"session", "request", 7}};
+  const auto original = bound.original_storage();
+  prepare(bound);
+  EXPECT_TRUE(stages.empty()) << "Shared facade prepared a request-bound answer";
+  EXPECT_EQ(bound.preparation.state, detail::PreparationState::unprepared);
+  EXPECT_EQ(bound.original_storage(), original);
+  EXPECT_EQ(bound.text(), "yes");
+  ASSERT_TRUE(bound.request);
+  EXPECT_EQ(bound.request->session, "session");
+  EXPECT_EQ(bound.request->request, "request");
+  EXPECT_EQ(bound.request->turn, 7u);
   detail::InputLine empty{""};
   empty.preparation_context = detail::PreparationContext::pending;
   prepare(empty);

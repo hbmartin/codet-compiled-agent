@@ -663,6 +663,149 @@ class ReplayIntegrity(unittest.TestCase):
         self.assertEqual(len(list((target / "measurements").rglob("samples.csv"))), 4)
         self.assertEqual(len(json.loads((target / "measurements.json").read_text())), 4)
 
+    def historical_measurement_bundle(self, version=1, advisory=128):
+        import statistics
+
+        import evidence_bundle
+        row = PreparationRecovery.row(preparation_metric_version=version, workload='preflight-checks',
+            prepared_submissions=128, effective_content_bytes=640, advisory_budget_checks=advisory)
+        if version == 1:
+            del row['advisory_budget_checks']
+        rows = [dict(row, set=number, sample=sample, variant=variant, warmup=sample == 0,
+                     milliseconds=float(sample + 1)) for number in (1, 2) for variant in ('baseline', 'changed') for sample in range(6)]
+        summaries = []
+        for number in (1, 2):
+            for variant in ('baseline', 'changed'):
+                selected = [v for v in rows if v['set'] == number and v['variant'] == variant and not v['warmup']]
+                fields = [k for k, value in selected[0].items() if type(value) in (int, float) and k not in ('set', 'sample')]
+                summaries.append(dict(set=number, harness='preparation', workload='preflight-checks', variant=variant,
+                    **{k: statistics.median(v[k] for v in selected) for k in fields}))
+        script = self.root / 'producer.py'
+        payload = dict(rows=rows, summary=summaries)
+        script.write_text('import sys\nfrom pathlib import Path\nsys.path.insert(0,' + repr(str(Path(evidence.__file__).parent))
+            + ')\nfrom validation_evidence import write_artifact\nimport json\nwrite_artifact(Path("measure.json"),"measure",json.loads('
+            + repr(json.dumps(payload)) + '),["config.json"])\n')
+        evidence.atomic_json(self.root / 'config.json', dict(cases=dict(preparation=['preflight-checks']), sets=2, measured=5))
+        self.checks = [dict(id='measure', argv=[sys.executable, str(script)], artifacts=[dict(path='measure.json',kind='measure',inputs=['config.json'])])]
+        self.capture()
+        target = self.root / 'historical-bundle'
+        # Simulate a bundle published by the then-current metric interpreter. The
+        # actual frozen v1 campaign is also audited by a captured campaign check.
+        verify = evidence_bundle.verify_samples
+        with patch.object(evidence_bundle, 'verify_samples', side_effect=lambda *a, **kw: verify(*a, **dict(kw, historical=True))):
+            evidence.publish_bundle(self.manifest, self.folder, target)
+        return target
+
+    def test_historical_bundle_audit_is_explicit_and_never_current_eligible(self):
+        from evidence_bundle import verify_bundle
+        target = self.historical_measurement_bundle()
+        with self.assertRaisesRegex(ValueError, 'preparation measurement counters'):
+            verify_bundle(target)
+        try:
+            value = verify_bundle(target, historical=True)
+        except ValueError as error:
+            self.fail('Historical metric interpretation was not exposed by the bundle auditor: ' + str(error))
+        self.assertTrue(value['verified'], 'Historical metric interpretation was not exposed by the bundle auditor')
+        self.assertTrue(value['historical'])
+        self.assertFalse(value['eligible_current'], 'Historical auditing granted current campaign eligibility')
+        with self.assertRaisesRegex(ValueError, 'preparation measurement counters'):
+            evidence.publish_bundle(self.manifest, self.folder, self.root / 'cannot-publish-live')
+        for wrong in (1, None, 'yes'):
+            with self.assertRaisesRegex(ValueError, 'Historical audit mode'):
+                verify_bundle(target, historical=wrong)
+
+    def test_historical_cli_exit_and_publication_boundaries(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        target = self.historical_measurement_bundle()
+        with patch.object(sys, 'argv', ['evidence', 'verify-bundle', str(target), '--historical']), redirect_stdout(StringIO()) as stream:
+            self.assertEqual(evidence.main(), 0)
+        value = json.loads(stream.getvalue())
+        self.assertTrue(value['verified']); self.assertFalse(value['eligible_current'])
+        with patch.object(sys, 'argv', ['evidence', 'verify-bundle', str(target)]), self.assertRaisesRegex(ValueError, 'preparation measurement counters'):
+            evidence.main()
+        with patch.object(sys, 'argv', ['evidence', 'bundle', str(self.manifest), str(self.folder), '--historical']), redirect_stdout(StringIO()):
+            with self.assertRaises(SystemExit) as result:
+                evidence.main()
+        self.assertEqual(result.exception.code, 2)
+
+    def test_historical_audit_keeps_provenance_sidecar_and_summary_checks(self):
+        import shutil
+
+        from evidence_bundle import verify_bundle
+        target = self.historical_measurement_bundle()
+        for fault in ('input', 'sidecar', 'summary', 'producer'):
+            with self.subTest(fault=fault):
+                changed = self.root / ('damaged-' + fault); shutil.copytree(target, changed)
+                inventory_path = changed / 'inventory.json'
+                inventory = json.loads(inventory_path.read_text())
+                if fault == 'input':
+                    path = changed / next(i['storage'] for i in json.loads((changed / 'inputs.json').read_text()) if i.get('storage'))
+                    path.write_text('corrupt archived input')
+                elif fault == 'sidecar':
+                    path = next((changed / 'measurements').rglob('samples.csv')); path.write_text('corrupt sidecar')
+                    inventory[str(path.relative_to(changed))] = evidence.digest(path)
+                else:
+                    path = changed / 'artifacts/measure/measure.json'; value = json.loads(path.read_text())
+                    if fault == 'summary':
+                        value['payload']['summary'][0]['milliseconds'] += 1
+                    else:
+                        value['check_id'] = 'another-producer'
+                    evidence.atomic_json(path, value)
+                    signature = evidence.digest(path)
+                    inventory[str(path.relative_to(changed))] = signature
+                    for record_path in (changed / 'capture/measure.json', changed / 'report.json'):
+                        record = json.loads(record_path.read_text())
+                        if record_path.name == 'report.json':
+                            record['derived_artifacts'][0] = value
+                            record['validation'][0]['artifacts'][0]['sha256'] = signature
+                        else:
+                            record['artifacts'][0]['sha256'] = signature
+                        evidence.atomic_json(record_path, record)
+                        inventory[str(record_path.relative_to(changed))] = evidence.digest(record_path)
+                evidence.atomic_json(inventory_path, inventory)
+                with self.assertRaisesRegex(ValueError, 'inventory|sidecar|summary|producer'):
+                    verify_bundle(changed, historical=True)
+
+    def test_historical_carrier_expansion_is_checked_before_auditing(self):
+        import tarfile
+
+        from evidence_historical import audit_package
+        bundle = self.historical_measurement_bundle()
+        package = self.root / 'package'; package.mkdir()
+        archive = package / 'audit-bundle.tar.gz'
+        run = json.loads((bundle / 'capture/run.json').read_text())['id']
+        members = sorted(p for p in bundle.rglob('*') if p.is_file())
+        with tarfile.open(archive, 'w:gz') as stream:
+            for path in members:
+                stream.add(path, arcname=run + '/' + str(path.relative_to(bundle)), recursive=False)
+        metadata = dict(capture_run_id=run, archive=dict(path=archive.name, sha256=evidence.digest(archive), bytes=archive.stat().st_size),
+            expanded=dict(prefix=run, files=len(members), bytes=sum(p.stat().st_size for p in members), inventory_sha256=evidence.digest(bundle / 'inventory.json')))
+        evidence.atomic_json(package / 'transport.json', metadata)
+        result = audit_package(package, self.root / 'expanded')
+        self.assertTrue(result['strict_rejected'])
+        self.assertTrue(result['historical_result']['verified'])
+        self.assertFalse(result['historical_result']['eligible_current'])
+        with self.assertRaises(FileExistsError):
+            audit_package(package, self.root / 'expanded')
+        metadata['archive']['sha256'] = '0' * 64
+        evidence.atomic_json(package / 'transport.json', metadata)
+        with self.assertRaisesRegex(ValueError, 'carrier digest'):
+            audit_package(package, self.root / 'wrong-digest')
+        self.assertFalse((self.root / 'wrong-digest').exists())
+        metadata['archive']['path'] = '../outside.tar.gz'
+        evidence.atomic_json(package / 'transport.json', metadata)
+        with self.assertRaisesRegex(ValueError, 'lookup path'):
+            audit_package(package, self.root / 'outside-path')
+
+    def test_historical_v2_experiment_remains_auditable_but_not_acceptable(self):
+        from evidence_bundle import verify_bundle
+        target = self.historical_measurement_bundle(version=2, advisory=128)
+        with self.assertRaisesRegex(ValueError, '256 advisory'):
+            verify_bundle(target)
+        value = verify_bundle(target, historical=True)
+        self.assertTrue(value['verified']); self.assertFalse(value['eligible_current'])
+
     def test_all_required_sidecars_are_verified(self):
         import shutil
 
@@ -820,10 +963,16 @@ class ReplayIntegrity(unittest.TestCase):
         self.assertIn("custom-debug", next(c for c in checks if c["id"] == "debug-configure")["argv"][4])
         config = json.loads((self.root / "build/fresh/config.json").read_text())
         self.assertNotIn("SSL_CERT_FILE", config["environment"])
+        self.assertEqual(config["builds"]["make"], str((self.root / "build/fresh/make-preparation").resolve()))
+        declared = json.loads(template.read_text()); declared['builds']['make'] = 'custom make'
+        evidence.atomic_json(template, declared)
         self.assertEqual((config["sets"], config["measured"], config["python39"]), (3, 4, campaign.discover_python39(preferred="unavailable-python39")))
         other = campaign.prepare(self.root, Path("build/other"), "HEAD", sys.executable, sys.executable, sys.executable,
                                  template_path=template, clang_tidy=sys.executable, cppcheck=sys.executable)
-        self.assertEqual(json.loads((other.parent / "config.json").read_text())["python39"], sys.executable)
+        other_config = json.loads((other.parent / "config.json").read_text())
+        self.assertEqual(other_config["python39"], sys.executable)
+        self.assertEqual(other_config["builds"]["make"], str((self.root / "build/other/custom make").resolve()))
+        self.assertIn('custom make', next(c for c in json.loads(other.read_text())["checks"] if c["id"] == 'make-configure')['argv'][4])
 
 
     def test_every_compatibility_wrapper_preserves_captured_output(self):
@@ -1949,6 +2098,30 @@ class PreparationRecovery(unittest.TestCase):
         from evidence_benchmarks import verify_preparation_metrics
         verify_preparation_metrics(self.row(preparation_metric_version=1, payload_sized_allocations=256), historical=True)
 
+    def test_v2_baseline_and_historical_advisory_controls_reject_arbitrary_counts(self):
+        from evidence_benchmarks import verify_preparation_metrics
+        for historical in (False, True):
+            for role in ('baseline', 'changed'):
+                if not historical and role == 'changed':
+                    continue
+                for count in (0, 127, 129, 255, 257, 999):
+                    with self.subTest(historical=historical, role=role, count=count), self.assertRaisesRegex(ValueError, 'advisory-check positive control'):
+                        verify_preparation_metrics(self.row(variant=role, workload='preflight-checks', advisory_budget_checks=count,
+                            prepared_submissions=128, effective_content_bytes=640), historical=historical)
+                for count in (128, 256):
+                    verify_preparation_metrics(self.row(variant=role, workload='preflight-checks', advisory_budget_checks=count,
+                        prepared_submissions=128, effective_content_bytes=640), historical=historical)
+
+    def test_positive_control_wrapper_requires_an_explicit_valid_role(self):
+        from evidence_campaign import positive_controls
+        row = self.row(workload='preflight-checks', advisory_budget_checks=256, prepared_submissions=128, effective_content_bytes=640)
+        positive_controls(row, 'preparation', 'preflight-checks', 'changed')
+        with self.assertRaises(TypeError):
+            positive_controls(row, 'preparation', 'preflight-checks')
+        for role in (None, '', 'other', 'baseline'):
+            with self.subTest(role=role), self.assertRaisesRegex(ValueError, 'preparation variant'):
+                positive_controls(row, 'preparation', 'preflight-checks', role)
+
     def test_adapter_driver_rewrites_only_after_production_excerpt_changes(self):
         from preparation_bench_driver import generate
         source = Path(__file__).resolve().parents[1] / 'src/modern/cli.cpp'
@@ -2003,17 +2176,17 @@ class PreparationRecovery(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / 'adapter.hpp'
             output.write_text('previous complete header')
-            factory = preparation_adapter.tempfile.NamedTemporaryFile
+            factory = preparation_adapter.os.fdopen
             @contextmanager
-            def interrupted(**options):
-                with factory(**options) as stream:
+            def interrupted(*args, **options):
+                with factory(*args, **options) as stream:
                     class Partial:
                         name = stream.name
                         def write(self, content):
                             stream.write(content[:23])
                             raise OSError('injected interrupted adapter write')
                     yield Partial()
-            with patch('preparation_adapter.tempfile.NamedTemporaryFile', interrupted):
+            with patch('preparation_adapter.os.fdopen', interrupted):
                 with self.assertRaisesRegex(OSError, 'interrupted adapter write'):
                     generate(source, output)
             self.assertEqual(output.read_text(), 'previous complete header', 'Interrupted write truncated the adapter')
@@ -2025,6 +2198,64 @@ class PreparationRecovery(unittest.TestCase):
             generate(source, output)
             self.assertIn('prepare_input_line', output.read_text())
 
+    def test_adapter_permissions_and_snapshot_extraction_are_preserved(self):
+        import os
+        import stat
+
+        import preparation_adapter
+        source = Path(__file__).resolve().parents[1] / 'src/modern/cli.cpp'
+        for mask in (0o022, 0o077):
+            with self.subTest(mask=mask), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / 'adapter.hpp'
+                previous = os.umask(mask)
+                try:
+                    with patch.object(preparation_adapter, '_extract', wraps=preparation_adapter._extract) as extract:
+                        record = preparation_adapter.generate(source, output)
+                    self.assertEqual(extract.call_count, 1, 'Historical adapter parsed the same source twice')
+                finally:
+                    os.umask(previous)
+                self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o666 & ~mask, 'New adapter ignored the process umask')
+                self.assertEqual(record['source_sha256'], evidence.digest(source))
+                self.assertEqual(record['adapter_sha256'], evidence.digest(output))
+                output.write_text('old complete header'); output.chmod(0o640)
+                preparation_adapter.generate(source, output)
+                self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o640, 'Replacement adapter changed existing permissions')
+                stamp = output.stat().st_mtime_ns
+                preparation_adapter.generate(source, output)
+                self.assertEqual(output.stat().st_mtime_ns, stamp)
+                self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o640)
+
+    def test_make_replay_directory_is_configurable_and_legacy_default_is_recorded(self):
+        from evidence_campaign import replay_builds
+        base = dict(debug='debug', asan='asan', tsan='tsan', cross='cross')
+        self.assertEqual(replay_builds(base)['make'], 'make-preparation')
+        self.assertNotIn('make', base)
+        self.assertEqual(replay_builds(dict(base, make='space dir/custom make'))['make'], 'space dir/custom make')
+        for invalid in (dict(base, make=''), dict(base, other='extra'), None, dict(base, debug=1)):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, 'replay build declaration'):
+                replay_builds(invalid)
+
+    def test_historical_sample_measurement_uses_the_historical_contract(self):
+        from evidence_benchmarks import verify_tooling_metrics
+        from evidence_tool_bench import measure
+        value = measure(Path(__file__).resolve().parents[1], 'unused', 'historical-samples')
+        value.update(harness='tooling', workload='historical-samples')
+        verify_tooling_metrics(value)
+        self.assertEqual((value['historical_sample_audits'], value['historical_rows']), (32, 768))
+        for field in ('historical_sample_audits', 'historical_rows'):
+            with self.assertRaisesRegex(ValueError, 'Historical sample audit'):
+                verify_tooling_metrics(dict(value, **{field: 0}))
+
+    def test_explicit_historical_adapter_cli_remains_usable(self):
+        root = Path(__file__).resolve().parents[1]
+        from preparation_adapter import cli_preparation_adapter
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'CLI adapter.hpp'
+            result = subprocess.run([sys.executable, str(root / 'scripts/preparation_bench_driver.py'), 'adapter',
+                '--source', str(root / 'src/modern/cli.cpp'), '--output', str(output)], text=True, capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(output.read_text(), cli_preparation_adapter(root / 'src/modern/cli.cpp')[1])
+
     def test_adapter_imports_no_evidence_stack_and_normal_build_has_no_generator(self):
         root = Path(__file__).resolve().parents[1]
         script = "import sys;sys.path.insert(0," + repr(str(root / 'scripts')) + ");import preparation_bench_driver;print(','.join(sorted(n for n in sys.modules if n.startswith('evidence_'))))"
@@ -2033,6 +2264,18 @@ class PreparationRecovery(unittest.TestCase):
         self.assertIn('add_executable(codet_preparation_bench tests/preparation_bench.cpp)', cmake)
         self.assertNotIn('set(preparation_adapter', cmake)
         self.assertNotIn('adapter --source', cmake)
+
+    def test_python_control_patterns_match_their_current_production_locations(self):
+        import ast
+        root = Path(__file__).resolve().parents[1]
+        tree = ast.parse((root / 'scripts/evidence_negative_controls.py').read_text())
+        function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'run_controls')
+        cases = next(ast.literal_eval(n.value) for n in function.body if isinstance(n, ast.Assign)
+                     and isinstance(n.targets[0], ast.Name) and n.targets[0].id == 'cases')
+        for name, module, before, _, _ in cases:
+            path = root / ('cmake/dependency-root.cmake' if module == 'dependency-root' else 'scripts/' + module + '.py')
+            with self.subTest(control=name):
+                self.assertEqual(path.read_text().count(before), 1, 'Python mutation no longer matches its production site: ' + name)
 
     def test_native_control_patterns_match_their_current_production_locations(self):
         import ast

@@ -94,11 +94,16 @@ Explicit cache assignments replace ownership metadata, so repeating an identical
 `$<...>` text in paths is preserved in receipts rather than evaluated.
 An orphan receipt does not own a newly created cache. A nonempty explicit override
 replaces a current receipt before that receipt is parsed; ordinary reuse still
-requires a valid matching receipt and independent generation-success witness.
+requires a valid matching receipt and separate configuration-success witness.
 Either artifact missing alone stops configuration; reset and reapply the desired
 root to recover. Coherent provisional metadata with both artifacts absent may
 rediscover after a failed first configure. Deleting both success artifacts is
-indistinguishable from that provisional state. A corrupt current receipt produces
+indistinguishable from that provisional state, including when their entire
+`CMakeFiles/` directory is deleted. Neither file proves that generation completed.
+GUI value edits preserving managed help and PATH type become explicit only after
+the previous private metadata and both success records validate. Ambiguous edits
+require a reset or an explicit `-D` assignment. Clearing the GUI value resets
+discovery even if its help and type remain unchanged. A corrupt current receipt produces
 an identifying reset diagnostic. Missing
 dependencies report the selected root; provisioning must use that same root,
 for example `CODET_DEPENDENCY_ROOT=/absolute/path python3 scripts/fetch-deps.py`.

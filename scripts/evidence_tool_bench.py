@@ -92,6 +92,28 @@ def measure(root, ref, workload, repository=None):
                     hashes[str(number)]=True
             if cmake_calls!=3:
                 raise ValueError('Configuration command positive control failed')
+        elif workload == "historical-samples":
+            import statistics
+
+            from evidence_benchmarks import verify_samples
+            rows = [dict(harness="preparation", workload="allocation-positive", preparation_metric_version=1,
+                         iterations=128, allocations=128, allocated_bytes=8388608, payload_sized_allocations=128,
+                         rejections=0, prepared_submissions=0, distinct_command_wrappers=0, effective_content_bytes=0,
+                         set=number, sample=sample, variant=variant, warmup=sample == 0, milliseconds=float(sample + 1))
+                    for number in (1, 2) for variant in ("baseline", "changed") for sample in range(6)]
+            summary = []
+            for number in (1, 2):
+                for variant in ("baseline", "changed"):
+                    values = [v for v in rows if v["set"] == number and v["variant"] == variant and not v["warmup"]]
+                    metrics = [k for k, v in values[0].items() if type(v) in (int, float) and k not in ("set", "sample")]
+                    summary.append(dict(set=number, harness="preparation", workload="allocation-positive", variant=variant,
+                                        **{k: statistics.median(v[k] for v in values) for k in metrics}))
+            hashes = {}
+            for number in range(32):
+                audited = verify_samples(rows, summary, {"preparation": ["allocation-positive"]}, historical=True)
+                if audited["samples"] != 24 or audited["measured_samples"] != 20:
+                    raise ValueError("Historical sample audit positive control failed")
+                hashes[str(number)] = True
         elif workload == "measurement-cleanup":
             from tempfile import TemporaryDirectory
             hashes = {}
@@ -125,11 +147,12 @@ def measure(root, ref, workload, repository=None):
                 tracemalloc.stop()
     if not hashes or (workload == "git-inspection" and calls < 3):
         raise ValueError("Hash/Git work counter positive control failed")
-    return dict(**(dict(context_metric_version=1, **context.counts) if context else {}), case=workload, milliseconds=elapsed, files=0 if workload in ("supervision", "configuration-selection") else len(hashes),
+    return dict(**(dict(context_metric_version=1, **context.counts) if context else {}), case=workload, milliseconds=elapsed, files=0 if workload in ("supervision", "configuration-selection", "historical-samples") else len(hashes),
                 owned_processes=len(hashes) if workload == "supervision" else 0,
                 check_output_calls=calls, git_commands=git_calls,
                 process_inspection_commands=process_inspections,
                 **(dict(configuration_metric_version=1,cmake_commands=cmake_calls,configuration_checks=len(hashes)) if workload=="configuration-selection" else {}),
+                **(dict(historical_sample_audits=32, historical_rows=768) if workload == "historical-samples" else {}),
                 metric_version=2, retained_traced_blocks=sum(s.count for s in stats), retained_traced_bytes=retained, peak_traced_bytes=peak)
 
 

@@ -125,9 +125,11 @@ def publish_audit_bundle(manifest_path, folder, destination):
     return value
 
 
-def verify_bundle(folder):
+def verify_bundle(folder, *, historical=False):
     """Audit recorded identities and archived material; does not rerun binaries."""
     from validation_evidence import SCHEMA_VERSION, digest, load_manifest
+    if type(historical) is not bool:
+        raise ValueError("Historical audit mode must be boolean")
     inventory = json.loads(safe_member(folder, "inventory.json").read_text())
     if not isinstance(inventory, dict):
         raise ValueError("Invalid audit inventory")
@@ -298,7 +300,7 @@ def verify_bundle(folder):
         except (ValueError, TypeError) as error:
             raise ValueError("Malformed measurement configuration: " + measurement["artifact"]) from error
         payload = envelope["payload"]
-        verify_samples(payload["rows"], payload["summary"], settings["cases"], sets=settings["sets"], measured=settings["measured"])
+        verify_samples(payload["rows"], payload["summary"], settings["cases"], sets=settings["sets"], measured=settings["measured"], historical=historical)
         if len(measurement["paths"]) != 2:
             raise ValueError("Audit measurement sidecar coverage mismatch")
         for position, key in enumerate(("rows", "summary")):
@@ -311,5 +313,8 @@ def verify_bundle(folder):
             fields = set().union(*(r.keys() for r in payload[key]))
             if actual_rows != [{k: str(row.get(k, "")) for k in fields} for row in payload[key]]:
                 raise ValueError("Audit measurement sidecar mismatch")
-    return dict(verified=True, eligible_current=True, schema_version=SCHEMA_VERSION, campaign_id=run["campaign_id"],
-                checks=len(records), audit_inputs=len(index), reran_binaries=False)
+    result = dict(verified=True, eligible_current=not historical, schema_version=SCHEMA_VERSION, campaign_id=run["campaign_id"],
+                  checks=len(records), audit_inputs=len(index), reran_binaries=False)
+    if historical:
+        result["historical"] = True
+    return result

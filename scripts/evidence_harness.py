@@ -39,12 +39,8 @@ def build_harnesses(root, folder, names, ninja):
         directory.mkdir()
         database = json.loads((build / "compile_commands.json").read_text())
         source = (folder / "baseline-src" if variant == "baseline" else root) / "src/modern/cli.cpp"
-        excerpt, adapter = cli_preparation_adapter(source)
         adapter_path = directory / "cli_prepare_adapter.hpp"
-        generate(source, adapter_path)
-        adapter_record = dict(source=str(source), source_sha256=sha256(source),
-                              excerpt_sha256=hashlib.sha256(excerpt.encode()).hexdigest(),
-                              adapter=str(adapter_path), adapter_sha256=sha256(adapter_path))
+        adapter_record = generate(source, adapter_path)
         records = {}
         for name, target in PROGRAMS.items():
             original_target = PROGRAMS["output"] if name == "preparation" else target
