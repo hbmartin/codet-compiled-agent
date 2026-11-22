@@ -33,3 +33,19 @@ publisher remains the path for a fully successful campaign.
 Tiger package determinism is scoped to repeated packaging of one frozen verified
 build. Complete audit records retain original paths and configuration. No cross-
 checkout byte-reproducibility or native Tiger runtime acceptance is implied.
+
+Campaign build locations use a conservative portable namespace: each path component
+is Unicode-NFC normalized and case-folded for collision, overlap, reserved-name,
+and control-prefix checks on every host. Case-sensitive hosts therefore reject
+some locally distinct names intentionally. Submitted and resolved paths are both
+checked before tool probes or campaign creation; actual I/O retains the selected
+path spelling and resolved-containment rules. This is not an exact emulation of
+all APFS or Tiger HFS+ filename rules.
+
+Historical carrier extraction owns a unique sibling staging directory until its
+full audit succeeds and publication is admitted exclusively. Cooperative SIGTERM
+and Ctrl-C unwind that staging and restore signal handlers. No automatic stale-tree
+sweep runs. SIGKILL, host failure, or an actual cleanup failure can leave staging;
+inspect ownership and stop relevant operations before any manual deletion. A
+secondary cleanup failure remains attached to the original error rather than
+replacing it. Historical integrity never grants current campaign eligibility.

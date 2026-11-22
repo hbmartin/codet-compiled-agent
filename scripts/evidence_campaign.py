@@ -8,6 +8,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path
 
 from clang_plist import resolve_files
@@ -27,7 +28,7 @@ CASES = {
     "preparation": list(WORKLOADS),
     "line": ["allocation-positive", "geometry-positive", "busy", "native-busy", "editing", "editing-basic",
              "native-editing", "deletion", "unchanged", "deferred-tail", "native-boundary", "native-flush-boundary", "native-unchanged", "pending-submission", "native-pending-submission", "native-pending-fragment", "preparation-queue", "bounded-expansion"],
-    "tooling": ["hashing", "git-inspection", "supervision", "build-context", "dependency-resolution", "configuration-selection", "measurement-cleanup", "historical-samples"],
+    "tooling": ["hashing", "git-inspection", "supervision", "build-context", "dependency-resolution", "configuration-selection", "measurement-cleanup", "historical-samples", "campaign-layout", "historical-extraction"],
     "output": ["write-positive", "stat-positive", "flags-positive", "bounds-positive", "diagnostics-amplified",
                "diagnostics-standalone-amplified", "diagnostics-pipe-amplified"],
     "export": ["small", "large"],
@@ -131,21 +132,32 @@ def resolve_build_layout(folder, settings):
     reserved = {name: folder / name for name in (*MANAGED_WORKSPACES, *MANAGED_FILES,
                 *(action + ".json" for action in PRODUCER_ACTIONS))}
     paths = {}
+    locations = {name: (path,) for name, path in reserved.items()}
+    def identity(path):
+        # A conservative portable namespace, independent of the host filesystem.
+        return tuple(unicodedata.normalize("NFC", unicodedata.normalize("NFC", part).casefold())
+                     for part in path.parts)
     def overlap(first, second):
-        return first == second or first in second.parents or second in first.parents
+        first, second = identity(first), identity(second)
+        return first[:len(second)] == second or second[:len(first)] == first
+    prefixes = tuple(identity(Path(prefix))[0] for prefix in CONTROL_PREFIXES)
     for name, specification in replay_builds(settings).items():
         path = (folder / specification).resolve()
         if folder not in path.parents:
             raise ValueError("Replay build path escapes campaign for " + name + ": " + specification)
-        relative = path.relative_to(folder)
-        if relative.parts[0].startswith(CONTROL_PREFIXES):
-            raise ValueError("Replay build path uses reserved control workspace for " + name)
-        for other, target in {**reserved, **paths}.items():
-            if overlap(path, target):
-                raise ValueError("Replay build path collision: " + name + " with " + other)
+        candidates = (folder / specification, path)
+        for candidate in candidates:
+            relative = candidate.relative_to(folder)
+            if identity(relative)[0].startswith(prefixes):
+                raise ValueError("Replay build path uses reserved control workspace for " + name)
+            for other, targets in locations.items():
+                for target in targets:
+                    if overlap(candidate, target):
+                        raise ValueError("Replay build path collision: " + name + " with " + other)
         if path.exists() or path.is_symlink():
             raise ValueError("Managed build directory already exists: " + str(path))
         paths[name] = path
+        locations[name] = candidates
     return {name: str(path) for name, path in paths.items()}
 
 
@@ -341,11 +353,11 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     harness_outputs.extend(dict(path=rel(folder / (v + "-harness/cli_prepare_adapter.hpp"))) for v in ("baseline", "changed"))
     producer("benchmark-harness", "harness", ["baseline-build", "changed-build"], harness_inputs, timeout=1800, outputs=harness_outputs,
              file_inputs=[dict(path=rel(folder / (v + "-release/libcodet_core.a")), archive=False) for v in ("baseline", "changed")])
-    producer("benchmarks", "measure", ["benchmark-harness", "static-comparison", "python-negative-controls", "native-negative-controls", "semgrep-controls"],
-             [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")] + [rel(folder / "harness.json")], timeout=1800)
-    metadata_inputs = [rel(Path(b) / "CMakeCache.txt") for b in builds.values()] + [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")]
     from evidence_historical import PACKAGE
     historical_inputs = [PACKAGE + "/" + name for name in ("audit-bundle.tar.gz", "transport.json")]
+    producer("benchmarks", "measure", ["benchmark-harness", "static-comparison", "python-negative-controls", "native-negative-controls", "semgrep-controls"],
+             [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")] + [rel(folder / "harness.json")] + historical_inputs, timeout=1800)
+    metadata_inputs = [rel(Path(b) / "CMakeCache.txt") for b in builds.values()] + [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")]
     producer("historical-audit", "historical-audit", ["runner-tests"], historical_inputs)
     producer("platform-availability", "platforms")
     producer("build-metadata", "build-info", ["debug-build", "asan-build", "tsan-build", "cross-build", "baseline-build", "changed-build", "make-build"], metadata_inputs)
@@ -565,6 +577,9 @@ def produce(config_path, action, *, output=None):
         inputs.extend(input_name(root, folder / (v + "-release") / n) for v in ("baseline", "changed") for n in ("compile_commands.json", "build.ninja", "libcodet_core.a"))
         payload = build_harnesses(root, folder, HARNESS_FILES, config["tools"]["ninja"]["path"])
     elif action == "measure":
+        if "historical-extraction" in config.get("cases", {}).get("tooling", []):
+            from evidence_historical import PACKAGE
+            inputs.extend(PACKAGE + "/" + name for name in ("audit-bundle.tar.gz", "transport.json"))
         inputs.append(input_name(root, folder / "harness.json"))
         inputs.extend(input_name(root, folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed"))
         payload = measure(config)

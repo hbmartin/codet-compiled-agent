@@ -63,6 +63,17 @@ def verify_tooling_metrics(row):
                 type(row.get('historical_rows')) is not int or row['historical_rows'] != 768 or
                 row['files'] or row['owned_processes'] or row['check_output_calls']):
             raise ValueError('Historical sample audit counters are invalid')
+    if row.get('workload') == 'campaign-layout':
+        if (any(type(row.get(key)) is not int for key in ('layout_metric_version', 'layout_checks', 'build_locations')) or
+                row.get('layout_metric_version') != 1 or row.get('layout_checks') != 128 or row.get('build_locations') != 640 or
+                row['files'] != 128 or row['owned_processes'] or row['check_output_calls']):
+            raise ValueError('Layout work counters or controls are invalid')
+    if row.get('workload') == 'historical-extraction':
+        if (any(type(row.get(key)) is not int for key in ('extraction_metric_version', 'historical_extractions')) or
+                row.get('extraction_metric_version') != 1 or row.get('historical_extractions') != 1 or
+                any(type(row.get(key)) is not int or row[key] <= 0 for key in ('expanded_files', 'expanded_bytes')) or
+                row['files'] != 1 or row['owned_processes'] or row['check_output_calls']):
+            raise ValueError('Extraction work counters or controls are invalid')
     if row.get('workload') == 'build-context':
         if (row.get('context_metric_version') != 1 or row['owned_processes'] or
                 row.get('context_resolutions') not in (1, 3) or row.get('sysroot_snapshots') not in (2, 3) or
@@ -197,6 +208,11 @@ def verify_unittest_result(baseline, mutant):
         raise ValueError("Negative-control baseline failed")
     if mutant["exit"] != 1 or mutant["failures"] < 1 or not mutant["assertion_failure"]:
         raise ValueError("Mutant did not fail through intended assertion")
+
+
+def require_assertion_marker(name, result, marker):
+    if not any(marker in detail for detail in result["failure_details"]):
+        raise ValueError("Control missed its intended assertion: " + name)
 
 
 def executable_provenance(path):

@@ -3,7 +3,7 @@
 import json
 import sys
 
-from evidence_benchmarks import replace_once, verify_unittest_result
+from evidence_benchmarks import replace_once, require_assertion_marker, verify_unittest_result
 from process_supervision import run as supervised_run
 
 RUNNER = r'''
@@ -49,7 +49,23 @@ raise SystemExit(exit_code)
 
 def run_controls(root, folder):
     cases = [
-        ("gui-guidance", "dependency-root", 'Configure alone does not create these records:', 'A prior commitment is required:',
+        ("shared-extraction-carrier", "evidence_tool_bench",
+         'audited = audit_package((repository or root) / PACKAGE, destination)',
+         'audited = audit_package(root / PACKAGE, destination)', "ReplayIntegrity.test_extraction_measurement_observes_completed_audit_work"),
+        ("measurement-carrier", "evidence_campaign",
+         '    elif action == "measure":\n        if "historical-extraction" in config.get("cases", {}).get("tooling", []):\n            from evidence_historical import PACKAGE\n            inputs.extend(PACKAGE + "/" + name for name in ("audit-bundle.tar.gz", "transport.json"))',
+         '    elif action == "measure":', "PreparationRecovery.test_measurement_envelope_binds_declared_carrier_inputs"),
+        ("portable-layout", "evidence_campaign",
+         'return tuple(unicodedata.normalize("NFC", unicodedata.normalize("NFC", part).casefold())\n                     for part in path.parts)',
+         'return path.parts', "PreparationRecovery.test_portable_layout_aliases_are_rejected_without_side_effects"),
+        ("historical-signals", "evidence_historical", 'with interruption():',
+         "with __import__('contextlib').nullcontext():", "ReplayIntegrity.test_historical_extraction_and_audit_unwind_real_signals"),
+        ("record-specificity", "dependency-root", 'and ${record_path};', 'and both generated records;',
+         "test_tiger_recovery.DependencyReconfiguration.test_identity_disagreement_identifies_each_record_and_field"),
+        ("control-marker", "evidence_benchmarks",
+         'if not any(marker in detail for detail in result["failure_details"]):', 'if False:',
+         "PreparationRecovery.test_control_marker_rejects_unrelated_regex_assertions"),
+        ("gui-guidance", "dependency-root", 'Configure alone does not create these records.', 'A prior commitment is required:',
          "test_tiger_recovery.DependencyReconfiguration.test_configure_only_recovery_guidance_and_explicit_gui_entry"),
         ("cache-disagreement", "dependency-root", 'Dependency selection identity disagreement between', 'Invalid dependency selection record',
          "test_tiger_recovery.DependencyReconfiguration.test_private_absolute_value_disagreement_names_cache_and_records"),
@@ -57,7 +73,7 @@ def run_controls(root, folder):
          "PreparationRecovery.test_historical_sample_work_counters_observe_completed_calls"),
         ("adapter-bytes", "preparation_adapter", 'output.read_bytes() == expected', 'output.read_text() == adapter',
          "PreparationRecovery.test_adapter_byte_identity_repairs_all_line_endings"),
-        ("layout-collision", "evidence_campaign", 'if overlap(path, target):', 'if False:',
+        ("layout-collision", "evidence_campaign", 'if overlap(candidate, target):', 'if False:',
          "PreparationRecovery.test_managed_build_layout_rejects_collisions_before_side_effects"),
         ("layout-containment", "evidence_campaign", 'if folder not in path.parents:', 'if False:',
          "PreparationRecovery.test_managed_build_layout_rejects_collisions_before_side_effects"),
@@ -74,7 +90,7 @@ def run_controls(root, folder):
          'if(NOT cached OR cache_value STREQUAL "")', 'if(NOT cached)',
          "test_tiger_recovery.DependencyReconfiguration.test_gui_empty_value_resets_even_managed_or_damaged_state"),
         ("gui-ambiguous", "dependency-root",
-         'message(FATAL_ERROR "Ambiguous dependency selection edit in ${cache}: no matching prior commitment in ${pin} and ${witness}. Configure alone does not create these records: after a successful Configure, run Generate before editing the derived root. If Generate is unavailable, relaunch cmake-gui/ccmake with -DCODET_DEPENDENCY_ROOT=<path>, or in cmake-gui remove the entry and Add Entry with type PATH and the desired value; ${reset_hint}")',
+         'message(FATAL_ERROR "Ambiguous dependency selection edit in ${cache}: no matching prior commitment in ${pin} and ${witness}. Configure alone does not create these records. Restore the previous derived root, then Configure and run Generate before editing again. If that cannot succeed, run cmake or ccmake with -DCODET_DEPENDENCY_ROOT=<path>. In cmake-gui, Remove Entry then Add Entry with type PATH, the desired value, and ordinary descriptive help; ${reset_hint}")',
          'set(committed FALSE)',
          "test_tiger_recovery.DependencyReconfiguration.test_ambiguous_gui_change_fails_without_promoting_private_corruption"),
         ("historical-mode", "evidence_bundle",
@@ -297,9 +313,11 @@ def run_controls(root, folder):
             verify_unittest_result(*runs)
         except ValueError as error:
             raise ValueError("Control " + name + ": " + repr(runs)) from error
-        markers = {"gui-guidance": "Missing Configure-only GUI recovery guidance", "cache-disagreement": "Private cache disagreement blamed an intact receipt",
+        markers = {"shared-extraction-carrier": "Extraction benchmark ignored shared declared carrier", "measurement-carrier": "Measurement producer omitted declared carrier inputs", "gui-guidance": "Missing Configure-only GUI recovery guidance", "cache-disagreement": "Private cache disagreement blamed an intact receipt",
                    "historical-work": "Completed audit work did not match the required workload", "adapter-bytes": "Byte-different adapter was not repaired",
-                   "layout-collision": "ValueError not raised", "layout-containment": "does not match", "carrier-counts": "does not match",
+                   "layout-collision": "ValueError not raised", "layout-containment": "Expected explicit campaign containment rejection", "carrier-counts": "Expected positive-integer carrier field validation: archive.bytes",
+                   "portable-layout": "Portable path alias was admitted", "historical-signals": "Cooperative extraction signal skipped cleanup",
+                   "record-specificity": "Identity disagreement lost the compared record or field", "control-marker": "ValueError not raised",
                    "carrier-staging": "Failed historical extraction left a final tree", "carrier-publication": "OSError not raised",
                    "gui-value": "GUI value edit was rejected", "gui-empty": "GUI empty value did not reset selection",
                    "gui-ambiguous": "Ambiguous GUI edit became explicit intent", "historical-mode": "Historical metric interpretation was not exposed",
@@ -331,7 +349,7 @@ def run_controls(root, folder):
                    "tiger-compiler-metadata": "Valid configure metadata was rejected",
                    "tiger-pinned-context": "Packaging reloaded its mutable build pointer",
                    "tiger-copied-input": "ValueError not raised"}
-        if name in markers and not any(markers[name] in text for text in runs[1]["failure_details"]):
-            raise ValueError("Control missed its intended assertion: " + name)
+        if name in markers:
+            require_assertion_marker(name, runs[1], markers[name])
         results.append(dict(name=name, test=target, baseline=runs[0], mutant=runs[1]))
     return results

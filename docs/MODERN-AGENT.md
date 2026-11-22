@@ -103,14 +103,15 @@ indistinguishable from that provisional state, including when their entire
 `CMakeFiles/` directory is deleted. Neither file proves that generation completed.
 GUI value edits preserving managed help and PATH type become explicit only after
 the previous private metadata and both success records validate. Ambiguous edits
-require a reset or an explicit `-D` assignment. Configure alone in cmake-gui or
-ccmake does not write the success records: after a successful initial Configure,
-run Generate before editing the derived value (ccmake may require a second
-Configure before enabling `g`). If the initial Configure fails or Generate is
-unavailable, relaunch with `-DCODET_DEPENDENCY_ROOT=/absolute/path`. Alternatively,
-in cmake-gui remove `CODET_DEPENDENCY_ROOT`, then use Add Entry with the same name,
-type PATH, the desired absolute value, and an ordinary descriptive help string;
-this makes the selection explicit. Do not change private metadata. Clearing the GUI value resets
+require a reset or an explicit selection. Configure alone in cmake-gui or ccmake
+does not write the success records. If an edit was already rejected, restore the
+previous derived value, Configure, Generate, and then edit again (ccmake may need
+a second Configure before enabling `g`). Before the first edit, Generate after a
+successful initial Configure. If this cannot succeed, run plain `cmake` or
+`ccmake` with `-DCODET_DEPENDENCY_ROOT=/absolute/path`. The `cmake-gui` executable
+does not accept `-D`: use Remove Entry for `CODET_DEPENDENCY_ROOT`, then Add Entry
+with the same name, type PATH, the desired absolute value, and ordinary descriptive
+help. This makes the selection explicit. Do not change private metadata. Clearing the GUI value resets
 discovery even if its help and type remain unchanged. A corrupt current receipt produces
 an identifying reset diagnostic. Missing
 dependencies report the selected root; provisioning must use that same root,

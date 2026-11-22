@@ -844,6 +844,114 @@ class ReplayIntegrity(unittest.TestCase):
         self.assertTrue(result['historical_result']['verified'])
         self.assertTrue(destination.is_dir())
 
+    def test_historical_extraction_and_audit_unwind_real_signals(self):
+        import os
+        import select
+        import signal
+
+        import evidence_historical as historical
+        package, _ = self.carrier_fixture()
+        sibling = self.root / '.historical-active'; sibling.mkdir()
+        (sibling / 'owner').write_text('another invocation')
+        code = r"""import importlib.util,json,signal,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[1]);sys.dont_write_bytecode=True
+spec=importlib.util.spec_from_file_location('evidence_historical',sys.argv[2])
+h=importlib.util.module_from_spec(spec);spec.loader.exec_module(h)
+prior=signal.getsignal(signal.SIGTERM)
+def gate():
+ print('READY',flush=True);signal.pause()
+native_copy=h.shutil.copyfileobj
+def copy(source,output):
+ gate();return native_copy(source,output)
+native_verify=h.verify_bundle
+def verify(*args,**kwargs):
+ if kwargs.get('historical'):gate()
+ return native_verify(*args,**kwargs)
+if sys.argv[5]=='extraction':h.shutil.copyfileobj=copy
+else:h.verify_bundle=verify
+try:h.audit_package(sys.argv[3],sys.argv[4])
+except BaseException as error:
+ value=dict(error=type(error).__name__,restored=signal.getsignal(signal.SIGTERM)==prior,
+            staging=[p.name for p in Path(sys.argv[4]).parent.glob('.historical-*') if p.name!='.historical-active'],
+            final=Path(sys.argv[4]).exists())
+ print('REPORT:'+json.dumps(value),flush=True)
+"""
+        for phase in ('extraction', 'verification'):
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                with self.subTest(phase=phase, signal=sig):
+                    destination = self.root / ('interrupted-' + phase + str(sig))
+                    process = subprocess.Popen([sys.executable, '-c', code, str(Path(__file__).resolve().parents[1] / 'scripts'),
+                        str(historical.__file__), str(package), str(destination), phase],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+                    try:
+                        self.assertTrue(select.select([process.stdout], [], [], 15)[0], 'Historical signal fixture never reached owned staging')
+                        self.assertEqual(process.stdout.readline().strip(), 'READY')
+                        os.kill(process.pid, sig)
+                        stdout, stderr = process.communicate(timeout=10)
+                    finally:
+                        if process.poll() is None:
+                            os.killpg(process.pid, signal.SIGKILL); process.wait(timeout=5)
+                    self.assertIn('REPORT:', stdout, 'Cooperative extraction signal skipped cleanup: ' + stderr)
+                    report = json.loads(stdout.split('REPORT:', 1)[1])
+                    self.assertEqual(report['error'], 'KeyboardInterrupt')
+                    self.assertTrue(report['restored'], 'Historical extraction retained its SIGTERM handler')
+                    self.assertFalse(report['staging'], 'Cooperative extraction signal retained owned staging')
+                    self.assertFalse(report['final'])
+                    self.assertEqual((sibling / 'owner').read_text(), 'another invocation')
+                    result = historical.audit_package(package, destination)
+                    self.assertTrue(result['historical_result']['verified'])
+
+    def test_historical_cleanup_preserves_primary_failure_and_restores_handlers(self):
+        import signal
+
+        import evidence_historical as historical
+        primary = KeyboardInterrupt('primary extraction interruption')
+        cleanup = OSError('secondary cleanup failure')
+        native = historical.tempfile.TemporaryDirectory
+        previous = signal.getsignal(signal.SIGTERM)
+        with native() as folder:
+            temporary = native(dir=folder)
+            with patch.object(historical.tempfile, 'TemporaryDirectory', return_value=temporary):
+                with patch.object(temporary, 'cleanup', side_effect=cleanup):
+                    with self.assertRaises(KeyboardInterrupt) as caught:
+                        with historical.historical_staging(folder):
+                            raise primary
+            self.assertIs(caught.exception, primary)
+            self.assertIn('secondary cleanup failure', primary.historical_cleanup['failure'])
+            self.assertEqual(signal.getsignal(signal.SIGTERM), previous)
+            temporary.cleanup()
+            temporary = native(dir=folder)
+            with patch.object(historical.tempfile, 'TemporaryDirectory', return_value=temporary):
+                with patch.object(temporary, 'cleanup', side_effect=cleanup):
+                    with self.assertRaises(OSError) as caught:
+                        with historical.historical_staging(folder):
+                            pass
+            self.assertIs(caught.exception, cleanup)
+            self.assertEqual(signal.getsignal(signal.SIGTERM), previous)
+            temporary.cleanup()
+
+    def test_extraction_measurement_observes_completed_audit_work(self):
+        import evidence_historical as historical
+        from evidence_benchmarks import verify_tooling_metrics
+        from evidence_tool_bench import measure
+        package, metadata = self.carrier_fixture()
+        variant = self.root / 'immutable variant'; variant.mkdir()
+        self.assertFalse((variant / 'carrier').exists())
+        with patch.object(historical, 'PACKAGE', 'carrier'), patch.object(historical, 'audit_package', wraps=historical.audit_package) as observed:
+            try:
+                value = measure(variant, 'unused', 'historical-extraction', self.root)
+            except (OSError, ValueError) as error:
+                self.fail('Extraction benchmark ignored shared declared carrier: ' + str(error))
+        self.assertEqual(observed.call_count, 1)
+        self.assertEqual(observed.call_args.args[0], package)
+        self.assertEqual(value['expanded_files'], metadata['expanded']['files'])
+        self.assertEqual(value['expanded_bytes'], metadata['expanded']['bytes'])
+        value.update(harness='tooling', workload='historical-extraction')
+        verify_tooling_metrics(value)
+        with self.assertRaisesRegex(ValueError, 'Extraction work counters'):
+            verify_tooling_metrics(dict(value, historical_extractions=0))
+
     def test_historical_count_metadata_is_validated_before_staging(self):
         import copy
 
@@ -856,7 +964,7 @@ class ReplayIntegrity(unittest.TestCase):
                     if value is None: metadata[section].pop(field)
                     else: metadata[section][field] = value
                     evidence.atomic_json(package / 'transport.json', metadata)
-                    with self.assertRaisesRegex(ValueError, section + r'\.' + field):
+                    with self.assertRaisesRegex(ValueError, section + r'\.' + field, msg='Expected positive-integer carrier field validation: ' + section + '.' + field):
                         audit_package(package, self.root / 'invalid')
                     self.assertFalse((self.root / 'invalid').exists())
                     self.assertFalse(list(self.root.glob('.historical-*')))
@@ -2434,11 +2542,78 @@ class PreparationRecovery(unittest.TestCase):
             self.assertEqual(good['make'], str((folder / 'custom space/make').resolve()))
             folder.mkdir(); outside = Path(d) / 'outside'; outside.mkdir()
             (folder / 'alias').symlink_to(outside, target_is_directory=True)
-            with self.assertRaisesRegex(ValueError, 'escapes campaign'):
+            with self.assertRaisesRegex(ValueError, 'escapes campaign', msg='Expected explicit campaign containment rejection'):
                 campaign.resolve_build_layout(folder, dict(base, make='alias/make'))
             (folder / 'same').symlink_to(folder / 'debug', target_is_directory=True)
             with self.assertRaisesRegex(ValueError, 'collision'):
                 campaign.resolve_build_layout(folder, dict(base, make='same'))
+
+    def test_portable_layout_aliases_are_rejected_without_side_effects(self):
+        import evidence_campaign as campaign
+        base = dict(debug='debug', asan='asan', tsan='tsan', cross='cross')
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d) / 'new campaign'
+            for name in ('Debug', 'DEBUG/child', 'Home', 'CAPTURE', 'BASELINE-RELEASE',
+                         'Manifest.JSON', 'HARNESS.JSON', 'CONTROL-example', 'Native-Control-x', 'SEMGREP-CONTROL-x'):
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'build path', msg='Portable path alias was admitted'):
+                    campaign.resolve_build_layout(folder, dict(base, make=name))
+                self.assertFalse(folder.exists(), 'Portable layout rejection created campaign files')
+            for first, second in (('café', 'cafe\u0301'), ('Straße', 'STRASSE'),
+                                  ('custom/café', 'CUSTOM/cafe\u0301/nested')):
+                with self.subTest(first=first, second=second), self.assertRaisesRegex(ValueError, 'collision', msg='Portable path alias was admitted'):
+                    campaign.resolve_build_layout(folder, dict(base, debug=first, make=second))
+            good = campaign.resolve_build_layout(folder, dict(base, debug='custom café/debug', make='other space/make'))
+            self.assertEqual(good['make'], str((folder / 'other space/make').resolve()))
+            # Submitted aliases are forbidden even if an existing symlink resolves elsewhere.
+            folder.mkdir(); (folder / 'Home').symlink_to(folder / 'unused', target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, 'collision', msg='Portable path alias was admitted'):
+                campaign.resolve_build_layout(folder, base | dict(make='Home/build'))
+            (folder / 'redirect').symlink_to(folder / 'DEBUG', target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, 'collision', msg='Portable path alias was admitted'):
+                campaign.resolve_build_layout(folder, base | dict(make='redirect/child'))
+
+    def test_layout_measurement_records_completed_resolutions(self):
+        import evidence_campaign as campaign
+        from evidence_benchmarks import verify_tooling_metrics
+        from evidence_tool_bench import measure
+        with patch.object(campaign, 'resolve_build_layout', wraps=campaign.resolve_build_layout) as observed:
+            value = measure(Path(__file__).resolve().parents[1], 'unused', 'campaign-layout')
+        self.assertEqual(value['layout_checks'], observed.call_count)
+        self.assertEqual(value['build_locations'], 5 * observed.call_count)
+        value.update(harness='tooling', workload='campaign-layout')
+        verify_tooling_metrics(value)
+        with self.assertRaisesRegex(ValueError, 'Layout work counters'):
+            verify_tooling_metrics(dict(value, layout_checks=0))
+
+    def test_measurement_envelope_binds_declared_carrier_inputs(self):
+        import os
+
+        import evidence_campaign as campaign
+        from evidence_historical import PACKAGE
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d).resolve(); folder = root / 'campaign'; folder.mkdir()
+            names = ['campaign/config.json', 'campaign/harness.json', 'campaign/baseline-release/CMakeCache.txt',
+                     'campaign/changed-release/CMakeCache.txt', PACKAGE + '/audit-bundle.tar.gz', PACKAGE + '/transport.json']
+            for name in names:
+                path = root / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text('fixture input')
+            config = folder / 'config.json'; config.write_text(json.dumps(dict(root=str(root), folder=str(folder), cases=dict(tooling=['historical-extraction']))))
+            spec = dict(path='campaign/measure.json', kind='measure', inputs=names)
+            context = evidence._context(root, dict(id='1'*32, campaign_id='2'*32), 'benchmarks', {}, {})
+            context['declared_artifacts'] = [spec]
+            with patch.dict(os.environ, CODET_EVIDENCE_CONTEXT=json.dumps(context)), patch.object(campaign, 'measure', return_value=dict(fixture=True)):
+                try:
+                    campaign.produce(config, 'measure')
+                except ValueError as error:
+                    self.fail('Measurement producer omitted declared carrier inputs: ' + str(error))
+            value = evidence.validate_artifact(root / spec['path'], spec, context)
+            self.assertEqual(set(value['input_hashes']), set(names), 'Measurement carrier input coverage changed')
+
+    def test_control_marker_rejects_unrelated_regex_assertions(self):
+        from evidence_negative_controls import require_assertion_marker
+        marker = 'Expected explicit campaign containment rejection'
+        with self.assertRaisesRegex(ValueError, 'missed its intended assertion'):
+            require_assertion_marker('layout-containment', dict(failure_details=['AssertionError: other regex does not match']), marker)
+        require_assertion_marker('layout-containment', dict(failure_details=['AssertionError: ' + marker]), marker)
 
     def test_invalid_layout_precedes_tool_probes_and_campaign_creation(self):
         import evidence_campaign as campaign
@@ -2446,7 +2621,7 @@ class PreparationRecovery(unittest.TestCase):
         template = json.loads((root / 'checks/validation-replay.json').read_text())
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'template.json'
-            template['builds']['make'] = 'debug'
+            template['builds']['make'] = 'Debug'
             path.write_text(json.dumps(template))
             folder = Path(d) / 'new'
             with patch.object(campaign, 'command', side_effect=AssertionError('unexpected tool probe')):

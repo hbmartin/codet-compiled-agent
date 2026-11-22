@@ -907,7 +907,7 @@ class DependencyReconfiguration(unittest.TestCase):
             result = configure('/environment-B')
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('identity disagreement', result.stderr, 'Private cache disagreement blamed an intact receipt')
-            for value in ('CMakeCache.txt', '_CODET_DEPENDENCY_VALUE', 'codet-dependency-selection.json', 'codet-dependency-success.json'):
+            for value in ('CMakeCache.txt', '_CODET_DEPENDENCY_VALUE', 'codet-dependency-selection.json'):
                 self.assertIn(value, result.stderr)
             self.assertEqual(pin.read_bytes(), original)
 
@@ -920,8 +920,8 @@ class DependencyReconfiguration(unittest.TestCase):
             self.edit_public_root(output, '/GUI-B')
             result = configure('/environment-C')
             self.assertNotEqual(result.returncode, 0)
-            for phrase in ('Configure alone', 'run Generate', 'relaunch cmake-gui/ccmake', 'Add Entry'):
-                self.assertIn(phrase, result.stderr.replace('\n', ' '), 'Missing Configure-only GUI recovery guidance')
+            for phrase in ('Configure alone', 'Restore the previous derived root', 'run Generate', 'run cmake or ccmake', 'In cmake-gui, Remove Entry', 'Add Entry'):
+                self.assertIn(phrase, ' '.join(result.stderr.split()), 'Missing Configure-only GUI recovery guidance')
             cache = output / 'CMakeCache.txt'
             changed, count = re.subn(r'(?m)^//.*Codet derived dependency selection.*\n(?=CODET_DEPENDENCY_ROOT:PATH=)',
                 '//Explicit GUI dependency sources\n', cache.read_text())
@@ -933,6 +933,41 @@ class DependencyReconfiguration(unittest.TestCase):
             result = configure('/environment-C')
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((output / 'CMakeFiles/codet-dependency-root.txt').read_text(), '/GUI-B')
+
+    def test_identity_disagreement_identifies_each_record_and_field(self):
+        for kind in ('selection', 'success'):
+            for field, wrong, cache_field in (('root', '/changed', 'VALUE'), ('origin', 'other', 'ORIGIN'), ('token', '0' * 32, 'TOKEN')):
+                with self.subTest(kind=kind, field=field), tempfile.TemporaryDirectory() as d:
+                    _, output, _, configure = self.dependency_probe(Path(d), 'Ninja')
+                    self.assertEqual(configure('/root-A').returncode, 0)
+                    record = output / ('CMakeFiles/codet-dependency-' + kind + '.json')
+                    value = json.loads(record.read_text()); value[field] = wrong
+                    record.write_text(json.dumps(value))
+                    result = configure('/root-B')
+                    diagnostic = ' '.join(result.stderr.split())
+                    self.assertNotEqual(result.returncode, 0)
+                    for expected in ('CMakeCache.txt', field + ' vs _CODET_DEPENDENCY_' + cache_field, 'and ' + str(record)):
+                        self.assertIn(expected, diagnostic, 'Identity disagreement lost the compared record or field')
+
+    def test_restore_configure_generate_then_edit_recovers_provisional_gui_value(self):
+        for prefix in ('short', 'long path ' * 8):
+            with self.subTest(prefix=prefix), tempfile.TemporaryDirectory(prefix=prefix) as d:
+                source, output, text, configure = self.dependency_probe(Path(d), 'Ninja')
+                (source / 'CMakeLists.txt').write_text(text + 'message(SEND_ERROR "provisional")\n')
+                self.assertNotEqual(configure('/root-A').returncode, 0)
+                (source / 'CMakeLists.txt').write_text(text)
+                self.edit_public_root(output, '/GUI-B')
+                rejected = configure('/root-C')
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertIn('Restore the previous derived root, then Configure and run Generate before editing again',
+                              ' '.join(rejected.stderr.split()), 'Rejected GUI edit lacks ordered recovery')
+                self.edit_public_root(output, '/root-A')
+                self.assertEqual(configure('/root-C').returncode, 0)
+                for kind in ('selection', 'success'):
+                    self.assertTrue((output / ('CMakeFiles/codet-dependency-' + kind + '.json')).is_file())
+                self.edit_public_root(output, '/GUI-B')
+                self.assertEqual(configure('/root-C').returncode, 0)
+                self.assertEqual((output / 'CMakeFiles/codet-dependency-root.txt').read_text(), '/GUI-B')
 
     @unittest.skipUnless(shutil.which('ccmake'), 'ccmake is unavailable for the optional real Configure-only fixture')
     def test_real_ccmake_configure_only_retains_strict_recovery(self):
@@ -981,7 +1016,7 @@ class DependencyReconfiguration(unittest.TestCase):
             self.edit_public_root(output, '/GUI-B')
             transcript = run(source, output, '/environment-C')
             for phrase in ('Ambiguous dependency selection edit', 'Configure alone', 'run Generate'):
-                self.assertIn(phrase, transcript, 'Configure-only GUI failure lacks recovery guidance')
+                self.assertIn(phrase, ' '.join(transcript.split()), 'Configure-only GUI failure lacks recovery guidance')
             self.assertEqual(configure('/environment-C', '-DCODET_DEPENDENCY_ROOT=/GUI-B').returncode, 0)
             self.assertEqual((output / 'CMakeFiles/codet-dependency-root.txt').read_text(), '/GUI-B')
 
