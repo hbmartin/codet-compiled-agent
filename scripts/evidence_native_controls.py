@@ -319,6 +319,9 @@ def run_controls(root, folder, build, ninja):
         raise ValueError("Pending keyboard mutant did not fail its intended assertion: " + repr(mutant))
     results.append(dict(name="pending-keyboard", target="CliTests.test_frozen_submission_obeys_turn_outcome_and_services_controls", mutation=dict(before=before, after=after, original_sha256=digest(root / "src/modern/cli.cpp"), mutant_sha256=digest(source)), binary_sha256=digest(binary), baseline=baseline, compile=compiled, link=linked, mutant=mutant))
     review_controls = [
+        ("preparation-publication-gate", "CliTests.test_preparation_cancellation_collects_an_already_successful_worker",
+         "const bool released =\n                  codet::test::read_token(event.release, byte, std::chrono::seconds(30));",
+         "const bool released = false;", "Preparation fixture did not gate final publication", "tests/test_main.cpp"),
         ("image-ownership", "CliTests.test_portable_image_transfer_control_reaches_provider",
          "run(text, true, line.preparation.prompt.get(), std::move(images));",
          "run(text, true, line.preparation.prompt.get(), {});",
@@ -385,7 +388,8 @@ def run_controls(root, folder, build, ninja):
         if baseline["exit"] or baseline["assertions"]:
             raise ValueError("Review control baseline failed: " + target)
         binary_target = "codet" if name in ("fresh-input-scope", "preparation-rejection") else "codet_tests"
-        source, binary, compiled, linked = compile_mutant(directory, binary_target, binary_target, "src/modern/cli.cpp", source_name, before, after)
+        entry_name = "tests/test_main.cpp" if source_name == "tests/test_main.cpp" else "src/modern/cli.cpp"
+        source, binary, compiled, linked = compile_mutant(directory, binary_target, binary_target, entry_name, source_name, before, after)
         placeholder = directory / "codet"
         if binary_target != "codet":
             shutil.copy2(build / "codet", placeholder)

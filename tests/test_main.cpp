@@ -232,13 +232,19 @@ int main(int argc, char **argv) {
         int release, notify;
         unsigned stage;
         bool active;
-        std::atomic<bool> gated{false};
+        std::atomic<bool> gated{false}, publication_gated{false};
       } observation{cancel, std::stoi(argv[2]), std::stoi(argv[3]),
                     static_cast<unsigned>(std::stoul(argv[4])), std::string(argv[5]) == "active"};
       const codet::detail::CliLifecycleOps lifecycle{
           +[](void *context) noexcept {
             auto &event = *static_cast<Observation *>(context);
             (void)::write(event.notify, "c", 1);
+            if (event.active && !event.publication_gated.exchange(true)) {
+              char byte = 0;
+              const bool released =
+                  codet::test::read_token(event.release, byte, std::chrono::seconds(30));
+              (void)::write(event.notify, released && byte == 'o' ? "f" : "x", 1);
+            }
           },
           &observation,
           +[](void *context, std::string_view text, unsigned stage) noexcept {
