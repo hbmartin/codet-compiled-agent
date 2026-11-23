@@ -112,7 +112,7 @@ def historical_staging(parent):
             failure.historical_cleanup = owner.observation
             if owner.result is not None:
                 failure.historical_publication = owner.result
-            raise failure
+            raise failure from error
         if not owner.recover(error):
             raise
 
