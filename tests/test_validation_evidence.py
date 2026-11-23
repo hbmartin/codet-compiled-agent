@@ -998,7 +998,7 @@ print('REPORT:'+json.dumps(value),flush=True)
                 try:inactive = group_inactive(child, timeout=.2)[0]
                 except BaseException as inspection:
                     error.fixture_inspection = repr(inspection)
-                    raise error
+                    raise error  # noqa: B904 - preserve the original inspection cause.
                 if inactive:return
                 raise
             until = min(deadline, time.monotonic() + (.2 if action == signal.SIGTERM else 1))
@@ -1034,7 +1034,7 @@ print('REPORT:'+json.dumps(value),flush=True)
         expected = ('python', '-c', 'immutable unique child')
         with patch('os.killpg') as kill, patch('os.getpgid', return_value=123):
             with patch('process_supervision.group_inactive', return_value=(False, ['S'])), patch('evidence_processes.read_argv', return_value=['python','-c','another process']):
-                with self.assertRaisesRegex(RuntimeError, 'identity changed'):self.stop_historical_signal_child(123, expected)
+                with self.assertRaisesRegex(RuntimeError, 'identity changed', msg='Recycled identity cleanup did not fail closed'):self.stop_historical_signal_child(123, expected)
             self.assertEqual(kill.call_count, 0, 'Recycled child identity authorized a signal')
             for error in (OSError(errno.EINVAL, 'vanished'), ValueError('empty argv')):
                 with patch('process_supervision.group_inactive', side_effect=[(False,['S']),(True,[])]), patch('evidence_processes.read_argv', side_effect=error):
@@ -1242,8 +1242,8 @@ print('REPORT:'+json.dumps(value),flush=True)
         def interrupted(observation):
             try:
                 with native_scope(observation):yield
-            except OSError:
-                raise KeyboardInterrupt('signal during cleanup unwinding')
+            except OSError as cleanup:
+                raise KeyboardInterrupt('signal during cleanup unwinding') from cleanup
         try:
             with patch.object(historical.tempfile.TemporaryDirectory, 'cleanup', cleanup), patch.object(historical, 'cleanup_interruptions', interrupted):
                 try:historical.audit_package(package, self.root/'committed-cleanup-error')
@@ -1435,6 +1435,9 @@ print('REPORT:'+json.dumps(value),flush=True)
             +'calls=0\ndef verify_bundle(folder):\n global calls\n calls+=1\n'
             +' if calls>1:raise ValueError("inventory corruption")\n'
             +' return dict(verified=True,eligible_current=True)\n')
+        import hashlib
+        entry=tooling/'evidence_bundle.py'
+        (bundle/'inventory.json').write_text(json.dumps({'verifier_tooling/evidence_bundle.py':hashlib.sha256(entry.read_bytes()).hexdigest()}))
         output=self.root/'should-not-exist.json'
         completed=subprocess.run([sys.executable,'-B',driver.__file__,str(bundle),str(output),'.'],
                                  cwd=self.root,capture_output=True,text=True,timeout=15)
@@ -1459,7 +1462,9 @@ print('REPORT:'+json.dumps(value),flush=True)
         with driver.guarded_apis([str(original)]):
             for alias in aliases:
                 with self.assertRaises(PermissionError,msg='Filesystem identity alias bypassed the offline guard'):alias.read_text()
-            self.assertTrue(__import__('stat').S_ISLNK(os.lstat(outside).st_mode), 'lstat inspected the link referent')
+            try:link_mode=os.lstat(outside).st_mode
+            except PermissionError:self.fail('No-follow guard inspected the link referent')
+            self.assertTrue(__import__('stat').S_ISLNK(link_mode), 'lstat inspected the link referent')
             self.assertTrue(__import__('stat').S_ISLNK(os.stat(outside,follow_symlinks=False).st_mode))
             with self.assertRaises(PermissionError):outside.read_text()
             # Following a link to public bytes does not inspect the private link itself.
@@ -1476,6 +1481,7 @@ print('REPORT:'+json.dumps(value),flush=True)
 
     def test_archived_verifier_precedes_bundle_root_and_cached_modules(self):
         import hashlib
+
         import evidence_offline_audit as driver
         bundle=self.root/'import-fixture';bundle.mkdir()
         (bundle/'inputs').mkdir();(bundle/'inputs/member').write_text('data')
@@ -1589,6 +1595,7 @@ print('REPORT:'+json.dumps(value),flush=True)
                 try:
                     with archive_hash_work(self.root,carrier):pass
                 except ValueError:pass
+                except (TypeError, KeyError):self.fail('Carrier lookup preceded descriptor validation')
                 else:self.fail('Carrier lookup preceded descriptor validation')
                 self.assertFalse(stat.called,'Unvalidated carrier performed metadata lookup')
 
