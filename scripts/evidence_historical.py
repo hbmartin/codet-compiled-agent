@@ -56,37 +56,65 @@ class HistoricalStage:
                                          interruptions=self.observation["interruptions"])
 
 
+    def recover(self, error):
+        """Retain commitment across scope teardown without hiding genuine errors."""
+        if self.result is None:
+            return False
+        error.historical_publication = self.result
+        if not isinstance(error, KeyboardInterrupt):
+            return False
+        self.observation["interruptions"].append(dict(exception=type(error).__name__))
+        return True
+
+
 @contextmanager
 def historical_staging(parent):
     """Own staging; cooperative signals after publication record commitment."""
-    with interruption():
-        temporary = tempfile.TemporaryDirectory(prefix=".historical-", dir=parent)
-        owner = HistoricalStage(temporary.name)
-        failure = None
-        try:
-            yield owner
-        except BaseException as error:
-            if owner.result is not None and isinstance(error, KeyboardInterrupt):
+    owner = HistoricalStage(None)
+    failure = None
+    try:
+        with interruption():
+            temporary = tempfile.TemporaryDirectory(prefix=".historical-", dir=parent)
+            owner.path = temporary.name
+            try:
+                yield owner
+            except BaseException as error:
+                if owner.result is not None and isinstance(error, KeyboardInterrupt):
+                    owner.observation["interruptions"].append(dict(exception=type(error).__name__))
+                else:
+                    failure = error
+                    if owner.result is not None:
+                        error.historical_publication = owner.result
+                    raise
+            finally:
+                with cleanup_interruptions(owner.observation):
+                    try:
+                        temporary.cleanup()
+                    except BaseException as cleanup:
+                        if failure is None:
+                            if owner.result is not None:
+                                cleanup.historical_publication = owner.result
+                            raise
+                        owner.observation["failure"] = repr(cleanup)
+                if failure is not None:
+                    failure.historical_cleanup = owner.observation
+                elif owner.observation["interruptions"] and owner.result is None:
+                    raise KeyboardInterrupt("Interrupted during historical staging cleanup")
+
+    except BaseException as error:
+        # The inner cleanup scope has restored its handlers here. Teardown of
+        # interruption() and the remaining tail must retain the same owner.
+        if failure is not None and error is not failure:
+            if isinstance(error, KeyboardInterrupt):
                 owner.observation["interruptions"].append(dict(exception=type(error).__name__))
             else:
-                failure = error
-                if owner.result is not None:
-                    error.historical_publication = owner.result
-                raise
-        finally:
-            with cleanup_interruptions(owner.observation):
-                try:
-                    temporary.cleanup()
-                except BaseException as cleanup:
-                    if failure is None:
-                        if owner.result is not None:
-                            cleanup.historical_publication = owner.result
-                        raise
-                    owner.observation["failure"] = repr(cleanup)
-            if failure is not None:
-                failure.historical_cleanup = owner.observation
-            elif owner.observation["interruptions"] and owner.result is None:
-                raise KeyboardInterrupt("Interrupted during historical staging cleanup")
+                owner.observation["failure"] = repr(error)
+            failure.historical_cleanup = owner.observation
+            if owner.result is not None:
+                failure.historical_publication = owner.result
+            raise failure
+        if not owner.recover(error):
+            raise
 
 
 def audit_package(package, destination):
@@ -97,38 +125,44 @@ def audit_package(package, destination):
     if destination.exists() or destination.is_symlink():
         raise FileExistsError("Historical audit destination already exists: " + str(destination))
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with historical_staging(destination.parent) as owner:
-        stage = Path(owner.path) / "expanded"
-        stage.mkdir()
-        prefix = expanded["prefix"]
-        files, size, seen = 0, 0, set()
-        with tarfile.open(archive, "r:gz") as stream:
-            for member in stream:
-                target = safe_member(stage, member.name)
-                if (not member.isfile() or member.name in seen or not member.name.startswith(prefix + "/") or
-                        member.size < 0 or size + member.size > expanded["bytes"] or files + 1 > expanded["files"]):
-                    raise ValueError("Invalid historical carrier member: " + member.name)
-                seen.add(member.name)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with stream.extractfile(member) as source, target.open("xb") as output:
-                    shutil.copyfileobj(source, output)
-                files += 1
-                size += member.size
-        bundle = safe_member(stage, prefix)
-        if (files, size) != (expanded["files"], expanded["bytes"]) or sha256(bundle / "inventory.json") != expanded["inventory_sha256"]:
-            raise ValueError("Historical carrier expansion mismatch")
-        try:
-            verify_bundle(bundle)
-        except ValueError as error:
-            strict_error = str(error)
-            if "Invalid preparation measurement counters" not in strict_error:
-                raise
-        else:
-            raise ValueError("Historical metric-v1 fixture unexpectedly met live acceptance")
-        result = verify_bundle(bundle, historical=True)
-        if not result["verified"] or result["eligible_current"] or not result.get("historical"):
-            raise ValueError("Historical audit did not preserve acceptance boundaries")
-        receipt = dict(archive_sha256=signature, expanded_files=files, expanded_bytes=size,
-                       strict_rejected=True, strict_error=strict_error, historical_result=result)
-        owner.publish(stage, destination, receipt)
-    return receipt
+    owner = None
+    try:
+        with historical_staging(destination.parent) as owner:
+            stage = Path(owner.path) / "expanded"
+            stage.mkdir()
+            prefix = expanded["prefix"]
+            files, size, seen = 0, 0, set()
+            with tarfile.open(archive, "r:gz") as stream:
+                for member in stream:
+                    target = safe_member(stage, member.name)
+                    if (not member.isfile() or member.name in seen or not member.name.startswith(prefix + "/") or
+                            member.size < 0 or size + member.size > expanded["bytes"] or files + 1 > expanded["files"]):
+                        raise ValueError("Invalid historical carrier member: " + member.name)
+                    seen.add(member.name)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with stream.extractfile(member) as source, target.open("xb") as output:
+                        shutil.copyfileobj(source, output)
+                    files += 1
+                    size += member.size
+            bundle = safe_member(stage, prefix)
+            if (files, size) != (expanded["files"], expanded["bytes"]) or sha256(bundle / "inventory.json") != expanded["inventory_sha256"]:
+                raise ValueError("Historical carrier expansion mismatch")
+            try:
+                verify_bundle(bundle)
+            except ValueError as error:
+                strict_error = str(error)
+                if "Invalid preparation measurement counters" not in strict_error:
+                    raise
+            else:
+                raise ValueError("Historical metric-v1 fixture unexpectedly met live acceptance")
+            result = verify_bundle(bundle, historical=True)
+            if not result["verified"] or result["eligible_current"] or not result.get("historical"):
+                raise ValueError("Historical audit did not preserve acceptance boundaries")
+            receipt = dict(archive_sha256=signature, expanded_files=files, expanded_bytes=size,
+                           strict_rejected=True, strict_error=strict_error, historical_result=result)
+            owner.publish(stage, destination, receipt)
+        return receipt
+    except BaseException as error:
+        if owner is not None and owner.recover(error):
+            return owner.result
+        raise

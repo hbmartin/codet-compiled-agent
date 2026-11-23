@@ -997,6 +997,49 @@ print('REPORT:'+json.dumps(value),flush=True)
                     self.assertEqual(report['result']['publication']['interruptions'], [dict(signal=int(sig))],
                                      'Committed publication lost its interruption observation')
 
+    def test_historical_scope_exit_keeps_the_committed_receipt(self):
+        import contextlib
+        import signal
+
+        import evidence_historical as historical
+        package, _ = self.carrier_fixture()
+        native = historical.cleanup_interruptions
+        # Inject just after the cleanup deferral has restored its handlers.
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(signal=sig):
+                scopes = []
+                @contextlib.contextmanager
+                def after_scope(observation):
+                    with native(observation):
+                        yield
+                    scopes.append(True)
+                    if len(scopes) == 2:
+                        import os
+                        os.kill(os.getpid(), sig)
+                destination = self.root / ('exit-' + str(int(sig)))
+                with patch.object(historical, 'cleanup_interruptions', after_scope):
+                    result = historical.audit_package(package, destination)
+                self.assertTrue(destination.exists())
+                self.assertTrue(result['publication']['committed'])
+                self.assertTrue(result['publication']['interruptions'], 'Scope exit lost the committed signal receipt')
+
+    def test_historical_handler_restoration_keeps_commitment(self):
+        import contextlib
+        import evidence_historical as historical
+        package, _ = self.carrier_fixture()
+        native = historical.interruption
+        original = KeyboardInterrupt('interrupted while restoring the operation handler')
+        @contextlib.contextmanager
+        def restore():
+            with native():
+                yield
+            raise original
+        with patch.object(historical, 'interruption', restore):
+            result = historical.audit_package(package, self.root / 'restored')
+        self.assertTrue(result['publication']['committed'])
+        self.assertIs(original.historical_publication, result)
+        self.assertTrue(result['publication']['interruptions'], 'Handler restoration lost commitment')
+
     def test_historical_published_cleanup_failure_keeps_receipt_and_exception(self):
         import evidence_historical as historical
         package, _ = self.carrier_fixture()
