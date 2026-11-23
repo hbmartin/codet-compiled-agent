@@ -866,7 +866,10 @@ def gate(release=False):
  while time.monotonic()<deadline:
   if release:
    import select
-   if select.select([sys.stdin],[],[],.05)[0] and sys.stdin.readline().strip()=='go':return
+   if select.select([sys.stdin],[],[],.05)[0]:
+    line=sys.stdin.readline()
+    if not line:raise RuntimeError('Historical signal fixture input closed')
+    if line.strip()=='go':return
   else:time.sleep(.05)
  raise RuntimeError('Historical signal fixture deadline expired')
 native_copy=h.shutil.copyfileobj
@@ -900,7 +903,7 @@ value.update(restored=all(signal.getsignal(s)==handler for s,handler in prior.it
 print('REPORT:'+json.dumps(value),flush=True)
 """
 
-    def historical_signal_case(self, phase, sig=None, ignored=False, parent_exits=False):
+    def historical_signal_case(self, phase, sig=None, ignored=False, parent_exits=False, after_ready=None):
         import os
         import select
         import signal
@@ -915,28 +918,45 @@ print('REPORT:'+json.dumps(value),flush=True)
             destination = parent / 'result'
             argv = [sys.executable, '-c', code, str(Path(evidence.__file__).parent),
                     str(historical.__file__), str(package), str(destination), phase, 'ignored' if ignored else 'normal']
+            child_argv = list(argv)
             if parent_exits:
                 driver = 'import json,subprocess,sys;subprocess.Popen(json.loads(sys.argv[1]),stdin=subprocess.DEVNULL,start_new_session=True)'
                 argv = [sys.executable, '-c', driver, json.dumps(argv)]
             process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                        text=True, start_new_session=True)
             child = None
+            primary = None
             try:
                 self.assertTrue(select.select([process.stdout], [], [], 15)[0], 'Historical signal fixture never reached owned staging')
                 ready = process.stdout.readline().strip()
                 self.assertTrue(ready.startswith('READY:'), ready)
                 child = int(ready.split(':', 1)[1])
+                if after_ready is not None:after_ready(child)
                 if sig is not None:
                     os.kill(child, sig)
                     if phase in ('rename', 'published', 'cleanup'):
                         process.stdin.write('go\n'); process.stdin.flush()
                 stdout, stderr = process.communicate(timeout=10)
+            except BaseException as error:
+                primary = error
+                raise
             finally:
-                if process.poll() is None:
-                    os.killpg(process.pid, signal.SIGKILL); process.wait(timeout=5)
+                try:
+                    # The intermediate parent may already be reaped. Its child
+                    # owns another session and needs independent cleanup.
                     if child is not None and child != process.pid:
-                        try:os.killpg(child, signal.SIGKILL)
-                        except ProcessLookupError:pass
+                        self.stop_historical_signal_child(child, child_argv)
+                except BaseException as error:
+                    if primary is None:raise
+                    primary.fixture_cleanup = repr(error)
+                finally:
+                    try:
+                        if process.poll() is None:
+                            from process_supervision import stop_group
+                            stop_group(process, grace=.2)
+                    finally:
+                        for stream in (process.stdin, process.stdout, process.stderr):
+                            stream.close()
             self.assertIn('REPORT:', stdout, 'Cooperative extraction signal skipped cleanup: ' + stderr)
             report = json.loads(stdout.split('REPORT:', 1)[1])
             self.assertTrue(report['restored'], 'Historical extraction retained its signal handler')
@@ -948,6 +968,65 @@ print('REPORT:'+json.dumps(value),flush=True)
                 result = historical.audit_package(package, destination)
                 self.assertTrue(result['historical_result']['verified'])
             return report
+
+    @staticmethod
+    def stop_historical_signal_child(child, argv):
+        import errno
+        import os
+        import signal
+        import time
+        from evidence_processes import read_argv
+        from process_supervision import group_inactive
+        # Verify the exact unique child command before each signal. A vanished
+        # or recycled PID never grants authority to signal another group.
+        deadline = time.monotonic() + 2
+        for action in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                if group_inactive(child, timeout=.2)[0]:return
+                if read_argv(child)[1:] != argv[1:] or os.getpgid(child) != child:
+                    raise RuntimeError('Historical fixture child identity changed')
+                os.killpg(child, action)
+            except OSError as error:
+                if error.errno in (errno.ENOENT, errno.ESRCH):return
+                raise
+            until = min(deadline, time.monotonic() + (.2 if action == signal.SIGTERM else 1))
+            while time.monotonic() < until:
+                if group_inactive(child, timeout=.2)[0]:return
+                time.sleep(.05)
+        raise RuntimeError('Historical fixture child cleanup deadline expired')
+
+    def test_historical_parent_exit_failure_cleans_owned_child(self):
+        import os
+        from process_supervision import group_inactive
+        observed = []
+        original = AssertionError('injected failure after orphan readiness')
+        def fail(child):
+            observed.append(child)
+            raise original
+        with self.assertRaises(AssertionError) as failed:
+            self.historical_signal_case('extraction', parent_exits=True, after_ready=fail)
+        self.assertIs(failed.exception, original)
+        self.assertEqual(len(observed), 1)
+        self.assertTrue(group_inactive(observed[0], timeout=1)[0], 'Exited parent left its signal child running')
+        self.assertNotEqual(observed[0], os.getpid())
+
+    def test_historical_release_gate_rejects_eof_without_spinning(self):
+        import ast
+        import io
+        from types import SimpleNamespace
+        tree = ast.parse(self.historical_signal_program())
+        gate = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'gate')
+        reads = []
+        scope = dict(time=SimpleNamespace(monotonic=lambda:0), os=SimpleNamespace(getpid=lambda:1),
+                     sys=SimpleNamespace(stdin=io.StringIO('')), print=lambda *a,**kw:None)
+        def ready(*args):
+            reads.append(True)
+            self.assertEqual(len(reads), 1, 'Historical release gate spun after EOF')
+            return ([scope['sys'].stdin], [], [])
+        with patch('select.select', ready):
+            exec(compile(ast.fix_missing_locations(ast.Module(body=[gate],type_ignores=[])), '<gate>', 'exec'),scope)
+            with self.assertRaisesRegex(RuntimeError, 'Historical signal fixture input closed'):
+                scope['gate'](True)
 
     def test_historical_extraction_and_audit_unwind_real_signals(self):
         import signal
