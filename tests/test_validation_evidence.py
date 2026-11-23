@@ -1112,6 +1112,38 @@ print('REPORT:'+json.dumps(value),flush=True)
             self.extraction_measurement_bundle(wrong=True)
         self.assertFalse((self.root/'wrong-extraction-bundle').exists())
 
+    def test_relocated_audit_receipt_names_only_its_guarded_apis(self):
+        import shutil
+        # Archive the verifier used by the child, rather than importing it from a checkout.
+        shutil.copytree(Path(evidence.__file__).parent,self.root/'scripts',ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
+        self.capture()
+        target=self.root/'offline-bundle';evidence.publish_bundle(self.manifest,self.folder,target)
+        output=self.root/'offline-receipt.json'
+        driver=Path(evidence.__file__).parent/'evidence_offline_audit.py'
+        subprocess.run([sys.executable,'-B',str(driver),str(target),str(output),str(self.root.resolve())],
+                       check=True,capture_output=True,text=True,timeout=30)
+        receipt=json.loads(output.read_text())
+        self.assertEqual(receipt['guarded_file_apis'],['builtins.open','io.open','os.open','os.stat','os.lstat'])
+        self.assertEqual(receipt['guarded_process_apis'],['subprocess.Popen','subprocess.run','subprocess.check_output','subprocess.check_call','subprocess.call'])
+        self.assertNotIn('original_checkout_io_forbidden',receipt)
+        self.assertNotIn('process_launches_forbidden',receipt)
+        import ast
+        tree=ast.parse(receipt['driver_source'])
+        loops=[node for node in ast.walk(tree) if isinstance(node,ast.For)]
+        files=next(node for node in loops if isinstance(node.target,ast.Tuple) and
+                   isinstance(node.iter,ast.List) and any(isinstance(value,ast.Tuple) and
+                   isinstance(value.elts[0],ast.Name) and value.elts[0].id=='builtins' for value in node.iter.elts))
+        actual_files=[value.elts[0].id+'.'+value.elts[1].value for value in files.iter.elts]
+        processes=next(node for node in loops if isinstance(node.iter,ast.Tuple) and
+                       any(isinstance(value,ast.Constant) and value.value=='Popen' for value in node.iter.elts))
+        actual_processes=['subprocess.'+value.value for value in processes.iter.elts]
+        self.assertEqual(receipt['guarded_file_apis'],actual_files)
+        self.assertEqual(receipt['guarded_process_apis'],actual_processes)
+        self.assertIn('not an OS sandbox',receipt['guard_scope'])
+        self.assertEqual(receipt['interpreter']['version'][:2],list(sys.version_info[:2]))
+        self.assertTrue(receipt['audit']['verified'])
+        self.assertTrue(receipt['negative_control']['rejected'])
+
     def test_declared_extraction_carrier_rejects_mutations_and_wrong_returned_identity(self):
         import evidence_historical as historical
         from evidence_carrier import (
