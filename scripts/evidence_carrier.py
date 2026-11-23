@@ -66,7 +66,7 @@ def verify_carrier_rows(rows, carrier, *, historical=False):
 
 
 def verify_archived_carrier(settings, payload, entries, check_id, *, folder):
-    if not any(row.get("extraction_metric_version") in (2, 3) for row in payload["rows"]):
+    if not any(row.get("extraction_metric_version") in (2, 3, 4) for row in payload["rows"]):
         return
     if payload.get("carrier") != settings.get("carrier"):
         raise ValueError("Measurement shared carrier differs from archived configuration")
@@ -82,5 +82,5 @@ def verify_archived_carrier(settings, payload, entries, check_id, *, folder):
     from evidence_bundle import safe_member
     archive = entries[(check_id, "input", names[0])]
     archive_bytes = safe_member(folder, archive["storage"]).stat().st_size
-    if any(row.get("extraction_metric_version") == 3 and row.get("archive_bytes") != archive_bytes for row in payload["rows"]):
+    if any(row.get("extraction_metric_version") in (3, 4) and row.get("archive_bytes") != archive_bytes for row in payload["rows"]):
         raise ValueError("Extraction archive byte counter differs from its archived carrier")

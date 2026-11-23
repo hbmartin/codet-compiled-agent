@@ -1316,8 +1316,8 @@ print('REPORT:'+json.dumps(value),flush=True)
         if wrong:carrier['archive']['sha256']='0'*64
         names=['config.json',carrier['archive']['path'],carrier['transport']['path']]
         archive_bytes=(self.root/carrier['archive']['path']).stat().st_size + int(wrong_size)
-        row=dict(harness='tooling', workload='historical-extraction',metric_version=2, extraction_metric_version=3,
-                 timing_scope='verified-operation', publication_interruptions=0, archive_bytes=archive_bytes, archive_hash_passes=3, archive_hash_bytes=archive_bytes*3,
+        row=dict(harness='tooling', workload='historical-extraction',metric_version=2, extraction_metric_version=4,
+                 timing_scope='verified-operation', publication_interruptions=0, archive_bytes=archive_bytes, archive_hash_passes=3, archive_hash_read_bytes=archive_bytes*3,
                  historical_extractions=1,expanded_files=477,expanded_bytes=1024,files=477,owned_processes=0,
                  check_output_calls=0,git_commands=0,process_inspection_commands=0,retained_traced_blocks=1,
                  retained_traced_bytes=1,peak_traced_bytes=1,carrier_path='carrier',
@@ -1481,10 +1481,10 @@ print('REPORT:'+json.dumps(value),flush=True)
         carrier=describe_carrier(self.root,'carrier')
         row=measure(self.root,'unused','historical-extraction',self.root,carrier)
         self.assertEqual(row['archive_hash_passes'],3,'Extraction omitted a verified archive hash pass')
-        self.assertEqual(row['archive_hash_bytes'],metadata['archive']['bytes']*3,'archive_hash_bytes did not match streamed work')
+        self.assertEqual(row['archive_hash_read_bytes'],metadata['archive']['bytes']*3,'archive_hash_bytes did not match streamed work')
         row.update(harness='tooling',workload='historical-extraction')
         verify_tooling_metrics(row)
-        for name, value in (('archive_hash_passes',2),('archive_hash_bytes',1),('publication_interruptions',1),('timing_scope','extraction-only')):
+        for name, value in (('archive_hash_passes',2),('archive_hash_read_bytes',1),('publication_interruptions',1),('timing_scope','extraction-only')):
             with self.subTest(name=name),self.assertRaisesRegex(ValueError,'verified-operation'):
                 verify_tooling_metrics(dict(row,**{name:value}))
 
@@ -1497,6 +1497,57 @@ print('REPORT:'+json.dumps(value),flush=True)
                 msg='Unversioned or mistyped live tooling bypassed its contract'):
                 verify_tooling_metrics(row)
         verify_tooling_metrics(dict(harness='tooling',files=128),historical=True)
+
+    def test_archive_instrumentation_delegates_native_hashing_and_optional_buffers(self):
+        import evidence_carrier
+        import evidence_historical
+        from evidence_tool_bench import archive_hash_work
+        from verified_sources import file_hash
+        package, _ = self.carrier_fixture()
+        carrier = evidence_carrier.describe_carrier(self.root, 'carrier')
+        archive = self.root/carrier['archive']['path']
+        other = self.root/'other';other.write_bytes(b'nonarchive')
+        native_open = Path.open
+        calls = []
+        def native(path, buffer=None):
+            calls.append((path,buffer))
+            return file_hash(path,buffer)
+        buffer = bytearray(13)
+        with patch.object(evidence_carrier, 'sha256', native):
+            with archive_hash_work(self.root, carrier) as observed:
+                self.assertEqual(evidence_carrier.sha256(archive, buffer), file_hash(archive))
+                self.assertEqual(evidence_carrier.sha256(other, buffer), file_hash(other))
+            self.assertEqual(calls, [(archive,buffer),(other,buffer)], 'Archive instrumentation bypassed native hashing')
+            self.assertEqual(observed['archive_hash_read_bytes'], archive.stat().st_size, 'Native hash read bytes were not observed')
+            self.assertEqual(observed['archive_hash_passes'], 1)
+            self.assertIs(evidence_carrier.sha256, native)
+        self.assertIs(Path.open, native_open)
+        error = OSError('native hash failure')
+        with patch.object(evidence_historical, 'sha256', side_effect=error):
+            with self.assertRaises(OSError) as caught:
+                with archive_hash_work(self.root,carrier):evidence_historical.sha256(archive)
+            self.assertIs(caught.exception,error)
+        self.assertIs(Path.open,native_open)
+
+    def test_carrier_descriptor_is_validated_before_any_lookup(self):
+        from evidence_tool_bench import archive_hash_work
+        for carrier in (None, {}, dict(path='carrier', archive=dict(path='../outside',sha256='0'*64), transport=dict(path='carrier/transport.json',sha256='0'*64))):
+            with self.subTest(carrier=carrier), patch.object(Path,'stat') as stat:
+                try:
+                    with archive_hash_work(self.root,carrier):pass
+                except ValueError:pass
+                else:self.fail('Carrier lookup preceded descriptor validation')
+                self.assertFalse(stat.called,'Unvalidated carrier performed metadata lookup')
+
+    def test_contract_three_is_explicitly_historical(self):
+        from evidence_benchmarks import verify_tooling_metrics
+        row = dict(harness='tooling',workload='historical-extraction',metric_version=2,extraction_metric_version=3,
+                   files=1,expanded_files=1,expanded_bytes=1,historical_extractions=1,owned_processes=0,
+                   check_output_calls=0,git_commands=0,process_inspection_commands=0,
+                   retained_traced_blocks=0,retained_traced_bytes=0,peak_traced_bytes=0,
+                   archive_bytes=10,archive_hash_passes=3,archive_hash_bytes=30,publication_interruptions=0,timing_scope='verified-operation')
+        verify_tooling_metrics(row,historical=True)
+        with self.assertRaisesRegex(ValueError,'Extraction work'):verify_tooling_metrics(row)
 
     def test_declared_extraction_carrier_rejects_mutations_and_wrong_returned_identity(self):
         import evidence_historical as historical
@@ -3191,11 +3242,11 @@ class PreparationRecovery(unittest.TestCase):
         verify_tooling_metrics(historical,historical=True)
         with self.assertRaisesRegex(ValueError,'Layout work counters'):
             verify_tooling_metrics(historical)
-        extraction=dict(value, workload='historical-extraction',extraction_metric_version=3,
-                        timing_scope='verified-operation', publication_interruptions=0, archive_bytes=10, archive_hash_passes=3, archive_hash_bytes=30,
+        extraction=dict(value, workload='historical-extraction',extraction_metric_version=4,
+                        timing_scope='verified-operation', publication_interruptions=0, archive_bytes=10, archive_hash_passes=3, archive_hash_read_bytes=30,
                         historical_extractions=1,expanded_files=477,expanded_bytes=1024,files=477)
         verify_tooling_metrics(extraction)
-        for version in (None,True,1,1.0,2,2.0,3.0,4):
+        for version in (None,True,1,1.0,2,2.0,3,3.0,4.0,5):
             with self.subTest(version=version), self.assertRaisesRegex(ValueError,'Extraction work counters'):
                 verify_tooling_metrics(dict(extraction,extraction_metric_version=version))
         with self.assertRaisesRegex(ValueError,'Extraction work counters',msg='Extraction operation count was accepted as files'):
