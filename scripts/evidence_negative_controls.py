@@ -50,11 +50,26 @@ raise SystemExit(exit_code)
 def run_controls(root, folder):
     cases = [
         ("shared-extraction-carrier", "evidence_tool_bench",
-         'audited = audit_package((repository or root) / PACKAGE, destination)',
-         'audited = audit_package(root / PACKAGE, destination)', "ReplayIntegrity.test_extraction_measurement_observes_completed_audit_work"),
-        ("measurement-carrier", "evidence_campaign",
-         '    elif action == "measure":\n        if "historical-extraction" in config.get("cases", {}).get("tooling", []):\n            from evidence_historical import PACKAGE\n            inputs.extend(PACKAGE + "/" + name for name in ("audit-bundle.tar.gz", "transport.json"))',
-         '    elif action == "measure":', "PreparationRecovery.test_measurement_envelope_binds_declared_carrier_inputs"),
+         'package = check_carrier(repository or root, carrier)',
+         'package = root / "variant-carrier"', "ReplayIntegrity.test_extraction_measurement_observes_completed_audit_work"),
+        ("measurement-carrier", "evidence_campaign", 'inputs.extend(selected_carrier_inputs(config))',
+         'pass', "PreparationRecovery.test_measurement_envelope_binds_declared_carrier_inputs"),
+        ("child-sigint", "test_validation_evidence", 'signal.signal(signal.SIGINT,signal.default_int_handler)',
+         'pass', "ReplayIntegrity.test_historical_extraction_and_audit_unwind_real_signals"),
+        ("bounded-signal-gate", "test_validation_evidence", 'while time.monotonic()<deadline:',
+         'while True:', "ReplayIntegrity.test_historical_signal_gate_has_an_independent_deadline"),
+        ("publication-commit", "evidence_historical", 'with cleanup_interruptions(self.observation):',
+         "with __import__('contextlib').nullcontext():", "ReplayIntegrity.test_historical_publication_defers_signals_through_commit_and_cleanup"),
+        ("layout-work", "evidence_tool_bench", 'build_locations += len(locations)',
+         'build_locations += 0', "PreparationRecovery.test_layout_measurement_records_completed_resolutions"),
+        ("carrier-return", "evidence_tool_bench", 'if audited["archive_sha256"] != carrier["archive"]["sha256"]:',
+         'if False:', "ReplayIntegrity.test_declared_extraction_carrier_rejects_mutations_and_wrong_returned_identity"),
+        ("carrier-samples", "evidence_carrier", 'if any(row.get(key) != content for key, content in expected.items()):',
+         'if False:', "ReplayIntegrity.test_declared_extraction_carrier_rejects_mutations_and_wrong_returned_identity"),
+        ("carrier-declarations", "evidence_carrier", 'return [value[role]["path"] for role in ("archive", "transport")]',
+         'return []', "ReplayIntegrity.test_declared_extraction_carrier_rejects_mutations_and_wrong_returned_identity"),
+        ("offline-carrier", "evidence_bundle", 'verify_archived_carrier(settings, payload, entries, envelope["check_id"])',
+         'pass', "ReplayIntegrity.test_offline_extraction_binds_descriptor_to_actual_archived_inputs"),
         ("portable-layout", "evidence_campaign",
          'return tuple(unicodedata.normalize("NFC", unicodedata.normalize("NFC", part).casefold())\n                     for part in path.parts)',
          'return path.parts', "PreparationRecovery.test_portable_layout_aliases_are_rejected_without_side_effects"),
@@ -94,7 +109,7 @@ def run_controls(root, folder):
          'set(committed FALSE)',
          "test_tiger_recovery.DependencyReconfiguration.test_ambiguous_gui_change_fails_without_promoting_private_corruption"),
         ("historical-mode", "evidence_bundle",
-         'historical=historical)', 'historical=False)',
+         'historical=historical, carrier=settings.get("carrier"))', 'historical=False, carrier=settings.get("carrier"))' ,
          "ReplayIntegrity.test_historical_bundle_audit_is_explicit_and_never_current_eligible"),
         ("historical-eligibility", "evidence_bundle",
          'eligible_current=not historical', 'eligible_current=True',
@@ -294,7 +309,7 @@ def run_controls(root, folder):
         directory = folder / ("control-" + name)
         directory.mkdir(exist_ok=True)
         suffix = ".cmake" if module == "dependency-root" else ".py"
-        source = root / ("cmake" if module == "dependency-root" else "scripts") / (module + suffix)
+        source = root / ("cmake" if module == "dependency-root" else "tests" if module == "test_validation_evidence" else "scripts") / (module + suffix)
         mutant = directory / (module + suffix)
         mutant.write_text(replace_once(source.read_text(), before, after))
         runs = []
@@ -313,7 +328,10 @@ def run_controls(root, folder):
             verify_unittest_result(*runs)
         except ValueError as error:
             raise ValueError("Control " + name + ": " + repr(runs)) from error
-        markers = {"shared-extraction-carrier": "Extraction benchmark ignored shared declared carrier", "measurement-carrier": "Measurement producer omitted declared carrier inputs", "gui-guidance": "Missing Configure-only GUI recovery guidance", "cache-disagreement": "Private cache disagreement blamed an intact receipt",
+        markers = {"offline-carrier": "Offline extraction accepted a contradictory archived carrier identity", "child-sigint": "Child SIGINT disposition was not restored", "bounded-signal-gate": "Unbounded historical gate attempted another sleep",
+                   "publication-commit": "Committed publication was reported as an interruption", "layout-work": "Build-location counter omitted completed work",
+                   "carrier-return": "Extraction accepted a different returned carrier", "carrier-samples": "Extraction sample ignored declared carrier identity",
+                   "carrier-declarations": "Selected extraction omitted carrier declarations", "shared-extraction-carrier": "Extraction benchmark ignored shared declared carrier", "measurement-carrier": "Measurement producer omitted declared carrier inputs", "gui-guidance": "Missing Configure-only GUI recovery guidance", "cache-disagreement": "Private cache disagreement blamed an intact receipt",
                    "historical-work": "Completed audit work did not match the required workload", "adapter-bytes": "Byte-different adapter was not repaired",
                    "layout-collision": "ValueError not raised", "layout-containment": "Expected explicit campaign containment rejection", "carrier-counts": "Expected positive-integer carrier field validation: archive.bytes",
                    "portable-layout": "Portable path alias was admitted", "historical-signals": "Cooperative extraction signal skipped cleanup",

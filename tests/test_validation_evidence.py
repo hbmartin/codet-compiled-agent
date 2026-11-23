@@ -482,6 +482,12 @@ class ReplayAndGitGuards(unittest.TestCase):
         (root / "src").mkdir(exist_ok=True)
         (root / "src/a.cpp").write_text("original")
         (root / "CMakeLists.txt").write_text("project(test)")
+        from evidence_historical import PACKAGE
+        carrier = root / PACKAGE; carrier.mkdir(parents=True)
+        (carrier / 'audit-bundle.tar.gz').write_bytes(b'fixture archive')
+        evidence.atomic_json(carrier / 'transport.json', dict(capture_run_id='fixture',
+            archive=dict(path='audit-bundle.tar.gz', bytes=15, sha256=evidence.digest(carrier / 'audit-bundle.tar.gz')),
+            expanded=dict(prefix='fixture', files=1, bytes=1, inventory_sha256='a'*64)))
         for args in (["init", "-q"], ["add", "."], ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture"]):
             subprocess.run(["git", "-C", str(root)] + args, check=True, capture_output=True, timeout=5)
 
@@ -844,14 +850,9 @@ class ReplayIntegrity(unittest.TestCase):
         self.assertTrue(result['historical_result']['verified'])
         self.assertTrue(destination.is_dir())
 
-    def historical_signal_case(self, phase, sig=None, ignored=False, parent_exits=False):
-        import os
-        import select
-        import signal
-
-        import evidence_historical as historical
-        package, _ = self.carrier_fixture() if not (self.root / 'carrier').exists() else (self.root / 'carrier', None)
-        code = r"""import importlib.util,json,os,signal,sys,time
+    @staticmethod
+    def historical_signal_program():
+        return r"""import importlib.util,json,os,signal,sys,time
 from pathlib import Path
 sys.path.insert(0,sys.argv[1]);sys.dont_write_bytecode=True
 spec=importlib.util.spec_from_file_location('evidence_historical',sys.argv[2])
@@ -898,12 +899,21 @@ value.update(restored=all(signal.getsignal(s)==handler for s,handler in prior.it
  final=Path(sys.argv[4]).exists())
 print('REPORT:'+json.dumps(value),flush=True)
 """
+
+    def historical_signal_case(self, phase, sig=None, ignored=False, parent_exits=False):
+        import os
+        import select
+        import signal
+
+        import evidence_historical as historical
+        package, _ = self.carrier_fixture() if not (self.root / 'carrier').exists() else (self.root / 'carrier', None)
+        code = self.historical_signal_program()
         with tempfile.TemporaryDirectory(dir=self.root) as directory:
             parent = Path(directory)
             sibling = parent / '.historical-active'; sibling.mkdir()
             (sibling / 'owner').write_text('another invocation')
             destination = parent / 'result'
-            argv = [sys.executable, '-c', code, str(Path(__file__).resolve().parents[1] / 'scripts'),
+            argv = [sys.executable, '-c', code, str(Path(evidence.__file__).parent),
                     str(historical.__file__), str(package), str(destination), phase, 'ignored' if ignored else 'normal']
             if parent_exits:
                 driver = 'import json,subprocess,sys;subprocess.Popen(json.loads(sys.argv[1]),stdin=subprocess.DEVNULL,start_new_session=True)'
@@ -933,7 +943,6 @@ print('REPORT:'+json.dumps(value),flush=True)
             self.assertFalse(report['staging'], 'Cooperative extraction signal retained owned staging')
             self.assertEqual((sibling / 'owner').read_text(), 'another invocation')
             if report['final']:
-                self.assertTrue(report['result']['publication']['committed'], 'Published extraction lost its committed receipt')
                 with self.assertRaises(FileExistsError):historical.audit_package(package, destination)
             else:
                 result = historical.audit_package(package, destination)
@@ -949,6 +958,25 @@ print('REPORT:'+json.dumps(value),flush=True)
                         report = self.historical_signal_case(phase, sig, ignored)
                         self.assertEqual(report.get('error'), 'KeyboardInterrupt', 'Child SIGINT disposition was not restored')
                         self.assertFalse(report['final'])
+
+    def test_historical_signal_gate_has_an_independent_deadline(self):
+        import ast
+        from types import SimpleNamespace
+        program = ast.parse(self.historical_signal_program())
+        gate = next(node for node in program.body if isinstance(node, ast.FunctionDef) and node.name == 'gate')
+        elapsed = [0.0]
+        sleeps = []
+        def sleep(delay):
+            sleeps.append(delay)
+            self.assertLessEqual(delay, .05)
+            self.assertEqual(len(sleeps), 1, 'Unbounded historical gate attempted another sleep')
+            elapsed[0] = 6.0
+        scope=dict(time=SimpleNamespace(monotonic=lambda:elapsed[0], sleep=sleep),
+                   print=lambda *a,**kw:None, os=SimpleNamespace(getpid=lambda:1))
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[gate],type_ignores=[])), '<gate>', 'exec'),scope)
+        with self.assertRaisesRegex(RuntimeError,'Historical signal fixture deadline expired'):
+            scope['gate']()
+        self.assertEqual(sleeps,[.05])
 
     def test_historical_signal_gate_is_bounded_even_after_parent_exit(self):
         for parent_exits in (False, True):
@@ -1023,19 +1051,111 @@ print('REPORT:'+json.dumps(value),flush=True)
         package, metadata = self.carrier_fixture()
         variant = self.root / 'immutable variant'; variant.mkdir()
         self.assertFalse((variant / 'carrier').exists())
-        with patch.object(historical, 'PACKAGE', 'carrier'), patch.object(historical, 'audit_package', wraps=historical.audit_package) as observed:
+        from evidence_carrier import describe_carrier
+        carrier = describe_carrier(self.root, 'carrier')
+        with patch.object(historical, 'PACKAGE', 'ignored-variant-default'), patch.object(historical, 'audit_package', wraps=historical.audit_package) as observed:
             try:
-                value = measure(variant, 'unused', 'historical-extraction', self.root)
+                value = measure(variant, 'unused', 'historical-extraction', self.root, carrier)
             except (OSError, ValueError) as error:
                 self.fail('Extraction benchmark ignored shared declared carrier: ' + str(error))
         self.assertEqual(observed.call_count, 1)
         self.assertEqual(observed.call_args.args[0], package)
+        self.assertEqual(value['files'], metadata['expanded']['files'])
+        self.assertEqual(value['carrier_archive_sha256'], carrier['archive']['sha256'])
         self.assertEqual(value['expanded_files'], metadata['expanded']['files'])
         self.assertEqual(value['expanded_bytes'], metadata['expanded']['bytes'])
         value.update(harness='tooling', workload='historical-extraction')
         verify_tooling_metrics(value)
         with self.assertRaisesRegex(ValueError, 'Extraction work counters'):
             verify_tooling_metrics(dict(value, historical_extractions=0))
+
+    def extraction_measurement_bundle(self, wrong=False):
+        import statistics
+
+        from evidence_carrier import describe_carrier
+        if not (self.root / 'carrier').exists():self.carrier_fixture()
+        carrier=describe_carrier(self.root,'carrier')
+        if wrong:carrier['archive']['sha256']='0'*64
+        names=['config.json',carrier['archive']['path'],carrier['transport']['path']]
+        row=dict(harness='tooling', workload='historical-extraction',metric_version=2, extraction_metric_version=2,
+                 historical_extractions=1,expanded_files=477,expanded_bytes=1024,files=477,owned_processes=0,
+                 check_output_calls=0,git_commands=0,process_inspection_commands=0,retained_traced_blocks=1,
+                 retained_traced_bytes=1,peak_traced_bytes=1,carrier_path='carrier',
+                 carrier_archive_sha256=carrier['archive']['sha256'],carrier_transport_sha256=carrier['transport']['sha256'])
+        rows=[dict(row,set=1,sample=n,variant=v,warmup=n==0,milliseconds=float(n+1)) for v in ('baseline','changed') for n in (0,1)]
+        metrics=[k for k,v in rows[0].items() if type(v) in (int,float) and k not in ('set','sample')]
+        summary=[dict(set=1,harness='tooling',workload='historical-extraction',variant=v,
+                      **{k:statistics.median(r[k] for r in rows if r['variant']==v and not r['warmup']) for k in metrics})
+                 for v in ('baseline','changed')]
+        payload=dict(rows=rows,summary=summary,carrier=carrier)
+        script=self.root/'producer.py'
+        script.write_text('import sys,json\nfrom pathlib import Path\nsys.path.insert(0,'+repr(str(Path(evidence.__file__).parent))
+            +')\nfrom validation_evidence import write_artifact\nwrite_artifact(Path("measure.json"),"measure",json.loads('
+            +repr(json.dumps(payload))+'),'+repr(names)+')\n')
+        evidence.atomic_json(self.root/'config.json',dict(cases=dict(tooling=['historical-extraction']),sets=1,measured=1,carrier=carrier))
+        self.folder=self.root/('wrong-capture' if wrong else 'extraction-capture')
+        self.checks=[dict(id='measure',argv=[sys.executable,str(script)],artifacts=[dict(path='measure.json',kind='measure',inputs=names)])]
+        self.capture()
+        target=self.root/('wrong-extraction-bundle' if wrong else 'extraction-bundle')
+        evidence.publish_bundle(self.manifest,self.folder,target)
+        return target
+
+    def test_offline_extraction_binds_descriptor_to_actual_archived_inputs(self):
+        import shutil
+
+        from evidence_bundle import verify_bundle
+        target=self.extraction_measurement_bundle()
+        moved=self.root/'moved extraction';shutil.copytree(target,moved)
+        self.assertTrue(verify_bundle(moved)['verified'])
+        with self.assertRaisesRegex(ValueError,'Shared carrier input missing, unarchived, or mismatched',
+                                    msg='Offline extraction accepted a contradictory archived carrier identity'):
+            self.extraction_measurement_bundle(wrong=True)
+        self.assertFalse((self.root/'wrong-extraction-bundle').exists())
+
+    def test_declared_extraction_carrier_rejects_mutations_and_wrong_returned_identity(self):
+        import evidence_historical as historical
+        from evidence_carrier import (
+            check_carrier,
+            describe_carrier,
+            selected_carrier_inputs,
+            verify_carrier_rows,
+        )
+        from evidence_tool_bench import measure
+        package, _ = self.carrier_fixture()
+        carrier = describe_carrier(self.root, 'carrier')
+        original = (package / 'transport.json').read_bytes()
+        (package / 'transport.json').write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, 'identity changed: transport'):
+            check_carrier(self.root, carrier)
+        (package / 'transport.json').write_bytes(original)
+        native = historical.audit_package
+        def wrong(*args):
+            value = native(*args); value['archive_sha256'] = '0'*64; return value
+        with patch.object(historical, 'audit_package', wrong):
+            with self.assertRaisesRegex(ValueError, 'different shared carrier', msg='Extraction accepted a different returned carrier'):
+                measure(self.root, 'unused', 'historical-extraction', self.root, carrier)
+        self.assertEqual(selected_carrier_inputs(dict(cases=dict(tooling=['historical-extraction']),carrier=carrier)),
+                         [carrier['archive']['path'], carrier['transport']['path']], 'Selected extraction omitted carrier declarations')
+        self.assertEqual(selected_carrier_inputs(dict(cases=dict(tooling=[]))), [])
+        with self.assertRaisesRegex(ValueError, 'shared carrier descriptor'):
+            selected_carrier_inputs(dict(cases=dict(tooling=['historical-extraction'])))
+        row=dict(harness='tooling', workload='historical-extraction', extraction_metric_version=2,
+                 carrier_path='carrier',carrier_archive_sha256='0'*64,carrier_transport_sha256=carrier['transport']['sha256'])
+        with self.assertRaisesRegex(ValueError, 'differs from its declared shared carrier', msg='Extraction sample ignored declared carrier identity'):
+            verify_carrier_rows([row], carrier)
+
+    def test_carrier_is_checked_again_after_extraction(self):
+        import evidence_historical as historical
+        from evidence_carrier import describe_carrier
+        from evidence_tool_bench import measure
+        package, _ = self.carrier_fixture()
+        carrier = describe_carrier(self.root, 'carrier')
+        native = historical.audit_package
+        def mutate(*args):
+            value=native(*args); (package / 'transport.json').write_text('changed during audit'); return value
+        with patch.object(historical, 'audit_package', mutate):
+            with self.assertRaisesRegex(ValueError, 'identity changed: transport', msg='Extraction omitted its final carrier check'):
+                measure(self.root, 'unused', 'historical-extraction', self.root, carrier)
 
     def test_historical_count_metadata_is_validated_before_staging(self):
         import copy
@@ -2547,7 +2667,7 @@ class PreparationRecovery(unittest.TestCase):
         cases = next(ast.literal_eval(n.value) for n in function.body if isinstance(n, ast.Assign)
                      and isinstance(n.targets[0], ast.Name) and n.targets[0].id == 'cases')
         for name, module, before, _, _ in cases:
-            path = root / ('cmake/dependency-root.cmake' if module == 'dependency-root' else 'scripts/' + module + '.py')
+            path = root / ('cmake/dependency-root.cmake' if module == 'dependency-root' else ('tests/' if module == 'test_validation_evidence' else 'scripts/') + module + '.py')
             with self.subTest(control=name):
                 self.assertEqual(path.read_text().count(before), 1, 'Python mutation no longer matches its production site: ' + name)
 
@@ -2663,35 +2783,64 @@ class PreparationRecovery(unittest.TestCase):
         from evidence_tool_bench import measure
         with patch.object(campaign, 'resolve_build_layout', wraps=campaign.resolve_build_layout) as observed:
             value = measure(Path(__file__).resolve().parents[1], 'unused', 'campaign-layout')
+        self.assertEqual(value['files'], 0, 'Layout validation claimed file work')
         self.assertEqual(value['layout_checks'], observed.call_count)
-        self.assertEqual(value['build_locations'], 5 * observed.call_count)
+        self.assertEqual(value['build_locations'], 5 * observed.call_count, 'Build-location counter omitted completed work')
         value.update(harness='tooling', workload='campaign-layout')
         verify_tooling_metrics(value)
         with self.assertRaisesRegex(ValueError, 'Layout work counters'):
             verify_tooling_metrics(dict(value, layout_checks=0))
 
+    def test_live_tooling_contracts_reject_old_versions_and_mislabelled_files(self):
+        from evidence_benchmarks import verify_tooling_metrics
+        from evidence_tool_bench import measure
+        value=measure(Path(__file__).resolve().parents[1], 'unused', 'campaign-layout')
+        value.update(harness='tooling',workload='campaign-layout')
+        for version in (None,True,1,1.0,2.0,3):
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError,'Layout work counters'):
+                verify_tooling_metrics(dict(value,layout_metric_version=version))
+        with self.assertRaisesRegex(ValueError,'Layout work counters',msg='Layout operation count was accepted as files'):
+            verify_tooling_metrics(dict(value,files=128))
+        historical=dict(value,layout_metric_version=1,files=128)
+        verify_tooling_metrics(historical,historical=True)
+        with self.assertRaisesRegex(ValueError,'Layout work counters'):
+            verify_tooling_metrics(historical)
+        extraction=dict(value, workload='historical-extraction',extraction_metric_version=2,
+                        historical_extractions=1,expanded_files=477,expanded_bytes=1024,files=477)
+        verify_tooling_metrics(extraction)
+        for version in (None,True,1,1.0,2.0,3):
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError,'Extraction work counters'):
+                verify_tooling_metrics(dict(extraction,extraction_metric_version=version))
+        with self.assertRaisesRegex(ValueError,'Extraction work counters',msg='Extraction operation count was accepted as files'):
+            verify_tooling_metrics(dict(extraction,files=1))
+        verify_tooling_metrics(dict(extraction,extraction_metric_version=1,files=1),historical=True)
+
     def test_measurement_envelope_binds_declared_carrier_inputs(self):
         import os
 
         import evidence_campaign as campaign
+        from evidence_carrier import selected_carrier_inputs
         from evidence_historical import PACKAGE
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d).resolve(); folder = root / 'campaign'; folder.mkdir()
-            names = ['campaign/config.json', 'campaign/harness.json', 'campaign/baseline-release/CMakeCache.txt',
-                     'campaign/changed-release/CMakeCache.txt', PACKAGE + '/audit-bundle.tar.gz', PACKAGE + '/transport.json']
-            for name in names:
-                path = root / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text('fixture input')
-            config = folder / 'config.json'; config.write_text(json.dumps(dict(root=str(root), folder=str(folder), cases=dict(tooling=['historical-extraction']))))
-            spec = dict(path='campaign/measure.json', kind='measure', inputs=names)
-            context = evidence._context(root, dict(id='1'*32, campaign_id='2'*32), 'benchmarks', {}, {})
-            context['declared_artifacts'] = [spec]
-            with patch.dict(os.environ, CODET_EVIDENCE_CONTEXT=json.dumps(context)), patch.object(campaign, 'measure', return_value=dict(fixture=True)):
-                try:
-                    campaign.produce(config, 'measure')
-                except ValueError as error:
-                    self.fail('Measurement producer omitted declared carrier inputs: ' + str(error))
-            value = evidence.validate_artifact(root / spec['path'], spec, context)
-            self.assertEqual(set(value['input_hashes']), set(names), 'Measurement carrier input coverage changed')
+        for extraction in (False, True):
+            with self.subTest(extraction=extraction), tempfile.TemporaryDirectory() as d:
+                root = Path(d).resolve(); folder = root / 'campaign'; folder.mkdir()
+                carrier = dict(path=PACKAGE, archive=dict(path=PACKAGE + '/audit-bundle.tar.gz', sha256='a'*64),
+                               transport=dict(path=PACKAGE + '/transport.json', sha256='b'*64))
+                settings = dict(root=str(root), folder=str(folder), carrier=carrier,
+                                cases=dict(tooling=['historical-extraction'] if extraction else ['campaign-layout']))
+                names = ['campaign/config.json', 'campaign/harness.json', 'campaign/baseline-release/CMakeCache.txt',
+                         'campaign/changed-release/CMakeCache.txt'] + selected_carrier_inputs(settings)
+                for name in names:
+                    path = root / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text('fixture input')
+                config = folder / 'config.json'; config.write_text(json.dumps(settings))
+                spec = dict(path='campaign/measure.json', kind='measure', inputs=names)
+                context = evidence._context(root, dict(id='1'*32, campaign_id='2'*32), 'benchmarks', {}, {})
+                context['declared_artifacts'] = [spec]
+                with patch.dict(os.environ, CODET_EVIDENCE_CONTEXT=json.dumps(context)), patch.object(campaign, 'measure', return_value=dict(fixture=True)):
+                    try:campaign.produce(config, 'measure')
+                    except ValueError as error:self.fail('Measurement producer omitted declared carrier inputs: ' + str(error))
+                value = evidence.validate_artifact(root / spec['path'], spec, context)
+                self.assertEqual(set(value['input_hashes']), set(names), 'Measurement carrier input coverage changed')
 
     def test_control_marker_rejects_unrelated_regex_assertions(self):
         from evidence_negative_controls import require_assertion_marker

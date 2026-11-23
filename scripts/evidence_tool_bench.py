@@ -19,11 +19,12 @@ from process_supervision import run as supervised_run
 from validation_evidence import production_hashes
 
 
-def measure(root, ref, workload, repository=None):
+def measure(root, ref, workload, repository=None, carrier=None):
     calls = git_calls = process_inspections = cmake_calls = 0
     historical_sample_audits = historical_rows = 0
     context = None
-    layout_checks = extraction_files = extraction_bytes = 0
+    layout_checks = build_locations = extraction_files = extraction_bytes = 0
+    carrier_metrics = {}
     if workload == "build-context":
         context = evidence_tiger_context_bench.ContextWorkload()
     native = subprocess.check_output
@@ -131,15 +132,23 @@ def measure(root, ref, workload, repository=None):
                     if set(locations) != set(settings) or campaign.exists():
                         raise ValueError("Layout measurement positive control failed")
                     layout_checks += 1
+                    build_locations += len(locations)
                     hashes[str(number)] = locations
         elif workload == "historical-extraction":
             from tempfile import TemporaryDirectory
 
-            from evidence_historical import PACKAGE, audit_package
+            from evidence_carrier import check_carrier
+            from evidence_historical import audit_package
             hashes = {}
             with TemporaryDirectory(prefix="codet-extraction-measure-") as directory:
                 destination = Path(directory) / "verified"
-                audited = audit_package((repository or root) / PACKAGE, destination)
+                package = check_carrier(repository or root, carrier)
+                audited = audit_package(package, destination)
+                check_carrier(repository or root, carrier)
+                if audited["archive_sha256"] != carrier["archive"]["sha256"]:
+                    raise ValueError("Extraction returned a different shared carrier")
+                carrier_metrics = dict(carrier_path=carrier["path"], carrier_archive_sha256=audited["archive_sha256"],
+                                       carrier_transport_sha256=carrier["transport"]["sha256"])
                 if not audited["strict_rejected"] or not audited["historical_result"]["verified"] or audited["historical_result"]["eligible_current"]:
                     raise ValueError("Extraction measurement positive control failed")
                 extraction_files, extraction_bytes = audited["expanded_files"], audited["expanded_bytes"]
@@ -179,18 +188,19 @@ def measure(root, ref, workload, repository=None):
                 tracemalloc.stop()
     if not hashes or (workload == "git-inspection" and calls < 3):
         raise ValueError("Hash/Git work counter positive control failed")
-    return dict(**(dict(context_metric_version=1, **context.counts) if context else {}), case=workload, milliseconds=elapsed, files=0 if workload in ("supervision", "configuration-selection", "historical-samples") else len(hashes),
+    return dict(**(dict(context_metric_version=1, **context.counts) if context else {}), case=workload, milliseconds=elapsed, files=(extraction_files if workload == "historical-extraction" else 0 if workload in ("supervision", "configuration-selection", "historical-samples", "campaign-layout") else len(hashes)),
                 owned_processes=len(hashes) if workload == "supervision" else 0,
                 check_output_calls=calls, git_commands=git_calls,
                 process_inspection_commands=process_inspections,
                 **(dict(configuration_metric_version=1,cmake_commands=cmake_calls,configuration_checks=len(hashes)) if workload=="configuration-selection" else {}),
                 **(dict(historical_sample_audits=historical_sample_audits, historical_rows=historical_rows) if workload == "historical-samples" else {}),
-                **(dict(layout_metric_version=1, layout_checks=layout_checks, build_locations=layout_checks * 5) if workload == "campaign-layout" else {}),
-                **(dict(extraction_metric_version=1, historical_extractions=len(hashes), expanded_files=extraction_files, expanded_bytes=extraction_bytes) if workload == "historical-extraction" else {}),
-                metric_version=2, retained_traced_blocks=sum(s.count for s in stats), retained_traced_bytes=retained, peak_traced_bytes=peak)
+                **(dict(layout_metric_version=2, layout_checks=layout_checks, build_locations=build_locations) if workload == "campaign-layout" else {}),
+                **(dict(extraction_metric_version=2, historical_extractions=len(hashes), expanded_files=extraction_files, expanded_bytes=extraction_bytes) if workload == "historical-extraction" else {}),
+                **carrier_metrics, metric_version=2, retained_traced_blocks=sum(s.count for s in stats), retained_traced_bytes=retained, peak_traced_bytes=peak)
 
 
 if __name__ == "__main__":
     root, ref, workload, output = sys.argv[1:5]
-    repository = Path(sys.argv[5]) if len(sys.argv) == 6 else None
-    Path(output).write_text(json.dumps(measure(Path(root), ref, workload, repository)) + "\n")
+    repository = Path(sys.argv[5]) if len(sys.argv) >= 6 else None
+    carrier = json.loads(sys.argv[6]) if len(sys.argv) == 7 else None
+    Path(output).write_text(json.dumps(measure(Path(root), ref, workload, repository, carrier)) + "\n")
