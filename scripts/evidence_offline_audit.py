@@ -3,6 +3,7 @@ import argparse
 import builtins
 import errno
 import hashlib
+import importlib
 import io
 import json
 import os
@@ -15,9 +16,12 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
-def canonical(path, *, lstat=os.lstat, readlink=os.readlink):
+def canonical(path, *, follow_final=True, lstat=os.lstat, readlink=os.readlink):
     """Resolve path identity using saved primitives, never recursively patched APIs."""
     value = os.fsdecode(path)
+    if not follow_final:
+        parent, name = os.path.split(value)
+        return os.path.join(canonical(parent or '.', lstat=lstat, readlink=readlink), name)
     if not os.path.isabs(value):
         value = os.getcwd() + os.sep + value
     todo, done, hops = value.split(os.sep), [], 0
@@ -49,19 +53,47 @@ def within(value, root):
     return value == root or value.startswith(root.rstrip(os.sep) + os.sep)
 
 
+class OriginalRoots:
+    """Use native ancestor identities as well as paths, including Darwin firmlinks."""
+    def __init__(self, roots, native_stat=os.stat):
+        self.native_stat = native_stat
+        self.paths = tuple(canonical(root) for root in roots)
+        self.identities = set()
+        for root in self.paths:
+            info = native_stat(root)
+            if not stat.S_ISDIR(info.st_mode):raise ValueError('Original checkout root is not a directory: ' + root)
+            self.identities.add((info.st_dev, info.st_ino))
+
+    def contains(self, path, *, follow_final=True):
+        value = canonical(path, follow_final=follow_final)
+        if any(within(value, root) for root in self.paths):return True
+        current = value if follow_final else os.path.dirname(value)
+        while True:
+            try:info = self.native_stat(current)
+            except OSError as error:
+                if error.errno not in (errno.ENOENT, errno.ENOTDIR):raise
+            else:
+                if (info.st_dev, info.st_ino) in self.identities:return True
+            parent = os.path.dirname(current)
+            if parent == current:return False
+            current = parent
+
+
 @contextmanager
 def guarded_apis(originals):
     blocked, saved = [], []
-    def check(path):
+    roots = OriginalRoots(originals)
+    def check(path, follow_final, kwargs):
         if isinstance(path, int):return
-        value = canonical(path)
-        if any(within(value, root) for root in originals):
-            blocked.append(value)
+        if kwargs.get('dir_fd') is not None and not os.path.isabs(path):
+            raise ValueError('Offline guard cannot establish relative dir_fd path identity')
+        if roots.contains(path, follow_final=follow_final):
+            blocked.append(os.fsdecode(path))
             raise PermissionError('Original checkout I/O is forbidden in this audit')
     def protect(owner, name):
         native = getattr(owner, name)
         def guarded(path, *args, **kwargs):
-            check(path)
+            check(path, name != 'lstat' and kwargs.get('follow_symlinks', True), kwargs)
             return native(path, *args, **kwargs)
         saved.append((owner, name, native))
         setattr(owner, name, guarded)
@@ -75,6 +107,19 @@ def guarded_apis(originals):
         yield blocked
     finally:
         for owner,name,native in reversed(saved):setattr(owner,name,native)
+
+
+@contextmanager
+def archived_verifier(tooling):
+    """Checkout module caches must not override the chosen archived tooling."""
+    names = {p.stem for p in tooling.glob('*.py')}
+    previous = {name:sys.modules.pop(name) for name in names if name in sys.modules}
+    try:
+        importlib.invalidate_caches()
+        yield
+    finally:
+        for name in names:sys.modules.pop(name, None)
+        sys.modules.update(previous)
 
 
 def validate_disposition(result, attempt, expected=None):
@@ -106,6 +151,7 @@ def main(argv=None):
     originals = [canonical(value) for value in args.originals]
     if any(not Path(value).is_dir() for value in originals):
         raise ValueError('Original checkout roots must be existing directories')
+    roots = OriginalRoots(originals)
     source = Path(__file__).read_bytes()
     helper_sha = hashlib.sha256(source).hexdigest()
     inventory_sha = hashlib.sha256((bundle/'inventory.json').read_bytes()).hexdigest()
@@ -114,16 +160,16 @@ def main(argv=None):
     imports = [canonical(value) for value in sys.path if value]
     sys.dont_write_bytecode = True
     with tempfile.TemporaryDirectory(prefix='codet relocated audit ') as temporary:
-        root = Path(temporary)
-        if any(within(canonical(root), value) for value in originals):
+        root = Path(temporary).resolve()
+        if roots.contains(root):
             raise ValueError('Relocated audit workspace overlaps an original checkout root')
         moved = root/'moved bundle'
         shutil.copytree(bundle,moved)
         try:
             os.chdir(root)
-            sys.path[:] = [p for p in imports if not any(within(p,o) for o in originals)]
-            sys.path[:0] = [str(moved),str(moved/'verifier_tooling')]
-            if not (moved/'verifier_tooling').exists():
+            sys.path[:] = [p for p in imports if not roots.contains(p)]
+            tooling = moved/'verifier_tooling'
+            if not tooling.exists():
                 tooling = root/'archived verifier tooling'
                 tooling.mkdir()
                 index = json.loads((moved/'inputs.json').read_text())
@@ -133,17 +179,25 @@ def main(argv=None):
                         data = (moved/item['storage']).read_bytes()
                         if hashlib.sha256(data).hexdigest()!=item['sha256']:raise ValueError('Changed archived verifier')
                         (tooling/Path(name).name).write_bytes(data)
-                sys.path.insert(0,str(tooling))
+            sys.path[:0] = [str(tooling),str(moved)]
             report = json.loads((moved/'report.json').read_text())
             attempt = 'attempt_bundle_version' in report
             # Installation precedes verifier imports, including aliases captured there.
-            with guarded_apis(originals) as blocked:
+            with guarded_apis(originals) as blocked, archived_verifier(tooling):
                 if attempt:
                     import evidence_attempt_audit
-                    verify = evidence_attempt_audit.verify
+                    module = evidence_attempt_audit
+                    verify = module.verify
                 else:
-                    from evidence_bundle import verify_bundle
-                    verify = verify_bundle
+                    module = importlib.import_module("evidence_bundle")
+                    verify = module.verify_bundle
+                entry = Path(module.__file__).resolve()
+                if entry.parent != tooling.resolve():raise ValueError('Verifier entrypoint is outside selected archived tooling')
+                verifier = dict(path=str(entry.relative_to(root)), sha256=hashlib.sha256(entry.read_bytes()).hexdigest())
+                if tooling == moved/'verifier_tooling':
+                    inventory = json.loads((moved/'inventory.json').read_text())
+                    if inventory.get('verifier_tooling/'+entry.name) != verifier['sha256']:
+                        raise ValueError('Verifier entrypoint differs from archived inventory')
                 result = verify(moved)
                 validate_disposition(result, attempt, expected)
                 member = next(p for p in (moved/'inputs').iterdir() if p.is_file())
@@ -161,7 +215,7 @@ def main(argv=None):
     receipt = dict(argv=sys.argv if argv is None else argv,kind='postpublication-offline-audit',driver_source=source.decode(),bundle_id=bundle.name,
         bundle_inventory_sha256=inventory_sha,helper_sha256=helper_sha,canonical_original_roots=originals,
         interpreter=dict(path=sys.executable,version=list(sys.version_info[:3]),sha256=interpreter_sha),
-        relocated=True,guarded_file_apis=['builtins.open','io.open','os.open','os.stat','os.lstat'],
+        relocated=True,verifier=verifier,guarded_file_apis=['builtins.open','io.open','os.open','os.stat','os.lstat'],
         guarded_process_apis=['subprocess.Popen','subprocess.run','subprocess.check_output','subprocess.check_call','subprocess.call'],
         guard_phase='Archived verifier import through verification and corruption control',
         guard_scope='Selected Python APIs only; previously cached aliases, cached pathlib accessors, directory listings and direct os process primitives are not blocked. This is not an OS sandbox.',

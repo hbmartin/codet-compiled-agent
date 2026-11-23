@@ -72,15 +72,16 @@ def verify_tooling_metrics(row, *, historical=False):
             raise ValueError('Layout work counters or controls are invalid')
     if row.get('workload') == 'historical-extraction':
         if (any(type(row.get(key)) is not int for key in ('extraction_metric_version', 'historical_extractions')) or
-                row.get('extraction_metric_version') not in ((1, 2, 3) if historical else (3,)) or row.get('historical_extractions') != 1 or
+                row.get('extraction_metric_version') not in ((1, 2, 3, 4) if historical else (4,)) or row.get('historical_extractions') != 1 or
                 any(type(row.get(key)) is not int or row[key] <= 0 for key in ('expanded_files', 'expanded_bytes')) or
                 row['files'] != (1 if row.get('extraction_metric_version') == 1 else row['expanded_files']) or row['owned_processes'] or row['check_output_calls']):
             raise ValueError('Extraction work counters or controls are invalid')
-        if row['extraction_metric_version'] == 3:
-            counters = ('archive_bytes','archive_hash_passes','archive_hash_bytes','publication_interruptions')
+        if row['extraction_metric_version'] in (3, 4):
+            read_bytes = 'archive_hash_read_bytes' if row['extraction_metric_version'] == 4 else 'archive_hash_bytes'
+            counters = ('archive_bytes','archive_hash_passes',read_bytes,'publication_interruptions')
             if (any(type(row.get(key)) is not int or row[key] < 0 for key in counters) or
                     not row['archive_bytes'] or row['archive_hash_passes'] != 3 or
-                    row['archive_hash_bytes'] != row['archive_bytes'] * row['archive_hash_passes'] or
+                    row[read_bytes] != row['archive_bytes'] * row['archive_hash_passes'] or
                     row['publication_interruptions'] != 0 or row.get('timing_scope') != 'verified-operation'):
                 raise ValueError('Extraction verified-operation contract is invalid')
     if row.get('workload') == 'build-context':

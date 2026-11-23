@@ -77,11 +77,16 @@ measurements require one declared carrier descriptor shared by both variants and
 bound to archived configuration and carrier inputs.
 
 
-The offline audit driver canonicalizes forbidden checkout roots before relocation
-and installs its selected API guards before archived verifier imports. Its receipt
-identifies that phase and the canonical roots. Previously cached aliases, cached
-pathlib accessors, directory listings, and direct OS process primitives remain
-outside coverage; this is not a sandbox. Import failures restore installed guards.
+The offline audit driver resolves forbidden checkout roots before relocation and
+uses filesystem ancestor identities to detect case and Darwin firmlink aliases.
+No-follow metadata operations inspect the final link rather than its referent.
+Selected API guards are installed before verifier imports. Tooling comes from the
+bundle's `verifier_tooling` directory, or verified archived sources when absent;
+bundle-root copies and checkout module caches cannot shadow it. Receipts record
+the selected entrypoint digest. Previously cached aliases, cached pathlib accessors,
+directory listings, direct OS process primitives, and descriptor-only access remain
+outside coverage; this is not a sandbox. Ambiguous relative `dir_fd` lookups are
+rejected rather than treated as clean. Import failures restore installed guards.
 Use `python3 scripts/evidence_offline_audit.py BUNDLE RECEIPT ORIGINAL_ROOT...`.
 The optional `--expect-unmet '{"benchmarks":"failed"}'` checks an explicit campaign
 expectation; otherwise the underlying auditor validates and reports the disposition.
@@ -89,15 +94,22 @@ Incomplete integrity verification never grants current campaign eligibility.
 
 Committed historical publication ownership extends through cleanup and operation
 scope teardown. Cooperative interruptions remain observations on the committed
-receipt. Measurements reject any such observation before writing a sample, retain
-the receipt in failure diagnostics, and do not turn an outer timeout into success.
-Genuine failures retain their original exception and any committed receipt.
+receipt. Genuine cleanup and operation failures retain their identity, original
+cause, and secondary error observations even if teardown is interrupted. Only
+pure committed interruptions recover as success. Measurements reject interruption
+observations before writing a sample and retain the receipt in failure diagnostics.
+An outer timeout does not become a successful sample.
 
-Extraction workload contract 3 measures the complete verified operation: carrier
+Extraction workload contract 4 measures the complete verified operation: carrier
 admission, extraction and auditing, final carrier verification, and owned cleanup.
-Observed archive-hash passes and streamed bytes are reported separately from
-expanded files and bytes. The three required archive hash passes are deliberately
-inside timing and tracing. Version-1/2 extraction observations retain their original
-meaning only in explicit historical auditing. Evidence containers stay at v5;
+The harness calls each variant's native hasher, including its buffer strategy, and
+observes bytes read through transparent stream forwarding. Successful native hash
+calls and actual read bytes are separate from expanded files/bytes. Three complete
+archive hash reads are required. Instrumentation overhead is inside timing and
+tracing; these are instrumented verified-operation measurements, not isolated or
+uninstrumented hashing costs. Version-1/2/3 extraction observations retain their
+original meaning only in explicit historical auditing. Earlier contract 3 used a
+shared harness hash loop and must not be described as native-hasher measurements.
+Historical samples and receipts are unchanged. Evidence containers stay at v5;
 live tooling observations require integer metric version 2. No timing threshold
 or general performance claim follows from these deterministic work checks.

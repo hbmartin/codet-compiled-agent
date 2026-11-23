@@ -917,7 +917,7 @@ print('REPORT:'+json.dumps(value),flush=True)
             destination = parent / 'result'
             argv = [sys.executable, '-c', code, str(Path(evidence.__file__).parent),
                     str(historical.__file__), str(package), str(destination), phase, 'ignored' if ignored else 'normal']
-            child_argv = list(argv)
+            child_argv = tuple(argv)
             if parent_exits:
                 driver = 'import json,subprocess,sys;subprocess.Popen(json.loads(sys.argv[1]),stdin=subprocess.DEVNULL,start_new_session=True)'
                 argv = [sys.executable, '-c', driver, json.dumps(argv)]
@@ -930,7 +930,7 @@ print('REPORT:'+json.dumps(value),flush=True)
                 ready = process.stdout.readline().strip()
                 self.assertTrue(ready.startswith('READY:'), ready)
                 child = int(ready.split(':', 1)[1])
-                if after_ready is not None:after_ready(child)
+                if after_ready is not None:after_ready(child, child_argv)
                 if sig is not None:
                     os.kill(child, sig)
                     if phase in ('rename', 'published', 'cleanup'):
@@ -940,22 +940,7 @@ print('REPORT:'+json.dumps(value),flush=True)
                 primary = error
                 raise
             finally:
-                try:
-                    # The intermediate parent may already be reaped. Its child
-                    # owns another session and needs independent cleanup.
-                    if child is not None and child != process.pid:
-                        self.stop_historical_signal_child(child, child_argv)
-                except BaseException as error:
-                    if primary is None:raise
-                    primary.fixture_cleanup = repr(error)
-                finally:
-                    try:
-                        if process.poll() is None:
-                            from process_supervision import stop_group
-                            stop_group(process, grace=.2)
-                    finally:
-                        for stream in (process.stdin, process.stdout, process.stderr):
-                            stream.close()
+                self.cleanup_historical_fixture(process, child, child_argv, primary)
             self.assertIn('REPORT:', stdout, 'Cooperative extraction signal skipped cleanup: ' + stderr)
             report = json.loads(stdout.split('REPORT:', 1)[1])
             self.assertTrue(report['restored'], 'Historical extraction retained its signal handler')
@@ -969,6 +954,24 @@ print('REPORT:'+json.dumps(value),flush=True)
             return report
 
     @staticmethod
+    def cleanup_historical_fixture(process, child, child_argv, primary):
+        from process_supervision import stop_group
+        failures = []
+        try:
+            if child is not None and child != process.pid:
+                ReplayIntegrity.stop_historical_signal_child(child, child_argv)
+        except BaseException as error:failures.append(error)
+        try:
+            if process.poll() is None:stop_group(process, grace=.2)
+        except BaseException as error:failures.append(error)
+        finally:
+            for stream in (process.stdin, process.stdout, process.stderr):stream.close()
+        if failures:
+            if primary is None:raise failures[0]
+            primary.fixture_cleanup = repr(failures[0])
+            primary.fixture_cleanup_failures = [repr(error) for error in failures]
+
+    @staticmethod
     def stop_historical_signal_child(child, argv):
         import errno
         import os
@@ -979,15 +982,24 @@ print('REPORT:'+json.dumps(value),flush=True)
         from process_supervision import group_inactive
         # Verify the exact unique child command before each signal. A vanished
         # or recycled PID never grants authority to signal another group.
+        if child <= 0:raise ValueError("Historical fixture requires a positive owned PID")
+        expected = tuple(argv)
         deadline = time.monotonic() + 2
         for action in (signal.SIGTERM, signal.SIGKILL):
             try:
                 if group_inactive(child, timeout=.2)[0]:return
-                if read_argv(child)[1:] != argv[1:] or os.getpgid(child) != child:
+                if tuple(read_argv(child)[1:]) != expected[1:] or os.getpgid(child) != child:
                     raise RuntimeError('Historical fixture child identity changed')
                 os.killpg(child, action)
-            except OSError as error:
-                if error.errno in (errno.ENOENT, errno.ESRCH):return
+            except (OSError, ValueError) as error:
+                if isinstance(error, OSError) and error.errno in (errno.ENOENT, errno.ESRCH):return
+                # Darwin EINVAL / Linux empty cmdline may race with exit. Only a
+                # positive group observation establishes that the child vanished.
+                try:inactive = group_inactive(child, timeout=.2)[0]
+                except BaseException as inspection:
+                    error.fixture_inspection = repr(inspection)
+                    raise error  # noqa: B904 - preserve the original inspection cause.
+                if inactive:return
                 raise
             until = min(deadline, time.monotonic() + (.2 if action == signal.SIGTERM else 1))
             while time.monotonic() < until:
@@ -1001,20 +1013,56 @@ print('REPORT:'+json.dumps(value),flush=True)
         from process_supervision import group_inactive
         observed = []
         original = AssertionError('injected failure after orphan readiness')
-        def fail(child):
-            observed.append(child)
+        def fail(child, argv):
+            observed.append((child, argv))
             raise original
         with self.assertRaises(AssertionError) as failed:
             self.historical_signal_case('extraction', parent_exits=True, after_ready=fail)
         self.assertIs(failed.exception, original)
         self.assertEqual(len(observed), 1)
         try:
-            self.assertTrue(group_inactive(observed[0], timeout=1)[0], 'Exited parent left its signal child running')
+            self.assertTrue(group_inactive(observed[0][0], timeout=1)[0], 'Exited parent left its signal child running')
         finally:
-            if not group_inactive(observed[0], timeout=1)[0]:
-                from evidence_processes import read_argv
-                self.stop_historical_signal_child(observed[0], read_argv(observed[0]))
-        self.assertNotEqual(observed[0], os.getpid())
+            if not group_inactive(observed[0][0], timeout=1)[0]:
+                self.stop_historical_signal_child(*observed[0])
+        self.assertNotEqual(observed[0][0], os.getpid())
+
+    def test_child_cleanup_rejects_recycled_identity_and_handles_verified_exit(self):
+        import errno
+        import signal
+        from types import SimpleNamespace
+        expected = ('python', '-c', 'immutable unique child')
+        with patch('os.killpg') as kill, patch('os.getpgid', return_value=123):
+            with patch('process_supervision.group_inactive', return_value=(False, ['S'])), patch('evidence_processes.read_argv', return_value=['python','-c','another process']):
+                with self.assertRaisesRegex(RuntimeError, 'identity changed', msg='Recycled identity cleanup did not fail closed'):self.stop_historical_signal_child(123, expected)
+            self.assertEqual(kill.call_count, 0, 'Recycled child identity authorized a signal')
+            for error in (OSError(errno.EINVAL, 'vanished'), ValueError('empty argv')):
+                with patch('process_supervision.group_inactive', side_effect=[(False,['S']),(True,[])]), patch('evidence_processes.read_argv', side_effect=error):
+                    self.stop_historical_signal_child(123, expected)
+                with patch('process_supervision.group_inactive', return_value=(False,['S'])), patch('evidence_processes.read_argv', side_effect=error):
+                    with self.assertRaises(type(error)):self.stop_historical_signal_child(123, expected)
+            with self.assertRaisesRegex(ValueError, 'positive'):self.stop_historical_signal_child(0, expected)
+            self.assertFalse(kill.called)
+            # The authentic identity can authorize only the recorded child group.
+            with patch('process_supervision.group_inactive', side_effect=[(False,['S']),(True,[])]), patch('evidence_processes.read_argv', return_value=list(expected)):
+                self.stop_historical_signal_child(123, expected)
+            kill.assert_called_once_with(123, signal.SIGTERM)
+        original = AssertionError('primary fixture assertion')
+        errors = [OSError('orphan cleanup'), RuntimeError('leader cleanup')]
+        streams = [SimpleNamespace(close=lambda:None) for _ in range(3)]
+        process = SimpleNamespace(pid=123, poll=lambda:None, stdin=streams[0], stdout=streams[1], stderr=streams[2])
+        with patch.object(ReplayIntegrity,'stop_historical_signal_child',side_effect=errors[0]), patch('process_supervision.stop_group',side_effect=errors[1]):
+            self.cleanup_historical_fixture(process, 124, expected, original)
+        self.assertEqual(original.fixture_cleanup_failures, [repr(e) for e in errors], 'Leader cleanup replaced the primary fixture failure')
+
+    def test_scope_exit_fixture_restores_ignored_sigint(self):
+        import signal
+        previous = signal.getsignal(signal.SIGINT)
+        try:
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+            self.test_historical_scope_exit_keeps_the_committed_receipt()
+            self.assertIs(signal.getsignal(signal.SIGINT), signal.SIG_IGN, 'Scope-exit fixture did not restore ignored SIGINT')
+        finally:signal.signal(signal.SIGINT, previous)
 
     def test_historical_release_gate_rejects_eof_without_spinning(self):
         import ast
@@ -1092,22 +1140,26 @@ print('REPORT:'+json.dumps(value),flush=True)
         # Inject just after the cleanup deferral has restored its handlers.
         for sig in (signal.SIGINT, signal.SIGTERM):
             with self.subTest(signal=sig):
-                scopes = []
-                @contextlib.contextmanager
-                def after_scope(observation, scopes=scopes, sig=sig):
-                    with native(observation):
-                        yield
-                    scopes.append(True)
-                    if len(scopes) == 2:
-                        import os
-                        os.kill(os.getpid(), sig)
-                destination = self.root / ('exit-' + str(int(sig)))
-                with patch.object(historical, 'cleanup_interruptions', after_scope):
-                    try:result = historical.audit_package(package, destination)
-                    except KeyboardInterrupt:self.fail('Scope exit lost the committed signal receipt')
-                self.assertTrue(destination.exists())
-                self.assertTrue(result['publication']['committed'])
-                self.assertTrue(result['publication']['interruptions'], 'Scope exit lost the committed signal receipt')
+                previous = signal.getsignal(signal.SIGINT)
+                signal.signal(signal.SIGINT, signal.default_int_handler)
+                try:
+                    scopes = []
+                    @contextlib.contextmanager
+                    def after_scope(observation, scopes=scopes, sig=sig):
+                        with native(observation):
+                            yield
+                        scopes.append(True)
+                        if len(scopes) == 2:
+                            import os
+                            os.kill(os.getpid(), sig)
+                    destination = self.root / ('exit-' + str(int(sig)))
+                    with patch.object(historical, 'cleanup_interruptions', after_scope):
+                        try:result = historical.audit_package(package, destination)
+                        except KeyboardInterrupt:self.fail('Scope exit lost the committed signal receipt')
+                    self.assertTrue(destination.exists())
+                    self.assertTrue(result['publication']['committed'])
+                    self.assertTrue(result['publication']['interruptions'], 'Scope exit lost the committed signal receipt')
+                finally:signal.signal(signal.SIGINT, previous)
 
     def test_historical_handler_restoration_keeps_commitment(self):
         import contextlib
@@ -1174,6 +1226,62 @@ print('REPORT:'+json.dumps(value),flush=True)
             self.assertEqual(signal.getsignal(signal.SIGTERM), previous)
             temporary.cleanup()
 
+    def test_cleanup_failure_survives_an_interrupt_during_unwinding(self):
+        import contextlib
+
+        import evidence_historical as historical
+        package, _ = self.carrier_fixture()
+        native_cleanup = historical.tempfile.TemporaryDirectory.cleanup
+        native_scope = historical.cleanup_interruptions
+        error = OSError('owned cleanup failure before signal')
+        owners = []
+        def cleanup(temporary):
+            owners.append(temporary)
+            raise error
+        @contextlib.contextmanager
+        def interrupted(observation):
+            try:
+                with native_scope(observation):yield
+            except OSError as cleanup:
+                raise KeyboardInterrupt('signal during cleanup unwinding') from cleanup
+        try:
+            with patch.object(historical.tempfile.TemporaryDirectory, 'cleanup', cleanup), patch.object(historical, 'cleanup_interruptions', interrupted):
+                try:historical.audit_package(package, self.root/'committed-cleanup-error')
+                except OSError as caught:
+                    self.assertIs(caught, error, 'Owned cleanup failure identity changed')
+                else:self.fail('Owned cleanup failure was swallowed by an interrupt')
+            self.assertTrue(error.historical_publication['publication']['committed'])
+            self.assertTrue(error.historical_cleanup['interruptions'])
+        finally:
+            for temporary in owners:native_cleanup(temporary)
+
+    def test_cleanup_and_teardown_preserve_cause_and_all_secondary_errors(self):
+        import contextlib
+
+        import evidence_historical as historical
+        cause = LookupError('original explicit cause')
+        primary = ValueError('original operation failure')
+        primary.__cause__ = cause
+        cleanup = OSError('first secondary cleanup')
+        teardown = RuntimeError('second secondary teardown')
+        @contextlib.contextmanager
+        def interrupted():
+            try:yield
+            finally:raise teardown
+        native = historical.tempfile.TemporaryDirectory
+        with native() as folder:
+            temporary = native(dir=folder)
+            try:
+                with patch.object(historical.tempfile, 'TemporaryDirectory', return_value=temporary), patch.object(temporary, 'cleanup', side_effect=cleanup), patch.object(historical, 'interruption', interrupted):
+                    with self.assertRaises(ValueError) as caught:
+                        with historical.historical_staging(folder):raise primary
+                self.assertIs(caught.exception, primary)
+                self.assertIs(primary.__cause__, cause, 'Cleanup replaced original exception cause')
+                details = primary.historical_cleanup
+                self.assertIn('first secondary cleanup', details['failure'])
+                self.assertEqual([v['error'] for v in details['failures']], [repr(cleanup), repr(teardown)], 'Secondary cleanup failure was overwritten')
+            finally:temporary.cleanup()
+
     def test_extraction_measurement_observes_completed_audit_work(self):
         import evidence_historical as historical
         from evidence_benchmarks import verify_tooling_metrics
@@ -1208,8 +1316,8 @@ print('REPORT:'+json.dumps(value),flush=True)
         if wrong:carrier['archive']['sha256']='0'*64
         names=['config.json',carrier['archive']['path'],carrier['transport']['path']]
         archive_bytes=(self.root/carrier['archive']['path']).stat().st_size + int(wrong_size)
-        row=dict(harness='tooling', workload='historical-extraction',metric_version=2, extraction_metric_version=3,
-                 timing_scope='verified-operation', publication_interruptions=0, archive_bytes=archive_bytes, archive_hash_passes=3, archive_hash_bytes=archive_bytes*3,
+        row=dict(harness='tooling', workload='historical-extraction',metric_version=2, extraction_metric_version=4,
+                 timing_scope='verified-operation', publication_interruptions=0, archive_bytes=archive_bytes, archive_hash_passes=3, archive_hash_read_bytes=archive_bytes*3,
                  historical_extractions=1,expanded_files=477,expanded_bytes=1024,files=477,owned_processes=0,
                  check_output_calls=0,git_commands=0,process_inspection_commands=0,retained_traced_blocks=1,
                  retained_traced_bytes=1,peak_traced_bytes=1,carrier_path='carrier',
@@ -1327,12 +1435,71 @@ print('REPORT:'+json.dumps(value),flush=True)
             +'calls=0\ndef verify_bundle(folder):\n global calls\n calls+=1\n'
             +' if calls>1:raise ValueError("inventory corruption")\n'
             +' return dict(verified=True,eligible_current=True)\n')
+        import hashlib
+        entry=tooling/'evidence_bundle.py'
+        (bundle/'inventory.json').write_text(json.dumps({'verifier_tooling/evidence_bundle.py':hashlib.sha256(entry.read_bytes()).hexdigest()}))
         output=self.root/'should-not-exist.json'
         completed=subprocess.run([sys.executable,'-B',driver.__file__,str(bundle),str(output),'.'],
                                  cwd=self.root,capture_output=True,text=True,timeout=15)
         self.assertNotEqual(completed.returncode,0,'Verifier import escaped the selected offline guards')
         self.assertIn('Original checkout I/O is forbidden',completed.stderr)
         self.assertFalse(output.exists())
+
+    def test_offline_guard_uses_filesystem_identity_and_nofollow_semantics(self):
+        import os
+
+        import evidence_offline_audit as driver
+        original = self.root/'CaseOriginal';original.mkdir()
+        secret = original/'secret';secret.write_text('owned')
+        outside = self.root/'outside-link';outside.symlink_to(secret)
+        inside = original/'outside-target';target=self.root/'public';target.write_text('public')
+        inside.symlink_to(target)
+        aliases = [secret]
+        case_alias=self.root/'caseoriginal/secret'
+        if case_alias.exists() and os.path.samefile(case_alias,secret):aliases.append(case_alias)
+        firmlink=Path('/System/Volumes/Data'+str(secret.resolve()))
+        if sys.platform=='darwin' and firmlink.exists() and os.path.samefile(firmlink,secret):aliases.append(firmlink)
+        with driver.guarded_apis([str(original)]):
+            for alias in aliases:
+                with self.assertRaises(PermissionError,msg='Filesystem identity alias bypassed the offline guard'):alias.read_text()
+            try:link_mode=os.lstat(outside).st_mode
+            except PermissionError:self.fail('No-follow guard inspected the link referent')
+            self.assertTrue(__import__('stat').S_ISLNK(link_mode), 'lstat inspected the link referent')
+            self.assertTrue(__import__('stat').S_ISLNK(os.stat(outside,follow_symlinks=False).st_mode))
+            with self.assertRaises(PermissionError):outside.read_text()
+            # Following a link to public bytes does not inspect the private link itself.
+            self.assertEqual(inside.read_text(),'public')
+            with self.assertRaises(PermissionError):os.lstat(inside)
+        # Portable simulation verifies alias identities even on case-sensitive hosts.
+        real_stat=os.stat;identity=real_stat(original)
+        alias=self.root/'simulated identity'
+        def native(path):
+            if driver.canonical(path)==driver.canonical(alias):return identity
+            return real_stat(path)
+        roots=driver.OriginalRoots([str(original)],native_stat=native)
+        self.assertTrue(roots.contains(alias/'missing'), 'Filesystem identity alias bypassed the offline guard')
+
+    def test_archived_verifier_precedes_bundle_root_and_cached_modules(self):
+        import hashlib
+
+        import evidence_offline_audit as driver
+        bundle=self.root/'import-fixture';bundle.mkdir()
+        (bundle/'inputs').mkdir();(bundle/'inputs/member').write_text('data')
+        (bundle/'report.json').write_text('{}')
+        tooling=bundle/'verifier_tooling';tooling.mkdir()
+        module=tooling/'evidence_bundle.py'
+        module.write_text('calls=0\ndef verify_bundle(folder):\n global calls\n calls+=1\n if calls>1:raise ValueError("inventory corruption")\n return dict(verified=True,eligible_current=True)\n')
+        (bundle/'evidence_bundle.py').write_text('raise RuntimeError("root verifier shadowed archived tooling")\n')
+        (bundle/'inventory.json').write_text(json.dumps({'verifier_tooling/evidence_bundle.py':hashlib.sha256(module.read_bytes()).hexdigest()}))
+        output=self.root/'selected-receipt.json'
+        process=subprocess.run([sys.executable,'-B',driver.__file__,str(bundle),str(output),str(self.root)],capture_output=True,text=True,timeout=15)
+        self.assertEqual(process.returncode,0,'Bundle root shadowed selected verifier tooling: '+process.stderr)
+        receipt=json.loads(output.read_text())
+        self.assertTrue(receipt['verifier']['path'].endswith('verifier_tooling/evidence_bundle.py'))
+        self.assertEqual(receipt['verifier']['sha256'],hashlib.sha256(module.read_bytes()).hexdigest())
+        cached=sys.modules.get('evidence_bundle')
+        with driver.archived_verifier(tooling):self.assertNotIn('evidence_bundle',sys.modules)
+        self.assertIs(sys.modules.get('evidence_bundle'),cached)
 
     def test_offline_disposition_defers_to_auditor_with_optional_expectation(self):
         from evidence_offline_audit import validate_disposition
@@ -1373,10 +1540,10 @@ print('REPORT:'+json.dumps(value),flush=True)
         carrier=describe_carrier(self.root,'carrier')
         row=measure(self.root,'unused','historical-extraction',self.root,carrier)
         self.assertEqual(row['archive_hash_passes'],3,'Extraction omitted a verified archive hash pass')
-        self.assertEqual(row['archive_hash_bytes'],metadata['archive']['bytes']*3,'archive_hash_bytes did not match streamed work')
+        self.assertEqual(row['archive_hash_read_bytes'],metadata['archive']['bytes']*3,'archive_hash_bytes did not match streamed work')
         row.update(harness='tooling',workload='historical-extraction')
         verify_tooling_metrics(row)
-        for name, value in (('archive_hash_passes',2),('archive_hash_bytes',1),('publication_interruptions',1),('timing_scope','extraction-only')):
+        for name, value in (('archive_hash_passes',2),('archive_hash_read_bytes',1),('publication_interruptions',1),('timing_scope','extraction-only')):
             with self.subTest(name=name),self.assertRaisesRegex(ValueError,'verified-operation'):
                 verify_tooling_metrics(dict(row,**{name:value}))
 
@@ -1389,6 +1556,58 @@ print('REPORT:'+json.dumps(value),flush=True)
                 msg='Unversioned or mistyped live tooling bypassed its contract'):
                 verify_tooling_metrics(row)
         verify_tooling_metrics(dict(harness='tooling',files=128),historical=True)
+
+    def test_archive_instrumentation_delegates_native_hashing_and_optional_buffers(self):
+        import evidence_carrier
+        import evidence_historical
+        from evidence_tool_bench import archive_hash_work
+        from verified_sources import file_hash
+        package, _ = self.carrier_fixture()
+        carrier = evidence_carrier.describe_carrier(self.root, 'carrier')
+        archive = self.root/carrier['archive']['path']
+        other = self.root/'other';other.write_bytes(b'nonarchive')
+        native_open = Path.open
+        calls = []
+        def native(path, buffer=None):
+            calls.append((path,buffer))
+            return file_hash(path,buffer)
+        buffer = bytearray(13)
+        with patch.object(evidence_carrier, 'sha256', native):
+            with archive_hash_work(self.root, carrier) as observed:
+                self.assertEqual(evidence_carrier.sha256(archive, buffer), file_hash(archive))
+                self.assertEqual(evidence_carrier.sha256(other, buffer), file_hash(other))
+            self.assertEqual(calls, [(archive,buffer),(other,buffer)], 'Archive instrumentation bypassed native hashing')
+            self.assertEqual(observed['archive_hash_read_bytes'], archive.stat().st_size, 'Native hash read bytes were not observed')
+            self.assertEqual(observed['archive_hash_passes'], 1)
+            self.assertIs(evidence_carrier.sha256, native)
+        self.assertIs(Path.open, native_open)
+        error = OSError('native hash failure')
+        with patch.object(evidence_historical, 'sha256', side_effect=error):
+            with self.assertRaises(OSError) as caught:
+                with archive_hash_work(self.root,carrier):evidence_historical.sha256(archive)
+            self.assertIs(caught.exception,error)
+        self.assertIs(Path.open,native_open)
+
+    def test_carrier_descriptor_is_validated_before_any_lookup(self):
+        from evidence_tool_bench import archive_hash_work
+        for carrier in (None, {}, dict(path='carrier', archive=dict(path='../outside',sha256='0'*64), transport=dict(path='carrier/transport.json',sha256='0'*64))):
+            with self.subTest(carrier=carrier), patch.object(Path,'stat') as stat:
+                try:
+                    with archive_hash_work(self.root,carrier):pass
+                except ValueError:pass
+                except (TypeError, KeyError):self.fail('Carrier lookup preceded descriptor validation')
+                else:self.fail('Carrier lookup preceded descriptor validation')
+                self.assertFalse(stat.called,'Unvalidated carrier performed metadata lookup')
+
+    def test_contract_three_is_explicitly_historical(self):
+        from evidence_benchmarks import verify_tooling_metrics
+        row = dict(harness='tooling',workload='historical-extraction',metric_version=2,extraction_metric_version=3,
+                   files=1,expanded_files=1,expanded_bytes=1,historical_extractions=1,owned_processes=0,
+                   check_output_calls=0,git_commands=0,process_inspection_commands=0,
+                   retained_traced_blocks=0,retained_traced_bytes=0,peak_traced_bytes=0,
+                   archive_bytes=10,archive_hash_passes=3,archive_hash_bytes=30,publication_interruptions=0,timing_scope='verified-operation')
+        verify_tooling_metrics(row,historical=True)
+        with self.assertRaisesRegex(ValueError,'Extraction work'):verify_tooling_metrics(row)
 
     def test_declared_extraction_carrier_rejects_mutations_and_wrong_returned_identity(self):
         import evidence_historical as historical
@@ -3083,11 +3302,11 @@ class PreparationRecovery(unittest.TestCase):
         verify_tooling_metrics(historical,historical=True)
         with self.assertRaisesRegex(ValueError,'Layout work counters'):
             verify_tooling_metrics(historical)
-        extraction=dict(value, workload='historical-extraction',extraction_metric_version=3,
-                        timing_scope='verified-operation', publication_interruptions=0, archive_bytes=10, archive_hash_passes=3, archive_hash_bytes=30,
+        extraction=dict(value, workload='historical-extraction',extraction_metric_version=4,
+                        timing_scope='verified-operation', publication_interruptions=0, archive_bytes=10, archive_hash_passes=3, archive_hash_read_bytes=30,
                         historical_extractions=1,expanded_files=477,expanded_bytes=1024,files=477)
         verify_tooling_metrics(extraction)
-        for version in (None,True,1,1.0,2,2.0,3.0,4):
+        for version in (None,True,1,1.0,2,2.0,3,3.0,4.0,5):
             with self.subTest(version=version), self.assertRaisesRegex(ValueError,'Extraction work counters'):
                 verify_tooling_metrics(dict(extraction,extraction_metric_version=version))
         with self.assertRaisesRegex(ValueError,'Extraction work counters',msg='Extraction operation count was accepted as files'):

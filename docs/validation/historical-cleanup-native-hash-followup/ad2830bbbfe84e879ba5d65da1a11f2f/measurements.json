@@ -1,0 +1,10 @@
+[
+  {
+    "artifact": "artifacts/benchmarks/measure.json",
+    "config": "/Volumes/Pro2T/codet-compiled-agent/build/historical-cleanup-native-hash/final-campaign-01/config.json",
+    "paths": [
+      "measurements/benchmarks/measure.json/samples.csv",
+      "measurements/benchmarks/measure.json/medians.csv"
+    ]
+  }
+]
