@@ -1174,6 +1174,62 @@ print('REPORT:'+json.dumps(value),flush=True)
             self.assertEqual(signal.getsignal(signal.SIGTERM), previous)
             temporary.cleanup()
 
+    def test_cleanup_failure_survives_an_interrupt_during_unwinding(self):
+        import contextlib
+
+        import evidence_historical as historical
+        package, _ = self.carrier_fixture()
+        native_cleanup = historical.tempfile.TemporaryDirectory.cleanup
+        native_scope = historical.cleanup_interruptions
+        error = OSError('owned cleanup failure before signal')
+        owners = []
+        def cleanup(temporary):
+            owners.append(temporary)
+            raise error
+        @contextlib.contextmanager
+        def interrupted(observation):
+            try:
+                with native_scope(observation):yield
+            except OSError:
+                raise KeyboardInterrupt('signal during cleanup unwinding')
+        try:
+            with patch.object(historical.tempfile.TemporaryDirectory, 'cleanup', cleanup), patch.object(historical, 'cleanup_interruptions', interrupted):
+                try:historical.audit_package(package, self.root/'committed-cleanup-error')
+                except OSError as caught:
+                    self.assertIs(caught, error, 'Owned cleanup failure identity changed')
+                else:self.fail('Owned cleanup failure was swallowed by an interrupt')
+            self.assertTrue(error.historical_publication['publication']['committed'])
+            self.assertTrue(error.historical_cleanup['interruptions'])
+        finally:
+            for temporary in owners:native_cleanup(temporary)
+
+    def test_cleanup_and_teardown_preserve_cause_and_all_secondary_errors(self):
+        import contextlib
+
+        import evidence_historical as historical
+        cause = LookupError('original explicit cause')
+        primary = ValueError('original operation failure')
+        primary.__cause__ = cause
+        cleanup = OSError('first secondary cleanup')
+        teardown = RuntimeError('second secondary teardown')
+        @contextlib.contextmanager
+        def interrupted():
+            try:yield
+            finally:raise teardown
+        native = historical.tempfile.TemporaryDirectory
+        with native() as folder:
+            temporary = native(dir=folder)
+            try:
+                with patch.object(historical.tempfile, 'TemporaryDirectory', return_value=temporary), patch.object(temporary, 'cleanup', side_effect=cleanup), patch.object(historical, 'interruption', interrupted):
+                    with self.assertRaises(ValueError) as caught:
+                        with historical.historical_staging(folder):raise primary
+                self.assertIs(caught.exception, primary)
+                self.assertIs(primary.__cause__, cause, 'Cleanup replaced original exception cause')
+                details = primary.historical_cleanup
+                self.assertIn('first secondary cleanup', details['failure'])
+                self.assertEqual([v['error'] for v in details['failures']], [repr(cleanup), repr(teardown)], 'Secondary cleanup failure was overwritten')
+            finally:temporary.cleanup()
+
     def test_extraction_measurement_observes_completed_audit_work(self):
         import evidence_historical as historical
         from evidence_benchmarks import verify_tooling_metrics
