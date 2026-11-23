@@ -1,0 +1,58 @@
+{
+  "argv": [
+    "scripts/evidence_offline_audit.py",
+    "/Volumes/Pro2T/codet-compiled-agent/build/historical-audit-interruption/signal-published",
+    "/Volumes/Pro2T/codet-compiled-agent/build/historical-audit-interruption/signal-offline-audit.json",
+    "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent",
+    "/Volumes/Pro2T/codet-compiled-agent"
+  ],
+  "kind": "postpublication-offline-audit",
+  "driver_source": "\"\"\"Relocated integrity audit with explicitly scoped Python API guards.\"\"\"\nimport argparse\nimport builtins\nimport errno\nimport hashlib\nimport io\nimport json\nimport os\nimport shutil\nimport stat\nimport subprocess\nimport sys\nimport tempfile\nfrom contextlib import contextmanager\nfrom pathlib import Path\n\n\ndef canonical(path, *, lstat=os.lstat, readlink=os.readlink):\n    \"\"\"Resolve path identity using saved primitives, never recursively patched APIs.\"\"\"\n    value = os.fsdecode(path)\n    if not os.path.isabs(value):\n        value = os.getcwd() + os.sep + value\n    todo, done, hops = value.split(os.sep), [], 0\n    while todo:\n        part = todo.pop(0)\n        if part in ('', '.'):\n            continue\n        if part == '..':\n            if done:done.pop()\n            continue\n        candidate = os.sep + os.sep.join(done + [part])\n        try:\n            mode = lstat(candidate).st_mode\n        except OSError as error:\n            if error.errno not in (errno.ENOENT, errno.ENOTDIR):raise\n            mode = 0\n        if stat.S_ISLNK(mode):\n            hops += 1\n            if hops > 40:raise ValueError('Excessive offline-audit resolution symlinks')\n            target = readlink(candidate)\n            if os.path.isabs(target):done = []\n            todo = target.split(os.sep) + todo\n        else:\n            done.append(part)\n    return os.sep + os.sep.join(done)\n\n\ndef within(value, root):\n    return value == root or value.startswith(root.rstrip(os.sep) + os.sep)\n\n\n@contextmanager\ndef guarded_apis(originals):\n    blocked, saved = [], []\n    def check(path):\n        if isinstance(path, int):return\n        value = canonical(path)\n        if any(within(value, root) for root in originals):\n            blocked.append(value)\n            raise PermissionError('Original checkout I/O is forbidden in this audit')\n    def protect(owner, name):\n        native = getattr(owner, name)\n        def guarded(path, *args, **kwargs):\n            check(path)\n            return native(path, *args, **kwargs)\n        saved.append((owner, name, native))\n        setattr(owner, name, guarded)\n    def no_process(*args, **kwargs):\n        raise PermissionError('Process launch is forbidden in this audit')\n    try:\n        for owner,name in [(builtins,'open'),(io,'open'),(os,'open'),(os,'stat'),(os,'lstat')]:protect(owner,name)\n        for name in ('Popen','run','check_output','check_call','call'):\n            saved.append((subprocess,name,getattr(subprocess,name)))\n            setattr(subprocess,name,no_process)\n        yield blocked\n    finally:\n        for owner,name,native in reversed(saved):setattr(owner,name,native)\n\n\ndef validate_disposition(result, attempt, expected=None):\n    if attempt:\n        if result.get('integrity_verified') is not True or result.get('eligible_current') is not False:\n            raise ValueError('Unexpected attempt audit disposition')\n        unmet = result.get('unmet_required')\n        if not isinstance(unmet, dict) or not unmet or any(not isinstance(k, str) or not isinstance(v, str) for k,v in unmet.items()):\n            raise ValueError('Malformed audited unmet-check disposition')\n    elif result.get('verified') is not True or result.get('eligible_current') is not True:\n        raise ValueError('Unexpected complete audit disposition')\n    if expected is not None and result.get('unmet_required', {}) != expected:\n        raise ValueError('Audited unmet checks differ from --expect-unmet')\n\n\ndef main(argv=None):\n    parser = argparse.ArgumentParser(description=__doc__)\n    parser.add_argument('bundle', type=Path)\n    parser.add_argument('destination', type=Path)\n    parser.add_argument('originals', nargs='+')\n    parser.add_argument('--expect-unmet', help='Optional JSON map of expected unmet checks')\n    args = parser.parse_args(argv)\n    expected = None\n    if args.expect_unmet is not None:\n        expected = json.loads(args.expect_unmet)\n        if not isinstance(expected, dict) or any(not isinstance(k,str) or not isinstance(v,str) for k,v in expected.items()):\n            raise ValueError('--expect-unmet must be a JSON string map')\n    bundle, destination = args.bundle.resolve(), args.destination.resolve()\n    originals = [canonical(value) for value in args.originals]\n    if any(not Path(value).is_dir() for value in originals):\n        raise ValueError('Original checkout roots must be existing directories')\n    source = Path(__file__).read_bytes()\n    helper_sha = hashlib.sha256(source).hexdigest()\n    inventory_sha = hashlib.sha256((bundle/'inventory.json').read_bytes()).hexdigest()\n    interpreter_sha = hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest()\n    previous_cwd, previous_path = os.getcwd(), list(sys.path)\n    imports = [canonical(value) for value in sys.path if value]\n    sys.dont_write_bytecode = True\n    with tempfile.TemporaryDirectory(prefix='codet relocated audit ') as temporary:\n        root = Path(temporary)\n        if any(within(canonical(root), value) for value in originals):\n            raise ValueError('Relocated audit workspace overlaps an original checkout root')\n        moved = root/'moved bundle'\n        shutil.copytree(bundle,moved)\n        try:\n            os.chdir(root)\n            sys.path[:] = [p for p in imports if not any(within(p,o) for o in originals)]\n            sys.path[:0] = [str(moved),str(moved/'verifier_tooling')]\n            if not (moved/'verifier_tooling').exists():\n                tooling = root/'archived verifier tooling'\n                tooling.mkdir()\n                index = json.loads((moved/'inputs.json').read_text())\n                for item in index:\n                    name = item['path']\n                    if item['check_id']=='run' and item['role']=='fingerprint:validation' and name.startswith('scripts/') and name.count('/')==1 and name.endswith('.py'):\n                        data = (moved/item['storage']).read_bytes()\n                        if hashlib.sha256(data).hexdigest()!=item['sha256']:raise ValueError('Changed archived verifier')\n                        (tooling/Path(name).name).write_bytes(data)\n                sys.path.insert(0,str(tooling))\n            report = json.loads((moved/'report.json').read_text())\n            attempt = 'attempt_bundle_version' in report\n            # Installation precedes verifier imports, including aliases captured there.\n            with guarded_apis(originals) as blocked:\n                if attempt:\n                    import evidence_attempt_audit\n                    verify = evidence_attempt_audit.verify\n                else:\n                    from evidence_bundle import verify_bundle\n                    verify = verify_bundle\n                result = verify(moved)\n                validate_disposition(result, attempt, expected)\n                member = next(p for p in (moved/'inputs').iterdir() if p.is_file())\n                member.write_bytes(b'corrupted offline negative control')\n                try:verify(moved)\n                except ValueError as error:\n                    reason = str(error)\n                    if 'inventory' not in reason.lower():raise\n                    corruption = dict(rejected=True,member='inputs/'+member.name,reason=reason)\n                else:raise ValueError('Corrupt archived input passed audit')\n                if blocked:raise ValueError('Audit attempted original checkout I/O')\n        finally:\n            os.chdir(previous_cwd)\n            sys.path[:] = previous_path\n    receipt = dict(argv=sys.argv if argv is None else argv,kind='postpublication-offline-audit',driver_source=source.decode(),bundle_id=bundle.name,\n        bundle_inventory_sha256=inventory_sha,helper_sha256=helper_sha,canonical_original_roots=originals,\n        interpreter=dict(path=sys.executable,version=list(sys.version_info[:3]),sha256=interpreter_sha),\n        relocated=True,guarded_file_apis=['builtins.open','io.open','os.open','os.stat','os.lstat'],\n        guarded_process_apis=['subprocess.Popen','subprocess.run','subprocess.check_output','subprocess.check_call','subprocess.call'],\n        guard_phase='Archived verifier import through verification and corruption control',\n        guard_scope='Selected Python APIs only; previously cached aliases, cached pathlib accessors, directory listings and direct os process primitives are not blocked. This is not an OS sandbox.',\n        audit=result,negative_control=corruption)\n    destination.write_text(json.dumps(receipt,indent=2)+'\\n')\n    print(json.dumps(receipt,indent=2))\n    return receipt\n\n\nif __name__ == '__main__':\n    main()\n",
+  "bundle_id": "signal-published",
+  "bundle_inventory_sha256": "4622d46f8471005550ce035726b0a24fffb3142666a0394c4b2880c8483ae7f1",
+  "helper_sha256": "bdd7cb2406a04a27d3f5a2cd59f9012e917f005c63cfe0a05eb5eec05876530b",
+  "canonical_original_roots": [
+    "/Users/haroldmartin/.codex/worktrees/input-distribution-validation/codet-compiled-agent",
+    "/Volumes/Pro2T/codet-compiled-agent"
+  ],
+  "interpreter": {
+    "path": "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+    "version": [
+      3,
+      9,
+      6
+    ],
+    "sha256": "c5a13e37785524fbc0384539d3c99aa4f888cb7c89e13e0bf0018436378b13bc"
+  },
+  "relocated": true,
+  "guarded_file_apis": [
+    "builtins.open",
+    "io.open",
+    "os.open",
+    "os.stat",
+    "os.lstat"
+  ],
+  "guarded_process_apis": [
+    "subprocess.Popen",
+    "subprocess.run",
+    "subprocess.check_output",
+    "subprocess.check_call",
+    "subprocess.call"
+  ],
+  "guard_phase": "Archived verifier import through verification and corruption control",
+  "guard_scope": "Selected Python APIs only; previously cached aliases, cached pathlib accessors, directory listings and direct os process primitives are not blocked. This is not an OS sandbox.",
+  "audit": {
+    "verified": true,
+    "eligible_current": true,
+    "schema_version": 5,
+    "campaign_id": "c6d70bdc7f4b498f8a83849b17ba473f",
+    "checks": 2,
+    "audit_inputs": 929,
+    "reran_binaries": false
+  },
+  "negative_control": {
+    "rejected": true,
+    "member": "inputs/d45ae2309114ae9b53ca6b10f73bc7bf4e7611b06ad98cfe43ecb174afb24766",
+    "reason": "Audit inventory mismatch"
+  }
+}

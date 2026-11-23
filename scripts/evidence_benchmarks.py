@@ -33,9 +33,11 @@ def verify_git_validation(repository, root, ref):
 
 
 def verify_tooling_metrics(row, *, historical=False):
-    if row.get('harness') != 'tooling' or 'metric_version' not in row:
-        return # Historical unversioned observations keep their original field interpretation.
-    if row['metric_version'] != 2:
+    if row.get('harness') != 'tooling':
+        return
+    if historical and 'metric_version' not in row:
+        return # Preserve explicitly historical unversioned observations.
+    if type(row.get('metric_version')) is not int or row['metric_version'] != 2:
         raise ValueError('Unsupported tooling metric version')
     fields = ('files', 'owned_processes', 'check_output_calls', 'git_commands', 'process_inspection_commands',
               'retained_traced_blocks', 'retained_traced_bytes', 'peak_traced_bytes')
@@ -70,10 +72,17 @@ def verify_tooling_metrics(row, *, historical=False):
             raise ValueError('Layout work counters or controls are invalid')
     if row.get('workload') == 'historical-extraction':
         if (any(type(row.get(key)) is not int for key in ('extraction_metric_version', 'historical_extractions')) or
-                row.get('extraction_metric_version') not in ((1, 2) if historical else (2,)) or row.get('historical_extractions') != 1 or
+                row.get('extraction_metric_version') not in ((1, 2, 3) if historical else (3,)) or row.get('historical_extractions') != 1 or
                 any(type(row.get(key)) is not int or row[key] <= 0 for key in ('expanded_files', 'expanded_bytes')) or
                 row['files'] != (1 if row.get('extraction_metric_version') == 1 else row['expanded_files']) or row['owned_processes'] or row['check_output_calls']):
             raise ValueError('Extraction work counters or controls are invalid')
+        if row['extraction_metric_version'] == 3:
+            counters = ('archive_bytes','archive_hash_passes','archive_hash_bytes','publication_interruptions')
+            if (any(type(row.get(key)) is not int or row[key] < 0 for key in counters) or
+                    not row['archive_bytes'] or row['archive_hash_passes'] != 3 or
+                    row['archive_hash_bytes'] != row['archive_bytes'] * row['archive_hash_passes'] or
+                    row['publication_interruptions'] != 0 or row.get('timing_scope') != 'verified-operation'):
+                raise ValueError('Extraction verified-operation contract is invalid')
     if row.get('workload') == 'build-context':
         if (row.get('context_metric_version') != 1 or row['owned_processes'] or
                 row.get('context_resolutions') not in (1, 3) or row.get('sysroot_snapshots') not in (2, 3) or

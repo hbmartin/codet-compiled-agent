@@ -866,7 +866,10 @@ def gate(release=False):
  while time.monotonic()<deadline:
   if release:
    import select
-   if select.select([sys.stdin],[],[],.05)[0] and sys.stdin.readline().strip()=='go':return
+   if select.select([sys.stdin],[],[],.05)[0]:
+    line=sys.stdin.readline()
+    if not line:raise RuntimeError('Historical signal fixture input closed')
+    if line.strip()=='go':return
   else:time.sleep(.05)
  raise RuntimeError('Historical signal fixture deadline expired')
 native_copy=h.shutil.copyfileobj
@@ -900,10 +903,9 @@ value.update(restored=all(signal.getsignal(s)==handler for s,handler in prior.it
 print('REPORT:'+json.dumps(value),flush=True)
 """
 
-    def historical_signal_case(self, phase, sig=None, ignored=False, parent_exits=False):
+    def historical_signal_case(self, phase, sig=None, ignored=False, parent_exits=False, after_ready=None):
         import os
         import select
-        import signal
 
         import evidence_historical as historical
         package, _ = self.carrier_fixture() if not (self.root / 'carrier').exists() else (self.root / 'carrier', None)
@@ -915,28 +917,45 @@ print('REPORT:'+json.dumps(value),flush=True)
             destination = parent / 'result'
             argv = [sys.executable, '-c', code, str(Path(evidence.__file__).parent),
                     str(historical.__file__), str(package), str(destination), phase, 'ignored' if ignored else 'normal']
+            child_argv = list(argv)
             if parent_exits:
                 driver = 'import json,subprocess,sys;subprocess.Popen(json.loads(sys.argv[1]),stdin=subprocess.DEVNULL,start_new_session=True)'
                 argv = [sys.executable, '-c', driver, json.dumps(argv)]
             process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                        text=True, start_new_session=True)
             child = None
+            primary = None
             try:
                 self.assertTrue(select.select([process.stdout], [], [], 15)[0], 'Historical signal fixture never reached owned staging')
                 ready = process.stdout.readline().strip()
                 self.assertTrue(ready.startswith('READY:'), ready)
                 child = int(ready.split(':', 1)[1])
+                if after_ready is not None:after_ready(child)
                 if sig is not None:
                     os.kill(child, sig)
                     if phase in ('rename', 'published', 'cleanup'):
                         process.stdin.write('go\n'); process.stdin.flush()
                 stdout, stderr = process.communicate(timeout=10)
+            except BaseException as error:
+                primary = error
+                raise
             finally:
-                if process.poll() is None:
-                    os.killpg(process.pid, signal.SIGKILL); process.wait(timeout=5)
+                try:
+                    # The intermediate parent may already be reaped. Its child
+                    # owns another session and needs independent cleanup.
                     if child is not None and child != process.pid:
-                        try:os.killpg(child, signal.SIGKILL)
-                        except ProcessLookupError:pass
+                        self.stop_historical_signal_child(child, child_argv)
+                except BaseException as error:
+                    if primary is None:raise
+                    primary.fixture_cleanup = repr(error)
+                finally:
+                    try:
+                        if process.poll() is None:
+                            from process_supervision import stop_group
+                            stop_group(process, grace=.2)
+                    finally:
+                        for stream in (process.stdin, process.stdout, process.stderr):
+                            stream.close()
             self.assertIn('REPORT:', stdout, 'Cooperative extraction signal skipped cleanup: ' + stderr)
             report = json.loads(stdout.split('REPORT:', 1)[1])
             self.assertTrue(report['restored'], 'Historical extraction retained its signal handler')
@@ -948,6 +967,72 @@ print('REPORT:'+json.dumps(value),flush=True)
                 result = historical.audit_package(package, destination)
                 self.assertTrue(result['historical_result']['verified'])
             return report
+
+    @staticmethod
+    def stop_historical_signal_child(child, argv):
+        import errno
+        import os
+        import signal
+        import time
+
+        from evidence_processes import read_argv
+        from process_supervision import group_inactive
+        # Verify the exact unique child command before each signal. A vanished
+        # or recycled PID never grants authority to signal another group.
+        deadline = time.monotonic() + 2
+        for action in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                if group_inactive(child, timeout=.2)[0]:return
+                if read_argv(child)[1:] != argv[1:] or os.getpgid(child) != child:
+                    raise RuntimeError('Historical fixture child identity changed')
+                os.killpg(child, action)
+            except OSError as error:
+                if error.errno in (errno.ENOENT, errno.ESRCH):return
+                raise
+            until = min(deadline, time.monotonic() + (.2 if action == signal.SIGTERM else 1))
+            while time.monotonic() < until:
+                if group_inactive(child, timeout=.2)[0]:return
+                time.sleep(.05)
+        raise RuntimeError('Historical fixture child cleanup deadline expired')
+
+    def test_historical_parent_exit_failure_cleans_owned_child(self):
+        import os
+
+        from process_supervision import group_inactive
+        observed = []
+        original = AssertionError('injected failure after orphan readiness')
+        def fail(child):
+            observed.append(child)
+            raise original
+        with self.assertRaises(AssertionError) as failed:
+            self.historical_signal_case('extraction', parent_exits=True, after_ready=fail)
+        self.assertIs(failed.exception, original)
+        self.assertEqual(len(observed), 1)
+        try:
+            self.assertTrue(group_inactive(observed[0], timeout=1)[0], 'Exited parent left its signal child running')
+        finally:
+            if not group_inactive(observed[0], timeout=1)[0]:
+                from evidence_processes import read_argv
+                self.stop_historical_signal_child(observed[0], read_argv(observed[0]))
+        self.assertNotEqual(observed[0], os.getpid())
+
+    def test_historical_release_gate_rejects_eof_without_spinning(self):
+        import ast
+        import io
+        from types import SimpleNamespace
+        tree = ast.parse(self.historical_signal_program())
+        gate = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'gate')
+        reads = []
+        scope = dict(time=SimpleNamespace(monotonic=lambda:0), os=SimpleNamespace(getpid=lambda:1),
+                     sys=SimpleNamespace(stdin=io.StringIO('')), print=lambda *a,**kw:None)
+        def ready(*args):
+            reads.append(True)
+            self.assertEqual(len(reads), 1, 'Historical release gate spun after EOF')
+            return ([scope['sys'].stdin], [], [])
+        with patch('select.select', ready):
+            exec(compile(ast.fix_missing_locations(ast.Module(body=[gate],type_ignores=[])), '<gate>', 'exec'),scope)
+            with self.assertRaisesRegex(RuntimeError, 'Historical signal fixture input closed'):
+                scope['gate'](True)
 
     def test_historical_extraction_and_audit_unwind_real_signals(self):
         import signal
@@ -996,6 +1081,51 @@ print('REPORT:'+json.dumps(value),flush=True)
                     self.assertTrue(report['final'])
                     self.assertEqual(report['result']['publication']['interruptions'], [dict(signal=int(sig))],
                                      'Committed publication lost its interruption observation')
+
+    def test_historical_scope_exit_keeps_the_committed_receipt(self):
+        import contextlib
+        import signal
+
+        import evidence_historical as historical
+        package, _ = self.carrier_fixture()
+        native = historical.cleanup_interruptions
+        # Inject just after the cleanup deferral has restored its handlers.
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(signal=sig):
+                scopes = []
+                @contextlib.contextmanager
+                def after_scope(observation, scopes=scopes, sig=sig):
+                    with native(observation):
+                        yield
+                    scopes.append(True)
+                    if len(scopes) == 2:
+                        import os
+                        os.kill(os.getpid(), sig)
+                destination = self.root / ('exit-' + str(int(sig)))
+                with patch.object(historical, 'cleanup_interruptions', after_scope):
+                    try:result = historical.audit_package(package, destination)
+                    except KeyboardInterrupt:self.fail('Scope exit lost the committed signal receipt')
+                self.assertTrue(destination.exists())
+                self.assertTrue(result['publication']['committed'])
+                self.assertTrue(result['publication']['interruptions'], 'Scope exit lost the committed signal receipt')
+
+    def test_historical_handler_restoration_keeps_commitment(self):
+        import contextlib
+
+        import evidence_historical as historical
+        package, _ = self.carrier_fixture()
+        native = historical.interruption
+        original = KeyboardInterrupt('interrupted while restoring the operation handler')
+        @contextlib.contextmanager
+        def restore():
+            with native():
+                yield
+            raise original
+        with patch.object(historical, 'interruption', restore):
+            result = historical.audit_package(package, self.root / 'restored')
+        self.assertTrue(result['publication']['committed'])
+        self.assertIs(original.historical_publication, result)
+        self.assertTrue(result['publication']['interruptions'], 'Handler restoration lost commitment')
 
     def test_historical_published_cleanup_failure_keeps_receipt_and_exception(self):
         import evidence_historical as historical
@@ -1069,7 +1199,7 @@ print('REPORT:'+json.dumps(value),flush=True)
         with self.assertRaisesRegex(ValueError, 'Extraction work counters'):
             verify_tooling_metrics(dict(value, historical_extractions=0))
 
-    def extraction_measurement_bundle(self, wrong=False):
+    def extraction_measurement_bundle(self, wrong=False, wrong_size=False):
         import statistics
 
         from evidence_carrier import describe_carrier
@@ -1077,7 +1207,9 @@ print('REPORT:'+json.dumps(value),flush=True)
         carrier=describe_carrier(self.root,'carrier')
         if wrong:carrier['archive']['sha256']='0'*64
         names=['config.json',carrier['archive']['path'],carrier['transport']['path']]
-        row=dict(harness='tooling', workload='historical-extraction',metric_version=2, extraction_metric_version=2,
+        archive_bytes=(self.root/carrier['archive']['path']).stat().st_size + int(wrong_size)
+        row=dict(harness='tooling', workload='historical-extraction',metric_version=2, extraction_metric_version=3,
+                 timing_scope='verified-operation', publication_interruptions=0, archive_bytes=archive_bytes, archive_hash_passes=3, archive_hash_bytes=archive_bytes*3,
                  historical_extractions=1,expanded_files=477,expanded_bytes=1024,files=477,owned_processes=0,
                  check_output_calls=0,git_commands=0,process_inspection_commands=0,retained_traced_blocks=1,
                  retained_traced_bytes=1,peak_traced_bytes=1,carrier_path='carrier',
@@ -1093,10 +1225,10 @@ print('REPORT:'+json.dumps(value),flush=True)
             +')\nfrom validation_evidence import write_artifact\nwrite_artifact(Path("measure.json"),"measure",json.loads('
             +repr(json.dumps(payload))+'),'+repr(names)+')\n')
         evidence.atomic_json(self.root/'config.json',dict(cases=dict(tooling=['historical-extraction']),sets=1,measured=1,carrier=carrier))
-        self.folder=self.root/('wrong-capture' if wrong else 'extraction-capture')
+        self.folder=self.root/('wrong-size-capture' if wrong_size else 'wrong-capture' if wrong else 'extraction-capture')
         self.checks=[dict(id='measure',argv=[sys.executable,str(script)],artifacts=[dict(path='measure.json',kind='measure',inputs=names)])]
         self.capture()
-        target=self.root/('wrong-extraction-bundle' if wrong else 'extraction-bundle')
+        target=self.root/('wrong-size-bundle' if wrong_size else 'wrong-extraction-bundle' if wrong else 'extraction-bundle')
         evidence.publish_bundle(self.manifest,self.folder,target)
         return target
 
@@ -1111,6 +1243,11 @@ print('REPORT:'+json.dumps(value),flush=True)
                                     msg='Offline extraction accepted a contradictory archived carrier identity'):
             self.extraction_measurement_bundle(wrong=True)
         self.assertFalse((self.root/'wrong-extraction-bundle').exists())
+
+    def test_offline_archive_work_bytes_match_the_archived_carrier(self):
+        with self.assertRaisesRegex(ValueError, 'archive byte counter differs'):
+            self.extraction_measurement_bundle(wrong_size=True)
+        self.assertFalse((self.root/'wrong-size-bundle').exists())
 
     def test_relocated_audit_receipt_names_only_its_guarded_apis(self):
         import shutil
@@ -1143,6 +1280,115 @@ print('REPORT:'+json.dumps(value),flush=True)
         self.assertEqual(receipt['interpreter']['version'][:2],list(sys.version_info[:2]))
         self.assertTrue(receipt['audit']['verified'])
         self.assertTrue(receipt['negative_control']['rejected'])
+
+    def test_offline_guards_canonicalize_aliases_and_restore_on_import_failure(self):
+        import builtins
+        import importlib.util
+        import os
+
+        import evidence_offline_audit as driver
+        target = self.root / 'private.txt'
+        target.write_text('original checkout')
+        alias = self.root.parent / (self.root.name + '-alias')
+        alias.symlink_to(self.root, target_is_directory=True)
+        self.addCleanup(alias.unlink)
+        previous = Path.cwd()
+        try:
+            os.chdir(self.root)
+            originals = [driver.canonical('.')]
+        finally:
+            os.chdir(previous)
+        self.assertEqual(originals, [str(self.root.resolve())])
+        self.assertEqual(driver.canonical(alias), originals[0])
+        native = builtins.open
+        with tempfile.TemporaryDirectory() as directory:
+            module = Path(directory) / 'guard_import.py'
+            module.write_text('from builtins import open as read\nread(' + repr(str(alias / 'private.txt')) + ')\n')
+            with self.assertRaises(PermissionError, msg='Canonical offline guard allowed an original root alias'), driver.guarded_apis(originals):
+                spec=importlib.util.spec_from_file_location('guard_import', module)
+                spec.loader.exec_module(importlib.util.module_from_spec(spec))
+        self.assertIs(builtins.open, native, 'Import failure did not restore offline guards')
+        with driver.guarded_apis(originals):
+            for path in (target, alias/'private.txt'):
+                with self.assertRaises(PermissionError, msg='Canonical offline guard allowed an original root alias'):
+                    path.read_text()
+
+    def test_offline_driver_installs_guards_before_import_for_relative_roots(self):
+        import evidence_offline_audit as driver
+        target=self.root/'private.txt';target.write_text('original checkout')
+        bundle=self.root/'synthetic guard fixture';bundle.mkdir()
+        (bundle/'inputs').mkdir();(bundle/'inputs/member').write_text('control')
+        (bundle/'report.json').write_text('{}')
+        (bundle/'inventory.json').write_text('{}')
+        tooling=bundle/'verifier_tooling';tooling.mkdir()
+        (tooling/'evidence_bundle.py').write_text(
+            'from builtins import open as captured_open\n'
+            +'captured_open('+repr(str(target))+').read()\n'
+            +'calls=0\ndef verify_bundle(folder):\n global calls\n calls+=1\n'
+            +' if calls>1:raise ValueError("inventory corruption")\n'
+            +' return dict(verified=True,eligible_current=True)\n')
+        output=self.root/'should-not-exist.json'
+        completed=subprocess.run([sys.executable,'-B',driver.__file__,str(bundle),str(output),'.'],
+                                 cwd=self.root,capture_output=True,text=True,timeout=15)
+        self.assertNotEqual(completed.returncode,0,'Verifier import escaped the selected offline guards')
+        self.assertIn('Original checkout I/O is forbidden',completed.stderr)
+        self.assertFalse(output.exists())
+
+    def test_offline_disposition_defers_to_auditor_with_optional_expectation(self):
+        from evidence_offline_audit import validate_disposition
+        for unmet in ({'benchmarks':'failed'}, {'hash-experiment':'failed','benchmarks':'blocked'}):
+            value=dict(integrity_verified=True,eligible_current=False,unmet_required=unmet)
+            try:
+                validate_disposition(value, True)
+                validate_disposition(value, True, unmet)
+            except ValueError:self.fail('Shared audit driver rejected an auditor-approved disposition')
+            with self.assertRaisesRegex(ValueError, '--expect-unmet'):
+                validate_disposition(value, True, {'unrelated':'failed'})
+        with self.assertRaisesRegex(ValueError, 'disposition'):
+            validate_disposition(dict(integrity_verified=True,eligible_current=True), True)
+
+    def test_interrupted_committed_extraction_cannot_be_a_sample(self):
+        import evidence_historical as historical
+        from evidence_carrier import describe_carrier
+        from evidence_tool_bench import measure
+        package, _ = self.carrier_fixture()
+        carrier = describe_carrier(self.root,'carrier')
+        native = historical.audit_package
+        def interrupted(*args):
+            result = native(*args)
+            result['publication']['interruptions'].append(dict(signal=2))
+            return result
+        with patch.object(historical,'audit_package',interrupted):
+            with self.assertRaisesRegex(ValueError,'Interrupted extraction measurement',
+                                        msg='Interrupted committed extraction became a timing sample') as failed:
+                measure(self.root,'unused','historical-extraction',self.root,carrier)
+        self.assertTrue(failed.exception.historical_publication['publication']['committed'])
+        self.assertTrue(failed.exception.historical_publication['publication']['interruptions'])
+
+    def test_extraction_hash_work_and_live_metric_contract_are_observed(self):
+        from evidence_benchmarks import verify_tooling_metrics
+        from evidence_carrier import describe_carrier
+        from evidence_tool_bench import measure
+        _, metadata = self.carrier_fixture()
+        carrier=describe_carrier(self.root,'carrier')
+        row=measure(self.root,'unused','historical-extraction',self.root,carrier)
+        self.assertEqual(row['archive_hash_passes'],3,'Extraction omitted a verified archive hash pass')
+        self.assertEqual(row['archive_hash_bytes'],metadata['archive']['bytes']*3,'archive_hash_bytes did not match streamed work')
+        row.update(harness='tooling',workload='historical-extraction')
+        verify_tooling_metrics(row)
+        for name, value in (('archive_hash_passes',2),('archive_hash_bytes',1),('publication_interruptions',1),('timing_scope','extraction-only')):
+            with self.subTest(name=name),self.assertRaisesRegex(ValueError,'verified-operation'):
+                verify_tooling_metrics(dict(row,**{name:value}))
+
+    def test_live_tooling_requires_an_actual_metric_version(self):
+        from evidence_benchmarks import verify_tooling_metrics
+        for version in (None,True,1,1.0,2.0,3):
+            row=dict(harness='tooling',workload='campaign-layout')
+            if version is not None:row['metric_version']=version
+            with self.subTest(version=version),self.assertRaisesRegex(ValueError,'tooling metric version',
+                msg='Unversioned or mistyped live tooling bypassed its contract'):
+                verify_tooling_metrics(row)
+        verify_tooling_metrics(dict(harness='tooling',files=128),historical=True)
 
     def test_declared_extraction_carrier_rejects_mutations_and_wrong_returned_identity(self):
         import evidence_historical as historical
@@ -1864,7 +2110,7 @@ class HashMetricScope(unittest.TestCase):
                 else:value['metric_version']=3
                 with self.assertRaisesRegex(ValueError,'[Tt]ooling|Supervision'):
                     verify_tooling_metrics(value)
-        verify_tooling_metrics(dict(harness='tooling',git_commands=5)) # Historical, not relabeled.
+        verify_tooling_metrics(dict(harness='tooling',git_commands=5), historical=True) # Historical, not relabeled.
 
     def payload(self):
         from evidence_hash_experiment import METRIC_SCOPE, ROLES
@@ -2837,10 +3083,11 @@ class PreparationRecovery(unittest.TestCase):
         verify_tooling_metrics(historical,historical=True)
         with self.assertRaisesRegex(ValueError,'Layout work counters'):
             verify_tooling_metrics(historical)
-        extraction=dict(value, workload='historical-extraction',extraction_metric_version=2,
+        extraction=dict(value, workload='historical-extraction',extraction_metric_version=3,
+                        timing_scope='verified-operation', publication_interruptions=0, archive_bytes=10, archive_hash_passes=3, archive_hash_bytes=30,
                         historical_extractions=1,expanded_files=477,expanded_bytes=1024,files=477)
         verify_tooling_metrics(extraction)
-        for version in (None,True,1,1.0,2.0,3):
+        for version in (None,True,1,1.0,2,2.0,3.0,4):
             with self.subTest(version=version), self.assertRaisesRegex(ValueError,'Extraction work counters'):
                 verify_tooling_metrics(dict(extraction,extraction_metric_version=version))
         with self.assertRaisesRegex(ValueError,'Extraction work counters',msg='Extraction operation count was accepted as files'):

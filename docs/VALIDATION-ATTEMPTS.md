@@ -75,3 +75,29 @@ Version-1 workload observations retain their original interpretation only during
 explicit historical auditing. Campaign evidence stays at v5. Live extraction
 measurements require one declared carrier descriptor shared by both variants and
 bound to archived configuration and carrier inputs.
+
+
+The offline audit driver canonicalizes forbidden checkout roots before relocation
+and installs its selected API guards before archived verifier imports. Its receipt
+identifies that phase and the canonical roots. Previously cached aliases, cached
+pathlib accessors, directory listings, and direct OS process primitives remain
+outside coverage; this is not a sandbox. Import failures restore installed guards.
+Use `python3 scripts/evidence_offline_audit.py BUNDLE RECEIPT ORIGINAL_ROOT...`.
+The optional `--expect-unmet '{"benchmarks":"failed"}'` checks an explicit campaign
+expectation; otherwise the underlying auditor validates and reports the disposition.
+Incomplete integrity verification never grants current campaign eligibility.
+
+Committed historical publication ownership extends through cleanup and operation
+scope teardown. Cooperative interruptions remain observations on the committed
+receipt. Measurements reject any such observation before writing a sample, retain
+the receipt in failure diagnostics, and do not turn an outer timeout into success.
+Genuine failures retain their original exception and any committed receipt.
+
+Extraction workload contract 3 measures the complete verified operation: carrier
+admission, extraction and auditing, final carrier verification, and owned cleanup.
+Observed archive-hash passes and streamed bytes are reported separately from
+expanded files and bytes. The three required archive hash passes are deliberately
+inside timing and tracing. Version-1/2 extraction observations retain their original
+meaning only in explicit historical auditing. Evidence containers stay at v5;
+live tooling observations require integer metric version 2. No timing threshold
+or general performance claim follows from these deterministic work checks.
