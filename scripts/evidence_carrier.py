@@ -65,8 +65,8 @@ def verify_carrier_rows(rows, carrier, *, historical=False):
             raise ValueError("Extraction sample differs from its declared shared carrier")
 
 
-def verify_archived_carrier(settings, payload, entries, check_id):
-    if not any(row.get("extraction_metric_version") == 2 for row in payload["rows"]):
+def verify_archived_carrier(settings, payload, entries, check_id, *, folder):
+    if not any(row.get("extraction_metric_version") in (2, 3) for row in payload["rows"]):
         return
     if payload.get("carrier") != settings.get("carrier"):
         raise ValueError("Measurement shared carrier differs from archived configuration")
@@ -78,3 +78,9 @@ def verify_archived_carrier(settings, payload, entries, check_id):
         item = entries.get((check_id, "input", name))
         if not item or not item.get("storage") or item["sha256"] != settings["carrier"][role]["sha256"]:
             raise ValueError("Shared carrier input missing, unarchived, or mismatched: " + name)
+
+    from evidence_bundle import safe_member
+    archive = entries[(check_id, "input", names[0])]
+    archive_bytes = safe_member(folder, archive["storage"]).stat().st_size
+    if any(row.get("extraction_metric_version") == 3 and row.get("archive_bytes") != archive_bytes for row in payload["rows"]):
+        raise ValueError("Extraction archive byte counter differs from its archived carrier")

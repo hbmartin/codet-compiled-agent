@@ -302,7 +302,7 @@ def verify_bundle(folder, *, historical=False):
         payload = envelope["payload"]
         verify_samples(payload["rows"], payload["summary"], settings["cases"], sets=settings["sets"], measured=settings["measured"], historical=historical, carrier=settings.get("carrier"))
         from evidence_carrier import verify_archived_carrier
-        verify_archived_carrier(settings, payload, entries, envelope["check_id"])
+        verify_archived_carrier(settings, payload, entries, envelope["check_id"], folder=folder)
         if len(measurement["paths"]) != 2:
             raise ValueError("Audit measurement sidecar coverage mismatch")
         for position, key in enumerate(("rows", "summary")):
