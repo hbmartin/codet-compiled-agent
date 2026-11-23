@@ -49,3 +49,29 @@ sweep runs. SIGKILL, host failure, or an actual cleanup failure can leave stagin
 inspect ownership and stop relevant operations before any manual deletion. A
 secondary cleanup failure remains attached to the original error rather than
 replacing it. Historical integrity never grants current campaign eligibility.
+
+Historical extraction publication is a commit point. Before admission, cooperative
+interruption unwinds only the invocation's staging and preserves the original
+failure. Signals during exclusive rename and subsequent cleanup are recorded in
+the committed result; a completed destination is not removed or reported as an
+ordinary interrupted extraction. Genuine post-publication cleanup errors retain
+their exception and carry the committed receipt. Existing destinations remain
+protected, and no stale-tree reclamation runs.
+
+The relocated offline-audit driver guards selected Python APIs, not every possible
+checkout access or process launch. Its file guards cover `builtins.open`, `io.open`,
+`os.open`, `os.stat`, and `os.lstat`; its process guards cover the listed `subprocess`
+entry points. Cached pathlib metadata accessors (notably on Python 3.9), directory
+listing, and direct `os` process primitives are outside that coverage. Historical
+receipts' universal prevention booleans overstate this scope; their archived bytes
+remain unchanged. New receipts enumerate their APIs and interpreter and make no
+OS-sandbox claim. Relocated inventory/provenance verification remains a separate
+integrity result, never evidence of current campaign acceptance by itself.
+
+Layout/extraction workload counter contracts version 2 distinguish operations from
+files: layout records zero files plus observed successful resolutions and returned
+locations; extraction records its actual expanded files/bytes and operation count.
+Version-1 workload observations retain their original interpretation only during
+explicit historical auditing. Campaign evidence stays at v5. Live extraction
+measurements require one declared carrier descriptor shared by both variants and
+bound to archived configuration and carrier inputs.

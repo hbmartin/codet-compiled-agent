@@ -19,6 +19,7 @@ from evidence_benchmarks import (
     verify_git_validation,
     verify_samples,
 )
+from evidence_carrier import describe_carrier, selected_carrier_inputs
 from modern_sources import application_sources
 from preparation_metrics import WORKLOADS
 from process_supervision import run as supervised_run
@@ -34,7 +35,7 @@ CASES = {
     "export": ["small", "large"],
 }
 HARNESS_FILES = ["tests/preparation_bench.cpp", "tests/line_input_bench.cpp", "tests/output_bench.cpp", "tests/export_bench.cpp",
-                 "tests/descriptor_bench_metrics.hpp", "tests/native_stat_interposer.hpp", "tests/native_symbol.hpp", "tests/temp.hpp", "scripts/evidence_tool_bench.py", "scripts/evidence_tiger_context_bench.py"]
+                 "tests/descriptor_bench_metrics.hpp", "tests/native_stat_interposer.hpp", "tests/native_symbol.hpp", "tests/temp.hpp", "scripts/evidence_tool_bench.py", "scripts/evidence_tiger_context_bench.py", "scripts/evidence_carrier.py"]
 TOOLS = ("clang-tidy", "cppcheck", "clang-analyzer")
 PRODUCER_ACTIONS = ("archive", "harness", "platforms", "semgrep-controls", "analysis", "analysis-baseline", "analysis-changed", "measure", "negative-controls", "native-negative-controls", "cross-placeholder", "build-info", "ci", "history", "hash-profile", "historical-audit")
 MANAGED_WORKSPACES = ("home", "tmp", "capture", "baseline-src", "baseline-release", "changed-release",
@@ -244,6 +245,8 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     if sys.platform == "darwin":
         config["sdk"] = dict(path=command(["/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-path"], timeout=5),
                              version=command(["/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-version"], timeout=5))
+    from evidence_historical import PACKAGE
+    config["carrier"] = describe_carrier(root, PACKAGE)
     atomic_json(config_path, config)
     rel = lambda p: input_name(root, p)
     checks = []
@@ -356,7 +359,7 @@ def prepare(root, folder, baseline=None, check_python=None, python39=None, analy
     from evidence_historical import PACKAGE
     historical_inputs = [PACKAGE + "/" + name for name in ("audit-bundle.tar.gz", "transport.json")]
     producer("benchmarks", "measure", ["benchmark-harness", "static-comparison", "python-negative-controls", "native-negative-controls", "semgrep-controls"],
-             [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")] + [rel(folder / "harness.json")] + historical_inputs, timeout=1800)
+             [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")] + [rel(folder / "harness.json")] + selected_carrier_inputs(config), timeout=1800)
     metadata_inputs = [rel(Path(b) / "CMakeCache.txt") for b in builds.values()] + [rel(folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed")]
     producer("historical-audit", "historical-audit", ["runner-tests"], historical_inputs)
     producer("platform-availability", "platforms")
@@ -426,7 +429,7 @@ def measure(config):
                         if harness == "tooling":
                             source = folder / "baseline-src" if variant == "baseline" else root
                             ref = config["baseline"] if variant == "baseline" else config["validated_ref"]
-                            argv = [config["check_python"], str(folder / "harness-src/scripts/evidence_tool_bench.py"), str(source), ref, case, str(result), str(root)]
+                            argv = [config["check_python"], str(folder / "harness-src/scripts/evidence_tool_bench.py"), str(source), ref, case, str(result), str(root), json.dumps(config.get("carrier"))]
                         else:
                             argv = [binaries[variant][harness]["path"], case, str(result)] + (["file"] if harness == "export" else [])
                         run = supervised_run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=180)
@@ -449,13 +452,13 @@ def measure(config):
                     metrics = [k for k, v in values[0].items() if type(v) in (int, float) and k not in ("set", "sample")]
                     summary.append(dict(set=number, harness=harness, workload=case, variant=variant,
                                         **{k: statistics.median(r[k] for r in values) for k in metrics}))
-    verified = verify_samples(rows, summary, config["cases"], sets=config["sets"], measured=config["measured"])
+    verified = verify_samples(rows, summary, config["cases"], sets=config["sets"], measured=config["measured"], carrier=config.get("carrier"))
     require_quiet_processes()
     for programs in binaries.values():
         for executable in programs.values():
             if executable_provenance(Path(executable["path"])) != executable:
                 raise ValueError("Benchmark executable changed during measurement")
-    return dict(**verified, rows=rows, summary=summary, invocations=invocations, baseline=baseline,
+    return dict(**verified, rows=rows, summary=summary, invocations=invocations, baseline=baseline, carrier=config.get("carrier"),
                 harness_hashes=harnesses, executables=binaries, configurations=configurations, harness_build=harness_build, host=dict(platform=platform.platform(), machine=platform.machine()))
 
 
@@ -577,9 +580,7 @@ def produce(config_path, action, *, output=None):
         inputs.extend(input_name(root, folder / (v + "-release") / n) for v in ("baseline", "changed") for n in ("compile_commands.json", "build.ninja", "libcodet_core.a"))
         payload = build_harnesses(root, folder, HARNESS_FILES, config["tools"]["ninja"]["path"])
     elif action == "measure":
-        if "historical-extraction" in config.get("cases", {}).get("tooling", []):
-            from evidence_historical import PACKAGE
-            inputs.extend(PACKAGE + "/" + name for name in ("audit-bundle.tar.gz", "transport.json"))
+        inputs.extend(selected_carrier_inputs(config))
         inputs.append(input_name(root, folder / "harness.json"))
         inputs.extend(input_name(root, folder / (v + "-release/CMakeCache.txt")) for v in ("baseline", "changed"))
         payload = measure(config)

@@ -32,7 +32,7 @@ def verify_git_validation(repository, root, ref):
     return expected
 
 
-def verify_tooling_metrics(row):
+def verify_tooling_metrics(row, *, historical=False):
     if row.get('harness') != 'tooling' or 'metric_version' not in row:
         return # Historical unversioned observations keep their original field interpretation.
     if row['metric_version'] != 2:
@@ -65,14 +65,14 @@ def verify_tooling_metrics(row):
             raise ValueError('Historical sample audit counters are invalid')
     if row.get('workload') == 'campaign-layout':
         if (any(type(row.get(key)) is not int for key in ('layout_metric_version', 'layout_checks', 'build_locations')) or
-                row.get('layout_metric_version') != 1 or row.get('layout_checks') != 128 or row.get('build_locations') != 640 or
-                row['files'] != 128 or row['owned_processes'] or row['check_output_calls']):
+                row.get('layout_metric_version') not in ((1, 2) if historical else (2,)) or row.get('layout_checks') != 128 or row.get('build_locations') != 640 or
+                row['files'] != (128 if row.get('layout_metric_version') == 1 else 0) or row['owned_processes'] or row['check_output_calls']):
             raise ValueError('Layout work counters or controls are invalid')
     if row.get('workload') == 'historical-extraction':
         if (any(type(row.get(key)) is not int for key in ('extraction_metric_version', 'historical_extractions')) or
-                row.get('extraction_metric_version') != 1 or row.get('historical_extractions') != 1 or
+                row.get('extraction_metric_version') not in ((1, 2) if historical else (2,)) or row.get('historical_extractions') != 1 or
                 any(type(row.get(key)) is not int or row[key] <= 0 for key in ('expanded_files', 'expanded_bytes')) or
-                row['files'] != 1 or row['owned_processes'] or row['check_output_calls']):
+                row['files'] != (1 if row.get('extraction_metric_version') == 1 else row['expanded_files']) or row['owned_processes'] or row['check_output_calls']):
             raise ValueError('Extraction work counters or controls are invalid')
     if row.get('workload') == 'build-context':
         if (row.get('context_metric_version') != 1 or row['owned_processes'] or
@@ -129,7 +129,9 @@ def verify_preparation_metrics(row, *, variant=_ROW_VARIANT, historical=False):
         raise ValueError("Normalization content control failed")
 
 
-def verify_samples(rows, summary, workloads, *, sets=2, measured=5, historical=False):
+def verify_samples(rows, summary, workloads, *, sets=2, measured=5, historical=False, carrier=None):
+    from evidence_carrier import verify_carrier_rows
+    verify_carrier_rows(rows, carrier, historical=historical)
     expected = {(s, harness, workload, variant) for s in range(1, sets + 1)
                 for harness, names in workloads.items() for workload in names
                 for variant in ("baseline", "changed")}
@@ -139,7 +141,7 @@ def verify_samples(rows, summary, workloads, *, sets=2, measured=5, historical=F
     grouped = {key: [] for key in expected}
     seen = set()
     for row in rows:
-        verify_tooling_metrics(row)
+        verify_tooling_metrics(row, historical=historical)
         verify_preparation_metrics(row, historical=historical)
         key = (row["set"], row["harness"], row["workload"], row["variant"])
         if type(row["set"]) is not int or key not in grouped:

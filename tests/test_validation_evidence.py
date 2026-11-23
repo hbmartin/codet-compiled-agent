@@ -482,6 +482,12 @@ class ReplayAndGitGuards(unittest.TestCase):
         (root / "src").mkdir(exist_ok=True)
         (root / "src/a.cpp").write_text("original")
         (root / "CMakeLists.txt").write_text("project(test)")
+        from evidence_historical import PACKAGE
+        carrier = root / PACKAGE; carrier.mkdir(parents=True)
+        (carrier / 'audit-bundle.tar.gz').write_bytes(b'fixture archive')
+        evidence.atomic_json(carrier / 'transport.json', dict(capture_run_id='fixture',
+            archive=dict(path='audit-bundle.tar.gz', bytes=15, sha256=evidence.digest(carrier / 'audit-bundle.tar.gz')),
+            expanded=dict(prefix='fixture', files=1, bytes=1, inventory_sha256='a'*64)))
         for args in (["init", "-q"], ["add", "."], ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture"]):
             subprocess.run(["git", "-C", str(root)] + args, check=True, capture_output=True, timeout=5)
 
@@ -844,63 +850,170 @@ class ReplayIntegrity(unittest.TestCase):
         self.assertTrue(result['historical_result']['verified'])
         self.assertTrue(destination.is_dir())
 
-    def test_historical_extraction_and_audit_unwind_real_signals(self):
+    @staticmethod
+    def historical_signal_program():
+        return r"""import importlib.util,json,os,signal,sys,time
+from pathlib import Path
+sys.path.insert(0,sys.argv[1]);sys.dont_write_bytecode=True
+spec=importlib.util.spec_from_file_location('evidence_historical',sys.argv[2])
+h=importlib.util.module_from_spec(spec);spec.loader.exec_module(h)
+if sys.argv[6]=='ignored':signal.signal(signal.SIGINT,signal.SIG_IGN)
+signal.signal(signal.SIGINT,signal.default_int_handler)
+prior={s:signal.getsignal(s) for s in (signal.SIGINT,signal.SIGTERM)}
+def gate(release=False):
+ print('READY:'+str(os.getpid()),flush=True)
+ deadline=time.monotonic()+5
+ while time.monotonic()<deadline:
+  if release:
+   import select
+   if select.select([sys.stdin],[],[],.05)[0] and sys.stdin.readline().strip()=='go':return
+  else:time.sleep(.05)
+ raise RuntimeError('Historical signal fixture deadline expired')
+native_copy=h.shutil.copyfileobj
+native_verify=h.verify_bundle
+native_rename=h.rename_exclusive
+native_cleanup=h.tempfile.TemporaryDirectory.cleanup
+cleanup_gated=False
+def copy(source,output):
+ gate();return native_copy(source,output)
+def verify(*args,**kwargs):
+ if kwargs.get('historical'):gate()
+ return native_verify(*args,**kwargs)
+def rename(stage,destination):
+ if sys.argv[5]=='rename':gate(True)
+ native_rename(stage,destination)
+ if sys.argv[5]=='published':gate(True)
+def cleanup(temporary):
+ global cleanup_gated
+ if not cleanup_gated:cleanup_gated=True;gate(True)
+ return native_cleanup(temporary)
+if sys.argv[5]=='extraction':h.shutil.copyfileobj=copy
+elif sys.argv[5]=='verification':h.verify_bundle=verify
+elif sys.argv[5]=='cleanup':h.tempfile.TemporaryDirectory.cleanup=cleanup
+else:h.rename_exclusive=rename
+try:
+ result=h.audit_package(sys.argv[3],sys.argv[4]);value=dict(result=result)
+except BaseException as error:value=dict(error=type(error).__name__,message=str(error))
+value.update(restored=all(signal.getsignal(s)==handler for s,handler in prior.items()),
+ staging=[p.name for p in Path(sys.argv[4]).parent.glob('.historical-*') if p.name!='.historical-active'],
+ final=Path(sys.argv[4]).exists())
+print('REPORT:'+json.dumps(value),flush=True)
+"""
+
+    def historical_signal_case(self, phase, sig=None, ignored=False, parent_exits=False):
         import os
         import select
         import signal
 
         import evidence_historical as historical
-        package, _ = self.carrier_fixture()
-        sibling = self.root / '.historical-active'; sibling.mkdir()
-        (sibling / 'owner').write_text('another invocation')
-        code = r"""import importlib.util,json,signal,sys
-from pathlib import Path
-sys.path.insert(0,sys.argv[1]);sys.dont_write_bytecode=True
-spec=importlib.util.spec_from_file_location('evidence_historical',sys.argv[2])
-h=importlib.util.module_from_spec(spec);spec.loader.exec_module(h)
-prior=signal.getsignal(signal.SIGTERM)
-def gate():
- print('READY',flush=True);signal.pause()
-native_copy=h.shutil.copyfileobj
-def copy(source,output):
- gate();return native_copy(source,output)
-native_verify=h.verify_bundle
-def verify(*args,**kwargs):
- if kwargs.get('historical'):gate()
- return native_verify(*args,**kwargs)
-if sys.argv[5]=='extraction':h.shutil.copyfileobj=copy
-else:h.verify_bundle=verify
-try:h.audit_package(sys.argv[3],sys.argv[4])
-except BaseException as error:
- value=dict(error=type(error).__name__,restored=signal.getsignal(signal.SIGTERM)==prior,
-            staging=[p.name for p in Path(sys.argv[4]).parent.glob('.historical-*') if p.name!='.historical-active'],
-            final=Path(sys.argv[4]).exists())
- print('REPORT:'+json.dumps(value),flush=True)
-"""
-        for phase in ('extraction', 'verification'):
+        package, _ = self.carrier_fixture() if not (self.root / 'carrier').exists() else (self.root / 'carrier', None)
+        code = self.historical_signal_program()
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            parent = Path(directory)
+            sibling = parent / '.historical-active'; sibling.mkdir()
+            (sibling / 'owner').write_text('another invocation')
+            destination = parent / 'result'
+            argv = [sys.executable, '-c', code, str(Path(evidence.__file__).parent),
+                    str(historical.__file__), str(package), str(destination), phase, 'ignored' if ignored else 'normal']
+            if parent_exits:
+                driver = 'import json,subprocess,sys;subprocess.Popen(json.loads(sys.argv[1]),stdin=subprocess.DEVNULL,start_new_session=True)'
+                argv = [sys.executable, '-c', driver, json.dumps(argv)]
+            process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       text=True, start_new_session=True)
+            child = None
+            try:
+                self.assertTrue(select.select([process.stdout], [], [], 15)[0], 'Historical signal fixture never reached owned staging')
+                ready = process.stdout.readline().strip()
+                self.assertTrue(ready.startswith('READY:'), ready)
+                child = int(ready.split(':', 1)[1])
+                if sig is not None:
+                    os.kill(child, sig)
+                    if phase in ('rename', 'published', 'cleanup'):
+                        process.stdin.write('go\n'); process.stdin.flush()
+                stdout, stderr = process.communicate(timeout=10)
+            finally:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL); process.wait(timeout=5)
+                    if child is not None and child != process.pid:
+                        try:os.killpg(child, signal.SIGKILL)
+                        except ProcessLookupError:pass
+            self.assertIn('REPORT:', stdout, 'Cooperative extraction signal skipped cleanup: ' + stderr)
+            report = json.loads(stdout.split('REPORT:', 1)[1])
+            self.assertTrue(report['restored'], 'Historical extraction retained its signal handler')
+            self.assertFalse(report['staging'], 'Cooperative extraction signal retained owned staging')
+            self.assertEqual((sibling / 'owner').read_text(), 'another invocation')
+            if report['final']:
+                with self.assertRaises(FileExistsError):historical.audit_package(package, destination)
+            else:
+                result = historical.audit_package(package, destination)
+                self.assertTrue(result['historical_result']['verified'])
+            return report
+
+    def test_historical_extraction_and_audit_unwind_real_signals(self):
+        import signal
+        for ignored in (False, True):
+            for phase in ('extraction', 'verification'):
+                for sig in (signal.SIGTERM, signal.SIGINT):
+                    with self.subTest(phase=phase, signal=sig, inherited_ignored=ignored):
+                        report = self.historical_signal_case(phase, sig, ignored)
+                        self.assertEqual(report.get('error'), 'KeyboardInterrupt', 'Child SIGINT disposition was not restored')
+                        self.assertFalse(report['final'])
+
+    def test_historical_signal_gate_has_an_independent_deadline(self):
+        import ast
+        from types import SimpleNamespace
+        program = ast.parse(self.historical_signal_program())
+        gate = next(node for node in program.body if isinstance(node, ast.FunctionDef) and node.name == 'gate')
+        elapsed = [0.0]
+        sleeps = []
+        def sleep(delay):
+            sleeps.append(delay)
+            self.assertLessEqual(delay, .05)
+            self.assertEqual(len(sleeps), 1, 'Unbounded historical gate attempted another sleep')
+            elapsed[0] = 6.0
+        scope=dict(time=SimpleNamespace(monotonic=lambda:elapsed[0], sleep=sleep),
+                   print=lambda *a,**kw:None, os=SimpleNamespace(getpid=lambda:1))
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[gate],type_ignores=[])), '<gate>', 'exec'),scope)
+        with self.assertRaisesRegex(RuntimeError,'Historical signal fixture deadline expired'):
+            scope['gate']()
+        self.assertEqual(sleeps,[.05])
+
+    def test_historical_signal_gate_is_bounded_even_after_parent_exit(self):
+        for parent_exits in (False, True):
+            with self.subTest(parent_exits=parent_exits):
+                report = self.historical_signal_case('extraction', parent_exits=parent_exits)
+                self.assertEqual(report.get('error'), 'RuntimeError')
+                self.assertEqual(report.get('message'), 'Historical signal fixture deadline expired', 'Historical gate lost its own deadline')
+                self.assertFalse(report['final'])
+
+    def test_historical_publication_defers_signals_through_commit_and_cleanup(self):
+        import signal
+        for phase in ('rename', 'published', 'cleanup'):
             for sig in (signal.SIGTERM, signal.SIGINT):
                 with self.subTest(phase=phase, signal=sig):
-                    destination = self.root / ('interrupted-' + phase + str(sig))
-                    process = subprocess.Popen([sys.executable, '-c', code, str(Path(__file__).resolve().parents[1] / 'scripts'),
-                        str(historical.__file__), str(package), str(destination), phase],
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
-                    try:
-                        self.assertTrue(select.select([process.stdout], [], [], 15)[0], 'Historical signal fixture never reached owned staging')
-                        self.assertEqual(process.stdout.readline().strip(), 'READY')
-                        os.kill(process.pid, sig)
-                        stdout, stderr = process.communicate(timeout=10)
-                    finally:
-                        if process.poll() is None:
-                            os.killpg(process.pid, signal.SIGKILL); process.wait(timeout=5)
-                    self.assertIn('REPORT:', stdout, 'Cooperative extraction signal skipped cleanup: ' + stderr)
-                    report = json.loads(stdout.split('REPORT:', 1)[1])
-                    self.assertEqual(report['error'], 'KeyboardInterrupt')
-                    self.assertTrue(report['restored'], 'Historical extraction retained its SIGTERM handler')
-                    self.assertFalse(report['staging'], 'Cooperative extraction signal retained owned staging')
-                    self.assertFalse(report['final'])
-                    self.assertEqual((sibling / 'owner').read_text(), 'another invocation')
-                    result = historical.audit_package(package, destination)
-                    self.assertTrue(result['historical_result']['verified'])
+                    report = self.historical_signal_case(phase, sig)
+                    self.assertNotIn('error', report, 'Committed publication was reported as an interruption')
+                    self.assertTrue(report['final'])
+                    self.assertEqual(report['result']['publication']['interruptions'], [dict(signal=int(sig))],
+                                     'Committed publication lost its interruption observation')
+
+    def test_historical_published_cleanup_failure_keeps_receipt_and_exception(self):
+        import evidence_historical as historical
+        package, _ = self.carrier_fixture()
+        destination = self.root / 'published'
+        native = historical.tempfile.TemporaryDirectory.cleanup
+        error = OSError('genuine published cleanup failure')
+        calls = []
+        def fail_once(temporary):
+            calls.append(temporary)
+            if len(calls) == 1:raise error
+            return native(temporary)
+        with patch.object(historical.tempfile.TemporaryDirectory, 'cleanup', fail_once):
+            with self.assertRaises(OSError) as caught:historical.audit_package(package, destination)
+        self.assertIs(caught.exception, error)
+        self.assertTrue(error.historical_publication['publication']['committed'])
+        self.assertTrue(destination.exists())
+        for temporary in calls:native(temporary)
 
     def test_historical_cleanup_preserves_primary_failure_and_restores_handlers(self):
         import signal
@@ -938,19 +1051,143 @@ except BaseException as error:
         package, metadata = self.carrier_fixture()
         variant = self.root / 'immutable variant'; variant.mkdir()
         self.assertFalse((variant / 'carrier').exists())
-        with patch.object(historical, 'PACKAGE', 'carrier'), patch.object(historical, 'audit_package', wraps=historical.audit_package) as observed:
+        from evidence_carrier import describe_carrier
+        carrier = describe_carrier(self.root, 'carrier')
+        with patch.object(historical, 'PACKAGE', 'ignored-variant-default'), patch.object(historical, 'audit_package', wraps=historical.audit_package) as observed:
             try:
-                value = measure(variant, 'unused', 'historical-extraction', self.root)
+                value = measure(variant, 'unused', 'historical-extraction', self.root, carrier)
             except (OSError, ValueError) as error:
                 self.fail('Extraction benchmark ignored shared declared carrier: ' + str(error))
         self.assertEqual(observed.call_count, 1)
         self.assertEqual(observed.call_args.args[0], package)
+        self.assertEqual(value['files'], metadata['expanded']['files'])
+        self.assertEqual(value['carrier_archive_sha256'], carrier['archive']['sha256'])
         self.assertEqual(value['expanded_files'], metadata['expanded']['files'])
         self.assertEqual(value['expanded_bytes'], metadata['expanded']['bytes'])
         value.update(harness='tooling', workload='historical-extraction')
         verify_tooling_metrics(value)
         with self.assertRaisesRegex(ValueError, 'Extraction work counters'):
             verify_tooling_metrics(dict(value, historical_extractions=0))
+
+    def extraction_measurement_bundle(self, wrong=False):
+        import statistics
+
+        from evidence_carrier import describe_carrier
+        if not (self.root / 'carrier').exists():self.carrier_fixture()
+        carrier=describe_carrier(self.root,'carrier')
+        if wrong:carrier['archive']['sha256']='0'*64
+        names=['config.json',carrier['archive']['path'],carrier['transport']['path']]
+        row=dict(harness='tooling', workload='historical-extraction',metric_version=2, extraction_metric_version=2,
+                 historical_extractions=1,expanded_files=477,expanded_bytes=1024,files=477,owned_processes=0,
+                 check_output_calls=0,git_commands=0,process_inspection_commands=0,retained_traced_blocks=1,
+                 retained_traced_bytes=1,peak_traced_bytes=1,carrier_path='carrier',
+                 carrier_archive_sha256=carrier['archive']['sha256'],carrier_transport_sha256=carrier['transport']['sha256'])
+        rows=[dict(row,set=1,sample=n,variant=v,warmup=n==0,milliseconds=float(n+1)) for v in ('baseline','changed') for n in (0,1)]
+        metrics=[k for k,v in rows[0].items() if type(v) in (int,float) and k not in ('set','sample')]
+        summary=[dict(set=1,harness='tooling',workload='historical-extraction',variant=v,
+                      **{k:statistics.median(r[k] for r in rows if r['variant']==v and not r['warmup']) for k in metrics})
+                 for v in ('baseline','changed')]
+        payload=dict(rows=rows,summary=summary,carrier=carrier)
+        script=self.root/'producer.py'
+        script.write_text('import sys,json\nfrom pathlib import Path\nsys.path.insert(0,'+repr(str(Path(evidence.__file__).parent))
+            +')\nfrom validation_evidence import write_artifact\nwrite_artifact(Path("measure.json"),"measure",json.loads('
+            +repr(json.dumps(payload))+'),'+repr(names)+')\n')
+        evidence.atomic_json(self.root/'config.json',dict(cases=dict(tooling=['historical-extraction']),sets=1,measured=1,carrier=carrier))
+        self.folder=self.root/('wrong-capture' if wrong else 'extraction-capture')
+        self.checks=[dict(id='measure',argv=[sys.executable,str(script)],artifacts=[dict(path='measure.json',kind='measure',inputs=names)])]
+        self.capture()
+        target=self.root/('wrong-extraction-bundle' if wrong else 'extraction-bundle')
+        evidence.publish_bundle(self.manifest,self.folder,target)
+        return target
+
+    def test_offline_extraction_binds_descriptor_to_actual_archived_inputs(self):
+        import shutil
+
+        from evidence_bundle import verify_bundle
+        target=self.extraction_measurement_bundle()
+        moved=self.root/'moved extraction';shutil.copytree(target,moved)
+        self.assertTrue(verify_bundle(moved)['verified'])
+        with self.assertRaisesRegex(ValueError,'Shared carrier input missing, unarchived, or mismatched',
+                                    msg='Offline extraction accepted a contradictory archived carrier identity'):
+            self.extraction_measurement_bundle(wrong=True)
+        self.assertFalse((self.root/'wrong-extraction-bundle').exists())
+
+    def test_relocated_audit_receipt_names_only_its_guarded_apis(self):
+        import shutil
+        # Archive the verifier used by the child, rather than importing it from a checkout.
+        shutil.copytree(Path(evidence.__file__).parent,self.root/'scripts',ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
+        self.capture()
+        target=self.root/'offline-bundle';evidence.publish_bundle(self.manifest,self.folder,target)
+        output=self.root/'offline-receipt.json'
+        driver=Path(evidence.__file__).parent/'evidence_offline_audit.py'
+        subprocess.run([sys.executable,'-B',str(driver),str(target),str(output),str(self.root.resolve())],
+                       check=True,capture_output=True,text=True,timeout=30)
+        receipt=json.loads(output.read_text())
+        self.assertEqual(receipt['guarded_file_apis'],['builtins.open','io.open','os.open','os.stat','os.lstat'])
+        self.assertEqual(receipt['guarded_process_apis'],['subprocess.Popen','subprocess.run','subprocess.check_output','subprocess.check_call','subprocess.call'])
+        self.assertNotIn('original_checkout_io_forbidden',receipt)
+        self.assertNotIn('process_launches_forbidden',receipt)
+        import ast
+        tree=ast.parse(receipt['driver_source'])
+        loops=[node for node in ast.walk(tree) if isinstance(node,ast.For)]
+        files=next(node for node in loops if isinstance(node.target,ast.Tuple) and
+                   isinstance(node.iter,ast.List) and any(isinstance(value,ast.Tuple) and
+                   isinstance(value.elts[0],ast.Name) and value.elts[0].id=='builtins' for value in node.iter.elts))
+        actual_files=[value.elts[0].id+'.'+value.elts[1].value for value in files.iter.elts]
+        processes=next(node for node in loops if isinstance(node.iter,ast.Tuple) and
+                       any(isinstance(value,ast.Constant) and value.value=='Popen' for value in node.iter.elts))
+        actual_processes=['subprocess.'+value.value for value in processes.iter.elts]
+        self.assertEqual(receipt['guarded_file_apis'],actual_files)
+        self.assertEqual(receipt['guarded_process_apis'],actual_processes)
+        self.assertIn('not an OS sandbox',receipt['guard_scope'])
+        self.assertEqual(receipt['interpreter']['version'][:2],list(sys.version_info[:2]))
+        self.assertTrue(receipt['audit']['verified'])
+        self.assertTrue(receipt['negative_control']['rejected'])
+
+    def test_declared_extraction_carrier_rejects_mutations_and_wrong_returned_identity(self):
+        import evidence_historical as historical
+        from evidence_carrier import (
+            check_carrier,
+            describe_carrier,
+            selected_carrier_inputs,
+            verify_carrier_rows,
+        )
+        from evidence_tool_bench import measure
+        package, _ = self.carrier_fixture()
+        carrier = describe_carrier(self.root, 'carrier')
+        original = (package / 'transport.json').read_bytes()
+        (package / 'transport.json').write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, 'identity changed: transport'):
+            check_carrier(self.root, carrier)
+        (package / 'transport.json').write_bytes(original)
+        native = historical.audit_package
+        def wrong(*args):
+            value = native(*args); value['archive_sha256'] = '0'*64; return value
+        with patch.object(historical, 'audit_package', wrong):
+            with self.assertRaisesRegex(ValueError, 'different shared carrier', msg='Extraction accepted a different returned carrier'):
+                measure(self.root, 'unused', 'historical-extraction', self.root, carrier)
+        self.assertEqual(selected_carrier_inputs(dict(cases=dict(tooling=['historical-extraction']),carrier=carrier)),
+                         [carrier['archive']['path'], carrier['transport']['path']], 'Selected extraction omitted carrier declarations')
+        self.assertEqual(selected_carrier_inputs(dict(cases=dict(tooling=[]))), [])
+        with self.assertRaisesRegex(ValueError, 'shared carrier descriptor'):
+            selected_carrier_inputs(dict(cases=dict(tooling=['historical-extraction'])))
+        row=dict(harness='tooling', workload='historical-extraction', extraction_metric_version=2,
+                 carrier_path='carrier',carrier_archive_sha256='0'*64,carrier_transport_sha256=carrier['transport']['sha256'])
+        with self.assertRaisesRegex(ValueError, 'differs from its declared shared carrier', msg='Extraction sample ignored declared carrier identity'):
+            verify_carrier_rows([row], carrier)
+
+    def test_carrier_is_checked_again_after_extraction(self):
+        import evidence_historical as historical
+        from evidence_carrier import describe_carrier
+        from evidence_tool_bench import measure
+        package, _ = self.carrier_fixture()
+        carrier = describe_carrier(self.root, 'carrier')
+        native = historical.audit_package
+        def mutate(*args):
+            value=native(*args); (package / 'transport.json').write_text('changed during audit'); return value
+        with patch.object(historical, 'audit_package', mutate):
+            with self.assertRaisesRegex(ValueError, 'identity changed: transport', msg='Extraction omitted its final carrier check'):
+                measure(self.root, 'unused', 'historical-extraction', self.root, carrier)
 
     def test_historical_count_metadata_is_validated_before_staging(self):
         import copy
@@ -2462,7 +2699,7 @@ class PreparationRecovery(unittest.TestCase):
         cases = next(ast.literal_eval(n.value) for n in function.body if isinstance(n, ast.Assign)
                      and isinstance(n.targets[0], ast.Name) and n.targets[0].id == 'cases')
         for name, module, before, _, _ in cases:
-            path = root / ('cmake/dependency-root.cmake' if module == 'dependency-root' else 'scripts/' + module + '.py')
+            path = root / ('cmake/dependency-root.cmake' if module == 'dependency-root' else ('tests/' if module == 'test_validation_evidence' else 'scripts/') + module + '.py')
             with self.subTest(control=name):
                 self.assertEqual(path.read_text().count(before), 1, 'Python mutation no longer matches its production site: ' + name)
 
@@ -2578,35 +2815,64 @@ class PreparationRecovery(unittest.TestCase):
         from evidence_tool_bench import measure
         with patch.object(campaign, 'resolve_build_layout', wraps=campaign.resolve_build_layout) as observed:
             value = measure(Path(__file__).resolve().parents[1], 'unused', 'campaign-layout')
+        self.assertEqual(value['files'], 0, 'Layout validation claimed file work')
         self.assertEqual(value['layout_checks'], observed.call_count)
-        self.assertEqual(value['build_locations'], 5 * observed.call_count)
+        self.assertEqual(value['build_locations'], 5 * observed.call_count, 'Build-location counter omitted completed work')
         value.update(harness='tooling', workload='campaign-layout')
         verify_tooling_metrics(value)
         with self.assertRaisesRegex(ValueError, 'Layout work counters'):
             verify_tooling_metrics(dict(value, layout_checks=0))
 
+    def test_live_tooling_contracts_reject_old_versions_and_mislabelled_files(self):
+        from evidence_benchmarks import verify_tooling_metrics
+        from evidence_tool_bench import measure
+        value=measure(Path(__file__).resolve().parents[1], 'unused', 'campaign-layout')
+        value.update(harness='tooling',workload='campaign-layout')
+        for version in (None,True,1,1.0,2.0,3):
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError,'Layout work counters'):
+                verify_tooling_metrics(dict(value,layout_metric_version=version))
+        with self.assertRaisesRegex(ValueError,'Layout work counters',msg='Layout operation count was accepted as files'):
+            verify_tooling_metrics(dict(value,files=128))
+        historical=dict(value,layout_metric_version=1,files=128)
+        verify_tooling_metrics(historical,historical=True)
+        with self.assertRaisesRegex(ValueError,'Layout work counters'):
+            verify_tooling_metrics(historical)
+        extraction=dict(value, workload='historical-extraction',extraction_metric_version=2,
+                        historical_extractions=1,expanded_files=477,expanded_bytes=1024,files=477)
+        verify_tooling_metrics(extraction)
+        for version in (None,True,1,1.0,2.0,3):
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError,'Extraction work counters'):
+                verify_tooling_metrics(dict(extraction,extraction_metric_version=version))
+        with self.assertRaisesRegex(ValueError,'Extraction work counters',msg='Extraction operation count was accepted as files'):
+            verify_tooling_metrics(dict(extraction,files=1))
+        verify_tooling_metrics(dict(extraction,extraction_metric_version=1,files=1),historical=True)
+
     def test_measurement_envelope_binds_declared_carrier_inputs(self):
         import os
 
         import evidence_campaign as campaign
+        from evidence_carrier import selected_carrier_inputs
         from evidence_historical import PACKAGE
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d).resolve(); folder = root / 'campaign'; folder.mkdir()
-            names = ['campaign/config.json', 'campaign/harness.json', 'campaign/baseline-release/CMakeCache.txt',
-                     'campaign/changed-release/CMakeCache.txt', PACKAGE + '/audit-bundle.tar.gz', PACKAGE + '/transport.json']
-            for name in names:
-                path = root / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text('fixture input')
-            config = folder / 'config.json'; config.write_text(json.dumps(dict(root=str(root), folder=str(folder), cases=dict(tooling=['historical-extraction']))))
-            spec = dict(path='campaign/measure.json', kind='measure', inputs=names)
-            context = evidence._context(root, dict(id='1'*32, campaign_id='2'*32), 'benchmarks', {}, {})
-            context['declared_artifacts'] = [spec]
-            with patch.dict(os.environ, CODET_EVIDENCE_CONTEXT=json.dumps(context)), patch.object(campaign, 'measure', return_value=dict(fixture=True)):
-                try:
-                    campaign.produce(config, 'measure')
-                except ValueError as error:
-                    self.fail('Measurement producer omitted declared carrier inputs: ' + str(error))
-            value = evidence.validate_artifact(root / spec['path'], spec, context)
-            self.assertEqual(set(value['input_hashes']), set(names), 'Measurement carrier input coverage changed')
+        for extraction in (False, True):
+            with self.subTest(extraction=extraction), tempfile.TemporaryDirectory() as d:
+                root = Path(d).resolve(); folder = root / 'campaign'; folder.mkdir()
+                carrier = dict(path=PACKAGE, archive=dict(path=PACKAGE + '/audit-bundle.tar.gz', sha256='a'*64),
+                               transport=dict(path=PACKAGE + '/transport.json', sha256='b'*64))
+                settings = dict(root=str(root), folder=str(folder), carrier=carrier,
+                                cases=dict(tooling=['historical-extraction'] if extraction else ['campaign-layout']))
+                names = ['campaign/config.json', 'campaign/harness.json', 'campaign/baseline-release/CMakeCache.txt',
+                         'campaign/changed-release/CMakeCache.txt'] + selected_carrier_inputs(settings)
+                for name in names:
+                    path = root / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text('fixture input')
+                config = folder / 'config.json'; config.write_text(json.dumps(settings))
+                spec = dict(path='campaign/measure.json', kind='measure', inputs=names)
+                context = evidence._context(root, dict(id='1'*32, campaign_id='2'*32), 'benchmarks', {}, {})
+                context['declared_artifacts'] = [spec]
+                with patch.dict(os.environ, CODET_EVIDENCE_CONTEXT=json.dumps(context)), patch.object(campaign, 'measure', return_value=dict(fixture=True)):
+                    try:campaign.produce(config, 'measure')
+                    except ValueError as error:self.fail('Measurement producer omitted declared carrier inputs: ' + str(error))
+                value = evidence.validate_artifact(root / spec['path'], spec, context)
+                self.assertEqual(set(value['input_hashes']), set(names), 'Measurement carrier input coverage changed')
 
     def test_control_marker_rejects_unrelated_regex_assertions(self):
         from evidence_negative_controls import require_assertion_marker
