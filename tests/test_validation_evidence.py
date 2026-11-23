@@ -917,7 +917,7 @@ print('REPORT:'+json.dumps(value),flush=True)
             destination = parent / 'result'
             argv = [sys.executable, '-c', code, str(Path(evidence.__file__).parent),
                     str(historical.__file__), str(package), str(destination), phase, 'ignored' if ignored else 'normal']
-            child_argv = list(argv)
+            child_argv = tuple(argv)
             if parent_exits:
                 driver = 'import json,subprocess,sys;subprocess.Popen(json.loads(sys.argv[1]),stdin=subprocess.DEVNULL,start_new_session=True)'
                 argv = [sys.executable, '-c', driver, json.dumps(argv)]
@@ -930,7 +930,7 @@ print('REPORT:'+json.dumps(value),flush=True)
                 ready = process.stdout.readline().strip()
                 self.assertTrue(ready.startswith('READY:'), ready)
                 child = int(ready.split(':', 1)[1])
-                if after_ready is not None:after_ready(child)
+                if after_ready is not None:after_ready(child, child_argv)
                 if sig is not None:
                     os.kill(child, sig)
                     if phase in ('rename', 'published', 'cleanup'):
@@ -940,22 +940,7 @@ print('REPORT:'+json.dumps(value),flush=True)
                 primary = error
                 raise
             finally:
-                try:
-                    # The intermediate parent may already be reaped. Its child
-                    # owns another session and needs independent cleanup.
-                    if child is not None and child != process.pid:
-                        self.stop_historical_signal_child(child, child_argv)
-                except BaseException as error:
-                    if primary is None:raise
-                    primary.fixture_cleanup = repr(error)
-                finally:
-                    try:
-                        if process.poll() is None:
-                            from process_supervision import stop_group
-                            stop_group(process, grace=.2)
-                    finally:
-                        for stream in (process.stdin, process.stdout, process.stderr):
-                            stream.close()
+                self.cleanup_historical_fixture(process, child, child_argv, primary)
             self.assertIn('REPORT:', stdout, 'Cooperative extraction signal skipped cleanup: ' + stderr)
             report = json.loads(stdout.split('REPORT:', 1)[1])
             self.assertTrue(report['restored'], 'Historical extraction retained its signal handler')
@@ -969,6 +954,24 @@ print('REPORT:'+json.dumps(value),flush=True)
             return report
 
     @staticmethod
+    def cleanup_historical_fixture(process, child, child_argv, primary):
+        from process_supervision import stop_group
+        failures = []
+        try:
+            if child is not None and child != process.pid:
+                ReplayIntegrity.stop_historical_signal_child(child, child_argv)
+        except BaseException as error:failures.append(error)
+        try:
+            if process.poll() is None:stop_group(process, grace=.2)
+        except BaseException as error:failures.append(error)
+        finally:
+            for stream in (process.stdin, process.stdout, process.stderr):stream.close()
+        if failures:
+            if primary is None:raise failures[0]
+            primary.fixture_cleanup = repr(failures[0])
+            primary.fixture_cleanup_failures = [repr(error) for error in failures]
+
+    @staticmethod
     def stop_historical_signal_child(child, argv):
         import errno
         import os
@@ -979,15 +982,24 @@ print('REPORT:'+json.dumps(value),flush=True)
         from process_supervision import group_inactive
         # Verify the exact unique child command before each signal. A vanished
         # or recycled PID never grants authority to signal another group.
+        if child <= 0:raise ValueError("Historical fixture requires a positive owned PID")
+        expected = tuple(argv)
         deadline = time.monotonic() + 2
         for action in (signal.SIGTERM, signal.SIGKILL):
             try:
                 if group_inactive(child, timeout=.2)[0]:return
-                if read_argv(child)[1:] != argv[1:] or os.getpgid(child) != child:
+                if tuple(read_argv(child)[1:]) != expected[1:] or os.getpgid(child) != child:
                     raise RuntimeError('Historical fixture child identity changed')
                 os.killpg(child, action)
-            except OSError as error:
-                if error.errno in (errno.ENOENT, errno.ESRCH):return
+            except (OSError, ValueError) as error:
+                if isinstance(error, OSError) and error.errno in (errno.ENOENT, errno.ESRCH):return
+                # Darwin EINVAL / Linux empty cmdline may race with exit. Only a
+                # positive group observation establishes that the child vanished.
+                try:inactive = group_inactive(child, timeout=.2)[0]
+                except BaseException as inspection:
+                    error.fixture_inspection = repr(inspection)
+                    raise error
+                if inactive:return
                 raise
             until = min(deadline, time.monotonic() + (.2 if action == signal.SIGTERM else 1))
             while time.monotonic() < until:
@@ -1001,20 +1013,56 @@ print('REPORT:'+json.dumps(value),flush=True)
         from process_supervision import group_inactive
         observed = []
         original = AssertionError('injected failure after orphan readiness')
-        def fail(child):
-            observed.append(child)
+        def fail(child, argv):
+            observed.append((child, argv))
             raise original
         with self.assertRaises(AssertionError) as failed:
             self.historical_signal_case('extraction', parent_exits=True, after_ready=fail)
         self.assertIs(failed.exception, original)
         self.assertEqual(len(observed), 1)
         try:
-            self.assertTrue(group_inactive(observed[0], timeout=1)[0], 'Exited parent left its signal child running')
+            self.assertTrue(group_inactive(observed[0][0], timeout=1)[0], 'Exited parent left its signal child running')
         finally:
-            if not group_inactive(observed[0], timeout=1)[0]:
-                from evidence_processes import read_argv
-                self.stop_historical_signal_child(observed[0], read_argv(observed[0]))
-        self.assertNotEqual(observed[0], os.getpid())
+            if not group_inactive(observed[0][0], timeout=1)[0]:
+                self.stop_historical_signal_child(*observed[0])
+        self.assertNotEqual(observed[0][0], os.getpid())
+
+    def test_child_cleanup_rejects_recycled_identity_and_handles_verified_exit(self):
+        import errno
+        import signal
+        from types import SimpleNamespace
+        expected = ('python', '-c', 'immutable unique child')
+        with patch('os.killpg') as kill, patch('os.getpgid', return_value=123):
+            with patch('process_supervision.group_inactive', return_value=(False, ['S'])), patch('evidence_processes.read_argv', return_value=['python','-c','another process']):
+                with self.assertRaisesRegex(RuntimeError, 'identity changed'):self.stop_historical_signal_child(123, expected)
+            self.assertEqual(kill.call_count, 0, 'Recycled child identity authorized a signal')
+            for error in (OSError(errno.EINVAL, 'vanished'), ValueError('empty argv')):
+                with patch('process_supervision.group_inactive', side_effect=[(False,['S']),(True,[])]), patch('evidence_processes.read_argv', side_effect=error):
+                    self.stop_historical_signal_child(123, expected)
+                with patch('process_supervision.group_inactive', return_value=(False,['S'])), patch('evidence_processes.read_argv', side_effect=error):
+                    with self.assertRaises(type(error)):self.stop_historical_signal_child(123, expected)
+            with self.assertRaisesRegex(ValueError, 'positive'):self.stop_historical_signal_child(0, expected)
+            self.assertFalse(kill.called)
+            # The authentic identity can authorize only the recorded child group.
+            with patch('process_supervision.group_inactive', side_effect=[(False,['S']),(True,[])]), patch('evidence_processes.read_argv', return_value=list(expected)):
+                self.stop_historical_signal_child(123, expected)
+            kill.assert_called_once_with(123, signal.SIGTERM)
+        original = AssertionError('primary fixture assertion')
+        errors = [OSError('orphan cleanup'), RuntimeError('leader cleanup')]
+        streams = [SimpleNamespace(close=lambda:None) for _ in range(3)]
+        process = SimpleNamespace(pid=123, poll=lambda:None, stdin=streams[0], stdout=streams[1], stderr=streams[2])
+        with patch.object(ReplayIntegrity,'stop_historical_signal_child',side_effect=errors[0]), patch('process_supervision.stop_group',side_effect=errors[1]):
+            self.cleanup_historical_fixture(process, 124, expected, original)
+        self.assertEqual(original.fixture_cleanup_failures, [repr(e) for e in errors], 'Leader cleanup replaced the primary fixture failure')
+
+    def test_scope_exit_fixture_restores_ignored_sigint(self):
+        import signal
+        previous = signal.getsignal(signal.SIGINT)
+        try:
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+            self.test_historical_scope_exit_keeps_the_committed_receipt()
+            self.assertIs(signal.getsignal(signal.SIGINT), signal.SIG_IGN, 'Scope-exit fixture did not restore ignored SIGINT')
+        finally:signal.signal(signal.SIGINT, previous)
 
     def test_historical_release_gate_rejects_eof_without_spinning(self):
         import ast
@@ -1092,22 +1140,26 @@ print('REPORT:'+json.dumps(value),flush=True)
         # Inject just after the cleanup deferral has restored its handlers.
         for sig in (signal.SIGINT, signal.SIGTERM):
             with self.subTest(signal=sig):
-                scopes = []
-                @contextlib.contextmanager
-                def after_scope(observation, scopes=scopes, sig=sig):
-                    with native(observation):
-                        yield
-                    scopes.append(True)
-                    if len(scopes) == 2:
-                        import os
-                        os.kill(os.getpid(), sig)
-                destination = self.root / ('exit-' + str(int(sig)))
-                with patch.object(historical, 'cleanup_interruptions', after_scope):
-                    try:result = historical.audit_package(package, destination)
-                    except KeyboardInterrupt:self.fail('Scope exit lost the committed signal receipt')
-                self.assertTrue(destination.exists())
-                self.assertTrue(result['publication']['committed'])
-                self.assertTrue(result['publication']['interruptions'], 'Scope exit lost the committed signal receipt')
+                previous = signal.getsignal(signal.SIGINT)
+                signal.signal(signal.SIGINT, signal.default_int_handler)
+                try:
+                    scopes = []
+                    @contextlib.contextmanager
+                    def after_scope(observation, scopes=scopes, sig=sig):
+                        with native(observation):
+                            yield
+                        scopes.append(True)
+                        if len(scopes) == 2:
+                            import os
+                            os.kill(os.getpid(), sig)
+                    destination = self.root / ('exit-' + str(int(sig)))
+                    with patch.object(historical, 'cleanup_interruptions', after_scope):
+                        try:result = historical.audit_package(package, destination)
+                        except KeyboardInterrupt:self.fail('Scope exit lost the committed signal receipt')
+                    self.assertTrue(destination.exists())
+                    self.assertTrue(result['publication']['committed'])
+                    self.assertTrue(result['publication']['interruptions'], 'Scope exit lost the committed signal receipt')
+                finally:signal.signal(signal.SIGINT, previous)
 
     def test_historical_handler_restoration_keeps_commitment(self):
         import contextlib
