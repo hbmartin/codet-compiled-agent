@@ -1266,6 +1266,48 @@ print('REPORT:'+json.dumps(value),flush=True)
         self.assertTrue(receipt['audit']['verified'])
         self.assertTrue(receipt['negative_control']['rejected'])
 
+    def test_offline_guards_canonicalize_aliases_and_restore_on_import_failure(self):
+        import builtins
+        import importlib.util
+        import os
+        import evidence_offline_audit as driver
+        target = self.root / 'private.txt'
+        target.write_text('original checkout')
+        alias = self.root.parent / (self.root.name + '-alias')
+        alias.symlink_to(self.root, target_is_directory=True)
+        self.addCleanup(alias.unlink)
+        previous = Path.cwd()
+        try:
+            os.chdir(self.root)
+            originals = [driver.canonical('.')]
+        finally:
+            os.chdir(previous)
+        self.assertEqual(originals, [str(self.root.resolve())])
+        self.assertEqual(driver.canonical(alias), originals[0])
+        native = builtins.open
+        with tempfile.TemporaryDirectory() as directory:
+            module = Path(directory) / 'guard_import.py'
+            module.write_text('from builtins import open as read\nread(' + repr(str(alias / 'private.txt')) + ')\n')
+            with self.assertRaises(PermissionError), driver.guarded_apis(originals):
+                spec=importlib.util.spec_from_file_location('guard_import', module)
+                spec.loader.exec_module(importlib.util.module_from_spec(spec))
+        self.assertIs(builtins.open, native, 'Import failure did not restore offline guards')
+        with driver.guarded_apis(originals):
+            for path in (target, alias/'private.txt'):
+                with self.assertRaises(PermissionError, msg='Canonical offline guard allowed an original root alias'):
+                    path.read_text()
+
+    def test_offline_disposition_defers_to_auditor_with_optional_expectation(self):
+        from evidence_offline_audit import validate_disposition
+        for unmet in ({'benchmarks':'failed'}, {'hash-experiment':'failed','benchmarks':'blocked'}):
+            value=dict(integrity_verified=True,eligible_current=False,unmet_required=unmet)
+            validate_disposition(value, True)
+            validate_disposition(value, True, unmet)
+            with self.assertRaisesRegex(ValueError, '--expect-unmet'):
+                validate_disposition(value, True, {'unrelated':'failed'})
+        with self.assertRaisesRegex(ValueError, 'disposition'):
+            validate_disposition(dict(integrity_verified=True,eligible_current=True), True)
+
     def test_declared_extraction_carrier_rejects_mutations_and_wrong_returned_identity(self):
         import evidence_historical as historical
         from evidence_carrier import (
