@@ -1442,6 +1442,59 @@ print('REPORT:'+json.dumps(value),flush=True)
         self.assertIn('Original checkout I/O is forbidden',completed.stderr)
         self.assertFalse(output.exists())
 
+    def test_offline_guard_uses_filesystem_identity_and_nofollow_semantics(self):
+        import os
+
+        import evidence_offline_audit as driver
+        original = self.root/'CaseOriginal';original.mkdir()
+        secret = original/'secret';secret.write_text('owned')
+        outside = self.root/'outside-link';outside.symlink_to(secret)
+        inside = original/'outside-target';target=self.root/'public';target.write_text('public')
+        inside.symlink_to(target)
+        aliases = [secret]
+        case_alias=self.root/'caseoriginal/secret'
+        if case_alias.exists() and os.path.samefile(case_alias,secret):aliases.append(case_alias)
+        firmlink=Path('/System/Volumes/Data'+str(secret.resolve()))
+        if sys.platform=='darwin' and firmlink.exists() and os.path.samefile(firmlink,secret):aliases.append(firmlink)
+        with driver.guarded_apis([str(original)]):
+            for alias in aliases:
+                with self.assertRaises(PermissionError,msg='Filesystem identity alias bypassed the offline guard'):alias.read_text()
+            self.assertTrue(__import__('stat').S_ISLNK(os.lstat(outside).st_mode), 'lstat inspected the link referent')
+            self.assertTrue(__import__('stat').S_ISLNK(os.stat(outside,follow_symlinks=False).st_mode))
+            with self.assertRaises(PermissionError):outside.read_text()
+            # Following a link to public bytes does not inspect the private link itself.
+            self.assertEqual(inside.read_text(),'public')
+            with self.assertRaises(PermissionError):os.lstat(inside)
+        # Portable simulation verifies alias identities even on case-sensitive hosts.
+        real_stat=os.stat;identity=real_stat(original)
+        alias=self.root/'simulated identity'
+        def native(path):
+            if driver.canonical(path)==driver.canonical(alias):return identity
+            return real_stat(path)
+        roots=driver.OriginalRoots([str(original)],native_stat=native)
+        self.assertTrue(roots.contains(alias/'missing'), 'Filesystem identity alias bypassed the offline guard')
+
+    def test_archived_verifier_precedes_bundle_root_and_cached_modules(self):
+        import hashlib
+        import evidence_offline_audit as driver
+        bundle=self.root/'import-fixture';bundle.mkdir()
+        (bundle/'inputs').mkdir();(bundle/'inputs/member').write_text('data')
+        (bundle/'report.json').write_text('{}')
+        tooling=bundle/'verifier_tooling';tooling.mkdir()
+        module=tooling/'evidence_bundle.py'
+        module.write_text('calls=0\ndef verify_bundle(folder):\n global calls\n calls+=1\n if calls>1:raise ValueError("inventory corruption")\n return dict(verified=True,eligible_current=True)\n')
+        (bundle/'evidence_bundle.py').write_text('raise RuntimeError("root verifier shadowed archived tooling")\n')
+        (bundle/'inventory.json').write_text(json.dumps({'verifier_tooling/evidence_bundle.py':hashlib.sha256(module.read_bytes()).hexdigest()}))
+        output=self.root/'selected-receipt.json'
+        process=subprocess.run([sys.executable,'-B',driver.__file__,str(bundle),str(output),str(self.root)],capture_output=True,text=True,timeout=15)
+        self.assertEqual(process.returncode,0,'Bundle root shadowed selected verifier tooling: '+process.stderr)
+        receipt=json.loads(output.read_text())
+        self.assertTrue(receipt['verifier']['path'].endswith('verifier_tooling/evidence_bundle.py'))
+        self.assertEqual(receipt['verifier']['sha256'],hashlib.sha256(module.read_bytes()).hexdigest())
+        cached=sys.modules.get('evidence_bundle')
+        with driver.archived_verifier(tooling):self.assertNotIn('evidence_bundle',sys.modules)
+        self.assertIs(sys.modules.get('evidence_bundle'),cached)
+
     def test_offline_disposition_defers_to_auditor_with_optional_expectation(self):
         from evidence_offline_audit import validate_disposition
         for unmet in ({'benchmarks':'failed'}, {'hash-experiment':'failed','benchmarks':'blocked'}):
