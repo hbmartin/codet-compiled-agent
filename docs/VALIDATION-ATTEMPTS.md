@@ -80,26 +80,35 @@ bound to archived configuration and carrier inputs.
 The offline audit driver resolves forbidden checkout roots before relocation and
 uses filesystem ancestor identities to detect case and Darwin firmlink aliases.
 No-follow metadata operations inspect the final link rather than its referent.
-Selected API guards are installed before verifier imports. Tooling comes from the
-bundle's `verifier_tooling` directory, or verified archived sources when absent;
-bundle-root copies and checkout module caches cannot shadow it. Receipts record
-the selected entrypoint digest. Previously cached aliases, cached pathlib accessors,
+Selected API guards are installed before verifier execution. Dedicated tooling is
+selected when the inventory contains top-level Python sources under
+`verifier_tooling/`. Otherwise the driver reconstructs it from bound archived
+sources. The expected entrypoint must exist in the selected sources. The driver
+stages verified Python files in a fresh directory and executes the exact verified
+entrypoint bytes. Receipts record their digest and the execution path. Previously
+cached aliases, cached pathlib accessors,
 directory listings, direct OS process primitives, and descriptor-only access remain
 outside coverage; this is not a sandbox. Ambiguous relative `dir_fd` lookups are
 rejected rather than treated as clean. Import failures restore installed guards.
 
-Before any archived code is imported, the driver hashes every relocated bundle file
-with its own `hashlib` and requires exact agreement with `inventory.json`, whose digest
-the receipt records. That binds the entrypoint, sibling tooling modules, `inputs.json`,
-and the archived inputs that fallback tooling is reconstructed from. Symlinks are
-preserved during relocation and rejected. Only the selected tooling directory is
-prepended to the import path; the bundle root is never importable. No-follow
+Before any archived code runs, the driver opens `inventory.json` as a regular file
+without following symlinks and hashes every relocated bundle file with its own
+`hashlib`. The contents must agree exactly with the inventory, whose digest the
+receipt records. Each fallback source must explicitly match a member and digest in
+that inventory before opening. The relocated bundle preserves symlinks for detection
+and rejection. The staged source directory is the sole archive directory on the
+driver's import path. No-follow
 operations also compare the final component's own identity, so a case or firmlink
 spelling of an original root is denied. Relative `dir_fd` lookups are denied as
 `PermissionError`, recorded, and fail the audit even if a verifier catches the error;
 stdlib helpers that need them, such as `shutil.rmtree` on nested directories, cannot
 run inside the guard.
 Use `python3 scripts/evidence_offline_audit.py BUNDLE RECEIPT ORIGINAL_ROOT...`.
+For published bundles, add `--expected-inventory-sha256 HEX` using the SHA-256 from
+a trusted publication receipt or transport record. The driver compares those
+64 lowercase hexadecimal digits against the raw inventory before loading archived
+code. The successful receipt records the expected digest. Without the option,
+trusted-local invocations rely on the caller to establish the bundle's provenance.
 The optional `--expect-unmet '{"benchmarks":"failed"}'` checks an explicit campaign
 expectation; otherwise the underlying auditor validates and reports the disposition.
 Incomplete integrity verification never grants current campaign eligibility.
@@ -115,10 +124,9 @@ the implicit context it had when first registered; a later teardown or interrupt
 is recorded as a secondary observation, never as the failure's context.
 
 Signal-fixture cleanup treats a vanished leader (`ENOENT`/`ESRCH`) like any other
-ambiguous inspection: it returns only after positively observing an empty process
-group, and otherwise fails. Ctrl-C and `SystemExit` during fixture cleanup still
-stop the run after the leader group and streams are cleaned; they are never
-recorded as cleanup failures.
+ambiguous inspection. It requires a positive observation that the group has no
+live members. Ctrl-C and `SystemExit` propagate after cleanup of the owned child,
+leader group, and streams. This includes Ctrl-C deferred by the process supervisor.
 
 Extraction workload contract 4 measures the complete verified operation: carrier
 admission, extraction and auditing, final carrier verification, and owned cleanup.

@@ -955,23 +955,44 @@ print('REPORT:'+json.dumps(value),flush=True)
 
     @staticmethod
     def cleanup_historical_fixture(process, child, child_argv, primary):
-        from process_supervision import stop_group
-        failures, interrupts = [], []
-        try:
+        import signal
+
+        from process_supervision import cleanup_interruptions, stop_group
+
+        observation = dict(interruptions=[])
+        interrupts = observation['interruptions']
+        failures = []
+
+        def attempt(cleanup, *args):
+            try:
+                cleanup(*args)
+            except Exception as error:
+                failures.append(error)
+            except BaseException as interrupt:
+                interrupts.append(interrupt)
+
+        def stop_leader():
+            if process.poll() is None:
+                try:
+                    stop_group(process, grace=.2)
+                finally:
+                    interrupts.extend(getattr(process, 'group_cleanup', {}).get('interruptions', ()))
+
+        with cleanup_interruptions(observation):
             if child is not None and child != process.pid:
-                ReplayIntegrity.stop_historical_signal_child(child, child_argv)
-        except Exception as error:failures.append(error)
-        except BaseException as interrupt:interrupts.append(interrupt)
-        try:
-            if process.poll() is None:stop_group(process, grace=.2)
-        except Exception as leader:failures.append(leader)
-        except BaseException as interrupt:interrupts.append(interrupt)
-        finally:
-            for stream in (process.stdin, process.stdout, process.stderr):stream.close()
-        if interrupts:
-            # Ctrl-C/SystemExit still stop the run, but only after the leader group is cleaned.
-            if failures:interrupts[0].fixture_cleanup_failures = [repr(error) for error in failures]
-            raise interrupts[0]
+                attempt(ReplayIntegrity.stop_historical_signal_child, child, child_argv)
+            attempt(stop_leader)
+            for stream in (process.stdin, process.stdout, process.stderr):
+                attempt(stream.close)
+        for interrupt in interrupts:
+            if isinstance(interrupt, dict):
+                if interrupt.get('signal') == signal.SIGTERM:
+                    signal.raise_signal(signal.SIGTERM)
+                    continue
+                interrupt = KeyboardInterrupt()
+            if failures:
+                interrupt.fixture_cleanup_failures = [repr(error) for error in failures]
+            raise interrupt
         if failures:
             if primary is None:raise failures[0]
             primary.fixture_cleanup = repr(failures[0])
@@ -1031,6 +1052,33 @@ print('REPORT:'+json.dumps(value),flush=True)
             if not group_inactive(observed[0][0], timeout=1)[0]:
                 self.stop_historical_signal_child(*observed[0])
         self.assertNotEqual(observed[0][0], os.getpid())
+
+    def test_fixture_cleanup_propagates_deferred_sigint(self):
+        import signal
+        from types import SimpleNamespace
+
+        previous = signal.getsignal(signal.SIGINT)
+        closed = []
+
+        def stop_owned_group(*args):
+            signal.raise_signal(signal.SIGINT)
+            raise ProcessLookupError
+
+        def close_stdin():
+            closed.append('stdin')
+            raise OSError('stdin close failed')
+
+        process = SimpleNamespace(pid=123, poll=lambda:None, wait=lambda timeout:0,
+                                  stdin=SimpleNamespace(close=close_stdin),
+                                  stdout=SimpleNamespace(close=lambda:closed.append('stdout')),
+                                  stderr=SimpleNamespace(close=lambda:closed.append('stderr')))
+        with patch('process_supervision.os.killpg', side_effect=stop_owned_group):
+            with self.assertRaises(KeyboardInterrupt, msg='Fixture lost SIGINT recorded by the supervisor') as caught:
+                self.cleanup_historical_fixture(process, process.pid, (), AssertionError('primary fixture failure'))
+        self.assertTrue(process.group_cleanup['reaped'])
+        self.assertEqual(closed, ['stdin', 'stdout', 'stderr'])
+        self.assertEqual(caught.exception.fixture_cleanup_failures, [repr(OSError('stdin close failed'))])
+        self.assertIs(signal.getsignal(signal.SIGINT), previous)
 
     def test_child_cleanup_rejects_recycled_identity_and_handles_verified_exit(self):
         import errno
@@ -1521,6 +1569,56 @@ print('REPORT:'+json.dumps(value),flush=True)
     VERIFY_FIXTURE = ('calls=0\ndef verify_bundle(folder):\n global calls\n calls+=1\n'
                       ' if calls>1:raise ValueError("inventory corruption")\n return dict(verified=True,eligible_current=True)\n')
 
+    def test_inventory_requires_regular_file_before_reading(self):
+        import evidence_offline_audit as driver
+
+        bundle = self.root / 'inventory-fixture'
+        bundle.mkdir()
+        target = self.root / 'inventory-data.json'
+        target.write_text('{}')
+        inventory = bundle / 'inventory.json'
+        inventory.symlink_to(target)
+        with patch.object(driver.os, 'fdopen', wraps=driver.os.fdopen) as open_stream:
+            with self.assertRaisesRegex(ValueError, 'regular file', msg='Inventory symlink was opened'):
+                driver.bind_inventory(bundle)
+            open_stream.assert_not_called()
+        inventory.unlink()
+        inventory.mkdir()
+        with self.assertRaisesRegex(ValueError, 'regular file'):
+            driver.bind_inventory(bundle)
+
+    def test_inventory_pin_precedes_member_scan(self):
+        import hashlib
+
+        import evidence_offline_audit as driver
+
+        self.write_full_inventory(self.root)
+        expected = hashlib.sha256((self.root / 'inventory.json').read_bytes()).hexdigest()
+        with patch.object(Path, 'rglob', side_effect=AssertionError('Inventory pin was checked after member scanning')):
+            with self.assertRaisesRegex(ValueError, 'differs from expected digest'):
+                driver.bind_inventory(self.root, '0' * 64)
+        self.assertEqual(driver.bind_inventory(self.root, expected)[0], expected)
+
+    def test_missing_archived_entrypoint_does_not_import_ambient_module(self):
+        import evidence_offline_audit as driver
+
+        bundle = self.root / 'missing-entry'
+        bundle.mkdir()
+        tooling = bundle / 'verifier_tooling'
+        tooling.mkdir()
+        (tooling / 'helper.py').write_text('VALUE = 1\n')
+        (bundle / 'report.json').write_text('{}')
+        self.write_full_inventory(bundle)
+        ambient = self.root / 'ambient'
+        ambient.mkdir()
+        (ambient / 'evidence_bundle.py').write_text('raise AssertionError("Ambient verifier was imported")\n')
+        output = self.root / 'no-receipt.json'
+        with patch.dict(sys.modules), patch.object(sys, 'path', [str(ambient), *sys.path]):
+            sys.modules.pop('evidence_bundle', None)
+            with self.assertRaisesRegex(ValueError, 'Missing bound archived verifier entrypoint'):
+                driver.main([str(bundle), str(output), str(bundle)])
+        self.assertFalse(output.exists())
+
     def test_offline_driver_authenticates_sibling_tooling_before_import(self):
         import evidence_offline_audit as driver
         with tempfile.TemporaryDirectory() as directory:
@@ -1585,6 +1683,36 @@ print('REPORT:'+json.dumps(value),flush=True)
             # The same declaration stored as an inventory-bound member remains accepted.
             completed=run('bound-fallback',self.VERIFY_FIXTURE,None)
             self.assertEqual(completed.returncode,0,'Bound fallback verifier source was rejected: '+completed.stderr)
+
+    def test_fallback_rejects_unbound_null_digest_and_duplicate_destinations(self):
+        import hashlib
+
+        import evidence_offline_audit as driver
+
+        bundle = self.root / 'fallback-declarations'
+        bundle.mkdir()
+        (bundle / 'verifier_tooling').mkdir()
+        index = bundle / 'inputs.json'
+        entry = dict(check_id='run', role='fingerprint:validation', path='scripts/evidence_bundle.py',
+                     sha256=None, storage='inputs/missing')
+        index.write_text(json.dumps([entry]))
+        with patch.object(Path, 'read_bytes', side_effect=AssertionError('Unbound source read was attempted')):
+            with self.assertRaisesRegex(ValueError, 'not a bound bundle member'):
+                driver.stage_verifier(bundle, self.root, {}, 'evidence_bundle.py')
+        data = self.VERIFY_FIXTURE.encode()
+        digest = hashlib.sha256(data).hexdigest()
+        source = bundle / 'source.py'
+        source.write_bytes(data)
+        entry.update(sha256=digest, storage=source.name)
+        index.write_text(json.dumps([entry, dict(entry, path='scripts/Evidence_Bundle.py')]))
+        bound = {source.name: digest}
+        with self.assertRaisesRegex(ValueError, 'Duplicate archived verifier source'):
+            driver.stage_verifier(bundle, self.root, bound, 'evidence_bundle.py')
+        index.write_text(json.dumps([entry]))
+        tooling, verified, signature = driver.stage_verifier(bundle, self.root, bound, 'evidence_bundle.py')
+        self.assertEqual(tooling.name, 'archived verifier tooling')
+        self.assertEqual(verified, data)
+        self.assertEqual(signature, digest)
 
     def test_nofollow_guard_matches_root_aliases(self):
         import os
@@ -1652,13 +1780,18 @@ print('REPORT:'+json.dumps(value),flush=True)
         (bundle/'report.json').write_text('{}')
         tooling=bundle/'verifier_tooling';tooling.mkdir()
         module=tooling/'evidence_bundle.py'
-        module.write_text('calls=0\ndef verify_bundle(folder):\n global calls\n calls+=1\n if calls>1:raise ValueError("inventory corruption")\n return dict(verified=True,eligible_current=True)\n')
+        module.write_text('from pathlib import Path\nassert not (Path(__file__).parent / "__pycache__").exists()\n'+self.VERIFY_FIXTURE)
+        (tooling/'__pycache__').mkdir()
+        (tooling/'__pycache__/unselected.pyc').write_bytes(b'archived data')
         (bundle/'evidence_bundle.py').write_text('raise RuntimeError("root verifier shadowed archived tooling")\n')
         self.write_full_inventory(bundle)
+        expected=hashlib.sha256((bundle/'inventory.json').read_bytes()).hexdigest()
         output=self.root/'selected-receipt.json'
-        process=subprocess.run([sys.executable,'-B',driver.__file__,str(bundle),str(output),str(self.root)],capture_output=True,text=True,timeout=15)
+        process=subprocess.run([sys.executable,'-B',driver.__file__,str(bundle),str(output),str(self.root),
+                                '--expected-inventory-sha256',expected],capture_output=True,text=True,timeout=15)
         self.assertEqual(process.returncode,0,'Bundle root shadowed selected verifier tooling: '+process.stderr)
         receipt=json.loads(output.read_text())
+        self.assertEqual(receipt['expected_inventory_sha256'],expected)
         self.assertTrue(receipt['verifier']['path'].endswith('verifier_tooling/evidence_bundle.py'))
         self.assertEqual(receipt['verifier']['sha256'],hashlib.sha256(module.read_bytes()).hexdigest())
         cached=sys.modules.get('evidence_bundle')
