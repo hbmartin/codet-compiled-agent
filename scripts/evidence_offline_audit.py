@@ -65,23 +65,22 @@ class OriginalRoots:
             if not stat.S_ISDIR(info.st_mode):raise ValueError('Original checkout root is not a directory: ' + root)
             self.identities.add((info.st_dev, info.st_ino))
 
+    def owns(self, probe, path):
+        """Whether a native identity probe of an existing path names an original root."""
+        try:info = probe(path)
+        except OSError as error:
+            if error.errno not in (errno.ENOENT, errno.ENOTDIR):raise
+            return False
+        return (info.st_dev, info.st_ino) in self.identities
+
     def contains(self, path, *, follow_final=True):
         value = canonical(path, follow_final=follow_final)
         if any(within(value, root) for root in self.paths):return True
-        if not follow_final:
-            # A no-follow final component can itself be a case/firmlink alias of a root.
-            try:final = self.native_lstat(value)
-            except OSError as error:
-                if error.errno not in (errno.ENOENT, errno.ENOTDIR):raise
-            else:
-                if (final.st_dev, final.st_ino) in self.identities:return True
+        # A no-follow final component can itself be a case/firmlink alias of a root.
+        if not follow_final and self.owns(self.native_lstat, value):return True
         current = value if follow_final else os.path.dirname(value)
         while True:
-            try:info = self.native_stat(current)
-            except OSError as error:
-                if error.errno not in (errno.ENOENT, errno.ENOTDIR):raise
-            else:
-                if (info.st_dev, info.st_ino) in self.identities:return True
+            if self.owns(self.native_stat, current):return True
             parent = os.path.dirname(current)
             if parent == current:return False
             current = parent
@@ -213,7 +212,11 @@ def main(argv=None):
                 for item in index:
                     name = item['path']
                     if item['check_id']=='run' and item['role']=='fingerprint:validation' and name.startswith('scripts/') and name.count('/')==1 and name.endswith('.py'):
-                        data = (moved/item['storage']).read_bytes()
+                        # Only inventory-bound bundle members may supply fallback verifier bytes.
+                        storage = item['storage']
+                        if not isinstance(storage, str) or bound.get(storage) != item['sha256']:
+                            raise ValueError('Archived verifier source is not a bound bundle member: ' + repr(storage))
+                        data = (moved/storage).read_bytes()
                         if hashlib.sha256(data).hexdigest()!=item['sha256']:raise ValueError('Changed archived verifier')
                         (tooling/Path(name).name).write_bytes(data)
                         sources[Path(name).name] = item['sha256']
