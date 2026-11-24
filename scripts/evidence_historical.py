@@ -46,6 +46,7 @@ class HistoricalStage:
         self.result = None
         self.failure = None
         self.failure_traceback = None
+        self.failure_context = None
         self.observation = dict(interruptions=[], failures=[])
 
     def publish(self, stage, destination, result):
@@ -59,6 +60,7 @@ class HistoricalStage:
         if self.failure is None:
             self.failure = error
             self.failure_traceback = error.__traceback__
+            self.failure_context = error.__context__
         elif error is not self.failure:
             if isinstance(error, KeyboardInterrupt):
                 self.observation["interruptions"].append(dict(exception=type(error).__name__))
@@ -71,7 +73,12 @@ class HistoricalStage:
 
     def raise_failure(self):
         # Do not replace an original explicit cause with a cleanup/teardown error.
-        raise self.failure.with_traceback(self.failure_traceback)
+        # Re-raising inside a handler would also make that later error its implicit
+        # context, reversing causality; restore the context recorded at registration.
+        try:
+            raise self.failure.with_traceback(self.failure_traceback)
+        finally:
+            self.failure.__context__ = self.failure_context
 
     def recover(self, error):
         """Pure committed interruptions are observations, never replacements for failures."""

@@ -78,8 +78,10 @@ def verify_tooling_metrics(row, *, historical=False):
             raise ValueError('Extraction work counters or controls are invalid')
         if row['extraction_metric_version'] in (3, 4):
             read_bytes = 'archive_hash_read_bytes' if row['extraction_metric_version'] == 4 else 'archive_hash_bytes'
+            # Each contract owns one hash-byte counter; the other's name is ambiguous here.
+            stale = 'archive_hash_bytes' if read_bytes == 'archive_hash_read_bytes' else 'archive_hash_read_bytes'
             counters = ('archive_bytes','archive_hash_passes',read_bytes,'publication_interruptions')
-            if (any(type(row.get(key)) is not int or row[key] < 0 for key in counters) or
+            if (stale in row or any(type(row.get(key)) is not int or row[key] < 0 for key in counters) or
                     not row['archive_bytes'] or row['archive_hash_passes'] != 3 or
                     row[read_bytes] != row['archive_bytes'] * row['archive_hash_passes'] or
                     row['publication_interruptions'] != 0 or row.get('timing_scope') != 'verified-operation'):
