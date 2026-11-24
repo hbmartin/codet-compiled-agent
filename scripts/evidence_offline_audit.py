@@ -55,8 +55,9 @@ def within(value, root):
 
 class OriginalRoots:
     """Use native ancestor identities as well as paths, including Darwin firmlinks."""
-    def __init__(self, roots, native_stat=os.stat):
+    def __init__(self, roots, native_stat=os.stat, native_lstat=os.lstat):
         self.native_stat = native_stat
+        self.native_lstat = native_lstat
         self.paths = tuple(canonical(root) for root in roots)
         self.identities = set()
         for root in self.paths:
@@ -67,6 +68,13 @@ class OriginalRoots:
     def contains(self, path, *, follow_final=True):
         value = canonical(path, follow_final=follow_final)
         if any(within(value, root) for root in self.paths):return True
+        if not follow_final:
+            # A no-follow final component can itself be a case/firmlink alias of a root.
+            try:final = self.native_lstat(value)
+            except OSError as error:
+                if error.errno not in (errno.ENOENT, errno.ENOTDIR):raise
+            else:
+                if (final.st_dev, final.st_ino) in self.identities:return True
         current = value if follow_final else os.path.dirname(value)
         while True:
             try:info = self.native_stat(current)
@@ -86,7 +94,9 @@ def guarded_apis(originals):
     def check(path, follow_final, kwargs):
         if isinstance(path, int):return
         if kwargs.get('dir_fd') is not None and not os.path.isabs(path):
-            raise ValueError('Offline guard cannot establish relative dir_fd path identity')
+            # Fail closed and record it: a verifier catching the error cannot hide the attempt.
+            blocked.append(os.fsdecode(path))
+            raise PermissionError('Offline guard cannot establish relative dir_fd path identity')
         if roots.contains(path, follow_final=follow_final):
             blocked.append(os.fsdecode(path))
             raise PermissionError('Original checkout I/O is forbidden in this audit')
@@ -122,6 +132,27 @@ def archived_verifier(tooling):
         sys.modules.update(previous)
 
 
+def bind_inventory(folder):
+    """Bind every relocated byte to inventory.json with this driver's hashlib before any archived import."""
+    raw = (folder/'inventory.json').read_bytes()
+    try:inventory = json.loads(raw)
+    except ValueError as error:raise ValueError('Invalid archived inventory') from error
+    if not isinstance(inventory, dict) or any(not isinstance(k,str) or not isinstance(v,str) for k,v in inventory.items()):
+        raise ValueError('Invalid archived inventory')
+    actual = {}
+    for path in sorted(folder.rglob('*')):
+        if path.is_symlink():raise ValueError('Relocated bundle contains symlink: ' + path.relative_to(folder).as_posix())
+        if path.is_file() and path != folder/'inventory.json':
+            digest = hashlib.sha256()
+            with open(path, 'rb') as stream:
+                for block in iter(lambda: stream.read(1 << 20), b''):digest.update(block)
+            actual[path.relative_to(folder).as_posix()] = digest.hexdigest()
+    if actual != inventory:
+        changed = sorted(name for name in set(actual) | set(inventory) if actual.get(name) != inventory.get(name))
+        raise ValueError('Relocated bundle differs from archived inventory before verifier import: ' + ', '.join(changed[:5]))
+    return hashlib.sha256(raw).hexdigest(), actual
+
+
 def validate_disposition(result, attempt, expected=None):
     if attempt:
         if result.get('integrity_verified') is not True or result.get('eligible_current') is not False:
@@ -154,7 +185,6 @@ def main(argv=None):
     roots = OriginalRoots(originals)
     source = Path(__file__).read_bytes()
     helper_sha = hashlib.sha256(source).hexdigest()
-    inventory_sha = hashlib.sha256((bundle/'inventory.json').read_bytes()).hexdigest()
     interpreter_sha = hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest()
     previous_cwd, previous_path = os.getcwd(), list(sys.path)
     imports = [canonical(value) for value in sys.path if value]
@@ -164,14 +194,21 @@ def main(argv=None):
         if roots.contains(root):
             raise ValueError('Relocated audit workspace overlaps an original checkout root')
         moved = root/'moved bundle'
-        shutil.copytree(bundle,moved)
+        shutil.copytree(bundle,moved,symlinks=True)
+        # Every importable byte (tooling, siblings, inputs.json and archived inputs) is
+        # authenticated against the receipt's inventory digest before archived code runs.
+        inventory_sha, bound = bind_inventory(moved)
         try:
             os.chdir(root)
             sys.path[:] = [p for p in imports if not roots.contains(p)]
             tooling = moved/'verifier_tooling'
-            if not tooling.exists():
+            if tooling.exists():
+                sources = {name[len('verifier_tooling/'):]:value for name,value in bound.items()
+                           if name.startswith('verifier_tooling/') and name.count('/')==1}
+            else:
                 tooling = root/'archived verifier tooling'
                 tooling.mkdir()
+                sources = {}
                 index = json.loads((moved/'inputs.json').read_text())
                 for item in index:
                     name = item['path']
@@ -179,7 +216,9 @@ def main(argv=None):
                         data = (moved/item['storage']).read_bytes()
                         if hashlib.sha256(data).hexdigest()!=item['sha256']:raise ValueError('Changed archived verifier')
                         (tooling/Path(name).name).write_bytes(data)
-            sys.path[:0] = [str(tooling),str(moved)]
+                        sources[Path(name).name] = item['sha256']
+            # The bundle root is not importable; only authenticated tooling precedes the interpreter.
+            sys.path[:0] = [str(tooling)]
             report = json.loads((moved/'report.json').read_text())
             attempt = 'attempt_bundle_version' in report
             # Installation precedes verifier imports, including aliases captured there.
@@ -193,11 +232,8 @@ def main(argv=None):
                     verify = module.verify_bundle
                 entry = Path(module.__file__).resolve()
                 if entry.parent != tooling.resolve():raise ValueError('Verifier entrypoint is outside selected archived tooling')
-                verifier = dict(path=str(entry.relative_to(root)), sha256=hashlib.sha256(entry.read_bytes()).hexdigest())
-                if tooling == moved/'verifier_tooling':
-                    inventory = json.loads((moved/'inventory.json').read_text())
-                    if inventory.get('verifier_tooling/'+entry.name) != verifier['sha256']:
-                        raise ValueError('Verifier entrypoint differs from archived inventory')
+                if entry.name not in sources:raise ValueError('Verifier entrypoint was not authenticated before import')
+                verifier = dict(path=str(entry.relative_to(root)), sha256=sources[entry.name])
                 result = verify(moved)
                 validate_disposition(result, attempt, expected)
                 member = next(p for p in (moved/'inputs').iterdir() if p.is_file())
@@ -208,17 +244,17 @@ def main(argv=None):
                     if 'inventory' not in reason.lower():raise
                     corruption = dict(rejected=True,member='inputs/'+member.name,reason=reason)
                 else:raise ValueError('Corrupt archived input passed audit')
-                if blocked:raise ValueError('Audit attempted original checkout I/O')
+                if blocked:raise ValueError('Audit attempted guarded I/O: ' + repr(blocked))
         finally:
             os.chdir(previous_cwd)
             sys.path[:] = previous_path
     receipt = dict(argv=sys.argv if argv is None else argv,kind='postpublication-offline-audit',driver_source=source.decode(),bundle_id=bundle.name,
         bundle_inventory_sha256=inventory_sha,helper_sha256=helper_sha,canonical_original_roots=originals,
         interpreter=dict(path=sys.executable,version=list(sys.version_info[:3]),sha256=interpreter_sha),
-        relocated=True,verifier=verifier,guarded_file_apis=['builtins.open','io.open','os.open','os.stat','os.lstat'],
+        relocated=True,verifier=verifier,pre_import_inventory_files=len(bound),guarded_file_apis=['builtins.open','io.open','os.open','os.stat','os.lstat'],
         guarded_process_apis=['subprocess.Popen','subprocess.run','subprocess.check_output','subprocess.check_call','subprocess.call'],
         guard_phase='Archived verifier import through verification and corruption control',
-        guard_scope='Selected Python APIs only; previously cached aliases, cached pathlib accessors, directory listings and direct os process primitives are not blocked. This is not an OS sandbox.',
+        guard_scope='Selected Python APIs only; descriptor-only access (integer paths), previously cached aliases, cached pathlib accessors, directory listings and direct os process primitives are not blocked. Relative dir_fd lookups are denied, recorded and fail the audit. This is not an OS sandbox.',
         audit=result,negative_control=corruption)
     destination.write_text(json.dumps(receipt,indent=2)+'\n')
     print(json.dumps(receipt,indent=2))

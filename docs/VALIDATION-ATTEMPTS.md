@@ -87,6 +87,18 @@ the selected entrypoint digest. Previously cached aliases, cached pathlib access
 directory listings, direct OS process primitives, and descriptor-only access remain
 outside coverage; this is not a sandbox. Ambiguous relative `dir_fd` lookups are
 rejected rather than treated as clean. Import failures restore installed guards.
+
+Before any archived code is imported, the driver hashes every relocated bundle file
+with its own `hashlib` and requires exact agreement with `inventory.json`, whose digest
+the receipt records. That binds the entrypoint, sibling tooling modules, `inputs.json`,
+and the archived inputs that fallback tooling is reconstructed from. Symlinks are
+preserved during relocation and rejected. Only the selected tooling directory is
+prepended to the import path; the bundle root is never importable. No-follow
+operations also compare the final component's own identity, so a case or firmlink
+spelling of an original root is denied. Relative `dir_fd` lookups are denied as
+`PermissionError`, recorded, and fail the audit even if a verifier catches the error;
+stdlib helpers that need them, such as `shutil.rmtree` on nested directories, cannot
+run inside the guard.
 Use `python3 scripts/evidence_offline_audit.py BUNDLE RECEIPT ORIGINAL_ROOT...`.
 The optional `--expect-unmet '{"benchmarks":"failed"}'` checks an explicit campaign
 expectation; otherwise the underlying auditor validates and reports the disposition.
@@ -98,7 +110,15 @@ receipt. Genuine cleanup and operation failures retain their identity, original
 cause, and secondary error observations even if teardown is interrupted. Only
 pure committed interruptions recover as success. Measurements reject interruption
 observations before writing a sample and retain the receipt in failure diagnostics.
-An outer timeout does not become a successful sample.
+An outer timeout does not become a successful sample. A preserved failure also keeps
+the implicit context it had when first registered; a later teardown or interrupt
+is recorded as a secondary observation, never as the failure's context.
+
+Signal-fixture cleanup treats a vanished leader (`ENOENT`/`ESRCH`) like any other
+ambiguous inspection: it returns only after positively observing an empty process
+group, and otherwise fails. Ctrl-C and `SystemExit` during fixture cleanup still
+stop the run after the leader group and streams are cleaned; they are never
+recorded as cleanup failures.
 
 Extraction workload contract 4 measures the complete verified operation: carrier
 admission, extraction and auditing, final carrier verification, and owned cleanup.
@@ -110,6 +130,8 @@ tracing; these are instrumented verified-operation measurements, not isolated or
 uninstrumented hashing costs. Version-1/2/3 extraction observations retain their
 original meaning only in explicit historical auditing. Earlier contract 3 used a
 shared harness hash loop and must not be described as native-hasher measurements.
+Each contract owns one hash-byte counter: contract 4 rows must not carry
+`archive_hash_bytes`, and contract 3 rows must not carry `archive_hash_read_bytes`.
 Historical samples and receipts are unchanged. Evidence containers stay at v5;
 live tooling observations require integer metric version 2. No timing threshold
 or general performance claim follows from these deterministic work checks.

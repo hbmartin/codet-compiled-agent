@@ -956,16 +956,22 @@ print('REPORT:'+json.dumps(value),flush=True)
     @staticmethod
     def cleanup_historical_fixture(process, child, child_argv, primary):
         from process_supervision import stop_group
-        failures = []
+        failures, interrupts = [], []
         try:
             if child is not None and child != process.pid:
                 ReplayIntegrity.stop_historical_signal_child(child, child_argv)
-        except BaseException as error:failures.append(error)
+        except Exception as error:failures.append(error)
+        except BaseException as interrupt:interrupts.append(interrupt)
         try:
             if process.poll() is None:stop_group(process, grace=.2)
-        except BaseException as error:failures.append(error)
+        except Exception as leader:failures.append(leader)
+        except BaseException as interrupt:interrupts.append(interrupt)
         finally:
             for stream in (process.stdin, process.stdout, process.stderr):stream.close()
+        if interrupts:
+            # Ctrl-C/SystemExit still stop the run, but only after the leader group is cleaned.
+            if failures:interrupts[0].fixture_cleanup_failures = [repr(error) for error in failures]
+            raise interrupts[0]
         if failures:
             if primary is None:raise failures[0]
             primary.fixture_cleanup = repr(failures[0])
@@ -973,7 +979,6 @@ print('REPORT:'+json.dumps(value),flush=True)
 
     @staticmethod
     def stop_historical_signal_child(child, argv):
-        import errno
         import os
         import signal
         import time
@@ -992,11 +997,11 @@ print('REPORT:'+json.dumps(value),flush=True)
                     raise RuntimeError('Historical fixture child identity changed')
                 os.killpg(child, action)
             except (OSError, ValueError) as error:
-                if isinstance(error, OSError) and error.errno in (errno.ENOENT, errno.ESRCH):return
-                # Darwin EINVAL / Linux empty cmdline may race with exit. Only a
-                # positive group observation establishes that the child vanished.
+                # A vanished leader (ENOENT/ESRCH), Darwin EINVAL or a Linux empty
+                # cmdline may race with exit while other group members survive. Only
+                # a positive group observation establishes that the group is gone.
                 try:inactive = group_inactive(child, timeout=.2)[0]
-                except BaseException as inspection:
+                except Exception as inspection:
                     error.fixture_inspection = repr(inspection)
                     raise error  # noqa: B904 - preserve the original inspection cause.
                 if inactive:return
@@ -1036,11 +1041,21 @@ print('REPORT:'+json.dumps(value),flush=True)
             with patch('process_supervision.group_inactive', return_value=(False, ['S'])), patch('evidence_processes.read_argv', return_value=['python','-c','another process']):
                 with self.assertRaisesRegex(RuntimeError, 'identity changed', msg='Recycled identity cleanup did not fail closed'):self.stop_historical_signal_child(123, expected)
             self.assertEqual(kill.call_count, 0, 'Recycled child identity authorized a signal')
-            for error in (OSError(errno.EINVAL, 'vanished'), ValueError('empty argv')):
+            for error in (OSError(errno.EINVAL, 'vanished'), ValueError('empty argv'),
+                          FileNotFoundError(errno.ENOENT, 'vanished leader'), ProcessLookupError(errno.ESRCH, 'vanished leader')):
                 with patch('process_supervision.group_inactive', side_effect=[(False,['S']),(True,[])]), patch('evidence_processes.read_argv', side_effect=error):
                     self.stop_historical_signal_child(123, expected)
+                # A vanished leader whose group is still active is not a cleaned child.
                 with patch('process_supervision.group_inactive', return_value=(False,['S'])), patch('evidence_processes.read_argv', side_effect=error):
-                    with self.assertRaises(type(error)):self.stop_historical_signal_child(123, expected)
+                    with self.assertRaises(type(error), msg='Vanished leader cleanup returned without a positive group observation'):
+                        self.stop_historical_signal_child(123, expected)
+            class Interrupt(BaseException):
+                pass
+            observed = None
+            with patch('process_supervision.group_inactive', side_effect=[(False,['S']),Interrupt('inspection')]), patch('evidence_processes.read_argv', side_effect=OSError(errno.EINVAL, 'vanished')):
+                try:self.stop_historical_signal_child(123, expected)
+                except BaseException as caught:observed = caught
+            self.assertIsInstance(observed, Interrupt, 'Fixture inspection swallowed an interrupt')
             with self.assertRaisesRegex(ValueError, 'positive'):self.stop_historical_signal_child(0, expected)
             self.assertFalse(kill.called)
             # The authentic identity can authorize only the recorded child group.
@@ -1054,6 +1069,19 @@ print('REPORT:'+json.dumps(value),flush=True)
         with patch.object(ReplayIntegrity,'stop_historical_signal_child',side_effect=errors[0]), patch('process_supervision.stop_group',side_effect=errors[1]):
             self.cleanup_historical_fixture(process, 124, expected, original)
         self.assertEqual(original.fixture_cleanup_failures, [repr(e) for e in errors], 'Leader cleanup replaced the primary fixture failure')
+        # Interrupts are never recorded as cleanup failures; they propagate after the
+        # remaining owned group and streams are cleaned.
+        for child_effect, leader_effect in ((OSError('orphan cleanup'), Interrupt('leader')), (Interrupt('child'), None)):
+            closed, observed, primary = [], None, AssertionError('primary fixture assertion')
+            streams = [SimpleNamespace(close=lambda n=n, closed=closed:closed.append(n)) for n in range(3)]
+            process = SimpleNamespace(pid=123, poll=lambda:None, stdin=streams[0], stdout=streams[1], stderr=streams[2])
+            with patch.object(ReplayIntegrity,'stop_historical_signal_child',side_effect=child_effect), patch('process_supervision.stop_group',side_effect=leader_effect) as leader:
+                try:self.cleanup_historical_fixture(process, 124, expected, primary)
+                except BaseException as caught:observed = caught
+            self.assertIsInstance(observed, Interrupt, 'Fixture cleanup swallowed an interrupt')
+            self.assertTrue(leader.called, 'Interrupted child cleanup skipped the leader group')
+            self.assertEqual(closed, [0, 1, 2], 'Interrupted fixture cleanup left streams open')
+            self.assertFalse(hasattr(primary, 'fixture_cleanup_failures'), 'Interrupt was recorded as a cleanup failure')
 
     def test_scope_exit_fixture_restores_ignored_sigint(self):
         import signal
@@ -1262,6 +1290,7 @@ print('REPORT:'+json.dumps(value),flush=True)
         cause = LookupError('original explicit cause')
         primary = ValueError('original operation failure')
         primary.__cause__ = cause
+        implicit = KeyError('original implicit context')
         cleanup = OSError('first secondary cleanup')
         teardown = RuntimeError('second secondary teardown')
         @contextlib.contextmanager
@@ -1274,9 +1303,12 @@ print('REPORT:'+json.dumps(value),flush=True)
             try:
                 with patch.object(historical.tempfile, 'TemporaryDirectory', return_value=temporary), patch.object(temporary, 'cleanup', side_effect=cleanup), patch.object(historical, 'interruption', interrupted):
                     with self.assertRaises(ValueError) as caught:
-                        with historical.historical_staging(folder):raise primary
+                        with historical.historical_staging(folder):
+                            try:raise implicit
+                            except KeyError:raise primary  # noqa: B904 - the implicit context is under test.
                 self.assertIs(caught.exception, primary)
                 self.assertIs(primary.__cause__, cause, 'Cleanup replaced original exception cause')
+                self.assertIs(primary.__context__, implicit, 'Teardown replaced the original implicit context')
                 details = primary.historical_cleanup
                 self.assertIn('first secondary cleanup', details['failure'])
                 self.assertEqual([v['error'] for v in details['failures']], [repr(cleanup), repr(teardown)], 'Secondary cleanup failure was overwritten')
@@ -1385,6 +1417,9 @@ print('REPORT:'+json.dumps(value),flush=True)
         self.assertEqual(receipt['guarded_file_apis'],actual_files)
         self.assertEqual(receipt['guarded_process_apis'],actual_processes)
         self.assertIn('not an OS sandbox',receipt['guard_scope'])
+        self.assertIn('descriptor-only access',receipt['guard_scope'])
+        self.assertIn('dir_fd lookups are denied, recorded and fail the audit',receipt['guard_scope'])
+        self.assertEqual(receipt['pre_import_inventory_files'],len(json.loads((target/'inventory.json').read_text())))
         self.assertEqual(receipt['interpreter']['version'][:2],list(sys.version_info[:2]))
         self.assertTrue(receipt['audit']['verified'])
         self.assertTrue(receipt['negative_control']['rejected'])
@@ -1435,9 +1470,7 @@ print('REPORT:'+json.dumps(value),flush=True)
             +'calls=0\ndef verify_bundle(folder):\n global calls\n calls+=1\n'
             +' if calls>1:raise ValueError("inventory corruption")\n'
             +' return dict(verified=True,eligible_current=True)\n')
-        import hashlib
-        entry=tooling/'evidence_bundle.py'
-        (bundle/'inventory.json').write_text(json.dumps({'verifier_tooling/evidence_bundle.py':hashlib.sha256(entry.read_bytes()).hexdigest()}))
+        self.write_full_inventory(bundle)
         output=self.root/'should-not-exist.json'
         completed=subprocess.run([sys.executable,'-B',driver.__file__,str(bundle),str(output),'.'],
                                  cwd=self.root,capture_output=True,text=True,timeout=15)
@@ -1479,6 +1512,107 @@ print('REPORT:'+json.dumps(value),flush=True)
         roots=driver.OriginalRoots([str(original)],native_stat=native)
         self.assertTrue(roots.contains(alias/'missing'), 'Filesystem identity alias bypassed the offline guard')
 
+    @staticmethod
+    def write_full_inventory(bundle):
+        import hashlib
+        (bundle/'inventory.json').write_text(json.dumps({path.relative_to(bundle).as_posix():hashlib.sha256(path.read_bytes()).hexdigest()
+                                                         for path in sorted(bundle.rglob('*')) if path.is_file() and path != bundle/'inventory.json'}))
+
+    VERIFY_FIXTURE = ('calls=0\ndef verify_bundle(folder):\n global calls\n calls+=1\n'
+                      ' if calls>1:raise ValueError("inventory corruption")\n return dict(verified=True,eligible_current=True)\n')
+
+    def test_offline_driver_authenticates_sibling_tooling_before_import(self):
+        import evidence_offline_audit as driver
+        with tempfile.TemporaryDirectory() as directory:
+            executed = Path(directory)
+            def fixture(name, verifier):
+                bundle=self.root/name;bundle.mkdir()
+                (bundle/'inputs').mkdir();(bundle/'inputs/member').write_text('data')
+                (bundle/'report.json').write_text('{}')
+                (bundle/'verifier_tooling').mkdir()
+                (bundle/'verifier_tooling/evidence_bundle.py').write_text(verifier+self.VERIFY_FIXTURE)
+                return bundle
+            def run(bundle):
+                output=self.root/(bundle.name+'-receipt.json')
+                return subprocess.run([sys.executable,'-B',driver.__file__,str(bundle),str(output),str(self.root)],
+                                      capture_output=True,text=True,timeout=15)
+            # The entrypoint is authentic, but a sibling module it imports changed after inventory.
+            bundle=fixture('tampered-sibling','import archived_helper\n')
+            (bundle/'verifier_tooling/archived_helper.py').write_text('VALUE=1\n')
+            self.write_full_inventory(bundle)
+            marker=executed/'sibling.executed'
+            (bundle/'verifier_tooling/archived_helper.py').write_text('open('+repr(str(marker))+',"w").close()\nVALUE=1\n')
+            completed=run(bundle)
+            self.assertFalse(marker.exists(), 'Unauthenticated archived tooling executed before inventory binding')
+            self.assertNotEqual(completed.returncode,0)
+            self.assertIn('differs from archived inventory before verifier import',completed.stderr)
+            self.assertIn('verifier_tooling/archived_helper.py',completed.stderr)
+            # Authentic bundle-root modules are data, never import candidates.
+            bundle=fixture('root-module','try:\n import bundle_root_probe\nexcept ImportError:\n pass\n')
+            marker=executed/'root.executed'
+            (bundle/'bundle_root_probe.py').write_text('open('+repr(str(marker))+',"w").close()\n')
+            self.write_full_inventory(bundle)
+            completed=run(bundle)
+            self.assertEqual(completed.returncode,0,completed.stderr)
+            self.assertFalse(marker.exists(), 'Bundle root module was importable by the archived verifier')
+
+    def test_nofollow_guard_matches_root_aliases(self):
+        import os
+
+        import evidence_offline_audit as driver
+        original=self.root/'CaseOriginal';original.mkdir()
+        # Portable simulation: the final no-follow component itself aliases the root.
+        identity=os.lstat(original);real_lstat=os.lstat
+        alias=self.root/'simulated root alias'
+        def native(path):
+            if driver.canonical(path,follow_final=False)==driver.canonical(alias,follow_final=False):return identity
+            return real_lstat(path)
+        roots=driver.OriginalRoots([str(original)],native_lstat=native)
+        self.assertTrue(roots.contains(alias,follow_final=False), 'No-follow root alias bypassed the offline guard')
+        self.assertFalse(roots.contains(self.root/'unrelated',follow_final=False))
+        aliases=[]
+        case_alias=self.root/'caseoriginal'
+        if case_alias.exists() and os.path.samefile(case_alias,original):aliases.append(case_alias)
+        firmlink=Path('/System/Volumes/Data'+str(original.resolve()))
+        if sys.platform=='darwin' and firmlink.exists() and os.path.samefile(firmlink,original):aliases.append(firmlink)
+        with driver.guarded_apis([str(original)]) as blocked:
+            for spelling in aliases:
+                with self.assertRaises(PermissionError,msg='No-follow root alias bypassed the offline guard'):os.lstat(spelling)
+                with self.assertRaises(PermissionError,msg='No-follow root alias bypassed the offline guard'):os.stat(spelling,follow_symlinks=False)
+        self.assertEqual(len(blocked),2*len(aliases))
+
+    def test_relative_dir_fd_is_denied_and_recorded(self):
+        import os
+
+        import evidence_offline_audit as driver
+        original=self.root/'original';original.mkdir()
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory)/'name').write_text('public')
+            descriptor=os.open(directory,os.O_RDONLY)
+            try:
+                with driver.guarded_apis([str(original)]) as blocked:
+                    # A verifier that swallows the denial cannot hide the attempt.
+                    try:os.lstat('name',dir_fd=descriptor)
+                    except (OSError,ValueError):pass
+                    self.assertEqual(blocked,['name'],'Relative dir_fd denial was not recorded')
+                    with self.assertRaises(PermissionError):os.stat('name',dir_fd=descriptor)
+            finally:os.close(descriptor)
+        bundle=self.root/'dir-fd-fixture';bundle.mkdir()
+        (bundle/'inputs').mkdir();(bundle/'inputs/member').write_text('data')
+        (bundle/'report.json').write_text('{}')
+        (bundle/'verifier_tooling').mkdir()
+        (bundle/'verifier_tooling/evidence_bundle.py').write_text(
+            'import os\ndef probe(folder):\n descriptor=os.open(str(folder),os.O_RDONLY)\n try:\n'
+            '  try:os.stat("report.json",dir_fd=descriptor)\n  except (OSError,ValueError):pass\n'
+            ' finally:os.close(descriptor)\n'+self.VERIFY_FIXTURE.replace(' return dict',' probe(folder)\n return dict'))
+        self.write_full_inventory(bundle)
+        output=self.root/'dir-fd-receipt.json'
+        completed=subprocess.run([sys.executable,'-B',driver.__file__,str(bundle),str(output),str(original)],
+                                 capture_output=True,text=True,timeout=15)
+        self.assertNotEqual(completed.returncode,0,'Swallowed dir_fd denial passed the offline audit')
+        self.assertIn('attempted guarded I/O',completed.stderr)
+        self.assertFalse(output.exists())
+
     def test_archived_verifier_precedes_bundle_root_and_cached_modules(self):
         import hashlib
 
@@ -1490,7 +1624,7 @@ print('REPORT:'+json.dumps(value),flush=True)
         module=tooling/'evidence_bundle.py'
         module.write_text('calls=0\ndef verify_bundle(folder):\n global calls\n calls+=1\n if calls>1:raise ValueError("inventory corruption")\n return dict(verified=True,eligible_current=True)\n')
         (bundle/'evidence_bundle.py').write_text('raise RuntimeError("root verifier shadowed archived tooling")\n')
-        (bundle/'inventory.json').write_text(json.dumps({'verifier_tooling/evidence_bundle.py':hashlib.sha256(module.read_bytes()).hexdigest()}))
+        self.write_full_inventory(bundle)
         output=self.root/'selected-receipt.json'
         process=subprocess.run([sys.executable,'-B',driver.__file__,str(bundle),str(output),str(self.root)],capture_output=True,text=True,timeout=15)
         self.assertEqual(process.returncode,0,'Bundle root shadowed selected verifier tooling: '+process.stderr)
@@ -1546,6 +1680,8 @@ print('REPORT:'+json.dumps(value),flush=True)
         for name, value in (('archive_hash_passes',2),('archive_hash_read_bytes',1),('publication_interruptions',1),('timing_scope','extraction-only')):
             with self.subTest(name=name),self.assertRaisesRegex(ValueError,'verified-operation'):
                 verify_tooling_metrics(dict(row,**{name:value}))
+        with self.assertRaisesRegex(ValueError,'verified-operation',msg='Extraction accepted the other contract hash counter'):
+            verify_tooling_metrics(dict(row,archive_hash_bytes=1))
 
     def test_live_tooling_requires_an_actual_metric_version(self):
         from evidence_benchmarks import verify_tooling_metrics
@@ -1608,6 +1744,8 @@ print('REPORT:'+json.dumps(value),flush=True)
                    archive_bytes=10,archive_hash_passes=3,archive_hash_bytes=30,publication_interruptions=0,timing_scope='verified-operation')
         verify_tooling_metrics(row,historical=True)
         with self.assertRaisesRegex(ValueError,'Extraction work'):verify_tooling_metrics(row)
+        with self.assertRaisesRegex(ValueError,'verified-operation',msg='Contract three accepted the contract four hash counter'):
+            verify_tooling_metrics(dict(row,archive_hash_read_bytes=30),historical=True)
 
     def test_declared_extraction_carrier_rejects_mutations_and_wrong_returned_identity(self):
         import evidence_historical as historical
