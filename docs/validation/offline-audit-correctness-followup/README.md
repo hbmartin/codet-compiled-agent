@@ -6,9 +6,10 @@
 
 The driver opens a regular inventory file without following symlinks, validates
 fallback source membership before reading, and executes the bound entrypoint
-from its verified bytes. Published replays use an independently supplied inventory
-digest. Fixture cleanup propagates SIGINT recorded by the supervisor after the
-owned groups and streams have been handled.
+from its verified bytes. Published replays pin the inventory to the digest in
+`transport.json` from a trusted checkout of the publication. Fixture cleanup
+replays recorded signals through the restored handlers after processing owned
+groups and streams.
 
 ## Captured results
 
@@ -48,7 +49,8 @@ All three rejected the corruption control. The attempt preserved
 Transport verification compared all 479 expanded files byte for byte. The relocated
 receipt binds 478 inventory entries and records the executed verifier digest. Replay
 from a trusted checkout of this publication and read the expected inventory digest
-from its transport record.
+from its transport record. If you obtain the carrier separately, authenticate the
+expected digest through the publisher or a verified signed tag before replaying it.
 
 ```sh
 base=docs/validation/offline-audit-correctness-followup/eaf52e27be994e4aadad39ccb6bc73b6

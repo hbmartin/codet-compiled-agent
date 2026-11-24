@@ -984,15 +984,21 @@ print('REPORT:'+json.dumps(value),flush=True)
             attempt(stop_leader)
             for stream in (process.stdin, process.stdout, process.stderr):
                 attempt(stream.close)
-        for interrupt in interrupts:
-            if isinstance(interrupt, dict):
-                if interrupt.get('signal') == signal.SIGTERM:
-                    signal.raise_signal(signal.SIGTERM)
-                    continue
-                interrupt = KeyboardInterrupt()
-            if failures:
-                interrupt.fixture_cleanup_failures = [repr(error) for error in failures]
-            raise interrupt
+        # Termination takes precedence. The stable sort keeps the remaining replay order.
+        pending = sorted(interrupts, key=lambda event: not (
+            isinstance(event, dict) and event.get('signal') == signal.SIGTERM))
+        for interrupt in pending:
+            try:
+                if isinstance(interrupt, dict):
+                    if 'signal' in interrupt:
+                        signal.raise_signal(interrupt['signal'])
+                        continue
+                    raise KeyboardInterrupt
+                raise interrupt
+            except BaseException as error:
+                if failures:
+                    error.fixture_cleanup_failures = [repr(failure) for failure in failures]
+                raise
         if failures:
             if primary is None:raise failures[0]
             primary.fixture_cleanup = repr(failures[0])
@@ -1057,7 +1063,8 @@ print('REPORT:'+json.dumps(value),flush=True)
         import signal
         from types import SimpleNamespace
 
-        previous = signal.getsignal(signal.SIGINT)
+        previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+        self.addCleanup(signal.signal, signal.SIGINT, previous)
         closed = []
 
         def stop_owned_group(*args):
@@ -1078,7 +1085,106 @@ print('REPORT:'+json.dumps(value),flush=True)
         self.assertTrue(process.group_cleanup['reaped'])
         self.assertEqual(closed, ['stdin', 'stdout', 'stderr'])
         self.assertEqual(caught.exception.fixture_cleanup_failures, [repr(OSError('stdin close failed'))])
-        self.assertIs(signal.getsignal(signal.SIGINT), previous)
+        self.assertIs(signal.getsignal(signal.SIGINT), signal.default_int_handler)
+
+    def test_fixture_cleanup_respects_ignored_sigint(self):
+        import signal
+        from types import SimpleNamespace
+
+        previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        self.addCleanup(signal.signal, signal.SIGINT, previous)
+        closed = []
+
+        def close_stdin():
+            closed.append('stdin')
+            signal.raise_signal(signal.SIGINT)
+
+        process = SimpleNamespace(pid=123, poll=lambda: 0,
+                                  stdin=SimpleNamespace(close=close_stdin),
+                                  stdout=SimpleNamespace(close=lambda: closed.append('stdout')),
+                                  stderr=SimpleNamespace(close=lambda: closed.append('stderr')))
+        self.cleanup_historical_fixture(process, process.pid, (), None)
+        self.assertEqual(closed, ['stdin', 'stdout', 'stderr'])
+        self.assertIs(signal.getsignal(signal.SIGINT), signal.SIG_IGN)
+
+    def test_fixture_cleanup_replays_sigterm_before_sigint(self):
+        import signal
+        from types import SimpleNamespace
+
+        def run_case(termination):
+            events = []
+            failure = OSError('stdout close failed')
+
+            def handle(signum, frame):
+                events.append(signum)
+                if signum == signal.SIGTERM and termination is not None:
+                    raise termination
+
+            def close_stdin():
+                events.append('stdin')
+                signal.raise_signal(signal.SIGINT)
+                signal.raise_signal(signal.SIGTERM)
+
+            def close_stdout():
+                events.append('stdout')
+                raise failure
+
+            process = SimpleNamespace(pid=123, poll=lambda: 0,
+                                      stdin=SimpleNamespace(close=close_stdin),
+                                      stdout=SimpleNamespace(close=close_stdout),
+                                      stderr=SimpleNamespace(close=lambda: events.append('stderr')))
+            for signum in (signal.SIGINT, signal.SIGTERM):
+                previous = signal.signal(signum, handle)
+                self.addCleanup(signal.signal, signum, previous)
+            primary = AssertionError('primary fixture failure')
+            if termination is None:
+                self.cleanup_historical_fixture(process, process.pid, (), primary)
+                self.assertEqual(events, ['stdin', 'stdout', 'stderr', signal.SIGTERM, signal.SIGINT])
+                self.assertEqual(primary.fixture_cleanup_failures, [repr(failure)])
+            else:
+                with self.assertRaises(SystemExit) as caught:
+                    self.cleanup_historical_fixture(process, process.pid, (), primary)
+                self.assertIs(caught.exception, termination)
+                self.assertEqual(events, ['stdin', 'stdout', 'stderr', signal.SIGTERM])
+                self.assertEqual(termination.fixture_cleanup_failures, [repr(failure)])
+            for signum in (signal.SIGINT, signal.SIGTERM):
+                self.assertIs(signal.getsignal(signum), handle)
+
+        with self.subTest(handler='returns'):
+            run_case(None)
+        with self.subTest(handler='raises'):
+            run_case(SystemExit(23))
+
+    def test_fixture_cleanup_preserves_unittest_catch_break(self):
+        program = r'''
+import signal
+import sys
+import unittest
+from types import SimpleNamespace
+
+sys.path.insert(0, "tests")
+import test_validation_evidence
+
+class CatchBreak(unittest.TestCase):
+    def test_1_cleanup(self):
+        stream = SimpleNamespace(close=lambda: None)
+        stdin = SimpleNamespace(close=lambda: signal.raise_signal(signal.SIGINT))
+        process = SimpleNamespace(pid=123, poll=lambda: 0, stdin=stdin, stdout=stream, stderr=stream)
+        test_validation_evidence.ReplayIntegrity.cleanup_historical_fixture(process, process.pid, (), None)
+        print("Current test finished")
+
+    def test_2_unexpected(self):
+        self.fail("unittest started a second test after catching SIGINT")
+
+unittest.main(argv=["fixture", "-c"])
+'''
+        completed = subprocess.run([sys.executable, '-B', '-c', program],
+                                   cwd=Path(__file__).resolve().parents[1],
+                                   capture_output=True, text=True, timeout=15)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn('Current test finished', completed.stdout)
+        self.assertIn('Ran 1 test', completed.stderr)
+        self.assertIn('OK', completed.stderr.splitlines())
 
     def test_child_cleanup_rejects_recycled_identity_and_handles_verified_exit(self):
         import errno
@@ -1126,7 +1232,8 @@ print('REPORT:'+json.dumps(value),flush=True)
             with patch.object(ReplayIntegrity,'stop_historical_signal_child',side_effect=child_effect), patch('process_supervision.stop_group',side_effect=leader_effect) as leader:
                 try:self.cleanup_historical_fixture(process, 124, expected, primary)
                 except BaseException as caught:observed = caught
-            self.assertIsInstance(observed, Interrupt, 'Fixture cleanup swallowed an interrupt')
+            expected_interrupt = leader_effect if leader_effect is not None else child_effect
+            self.assertIs(observed, expected_interrupt, 'Fixture cleanup swallowed an interrupt')
             self.assertTrue(leader.called, 'Interrupted child cleanup skipped the leader group')
             self.assertEqual(closed, [0, 1, 2], 'Interrupted fixture cleanup left streams open')
             self.assertFalse(hasattr(primary, 'fixture_cleanup_failures'), 'Interrupt was recorded as a cleanup failure')
