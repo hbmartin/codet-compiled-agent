@@ -1308,7 +1308,7 @@ print('REPORT:'+json.dumps(value),flush=True)
                             except KeyError:raise primary  # noqa: B904 - the implicit context is under test.
                 self.assertIs(caught.exception, primary)
                 self.assertIs(primary.__cause__, cause, 'Cleanup replaced original exception cause')
-                self.assertIs(primary.__context__, implicit, 'Teardown replaced the original implicit context')
+                self.assertIs(caught.exception.__context__, implicit, 'Teardown replaced the original implicit context')
                 details = primary.historical_cleanup
                 self.assertIn('first secondary cleanup', details['failure'])
                 self.assertEqual([v['error'] for v in details['failures']], [repr(cleanup), repr(teardown)], 'Secondary cleanup failure was overwritten')
@@ -1555,6 +1555,36 @@ print('REPORT:'+json.dumps(value),flush=True)
             completed=run(bundle)
             self.assertEqual(completed.returncode,0,completed.stderr)
             self.assertFalse(marker.exists(), 'Bundle root module was importable by the archived verifier')
+
+    def test_fallback_verifier_sources_must_be_bound_members(self):
+        import hashlib
+
+        import evidence_offline_audit as driver
+        with tempfile.TemporaryDirectory() as directory:
+            outside=Path(directory);marker=outside/'unbound.executed'
+            def run(name, source, storage):
+                bundle=self.root/name;bundle.mkdir()
+                (bundle/'inputs').mkdir();(bundle/'inputs/member').write_text('data')
+                (bundle/'report.json').write_text('{}')
+                signature=hashlib.sha256(source.encode()).hexdigest()
+                if storage is None:
+                    storage='inputs/'+signature;(bundle/storage).write_text(source)
+                (bundle/'inputs.json').write_text(json.dumps([dict(check_id='run',role='fingerprint:validation',
+                                                                   path='scripts/evidence_bundle.py',sha256=signature,storage=storage)]))
+                self.write_full_inventory(bundle)
+                output=self.root/(name+'-receipt.json')
+                return subprocess.run([sys.executable,'-B',driver.__file__,str(bundle),str(output),str(self.root)],
+                                      capture_output=True,text=True,timeout=15)
+            # The declared digest matches, but the bytes live outside the authenticated bundle.
+            source='open('+repr(str(marker))+',"w").close()\n'+self.VERIFY_FIXTURE
+            external=outside/'evidence_bundle.py';external.write_text(source)
+            completed=run('unbound-fallback',source,str(external))
+            self.assertFalse(marker.exists(), 'Unbound fallback verifier source executed')
+            self.assertNotEqual(completed.returncode,0)
+            self.assertIn('not a bound bundle member',completed.stderr)
+            # The same declaration stored as an inventory-bound member remains accepted.
+            completed=run('bound-fallback',self.VERIFY_FIXTURE,None)
+            self.assertEqual(completed.returncode,0,'Bound fallback verifier source was rejected: '+completed.stderr)
 
     def test_nofollow_guard_matches_root_aliases(self):
         import os
