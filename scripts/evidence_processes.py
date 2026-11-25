@@ -8,12 +8,14 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from process_supervision import system_ps
 
 NATIVE_BLOCKERS = {"ctest", "codet_tests", "codet_publication_fault_tests", "clang-tidy", "cppcheck", "ninja", "pytest"}
 SCRIPT_BLOCKERS = {"analyze-modern.py", "cli_integration.py", "test_validation_evidence.py", "gtest_isolation.py"}
+SNAPSHOT_TIMEOUT = 5
 
 
 def matches_native(name):
@@ -133,34 +135,47 @@ def read_argv(pid, platform=None):
 def process_snapshot():
     if sys.platform != "darwin" and not sys.platform.startswith("linux"):
         raise ValueError("Process inspection unsupported on " + sys.platform)
-    identities = subprocess.check_output([system_ps(), "-axo", "pid=,stat=,comm="], text=True, timeout=5)
-    processes = []
-    for line in identities.splitlines():
-        fields = line.strip().split(None, 2)
-        if len(fields) != 3 or not fields[0].isdigit():
-            raise ValueError("Malformed process identity: " + line)
-        pid, state, executable = fields
-        if state.startswith("Z"):
-            continue
-        arguments = [executable]
-        if needs_arguments(executable):
-            try:
-                arguments = read_argv(pid)
-            except OSError as error:
-                if error.errno in (errno.ENOENT, errno.ESRCH):
-                    continue
-                raise
-            if sys.platform.startswith("linux"):
+    remaining = SNAPSHOT_TIMEOUT
+    deadline = time.monotonic() + remaining
+    retries = 2
+    while True:
+        identities = subprocess.check_output([system_ps(), "-axo", "pid=,stat=,comm="],
+                                             text=True, timeout=remaining)
+        processes = []
+        for line in identities.splitlines():
+            fields = line.strip().split(None, 2)
+            if len(fields) != 3 or not fields[0].isdigit():
+                raise ValueError("Malformed process identity: " + line)
+            pid, state, executable = fields
+            if state.startswith("Z"):
+                continue
+            arguments = [executable]
+            if needs_arguments(executable):
                 try:
-                    executable = os.readlink("/proc/" + pid + "/exe")
+                    arguments = read_argv(pid)
                 except OSError as error:
                     if error.errno in (errno.ENOENT, errno.ESRCH):
                         continue
+                    # Darwin can report EINVAL when a listed process disappears.
+                    # Restart the entire sweep because EINVAL alone does not prove exit.
+                    if sys.platform == "darwin" and error.errno == errno.EINVAL and retries:
+                        remaining = deadline - time.monotonic()
+                        if remaining > 0:
+                            retries -= 1
+                            break
                     raise
-        processes.append(dict(pid=pid, executable=executable, argv=arguments))
-    if not processes:
-        raise ValueError("Process inspection returned no usable records")
-    return processes
+                if sys.platform.startswith("linux"):
+                    try:
+                        executable = os.readlink("/proc/" + pid + "/exe")
+                    except OSError as error:
+                        if error.errno in (errno.ENOENT, errno.ESRCH):
+                            continue
+                        raise
+            processes.append(dict(pid=pid, executable=executable, argv=arguments))
+        else:
+            if not processes:
+                raise ValueError("Process inspection returned no usable records")
+            return processes
 
 
 def require_quiet_processes():
@@ -168,13 +183,13 @@ def require_quiet_processes():
     try:
         processes = json.loads(subprocess.check_output(
             [sys.executable, str(Path(__file__).resolve()), "--snapshot"], text=True,
-            stderr=subprocess.PIPE, timeout=5))
+            stderr=subprocess.PIPE, timeout=SNAPSHOT_TIMEOUT))
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         stderr = error.stderr or ''
         if isinstance(stderr, bytes):
             stderr = stderr.decode('utf-8', 'replace')
         observation = dict(inspector_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-                           deadline_seconds=5, reason=type(error).__name__,
+                           deadline_seconds=SNAPSHOT_TIMEOUT, reason=type(error).__name__,
                            returncode=getattr(error, 'returncode', None), stderr=stderr[-16384:])
         print('Measurement inspection unavailable: ' + json.dumps(observation, sort_keys=True),
               file=sys.stderr)
@@ -189,7 +204,7 @@ def require_quiet_processes():
 def validate_inspection_failure(value, inspector_digest):
     if (not isinstance(value, dict) or set(value) != {'inspector_sha256', 'deadline_seconds', 'reason', 'returncode', 'stderr'}
             or value['inspector_sha256'] != inspector_digest
-            or type(value['deadline_seconds']) is not int or value['deadline_seconds'] != 5
+            or type(value['deadline_seconds']) is not int or value['deadline_seconds'] != SNAPSHOT_TIMEOUT
             or not isinstance(value['stderr'], str) or len(value['stderr']) > 16384):
         raise ValueError('Unavailable process inspection is not source-bound')
     if value['reason'] == 'CalledProcessError':
