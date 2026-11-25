@@ -476,6 +476,75 @@ class ExactProcessArguments(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 processes.process_snapshot()
 
+    def test_darwin_einval_restarts_the_whole_snapshot(self):
+        import errno
+
+        import evidence_processes as processes
+
+        marker = "Darwin EINVAL did not restart the complete process snapshot"
+        first = "100 S /bin/sh\n123 S /usr/bin/python3\n"
+        for executable, argv in (("/bin/sh", ["/bin/sh"]),
+                                 ("/usr/bin/python3", ["/usr/bin/python3", "-m", "unittest"])):
+            with self.subTest(executable=executable):
+                retry = f"456 S {executable}\n"
+                with patch.object(processes.sys, "platform", "darwin"), \
+                     patch.object(processes.time, "monotonic", side_effect=[100, 101]), \
+                     patch.object(processes.subprocess, "check_output", side_effect=[first, retry]) as ps, \
+                     patch.object(processes, "read_argv", side_effect=[OSError(errno.EINVAL, "argv unavailable"), argv]) as read:
+                    try:
+                        snapshot = processes.process_snapshot()
+                    except OSError as error:
+                        self.fail(f"{marker}: {error}")
+                self.assertEqual(snapshot, [dict(pid="456", executable=executable, argv=argv)], marker)
+                self.assertEqual([call.kwargs["timeout"] for call in ps.call_args_list], [5, 4])
+                expected_pids = ["123", "456"] if executable.endswith("python3") else ["123"]
+                self.assertEqual([call.args[0] for call in read.call_args_list], expected_pids)
+                with patch.object(processes.subprocess, "check_output", return_value=json.dumps(snapshot)):
+                    if executable.endswith("python3"):
+                        with self.assertRaisesRegex(ValueError, "Concurrent validation"):
+                            processes.require_quiet_processes()
+                    else:
+                        processes.require_quiet_processes()
+
+    def test_darwin_einval_respects_attempt_limit_and_shared_deadline(self):
+        import errno
+
+        import evidence_processes as processes
+
+        for clock, timeouts in (([100, 101, 102], [5, 4, 3]), ([100, 101, 105], [5, 4])):
+            with self.subTest(timeouts=timeouts):
+                error = OSError(errno.EINVAL, "argv unavailable")
+                with patch.object(processes.sys, "platform", "darwin"), \
+                     patch.object(processes.time, "monotonic", side_effect=clock), \
+                     patch.object(processes.subprocess, "check_output", return_value="123 S /usr/bin/python3\n") as ps, \
+                     patch.object(processes, "read_argv", side_effect=error) as read:
+                    with self.assertRaises(OSError) as caught:
+                        processes.process_snapshot()
+                self.assertIs(caught.exception, error)
+                self.assertEqual([call.kwargs["timeout"] for call in ps.call_args_list], timeouts)
+                self.assertEqual(read.call_count, len(timeouts))
+
+    def test_snapshot_rejects_other_failures_without_retrying(self):
+        import errno
+
+        import evidence_processes as processes
+
+        for platform, error in (("linux", OSError(errno.EINVAL, "argv unavailable")),
+                                ("darwin", PermissionError(errno.EPERM, "denied"))):
+            with self.subTest(platform=platform):
+                with patch.object(processes.sys, "platform", platform), \
+                     patch.object(processes.subprocess, "check_output", return_value="123 S /usr/bin/python3\n") as ps, \
+                     patch.object(processes, "read_argv", side_effect=error):
+                    with self.assertRaises(OSError) as caught:
+                        processes.process_snapshot()
+                self.assertIs(caught.exception, error)
+                self.assertEqual(ps.call_count, 1)
+        with patch.object(processes.sys, "platform", "darwin"), \
+             patch.object(processes.subprocess, "check_output", return_value="invalid listing\n") as ps:
+            with self.assertRaisesRegex(ValueError, "Malformed process identity"):
+                processes.process_snapshot()
+        self.assertEqual(ps.call_count, 1)
+
 
 class ReplayAndGitGuards(unittest.TestCase):
     def git_fixture(self, root):
