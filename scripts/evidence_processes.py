@@ -16,6 +16,9 @@ from process_supervision import system_ps
 NATIVE_BLOCKERS = {"ctest", "codet_tests", "codet_publication_fault_tests", "clang-tidy", "cppcheck", "ninja", "pytest"}
 SCRIPT_BLOCKERS = {"analyze-modern.py", "cli_integration.py", "test_validation_evidence.py", "gtest_isolation.py"}
 SNAPSHOT_TIMEOUT = 5
+SNAPSHOT_REPORT_RESERVE_NS = 200_000_000
+DARWIN_RETRY_DELAYS = (0.075, 0.150)
+MIN_RETRY_SWEEP_SECONDS = 0.100
 
 
 def matches_native(name):
@@ -132,15 +135,49 @@ def read_argv(pid, platform=None):
     raise ValueError("Process inspection unsupported on " + platform)
 
 
-def process_snapshot():
+def _seconds_left(deadline_ns):
+    return (deadline_ns - time.clock_gettime_ns(time.CLOCK_MONOTONIC)) / 1_000_000_000
+
+
+def _prepare_darwin_retry(pid, state, executable, error, delay, deadline_ns):
+    failure = OSError(error.errno, f"Cannot read argv for PID {pid} ({executable}, state {state}): {error.strerror}")
+    failure.__cause__ = error
+    if delay is None or int(pid) <= 0:
+        raise failure
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        delay = 0
+    except OSError as probe_error:
+        raise OSError(probe_error.errno, f"{failure.strerror}; signal-zero probe failed: {probe_error.strerror}") from failure
+    if _seconds_left(deadline_ns) < delay + MIN_RETRY_SWEEP_SECONDS:
+        raise failure
+    print(f"{failure}; retrying process snapshot after {delay:.3f}s", file=sys.stderr, flush=True)
+    if delay:
+        time.sleep(delay)
+    return failure
+
+
+def process_snapshot(deadline_ns=None):
     if sys.platform != "darwin" and not sys.platform.startswith("linux"):
         raise ValueError("Process inspection unsupported on " + sys.platform)
-    remaining = SNAPSHOT_TIMEOUT
-    deadline = time.monotonic() + remaining
-    retries = 2
+    if deadline_ns is None:
+        deadline_ns = time.clock_gettime_ns(time.CLOCK_MONOTONIC) + SNAPSHOT_TIMEOUT * 1_000_000_000
+    retries = 0
+    retry_failure = None
     while True:
-        identities = subprocess.check_output([system_ps(), "-axo", "pid=,stat=,comm="],
-                                             text=True, timeout=remaining)
+        remaining = _seconds_left(deadline_ns)
+        if retry_failure is not None and remaining < MIN_RETRY_SWEEP_SECONDS:
+            raise retry_failure
+        if remaining <= 0:
+            raise TimeoutError("Process inspection deadline expired")
+        try:
+            identities = subprocess.check_output([system_ps(), "-axo", "pid=,stat=,comm="],
+                                                 text=True, timeout=remaining)
+        except subprocess.TimeoutExpired as error:
+            if retry_failure is not None:
+                raise error from retry_failure
+            raise
         processes = []
         for line in identities.splitlines():
             fields = line.strip().split(None, 2)
@@ -156,13 +193,13 @@ def process_snapshot():
                 except OSError as error:
                     if error.errno in (errno.ENOENT, errno.ESRCH):
                         continue
-                    # Darwin can report EINVAL when a listed process disappears.
-                    # Restart the entire sweep because EINVAL alone does not prove exit.
-                    if sys.platform == "darwin" and error.errno == errno.EINVAL and retries:
-                        remaining = deadline - time.monotonic()
-                        if remaining > 0:
-                            retries -= 1
-                            break
+                    # Darwin uses EINVAL for both exit races and denied argv reads.
+                    # A retry always discards the partial sweep.
+                    if sys.platform == "darwin" and error.errno == errno.EINVAL:
+                        delay = DARWIN_RETRY_DELAYS[retries] if retries < len(DARWIN_RETRY_DELAYS) else None
+                        retry_failure = _prepare_darwin_retry(pid, state, executable, error, delay, deadline_ns)
+                        retries += 1
+                        break
                     raise
                 if sys.platform.startswith("linux"):
                     try:
@@ -175,15 +212,19 @@ def process_snapshot():
         else:
             if not processes:
                 raise ValueError("Process inspection returned no usable records")
+            if _seconds_left(deadline_ns) <= 0:
+                raise TimeoutError("Process inspection deadline expired") from retry_failure
             return processes
 
 
 def require_quiet_processes():
-    # The child deadline bounds ps and native argv inspection together.
+    # Use a host-wide clock so interpreter startup also spends the worker budget.
+    deadline_ns = (time.clock_gettime_ns(time.CLOCK_MONOTONIC) +
+                   SNAPSHOT_TIMEOUT * 1_000_000_000 - SNAPSHOT_REPORT_RESERVE_NS)
     try:
         processes = json.loads(subprocess.check_output(
-            [sys.executable, str(Path(__file__).resolve()), "--snapshot"], text=True,
-            stderr=subprocess.PIPE, timeout=SNAPSHOT_TIMEOUT))
+            [sys.executable, str(Path(__file__).resolve()), "--snapshot", "--deadline-ns", str(deadline_ns)],
+            text=True, stderr=subprocess.PIPE, timeout=SNAPSHOT_TIMEOUT))
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         stderr = error.stderr or ''
         if isinstance(stderr, bytes):
@@ -218,4 +259,9 @@ def validate_inspection_failure(value, inspector_digest):
 
 
 if __name__ == "__main__":
-    print(json.dumps(process_snapshot()))
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--snapshot", action="store_true", help="print a process snapshot (default)")
+    parser.add_argument("--deadline-ns", type=int)
+    print(json.dumps(process_snapshot(parser.parse_args().deadline_ns)))
