@@ -1235,19 +1235,15 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   }
   Session session;
   if (o.command == "resume" || o.command == "fork" || o.command == "export") {
-    if (o.last)
-      session = state.last(o.command == "export");
-    else if (!o.session.empty())
-      session = state.load(o.session, o.command == "export");
-    else {
+    auto selector = o.session;
+    if (!o.last && selector.empty()) {
       if (o.exec || !isatty(STDIN_FILENO))
         throw Error("Select a session id or --last", 2);
       (void)errors.write({state.list().dump(2), "\nSession id: "}, false);
-      std::string id;
-      std::getline(std::cin, id);
-      session = state.load(id, o.command == "export");
+      std::getline(std::cin, selector);
     }
     if (o.command == "export") {
+      session = state.export_session(selector, o.last);
       if (o.format == "text") {
         detail::TextExport exported(output);
         const bool human = isatty(STDOUT_FILENO);
@@ -1270,6 +1266,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
                  .dump(2)});
       return 0;
     }
+    session = o.last ? state.last(false) : state.load(selector, false);
   }
   if (o.command == "resume") {
     lifecycle_owner = state.acquire(session.id);

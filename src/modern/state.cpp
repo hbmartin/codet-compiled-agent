@@ -2198,6 +2198,12 @@ Session StateStore::load(const std::string &selector, bool repair) {
   const auto id = select_session(impl_->db, selector, false);
   return load_id(id, repair);
 }
+Session StateStore::export_session(const std::string &selector, bool last_session) {
+  ReadOptions options;
+  options.repair = true;
+  options.provider = false;
+  return read_session(select_session(impl_->db, selector, last_session), options);
+}
 Session StateStore::load_id(const std::string &id, bool repair) {
   ReadOptions options;
   options.repair = repair;

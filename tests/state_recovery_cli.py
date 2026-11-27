@@ -105,6 +105,40 @@ class StateRecovery(unittest.TestCase):
         self.assertEqual(json.loads(exported["messages"][-1]["text"])["metadata"]["recovery"],
                          "uncertain")
 
+    def test_export_recovers_without_reading_or_mutating_corrupt_provider_cache(self):
+        self.ok("sessions")
+        with self.db() as db:
+            db.execute("INSERT INTO provider_parts VALUES('parent',0,'{broken')")
+        before = self.snapshot()
+        for selector in ("parent", "named parent", "--last"):
+            exported = json.loads(self.ok("export", selector, "--output-format", "json"))
+            self.assertEqual(exported["id"], "parent")
+            self.assertEqual(exported["messages"][0]["text"], "intact transcript")
+            tool = exported["messages"][-1]
+            self.assertEqual(tool["tool_call_id"], "call")
+            self.assertEqual(json.loads(tool["text"])["metadata"]["recovery"], "uncertain")
+        self.assertIn("intact transcript", self.ok("export", "--last", "--output-format", "text"))
+        for command in (self.fork, ("exec", "resume", "parent", "--provider", "ollama", "continue")):
+            strict = self.cli(*command)
+            self.assertNotEqual(strict.returncode, 0)
+            self.assertIn("Corrupt provider conversation", strict.stderr)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_export_reports_corrupt_journal_or_transcript_without_mutation(self):
+        self.ok("sessions")
+        with self.db() as db:
+            db.execute("UPDATE tools SET status='complete',result='{broken'")
+        for expected in ("Corrupt completed tool record", "Corrupt session messages"):
+            with self.subTest(expected=expected):
+                before = self.snapshot()
+                exported = self.cli("export", "parent", "--output-format", "json")
+                self.assertNotEqual(exported.returncode, 0)
+                self.assertIn(expected, exported.stderr)
+                self.assertEqual(exported.stdout, "")
+                self.assertEqual(self.snapshot(), before)
+                with self.db() as db:
+                    db.execute("UPDATE session_messages SET payload='{broken' WHERE position=0")
+
     def index_fixture(self):
         self.ok("sessions")
         self.indexes.mkdir(parents=True)

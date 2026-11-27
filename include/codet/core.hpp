@@ -483,6 +483,7 @@ public:
   std::shared_ptr<void> acquire(const std::string &id);
   void reconcile(Session &, bool persist = true);
   Session last(bool repair = true);
+  Session export_session(const std::string &selector, bool last_session);
   Session fork(const Session &);
   void save(Session &);
   void save(const Session &);
