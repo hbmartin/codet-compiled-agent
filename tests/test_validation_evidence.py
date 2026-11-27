@@ -436,7 +436,7 @@ class ComparisonGuards(unittest.TestCase):
 
 class ExactProcessArguments(unittest.TestCase):
     @contextmanager
-    def snapshot_fixture(self, listings, argv, *, platform="darwin", probe=None, oversleep_ns=0):
+    def snapshot_fixture(self, listings, argv, *, platform="darwin", probe=None, oversleep_ns=0, clock_read=None):
         import evidence_processes as processes
 
         now = 0
@@ -446,8 +446,10 @@ class ExactProcessArguments(unittest.TestCase):
             now += round(seconds * 1_000_000_000) + oversleep_ns
 
         stderr = io.StringIO()
+        uptime_clock = getattr(processes.time, "CLOCK_UPTIME_RAW", -1)
         with patch.object(processes.sys, "platform", platform), \
-             patch.object(processes.time, "clock_gettime_ns", side_effect=lambda clock: now), \
+             patch.object(processes.time, "CLOCK_UPTIME_RAW", uptime_clock, create=True), \
+             patch.object(processes.time, "clock_gettime_ns", side_effect=clock_read or (lambda clock: now)), \
              patch.object(processes.time, "sleep", side_effect=advance) as sleep, \
              patch.object(processes.subprocess, "check_output", side_effect=listings) as ps, \
              patch.object(processes, "read_argv", side_effect=argv) as read, \
@@ -486,8 +488,15 @@ class ExactProcessArguments(unittest.TestCase):
     def test_inspection_timeout_is_not_clean(self):
         import evidence_processes as processes
 
-        retry_message = "PID 123 (/usr/bin/python3): [Errno 22] argv unavailable"
-        timeout = subprocess.TimeoutExpired("inspection", 5, stderr=retry_message.encode())
+        argv_error = OSError(errno.EINVAL, "argv unavailable")
+        denied = PermissionError(errno.EPERM, "signal denied")
+        ps_timeout = subprocess.TimeoutExpired("ps", 4.925)
+        with self.snapshot_fixture(["123 ?E /usr/bin/python3\n", ps_timeout], [argv_error],
+                                   probe=denied) as (_, _, _, _, worker_stderr):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                processes.process_snapshot()
+        retry_message = worker_stderr.getvalue().encode()
+        timeout = subprocess.TimeoutExpired("inspection", 5, stderr=retry_message)
         stderr = io.StringIO()
         with patch.object(processes.time, "clock_gettime_ns", return_value=20_000_000_000), \
              patch.object(processes.subprocess, "check_output", side_effect=timeout) as worker, \
@@ -499,9 +508,46 @@ class ExactProcessArguments(unittest.TestCase):
         prefix = "Measurement inspection unavailable: "
         self.assertTrue(stderr.getvalue().startswith(prefix))
         observation = json.loads(stderr.getvalue()[len(prefix):])
-        self.assertEqual(observation["stderr"], retry_message)
+        self.assertEqual(observation["stderr"].encode(), retry_message)
+        self.assertIn("[Errno 22] Cannot read argv for PID 123 (/usr/bin/python3, state ?E): argv unavailable",
+                      observation["stderr"])
+        self.assertIn("signal-zero probe denied: [Errno 1] signal denied", observation["stderr"])
         self.assertEqual(observation["reason"], "TimeoutExpired")
         processes.validate_inspection_failure(observation, evidence.digest(Path(processes.__file__)))
+
+    def test_darwin_worker_deadline_excludes_sleep(self):
+        import evidence_processes as processes
+
+        uptime_ns = 20_000_000_000
+        suspended_ns = 0
+        marker = "Darwin snapshot deadline counted system sleep"
+
+        def clock_read(clock):
+            if clock == processes.time.CLOCK_UPTIME_RAW:
+                return uptime_ns
+            return uptime_ns + suspended_ns
+
+        def command_output(argv, **kwargs):
+            nonlocal suspended_ns
+            if "--deadline-ns" in argv:
+                suspended_ns += 30_000_000_000
+                return json.dumps(processes.process_snapshot(int(argv[-1])))
+            return "100 S /bin/sh\n"
+
+        with self.snapshot_fixture(command_output, [], clock_read=clock_read) as (commands, _, _, _, _):
+            try:
+                processes.require_quiet_processes()
+            except TimeoutError as error:
+                self.fail(f"{marker}: {error}")
+            deadline_ns = int(commands.call_args_list[0].args[0][-1])
+            self.assertEqual(deadline_ns, 24_800_000_000, marker)
+            self.assertEqual([call.kwargs["timeout"] for call in commands.call_args_list], [5, 4.8], marker)
+            uptime_ns = deadline_ns
+            with self.assertRaisesRegex(TimeoutError, "Process inspection deadline expired"):
+                processes.process_snapshot(deadline_ns)
+            self.assertEqual(commands.call_count, 2)
+            processes.process_snapshot()
+            self.assertEqual(commands.call_args.kwargs["timeout"], 5, marker)
 
 
     def test_vanished_process_is_skipped_but_denial_is_not_clean(self):
@@ -513,6 +559,10 @@ class ExactProcessArguments(unittest.TestCase):
                 processes.process_snapshot()
         with patch.object(processes.subprocess, "check_output", return_value="123 S /usr/bin/python3\n"), patch.object(processes, "read_argv", side_effect=PermissionError(errno.EPERM, "denied")):
             with self.assertRaises(PermissionError):
+                processes.process_snapshot()
+        error = OSError(errno.EINVAL, "argv unavailable")
+        with self.snapshot_fixture(["123 ?E clang-tidy\n"], [error], probe=ProcessLookupError(errno.ESRCH, "gone")):
+            with self.assertRaisesRegex(ValueError, "no usable records"):
                 processes.process_snapshot()
 
     def test_darwin_einval_restarts_the_whole_snapshot(self):
@@ -528,6 +578,8 @@ class ExactProcessArguments(unittest.TestCase):
                     try:
                         snapshot = processes.process_snapshot()
                     except OSError as error:
+                        if error.errno != errno.EINVAL:
+                            raise
                         self.fail(f"{marker}: {error}")
                 self.assertEqual(snapshot, [dict(pid="456", executable=executable, argv=argv)], marker)
                 self.assertEqual([call.kwargs["timeout"] for call in ps.call_args_list], [5, 4.925])
@@ -558,18 +610,22 @@ class ExactProcessArguments(unittest.TestCase):
         import evidence_processes as processes
 
         error = OSError(errno.EINVAL, "argv unavailable")
+        denied = PermissionError(errno.EPERM, "signal denied")
         failure = None
-        with self.snapshot_fixture(repeat("123 ?E /usr/bin/python3\n"), [error] * 3 + [["python3"]]) as (ps, read, _, kill, _):
+        with self.snapshot_fixture(repeat("123 ?E /usr/bin/python3\n"), [error] * 3 + [["python3"]],
+                                   probe=denied) as (ps, read, sleep, kill, _):
             try:
                 processes.process_snapshot()
             except OSError as caught:
                 failure = caught
         self.assertEqual(ps.call_count, 3, "Darwin EINVAL exceeded the retry limit")
         self.assertEqual(read.call_count, 3)
-        self.assertEqual(kill.call_count, 2)
+        self.assertEqual(kill.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.075, 0.150])
         self.assertIsNotNone(failure)
         self.assertIs(failure.__cause__, error)
         self.assertRegex(str(failure), r"\[Errno 22\].*PID 123.*python3")
+        self.assertIn("signal-zero probe denied: [Errno 1] signal denied", str(failure))
 
     def test_darwin_einval_checks_sweep_budget_before_sleeping(self):
         import evidence_processes as processes
@@ -595,26 +651,67 @@ class ExactProcessArguments(unittest.TestCase):
         self.assertEqual(ps.call_count, 1, "Darwin EINVAL began a sweep after its retry budget expired")
         self.assertIs(caught.exception.__cause__, error)
 
-    def test_darwin_einval_distinguishes_permission_and_disappearance(self):
+    def test_darwin_einval_retries_when_signal_permission_is_denied(self):
         import evidence_processes as processes
 
         error = OSError(errno.EINVAL, "argv unavailable")
         listings = ["123 ?E clang-tidy\n", "456 S /bin/sh\n"]
-        probes = (ProcessLookupError(errno.ESRCH, "gone"), PermissionError(errno.EPERM, "denied"))
-        for probe in probes:
-            with self.subTest(errno=probe.errno):
-                with self.snapshot_fixture(listings, [error], probe=probe) as (ps, _, sleep, kill, _):
-                    if probe.errno == errno.ESRCH:
+        denied = PermissionError(errno.EPERM, "signal denied")
+        marker = "Darwin EPERM prevented a fresh sweep"
+        with self.snapshot_fixture(listings, [error], probe=denied) as (ps, _, sleep, kill, stderr):
+            try:
+                snapshot = processes.process_snapshot()
+            except PermissionError as failure:
+                if failure.errno != errno.EPERM:
+                    raise
+                self.fail(f"{marker}: {failure}")
+        self.assertEqual([row["pid"] for row in snapshot], ["456"], marker)
+        self.assertEqual(ps.call_count, 2, marker)
+        kill.assert_called_once_with(123, 0)
+        sleep.assert_called_once_with(0.075)
+        self.assertIn("signal-zero probe denied: [Errno 1] signal denied", stderr.getvalue())
+
+    def test_darwin_einval_skips_vanished_pids_in_place(self):
+        import evidence_processes as processes
+
+        error = OSError(errno.EINVAL, "argv unavailable")
+        gone = ProcessLookupError(errno.ESRCH, "gone")
+        marker = "Darwin ESRCH discarded the current sweep"
+        exiting = "123 ?E clang-tidy\n"
+        usable = "100 S /bin/sh\n124 ?E clang-tidy\n125 ?E clang-tidy\n126 ?E clang-tidy\n456 S python3\n"
+        blocking = ["python3", "-m", "unittest"]
+        for spent in (0, 2):
+            with self.subTest(retries_already_used=spent):
+                listings = [exiting] * spent + [usable] * 3
+                arguments = [error] * (spent + 3) + [blocking]
+                with self.snapshot_fixture(listings, arguments, probe=[None] * spent + [gone] * 3) as (ps, _, sleep, kill, _):
+                    try:
                         snapshot = processes.process_snapshot()
-                        self.assertEqual([row["pid"] for row in snapshot], ["456"])
-                        self.assertEqual(ps.call_count, 2)
-                    else:
-                        with self.assertRaisesRegex(PermissionError, "PID 123.*clang-tidy.*signal-zero probe failed: denied") as caught:
-                            processes.process_snapshot()
-                        self.assertEqual(ps.call_count, 1)
-                        self.assertIs(caught.exception.__cause__.__cause__, error)
-                kill.assert_called_once_with(123, 0)
-                sleep.assert_not_called()
+                    except OSError as failure:
+                        if failure.errno != errno.EINVAL:
+                            raise
+                        self.fail(f"{marker}: {failure}")
+                self.assertEqual(ps.call_count, spent + 1, marker)
+                self.assertEqual(sleep.call_count, spent, marker)
+                self.assertEqual([call.args for call in kill.call_args_list],
+                                 [(123, 0)] * spent + [(124, 0), (125, 0), (126, 0)])
+                self.assertEqual([row["pid"] for row in snapshot], ["100", "456"])
+                with patch.object(processes.subprocess, "check_output", return_value=json.dumps(snapshot)):
+                    with self.assertRaisesRegex(ValueError, "Concurrent validation"):
+                        processes.require_quiet_processes()
+
+    def test_darwin_einval_fails_when_probe_returns_an_unexpected_error(self):
+        import evidence_processes as processes
+
+        error = OSError(errno.EINVAL, "argv unavailable")
+        failed_probe = OSError(errno.EIO, "probe unavailable")
+        with self.snapshot_fixture(["123 ?E clang-tidy\n"], [error], probe=failed_probe) as (ps, _, sleep, _, _):
+            with self.assertRaisesRegex(OSError, "PID 123.*clang-tidy.*signal-zero probe failed: probe unavailable") as caught:
+                processes.process_snapshot()
+        self.assertEqual(caught.exception.errno, errno.EIO)
+        self.assertIs(caught.exception.__cause__.__cause__, error)
+        self.assertEqual(ps.call_count, 1)
+        sleep.assert_not_called()
 
     def test_darwin_einval_survives_retry_ps_timeout(self):
         import evidence_processes as processes
@@ -648,8 +745,7 @@ class ExactProcessArguments(unittest.TestCase):
                         processes.process_snapshot()
                 self.assertEqual(ps.call_count, 1, "Non-Darwin EINVAL or another argv failure retried")
                 self.assertIs(caught.exception, error)
-        with patch.object(processes.sys, "platform", "darwin"), \
-             patch.object(processes.subprocess, "check_output", return_value="invalid listing\n") as ps:
+        with self.snapshot_fixture(["invalid listing\n"], []) as (ps, _, _, _, _):
             with self.assertRaisesRegex(ValueError, "Malformed process identity"):
                 processes.process_snapshot()
         self.assertEqual(ps.call_count, 1)

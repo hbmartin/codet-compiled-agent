@@ -135,34 +135,49 @@ def read_argv(pid, platform=None):
     raise ValueError("Process inspection unsupported on " + platform)
 
 
+def _snapshot_now_ns():
+    # Match the subprocess timeout's awake time using a clock shared across processes.
+    clock = time.CLOCK_UPTIME_RAW if sys.platform == "darwin" else time.CLOCK_MONOTONIC
+    return time.clock_gettime_ns(clock)
+
+
 def _seconds_left(deadline_ns):
-    return (deadline_ns - time.clock_gettime_ns(time.CLOCK_MONOTONIC)) / 1_000_000_000
+    return (deadline_ns - _snapshot_now_ns()) / 1_000_000_000
 
 
-def _prepare_darwin_retry(pid, state, executable, error, delay, deadline_ns):
-    failure = OSError(error.errno, f"Cannot read argv for PID {pid} ({executable}, state {state}): {error.strerror}")
+def _darwin_argv_failure(pid, state, executable, error):
+    message = f"Cannot read argv for PID {pid} ({executable}, state {state}): {error.strerror}"
+    failure = OSError(error.errno, message)
     failure.__cause__ = error
-    if delay is None or int(pid) <= 0:
+    pid_number = int(pid)
+    if pid_number <= 0:
         raise failure
     try:
-        os.kill(int(pid), 0)
+        os.kill(pid_number, 0)
     except ProcessLookupError:
-        delay = 0
+        return None
     except OSError as probe_error:
-        raise OSError(probe_error.errno, f"{failure.strerror}; signal-zero probe failed: {probe_error.strerror}") from failure
+        if probe_error.errno != errno.EPERM:
+            raise OSError(probe_error.errno, f"{message}; signal-zero probe failed: {probe_error.strerror}") from failure
+        failure = OSError(error.errno, f"{message}; signal-zero probe denied: {probe_error}")
+        failure.__cause__ = error
+    return failure
+
+
+def _prepare_darwin_retry(failure, delay, deadline_ns):
+    if delay is None:
+        raise failure
     if _seconds_left(deadline_ns) < delay + MIN_RETRY_SWEEP_SECONDS:
         raise failure
     print(f"{failure}; retrying process snapshot after {delay:.3f}s", file=sys.stderr, flush=True)
-    if delay:
-        time.sleep(delay)
-    return failure
+    time.sleep(delay)
 
 
 def process_snapshot(deadline_ns=None):
     if sys.platform != "darwin" and not sys.platform.startswith("linux"):
         raise ValueError("Process inspection unsupported on " + sys.platform)
     if deadline_ns is None:
-        deadline_ns = time.clock_gettime_ns(time.CLOCK_MONOTONIC) + SNAPSHOT_TIMEOUT * 1_000_000_000
+        deadline_ns = _snapshot_now_ns() + SNAPSHOT_TIMEOUT * 1_000_000_000
     retries = 0
     retry_failure = None
     while True:
@@ -196,8 +211,12 @@ def process_snapshot(deadline_ns=None):
                     # Darwin uses EINVAL for both exit races and denied argv reads.
                     # A retry always discards the partial sweep.
                     if sys.platform == "darwin" and error.errno == errno.EINVAL:
+                        failure = _darwin_argv_failure(pid, state, executable, error)
+                        if failure is None:
+                            continue
                         delay = DARWIN_RETRY_DELAYS[retries] if retries < len(DARWIN_RETRY_DELAYS) else None
-                        retry_failure = _prepare_darwin_retry(pid, state, executable, error, delay, deadline_ns)
+                        _prepare_darwin_retry(failure, delay, deadline_ns)
+                        retry_failure = failure
                         retries += 1
                         break
                     raise
@@ -219,8 +238,7 @@ def process_snapshot(deadline_ns=None):
 
 def require_quiet_processes():
     # Use a host-wide clock so interpreter startup also spends the worker budget.
-    deadline_ns = (time.clock_gettime_ns(time.CLOCK_MONOTONIC) +
-                   SNAPSHOT_TIMEOUT * 1_000_000_000 - SNAPSHOT_REPORT_RESERVE_NS)
+    deadline_ns = _snapshot_now_ns() + SNAPSHOT_TIMEOUT * 1_000_000_000 - SNAPSHOT_REPORT_RESERVE_NS
     try:
         processes = json.loads(subprocess.check_output(
             [sys.executable, str(Path(__file__).resolve()), "--snapshot", "--deadline-ns", str(deadline_ns)],
