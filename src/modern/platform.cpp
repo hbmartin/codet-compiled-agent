@@ -19,6 +19,7 @@
 #include <new>
 #include <poll.h>
 #include <pthread.h>
+#include <sstream>
 #include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>

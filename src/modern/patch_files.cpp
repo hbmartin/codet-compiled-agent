@@ -107,7 +107,7 @@ struct FileVersion {
 
 using SourceVersions = std::map<std::pair<dev_t, ino_t>, FileVersion>;
 
-[[noreturn]] void rollback_error(std::exception_ptr primary, const std::string &failure) {
+[[noreturn]] void rollback_error(const std::exception_ptr &primary, const std::string &failure) {
   try {
     std::rethrow_exception(primary);
   } catch (const Error &error) {
@@ -144,8 +144,8 @@ public:
   void keep() noexcept {
     keep_ = true;
   }
-  void restore_retired(const fs::path &path, const PatchFileOps &ops, std::exception_ptr primary,
-                       FileVersion *known = nullptr) {
+  void restore_retired(const fs::path &path, const PatchFileOps &ops,
+                       const std::exception_ptr &primary, FileVersion *known = nullptr) {
     try {
       ops.link_exclusive(retired, path);
       if (known)
