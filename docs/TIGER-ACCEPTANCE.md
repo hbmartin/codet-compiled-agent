@@ -2,6 +2,8 @@
 
 Run these checks on the G4 with 512 MB RAM. The build host never executes the PPC application or test executable.
 
+On the packaging host, the public archive and checksum names follow a per-variant `current` link. To verify or copy a pair while another build is publishing, resolve the archive once with `Path(archive).resolve(strict=True)` in Python. Read that path and its adjacent `.sha256` file from the same generation directory. Publishers retain earlier generations so a pinned reader can finish.
+
 Choose the instructions matching your archive:
 
 - **Portable:** extract `codet-tiger-ppc-portable.tar.gz` and enter `codet-tiger`.
