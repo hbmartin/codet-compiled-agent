@@ -169,6 +169,26 @@ int main(int argc, char **argv) {
       return codet::test::credential_writer(argv[2], argv[3], std::stoi(argv[4]));
     if (argc == 5 && std::string(argv[1]) == "--codet-patch-helper")
       return codet::test::patch_child(argv[2], argv[3], argv[4]);
+    if (argc > 2 && std::string(argv[1]) == "--codet-interrupt-approved-new-helper") {
+      struct Approval {
+        codet::Cancellation cancel;
+        bool interrupted = false;
+      } approval;
+      codet::detail::CursesDrawOps drawing;
+      drawing.context = &approval;
+      drawing.put_text = +[](void *context, std::string_view text) {
+        auto &state = *static_cast<Approval *>(context);
+        if (!state.interrupted && text.find("[Approval approved]") == 0) {
+          state.interrupted = true;
+          state.cancel.requested = true; // The terminal accepted yes; dispatch has not begun.
+        }
+        return ::addnstr(text.data(), static_cast<int>(text.size()));
+      };
+      codet::detail::IoContext io(approval.cancel);
+      const auto result = codet::detail::cli_main(std::vector<std::string>(argv + 2, argv + argc),
+                                                  approval.cancel, io, drawing);
+      return approval.interrupted ? result : 87;
+    }
     if (argc > 2 && std::string(argv[1]) == "--codet-admission-helper") {
       struct Admission {
         std::string constraint;

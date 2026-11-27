@@ -1877,17 +1877,13 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       const auto handles = tools.live_exec_sessions(session.id);
       if (!handles.empty()) {
         const auto answer = terminal->confirm_new_session(session.id, handles.size(), cancel);
-        if (!answer) {
-          if (cancel.requested.exchange(false)) {
-            terminal->say("Kept the current conversation.");
-            continue;
-          }
-          quit_requested = true;
-          break;
-        }
-        if (!*answer) {
+        if (cancel.requested.exchange(false) || answer == false) {
           terminal->say("Kept the current conversation.");
           continue;
+        }
+        if (!answer) {
+          quit_requested = true;
+          break;
         }
         try {
           tools.stop_exec_sessions(session.id, handles);
@@ -1902,8 +1898,8 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       fresh.model = config.model;
       fresh.effort = saved_effort(config, &session);
       state.update_metadata(fresh);
+      tools.switch_conversation(fresh.id);
       session = std::move(fresh);
-      tools.use_session(session.id);
       last_usage.reset();
       current_owner = std::move(fresh_owner);
       terminal->say_literal("Started " + session.id);

@@ -972,8 +972,10 @@ std::vector<int> Tools::live_exec_sessions(const std::string &owner) {
       continue;
     try {
       const auto status = processes_.status(job.process);
-      if (!status.running && status.error.empty())
+      if (!status.running && status.error.empty()) {
+        job.exit_observed = true;
         continue;
+      }
     } catch (const ProcessExpired &) {
       job.completed = true;
       continue;
@@ -1700,6 +1702,8 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
       try {
         processes_.stop(job.process);
         job.completed = true;
+      } catch (const ProcessExpired &) {
+        job.completed = true;
       } catch (...) {
         if (interaction_)
           interaction_->warn(Interaction::Warning::exec_original);
@@ -1973,39 +1977,54 @@ void Tools::use_session(const std::string &id) {
       throw Error("Artifact storage changed before session inspection");
     archive_image_history(root, files_, id, {});
   }
-  session_id_ = id;
-  referenced_results_.clear();
-  large_plan_ = false;
-  todos_ = Json::array();
-  damaged_plan_ = false;
+  bool large_plan = false, damaged_plan = false;
+  auto todos = Json::array();
   const auto p = invocation_directory(config_) / "plans" / (id + ".json");
   if (fs::exists(p) || fs::is_symlink(p)) {
     if (fs::is_symlink(p) || !fs::is_regular_file(p))
       throw Error("Saved plan must be a regular file");
     if (fs::file_size(p) > 1048576) {
-      large_plan_ = true;
-      damaged_plan_ = true;
+      large_plan = true;
+      damaged_plan = true;
       report_diagnostic(diagnostics_, "Saved task plan exceeds 1 MiB; preserved at " + p.string() +
                                           "; resuming without an active plan");
-      return;
-    }
-    const auto bytes = files_.read(p, 1048576);
-    todos_ = bytes.find('\0') == std::string::npos ? Json::parse(bytes, nullptr, false) : Json();
-    bool valid = todos_.is_array() && todos_.size() <= 100;
-    size_t active = 0;
-    if (valid)
-      for (const auto &step : todos_) {
-        const auto status = step.is_object() ? step.value("status", Json()) : Json();
-        valid = valid && step.is_object() && step.contains("step") && step["step"].is_string() &&
-                (status == "pending" || status == "in_progress" || status == "completed");
-        active += status == "in_progress";
+    } else {
+      const auto bytes = files_.read(p, 1048576);
+      todos = bytes.find('\0') == std::string::npos ? Json::parse(bytes, nullptr, false) : Json();
+      bool valid = todos.is_array() && todos.size() <= 100;
+      size_t active = 0;
+      if (valid)
+        for (const auto &step : todos) {
+          const auto status = step.is_object() ? step.value("status", Json()) : Json();
+          valid = valid && step.is_object() && step.contains("step") && step["step"].is_string() &&
+                  (status == "pending" || status == "in_progress" || status == "completed");
+          active += status == "in_progress";
+        }
+      if (!valid || active > 1) {
+        todos = Json::array();
+        damaged_plan = true;
+        report_diagnostic(diagnostics_, "Invalid saved task plan preserved at " + p.string() +
+                                            "; resuming without an active plan");
       }
-    if (!valid || active > 1) {
-      todos_ = Json::array();
-      damaged_plan_ = true;
-      report_diagnostic(diagnostics_, "Invalid saved task plan preserved at " + p.string() +
-                                          "; resuming without an active plan");
     }
+  }
+  session_id_ = id;
+  referenced_results_.clear();
+  large_plan_ = large_plan;
+  damaged_plan_ = damaged_plan;
+  todos_ = std::move(todos);
+}
+void Tools::switch_conversation(const std::string &id) {
+  if (id == session_id_)
+    return;
+  const auto previous = session_id_;
+  use_session(id);
+  for (auto it = exec_sessions_.begin(); it != exec_sessions_.end();) {
+    const auto &job = it->second;
+    if (job.owner == previous && (job.completed || job.exit_observed))
+      it = exec_sessions_.erase(it);
+    else
+      ++it;
   }
 }
 namespace {

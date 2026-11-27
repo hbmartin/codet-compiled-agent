@@ -1358,19 +1358,94 @@ class CliTests(unittest.TestCase):
             if p.poll() is None:p.kill();p.wait(timeout=5)
             p.stdout.close();p.stderr.close()
 
+    @contextlib.contextmanager
+    def background_shell_cli(self, mode, command):
+        release = self.workspace / 'release'
+        pid_file = self.workspace / 'job.pid'
+        for path in (release, pid_file, self.workspace / 'exited'):
+            path.unlink(missing_ok=True)
+        (self.workspace / 'output.txt').write_text('ready')
+        try:
+            with PtyProcess() as resources:
+                master, slave = resources.openpty()
+                child = resources.start([*command, '-C', str(self.workspace), '--ui', mode,
+                                         '--permission-mode', 'bypass'], stdin=slave, stdout=slave,
+                                        stderr=slave, env=dict(self.env, TERM='xterm'))
+                try:
+                    yield master, child
+                finally:
+                    release.touch()
+                    if child.poll() is None:
+                        # A graceful quit lets the CLI reap the shell even while awaiting approval.
+                        os.write(master, b'/quit\n')
+                        with contextlib.suppress(AssertionError):
+                            collect_pty(self, master, bytearray(), lambda: child.poll() is not None, seconds=3)
+        finally:
+            if pid_file.exists():
+                pid = int(pid_file.read_text())
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    try:
+                        os.kill(pid, 0)
+                    except ProcessLookupError:
+                        break
+                    time.sleep(.02)
+                else:
+                    self.fail(f'background shell {pid} survived fixture cleanup')
+
+    def test_new_confirmation_cancel_after_yes_preserves_shell_and_session(self):
+        import sqlite3
+        helper = str(pathlib.Path(BIN).with_name('codet_tests'))
+        with self.background_shell_cli('curses', [helper, '--codet-interrupt-approved-new-helper']) as (master, child):
+            def wait_for(marker):
+                received = bytearray()
+                collect_pty(self, master, received, lambda: marker in received)
+            wait_for(b'codet>')
+            os.write(master, b'fixture-capture-background-pid\n')
+            wait_for(b'fixture done')
+            pid = int((self.workspace / 'job.pid').read_text())
+            with contextlib.closing(sqlite3.connect(self.home / 'state.sqlite3')) as db:
+                before = db.execute('SELECT id FROM sessions').fetchall()
+                self.assertEqual(len(before), 1)
+                os.write(master, b'/new\n')
+                wait_for(b'Approve? [y/N]')
+                os.write(master, b'yes\n')
+                wait_for(b'Kept the current conversation')
+                self.assertEqual(db.execute('SELECT id FROM sessions').fetchall(), before)
+                os.kill(pid, 0)
+                # The test helper cancels only the first accepted approval.
+                os.write(master, b'/new\n')
+                wait_for(b'Approve? [y/N]')
+                os.write(master, b'yes\n')
+                wait_for(b'Started ')
+                self.assertEqual(db.execute('SELECT count(*) FROM sessions').fetchone()[0], 2)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
+            os.write(master, b'/quit\n')
+            collect_pty(self, master, bytearray(), lambda: child.poll() is not None, seconds=5)
+            self.assertEqual(child.returncode, 0)
+
+    def test_background_shell_is_reaped_after_early_fixture_failure(self):
+        with self.assertRaisesRegex(RuntimeError, 'injected fixture failure'):
+            with self.background_shell_cli('line', [BIN]) as (master, child):
+                received = bytearray()
+                collect_pty(self, master, received, lambda: b'codet>' in received)
+                os.write(master, b'fixture-capture-background-pid\n')
+                collect_pty(self, master, received, lambda: b'fixture done' in received)
+                pid = int((self.workspace / 'job.pid').read_text())
+                os.kill(pid, 0)
+                raise RuntimeError('injected fixture failure')
+        self.assertIsNotNone(child.returncode)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+
     def test_new_confirms_and_reaps_jobs_in_both_terminals(self):
         import signal
         import sqlite3
-        (self.workspace / 'output.txt').write_text('ready')
         # The job writes its own PID so the test can distinguish real reaping from hiding a handle.
         for mode in ('line', 'curses'):
-            with self.subTest(mode=mode), PtyProcess() as resources:
+            with self.subTest(mode=mode), self.background_shell_cli(mode, [BIN]) as (master, child):
                 release = self.workspace / 'release'
-                release.unlink(missing_ok=True)
-                master, slave = resources.openpty()
-                child = resources.start([BIN, '-C', str(self.workspace), '--ui', mode,
-                                         '--permission-mode', 'bypass'], stdin=slave, stdout=slave,
-                                        stderr=slave, env=dict(self.env, TERM='xterm'))
                 def wait_for(*markers, master=master):
                     received = bytearray()
                     collect_pty(self, master, received,
@@ -1381,7 +1456,7 @@ class CliTests(unittest.TestCase):
                 type_line(b'fixture-capture-background-pid')
                 wait_for(b'fixture done')
                 pid = int((self.workspace / 'job.pid').read_text())
-                with sqlite3.connect(self.home / 'state.sqlite3') as db:
+                with contextlib.closing(sqlite3.connect(self.home / 'state.sqlite3')) as db:
                     before = db.execute('SELECT count(*) FROM sessions').fetchone()[0]
                     def wait_for_count(expected, db=db, master=master):
                         # Curses can redraw an earlier "Started" line while the new switch is pending.

@@ -609,6 +609,7 @@ class Tools {
     bool pty = false;
     bool completed = false;
     std::optional<int> exit_code;
+    bool exit_observed = false; // Final output remains collectable until the owner departs.
   };
   struct RecoveryArchive {
     std::string identity;
@@ -638,6 +639,7 @@ public:
   Json schemas() const;
   Json schemas(const Json &capabilities) const;
   void use_session(const std::string &id);
+  void switch_conversation(const std::string &id);
   void reference_results(const std::vector<Message> &);
   void restore_references(const std::vector<std::string> &);
   std::string retain_result(Message &);
