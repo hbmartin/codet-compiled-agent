@@ -4,3 +4,5 @@
 !analysis-tools.lock.json
 !scripts/
 !scripts/analysis-tools.py
+!scripts/process_supervision.py
+!scripts/verified_sources.py

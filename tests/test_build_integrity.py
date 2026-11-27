@@ -1,7 +1,9 @@
 import importlib.util
 import io
 import pathlib
+import shutil
 import struct
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -22,6 +24,24 @@ class BuildIntegrity(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = pathlib.Path(self.temp.name)
+
+    def test_analyzer_bootstraps_from_the_developer_image_context(self):
+        project = SCRIPTS.parent
+        recipe = (project / 'cmake/Dockerfile.host-tests').read_text().splitlines()
+        includes = set((project / '.dockerignore').read_text().splitlines())
+        folder = self.root / 'scripts'
+        folder.mkdir()
+        for line in recipe:
+            fields = line.split()
+            if fields[:1] == ['COPY'] and fields[-1].startswith('/opt/codet-analysis/scripts/'):
+                for source in fields[1:-1]:
+                    self.assertIn('!' + source, includes)
+                    shutil.copyfile(project / source, folder / pathlib.Path(source).name)
+        result = subprocess.run([sys.executable, '-E', '-s', str(folder / 'analysis-tools.py'), '--help'],
+                                cwd=self.root, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('fetch', result.stdout)
+        self.assertIn('RUN --network=none python3 /opt/codet-analysis/scripts/analysis-tools.py --help', recipe)
 
     def archive(self, version, members):
         archive = self.root / (version + '.tar.gz')
