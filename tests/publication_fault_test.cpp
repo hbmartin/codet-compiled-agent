@@ -1725,8 +1725,9 @@ TEST_F(PublicationFault, EveryExistingSessionMutatorRejectsDamagedTokensBeforeRo
       EXPECT_EQ(f.value("SELECT group_concat(payload) FROM session_messages"), rows);
       EXPECT_EQ(f.value("SELECT status FROM tools WHERE call_id='running'"), "running");
       EXPECT_EQ(f.value("SELECT count(*) FROM session_revisions"), missing ? "0" : "1");
-      if (!missing)
+      if (!missing) {
         EXPECT_EQ(f.value("SELECT revision FROM session_revisions"), "broken");
+      }
     }
 }
 TEST_F(PublicationFault, TokenOnlyRepairPreservesRawRowsAndRequiresNoDecoding) {

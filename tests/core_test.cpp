@@ -296,12 +296,14 @@ TEST_F(Fixture, ConcurrentKeysImportsAndRefreshesSerializeAcrossProcesses) {
     ASSERT_TRUE(WIFEXITED(status));
     ASSERT_EQ(WEXITSTATUS(status), 0);
     const auto stored = store.load();
-    if (std::string(operations.first) == "key")
+    if (std::string(operations.first) == "key") {
       EXPECT_EQ(stored.at("api_keys").at("openai"), "first-key");
+    }
     if (std::string(operations.second) == "key") {
       EXPECT_EQ(stored.at("api_keys").at("google"), "second-key");
-      if (std::string(operations.first) == "refresh")
+      if (std::string(operations.first) == "refresh") {
         EXPECT_EQ(stored.at("codex").at("refresh_token"), "rotated");
+      }
     } else
       EXPECT_EQ(stored.at("codex").at("access_token"), "imported");
   }

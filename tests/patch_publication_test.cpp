@@ -89,8 +89,9 @@ TEST(PatchPublication, TerminationAtMoveBoundariesAlwaysLeavesCompleteFile) {
       ASSERT_EQ(WEXITSTATUS(status), 61);
       EXPECT_EQ(fs::exists(src), std::string(step) != "retired");
       EXPECT_EQ(fs::exists(dst), std::string(step) != "unpublished");
-      if (fs::exists(src))
+      if (fs::exists(src)) {
         EXPECT_EQ(files.read(src), "original\n");
+      }
       if (fs::exists(dst)) {
         EXPECT_EQ(files.read(dst), "edited\n");
         EXPECT_EQ(permissions(dst), 0751);
@@ -180,8 +181,9 @@ TEST(PatchPublication, FailedPublicationOrSourceRetirementPreservesSourceAndMode
     files.atomic_write(src, "original\n", true);
     bool fired = false;
     ops.before = [&](const auto &op, const auto &path) {
-      if (std::string(point) == "remove" && op == "remove" && path == src)
+      if (std::string(point) == "remove" && op == "remove" && path == src) {
         EXPECT_EQ(permissions(dst), 0600);
+      }
       if (!fired && ((std::string(point) == "parent" && op == "sync" && path == dir.root &&
                       fs::exists(dir.root / "new")) ||
                      (std::string(point) == "child" && op == "sync" && path == dir.root / "new") ||
@@ -301,8 +303,9 @@ TEST(PatchPublication, RollbackRestoresSourceBeforeRetiringOwnedDestination) {
       }
       if (op == "link" && path == src && std::string(point) == "failed-restore")
         throw Error("cannot restore");
-      if (op == "remove" && path == dst)
+      if (op == "remove" && path == dst) {
         EXPECT_EQ(files.read(src), "original\n");
+      }
     };
     try {
       publish_native_patch({move_file(src, dst), {{}, late, {}, "later"}}, Cancellation{}, ops);

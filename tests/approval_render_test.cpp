@@ -53,10 +53,11 @@ void expect_row(int row, std::string_view text, int columns) {
   size_t column = 0;
   for (size_t offset = 0; offset < text.size();) {
     const auto token = codet::detail::rendered_token(text, offset);
-    if (token.point < 0x80)
+    if (token.point < 0x80) {
       for (size_t i = 0; i < token.bytes; ++i)
         EXPECT_EQ(mvinch(row, static_cast<int>(column + i)) & A_CHARTEXT,
                   static_cast<chtype>(text[offset + i]));
+    }
     if (token.point >= 0x80) {
       cchar_t cell{};
       ASSERT_EQ(mvwin_wch(stdscr, row, static_cast<int>(column), &cell), OK);
@@ -183,8 +184,9 @@ TEST(ApprovalCurses, PreparedPagesFitRealCellsInCAndUtf8Locales) {
       EXPECT_EQ(reconstructed, expected);
     }
   }
-  if (std::getenv("CODET_REQUIRE_UTF8_CURSES"))
+  if (std::getenv("CODET_REQUIRE_UTF8_CURSES")) {
     EXPECT_TRUE(exercised_unicode) << "Required UTF-8/wide-curses branch did not run";
+  }
 }
 TEST(ApprovalCurses, InputRemainsWithinBottomRowForEveryBytePrefixAndSmallScreen) {
   for (const char *locale : {"C", "en_US.UTF-8", "C.UTF-8"}) {
