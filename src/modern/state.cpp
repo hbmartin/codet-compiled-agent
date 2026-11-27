@@ -2109,6 +2109,7 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
       impl_->finish_fork_marker(id, startup.diagnostics);
     } catch (const SessionBusy &) {
       // A live fork will finish its own publication.
+      continue;
     }
   }
 }

@@ -218,16 +218,16 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
   c.max_turns = limit(data, "max_turns", c.max_turns, 1, 1000);
   c.max_output_tokens = limit(data, "max_output_tokens", c.max_output_tokens, 1, 1000000);
   c.context_tokens = limit(data, "context_tokens", c.context_tokens, 512, 2000000);
-  c.tool_output_limit =
-      limit(data, "tool_output_limit", c.tool_output_limit, 256, 16 * 1024 * 1024);
+  constexpr uint64_t mebibyte = uint64_t{1024} * 1024;
+  c.tool_output_limit = limit(data, "tool_output_limit", c.tool_output_limit, 256, 16 * mebibyte);
   c.request_timeout = limit(data, "request_timeout_seconds", c.request_timeout, 0, 3600);
   c.connect_timeout = limit(data, "connect_timeout_seconds", c.connect_timeout, 1, 3600);
   c.stream_idle_timeout =
       limit(data, "stream_idle_timeout_seconds", c.stream_idle_timeout, 1, 3600);
   c.project_doc_max_bytes =
-      limit(data, "project_doc_max_bytes", c.project_doc_max_bytes, 0, 1024 * 1024);
+      limit(data, "project_doc_max_bytes", c.project_doc_max_bytes, 0, mebibyte);
   c.memory_context_max_bytes =
-      limit(data, "memory_context_max_bytes", c.memory_context_max_bytes, 0, 1024 * 1024);
+      limit(data, "memory_context_max_bytes", c.memory_context_max_bytes, 0, mebibyte);
   c.set_allow(setting(data, "allow", c.rules().allow));
   c.set_deny(setting(data, "deny", c.rules().deny));
   c.hooks = data.value("hooks", Json::object());

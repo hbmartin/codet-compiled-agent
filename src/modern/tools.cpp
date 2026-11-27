@@ -994,15 +994,15 @@ void Tools::stop_exec_sessions(const std::string &owner, const std::vector<int> 
       throw Error("Execution handle belongs to another conversation");
     try {
       processes_.stop(job.process);
+      job.completed = true;
     } catch (const ProcessExpired &) {
       // An already-reaped job may have aged out during confirmation.
+      job.completed = true;
     } catch (const std::exception &e) {
       if (fatal(std::current_exception()))
         throw;
       failures += " " + std::to_string(id) + " (" + e.what() + ")";
-      continue;
     }
-    job.completed = true;
   }
   if (!failures.empty())
     throw Error("Could not stop shell jobs:" + failures);

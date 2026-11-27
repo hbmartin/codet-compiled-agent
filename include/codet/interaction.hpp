@@ -26,7 +26,7 @@ class Interaction {
     std::shared_ptr<const detail::PreparedPrompt> prepared = {};
     size_t charged_bytes = 0, retained_bytes = 0;
   };
-  bool input_barrier(std::deque<Input>::const_iterator end) const noexcept;
+  bool input_barrier(const std::deque<Input>::const_iterator &end) const noexcept;
   uint64_t next_input_ = 0;
   size_t input_bytes_ = 0, retained_bytes_ = 0;
   void check_input_capacity(size_t, size_t, size_t previous = 0,

@@ -174,7 +174,7 @@ std::set<std::string> attr_names(int fd, const fs::path &path) {
   const auto n = ::flistxattr(fd, nullptr, 0, 0);
   if (n < 0)
     io_error("Enumerate patch attributes in", path);
-  if (n > 1024 * 1024)
+  if (n > ssize_t{1024} * 1024)
     throw Error("Attribute list too large to verify: " + path.string());
   if (!n)
     return {};
@@ -193,7 +193,7 @@ std::set<std::string> attr_names(int fd, const fs::path &path) {
 }
 std::string attribute(int fd, const std::string &name, const fs::path &path) {
   const auto n = attr_size(fd, name, path);
-  if (n > 1024 * 1024)
+  if (n > size_t{1024} * 1024)
     throw Error("Attribute too large to preserve: " + path.string() + " (" + name + ")");
   std::string value(n, '\0');
   if (::fgetxattr(fd, name.c_str(), value.data(), n, 0, 0) != static_cast<ssize_t>(n))
