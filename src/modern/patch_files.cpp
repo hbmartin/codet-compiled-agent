@@ -136,6 +136,20 @@ void retire_verified(const fs::path &path, Stage &stage, const struct stat &expe
   }
 }
 
+// The checked pathname can change before rename. Capture its occupant in private storage,
+// then claim the public name exclusively. Apply the same ordering when undoing an Update.
+void replace_verified(const fs::path &path, Stage &displaced, const struct stat &expected,
+                      const std::string &hash, const fs::path &replacement,
+                      const PatchFileOps &ops) {
+  retire_verified(path, displaced, expected, hash, ops);
+  try {
+    ops.link_exclusive(replacement, path);
+  } catch (...) {
+    displaced.restore_retired(path, ops);
+    throw;
+  }
+}
+
 void create_parents(const fs::path &parent, const PatchFileOps &ops) {
   std::vector<fs::path> missing;
   for (auto path = parent; !fs::exists(path); path = path.parent_path()) {
@@ -338,7 +352,7 @@ struct Prepared {
       require_version(src, original, change.before_hash);
     if (staged) {
       if (src == dst)
-        ops.replace(staged->file, dst);
+        replace_verified(dst, *backup, original, change.before_hash, staged->file, ops);
       else
         ops.link_exclusive(staged->file, dst);
       published = true;
@@ -378,7 +392,7 @@ struct Prepared {
       require_version(dst, installed, after_hash);
       if (src == dst) {
         require_version(backup->file, original, change.before_hash);
-        ops.replace(backup->file, src);
+        replace_verified(dst, *staged, installed, after_hash, backup->file, ops);
         ops.sync_directory(dst.parent_path());
         return;
       }
@@ -403,10 +417,6 @@ struct Prepared {
 void PatchFileOps::link_exclusive(const fs::path &from, const fs::path &to) const {
   if (::link(from.c_str(), to.c_str()))
     io_error("Cannot create exclusive patch link at", to);
-}
-void PatchFileOps::replace(const fs::path &from, const fs::path &to) const {
-  if (::rename(from.c_str(), to.c_str()))
-    io_error("Cannot replace patch file", to);
 }
 void PatchFileOps::retire(const fs::path &from, const fs::path &private_name) const {
   if (::rename(from.c_str(), private_name.c_str()))

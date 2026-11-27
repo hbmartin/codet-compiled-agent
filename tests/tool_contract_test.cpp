@@ -568,12 +568,12 @@ struct FailingFiles : FileSystem, PatchFileOps {
   void publish_patch(const std::vector<PatchChange> &changes, const Cancellation &c) override {
     publish_native_patch(changes, c, *this);
   }
-  void replace(const fs::path &from, const fs::path &to) const override {
+  void link_exclusive(const fs::path &from, const fs::path &to) const override {
     if (armed && to.filename() == "b") {
       armed = false;
       throw Error("injected write failure");
     }
-    PatchFileOps::replace(from, to);
+    PatchFileOps::link_exclusive(from, to);
   }
   void remove(const fs::path &p) override {
     native.remove(p);
@@ -591,6 +591,7 @@ TEST_F(Contracts, PatchRollsBackAnEarlierWriteWhenALaterFileFails) {
   const auto patch = "*** Begin Patch\n*** Update File: a\n@@\n-old a\n+new a\n*** Update File: "
                      "b\n@@\n-old b\n+new b\n*** End Patch\n";
   EXPECT_TRUE(t.execute(call("apply_patch", {{"patch", patch}}), cancel).error);
+  EXPECT_FALSE(failing.armed);
   EXPECT_EQ(files.read(config.cwd / "a"), "old a\n");
   EXPECT_EQ(files.read(config.cwd / "b"), "old b\n");
 }

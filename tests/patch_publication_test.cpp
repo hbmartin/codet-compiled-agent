@@ -20,10 +20,6 @@ struct ControlledPatchOps : PatchFileOps {
     before("link", to);
     PatchFileOps::link_exclusive(from, to);
   }
-  void replace(const fs::path &from, const fs::path &to) const override {
-    before("replace", to);
-    PatchFileOps::replace(from, to);
-  }
   void retire(const fs::path &from, const fs::path &private_name) const override {
     before("remove", from);
     PatchFileOps::retire(from, private_name);
@@ -60,6 +56,8 @@ int patch_child(const fs::path &source, const fs::path &dest, const std::string 
   ControlledPatchOps ops;
   ops.before = [&](const auto &operation, const auto &path) {
     if ((step == "unpublished" && operation == "link" && path == dest) ||
+        (step == "update-captured" && operation == "link" && path == source &&
+         !fs::exists(source)) ||
         (step == "published" && operation == "remove" && path == source) ||
         (step == "retired" && operation == "sync" && path == source.parent_path() &&
          !fs::exists(source)))
@@ -98,6 +96,39 @@ TEST(PatchPublication, TerminationAtMoveBoundariesAlwaysLeavesCompleteFile) {
       }
     }
   }
+}
+
+TEST(PatchPublication, InterruptedInPlaceUpdateRetainsCapturedOriginal) {
+  TempDirectory dir;
+  NativeFileSystem files;
+  const auto target = dir.root / "file";
+  files.atomic_write(target, "original\n");
+  ASSERT_EQ(::chmod(target.c_str(), 0751), 0);
+  struct stat expected {};
+  ASSERT_EQ(::lstat(target.c_str(), &expected), 0);
+  const auto pid = test::start_helper(
+      {"--codet-patch-helper", target.string(), target.string(), "update-captured"});
+  int status = 0;
+  ASSERT_TRUE(test::wait_helper(pid, status));
+  ASSERT_TRUE(WIFEXITED(status));
+  ASSERT_EQ(WEXITSTATUS(status), 61);
+  EXPECT_FALSE(fs::exists(target));
+  size_t captures = 0;
+  for (const auto &stage : fs::directory_iterator(dir.root)) {
+    if (stage.path().filename().string().rfind(".codet-patch-", 0) != 0)
+      continue;
+    const auto captured = stage.path() / "retired";
+    if (!fs::exists(captured))
+      continue;
+    ++captures;
+    struct stat actual {};
+    ASSERT_EQ(::lstat(captured.c_str(), &actual), 0);
+    EXPECT_EQ(actual.st_dev, expected.st_dev);
+    EXPECT_EQ(actual.st_ino, expected.st_ino);
+    EXPECT_EQ(permissions(captured), 0751);
+    EXPECT_EQ(files.read(captured), "original\n");
+  }
+  EXPECT_EQ(captures, 1u);
 }
 
 TEST(PatchPublication, OperatingSystemAppliesUmaskToNewFiles) {
@@ -168,6 +199,104 @@ TEST(PatchPublication, CompetingFileAtPublicationIsNeverReplaced) {
     EXPECT_EQ(files.read(src), "original\n");
     EXPECT_EQ(files.read(dst), "independent\n");
     EXPECT_EQ(permissions(dst), 0600);
+  }
+}
+
+TEST(PatchPublication, InPlaceUpdatePreservesReplacementBetweenCheckAndRename) {
+  for (bool during_rollback : {false, true}) {
+    SCOPED_TRACE(during_rollback ? "rollback" : "commit");
+    TempDirectory dir;
+    NativeFileSystem files;
+    ControlledPatchOps ops;
+    const auto target = dir.root / "file", competitor = dir.root / "independent",
+               late = dir.root / "later";
+    files.atomic_write(target, "original\n", true);
+    files.atomic_write(competitor, "competing edit\n");
+    ASSERT_EQ(::chmod(competitor.c_str(), 0640), 0);
+    struct stat expected {};
+    ASSERT_EQ(::lstat(competitor.c_str(), &expected), 0);
+    bool failed_later = false, replaced = false;
+    ops.before = [&](const auto &operation, const auto &path) {
+      if (operation == "link" && path == late) {
+        failed_later = true;
+        throw Error("later patch failure");
+      }
+      if (operation == "remove" && path == target && failed_later == during_rollback && !replaced) {
+        EXPECT_EQ(files.read(target), during_rollback ? "edited\n" : "original\n");
+        fs::rename(competitor, target);
+        replaced = true;
+      }
+    };
+    std::vector<PatchChange> changes{move_file(target, target)};
+    if (during_rollback)
+      changes.push_back({{}, late, {}, "later\n"});
+    std::string error;
+    try {
+      publish_native_patch(changes, Cancellation{}, ops);
+    } catch (const Error &e) {
+      error = e.what();
+    }
+    ASSERT_TRUE(replaced);
+    EXPECT_EQ(failed_later, during_rollback);
+    EXPECT_NE(error.find(target.string()), std::string::npos) << error;
+    EXPECT_FALSE(fs::exists(late));
+    struct stat actual {};
+    ASSERT_EQ(::lstat(target.c_str(), &actual), 0);
+    EXPECT_EQ(actual.st_dev, expected.st_dev);
+    EXPECT_EQ(actual.st_ino, expected.st_ino);
+    EXPECT_EQ(permissions(target), 0640);
+    EXPECT_EQ(files.read(target), "competing edit\n");
+  }
+}
+
+TEST(PatchPublication, InPlaceUpdateKeepsClaimantAndReportsCapturedFile) {
+  for (bool replace_before_capture : {false, true}) {
+    SCOPED_TRACE(replace_before_capture ? "racing restoration" : "racing publication");
+    TempDirectory dir;
+    NativeFileSystem files;
+    ControlledPatchOps ops;
+    const auto target = dir.root / "file", replacement = dir.root / "replacement",
+               claimant = dir.root / "claimant";
+    files.atomic_write(target, "original\n", true);
+    files.atomic_write(replacement, "first competing edit\n", true);
+    files.atomic_write(claimant, "new occupant\n");
+    struct stat captured {};
+    ASSERT_EQ(::lstat((replace_before_capture ? replacement : target).c_str(), &captured), 0);
+    bool claimed = false;
+    ops.before = [&](const auto &operation, const auto &path) {
+      if (path != target)
+        return;
+      if (operation == "remove" && replace_before_capture)
+        fs::rename(replacement, target);
+      if (operation == "link" && !claimed) {
+        fs::create_hard_link(claimant, target);
+        claimed = true;
+      }
+    };
+    std::string error;
+    try {
+      publish_native_patch({move_file(target, target)}, Cancellation{}, ops);
+    } catch (const Error &e) {
+      error = e.what();
+    }
+    ASSERT_TRUE(claimed);
+    ASSERT_TRUE(fs::equivalent(claimant, target));
+    EXPECT_EQ(files.read(target), "new occupant\n");
+    bool recovery_reported = false;
+    for (const auto &entry : fs::recursive_directory_iterator(dir.root)) {
+      const auto &path = entry.path();
+      if (path.parent_path() == dir.root || !entry.is_regular_file() ||
+          error.find(path.string()) == std::string::npos)
+        continue;
+      struct stat retained {};
+      ASSERT_EQ(::lstat(path.c_str(), &retained), 0);
+      if (retained.st_dev == captured.st_dev && retained.st_ino == captured.st_ino) {
+        EXPECT_EQ(files.read(path),
+                  replace_before_capture ? "first competing edit\n" : "original\n");
+        recovery_reported = true;
+      }
+    }
+    EXPECT_TRUE(recovery_reported) << error;
   }
 }
 

@@ -10,7 +10,6 @@ struct PatchChange {
 struct PatchFileOps {
   virtual ~PatchFileOps() = default;
   virtual void link_exclusive(const fs::path &from, const fs::path &to) const;
-  virtual void replace(const fs::path &from, const fs::path &to) const;
   virtual void retire(const fs::path &from, const fs::path &private_name) const;
   virtual void sync_directory(const fs::path &) const;
   virtual void preserve_metadata(const fs::path &source, int source_fd, const fs::path &staged,
