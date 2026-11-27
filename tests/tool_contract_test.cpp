@@ -570,6 +570,7 @@ struct FailingFiles : FileSystem, PatchFileOps {
   }
   void link_exclusive(const fs::path &from, const fs::path &to) const override {
     if (armed && to.filename() == "b") {
+      EXPECT_EQ(native.read(to.parent_path() / "a"), "new a\n");
       armed = false;
       throw Error("injected write failure");
     }
