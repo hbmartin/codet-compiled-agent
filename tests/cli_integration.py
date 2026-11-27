@@ -1345,9 +1345,10 @@ class CliTests(unittest.TestCase):
                 child = resources.start([BIN, '-C', str(self.workspace), '--ui', mode,
                                          '--permission-mode', 'bypass'], stdin=slave, stdout=slave,
                                         stderr=slave, env=dict(self.env, TERM='xterm'))
-                def wait_for(marker, master=master):
+                def wait_for(*markers, master=master):
                     received = bytearray()
-                    collect_pty(self, master, received, lambda: marker in received)
+                    collect_pty(self, master, received,
+                                lambda: all(marker in received for marker in markers))
                 def type_line(text, master=master):
                     os.write(master, text + b'\n')
                 wait_for(b'codet>')
@@ -1362,19 +1363,22 @@ class CliTests(unittest.TestCase):
                             'SELECT count(*) FROM sessions').fetchone()[0] == expected)
                     # A pretyped yes must not confirm a job stop. Interrupt the open question.
                     os.write(master, b'/new\nyes\n')
-                    wait_for(b'live shell job')
+                    # Curses draws the question before it finishes presenting the review.
+                    # Both terminals display this prompt when fresh input can confirm it.
+                    wait_for(b'live shell job', b'Approve? [y/N]')
                     child.send_signal(signal.SIGINT)
                     wait_for(b'Kept the current conversation')
                     self.assertEqual(db.execute('SELECT count(*) FROM sessions').fetchone()[0], before)
                     os.kill(pid, 0)
                     type_line(b'/new')
-                    wait_for(b'live shell job')
+                    wait_for(b'Approve? [y/N]')
                     type_line(b'no')
-                    wait_for(b'Kept the current conversation')
+                    # Curses may redraw the earlier cancellation from its transcript.
+                    wait_for(b'[Approval denied]' if mode == 'curses' else b'Kept the current conversation')
                     self.assertEqual(db.execute('SELECT count(*) FROM sessions').fetchone()[0], before)
                     os.kill(pid, 0)
                     type_line(b'/new')
-                    wait_for(b'live shell job')
+                    wait_for(b'Approve? [y/N]')
                     type_line(b'yes')
                     wait_for(b'Started ')
                     wait_for_count(before + 1)
@@ -1386,7 +1390,7 @@ class CliTests(unittest.TestCase):
                     type_line(b'fixture-capture-background-pid')
                     wait_for(b'fixture done')
                     type_line(b'/new')
-                    wait_for(b'Approve?' if mode == 'curses' else b'live shell job')
+                    wait_for(b'Approve? [y/N]')
                     release.touch()
                     # Wait for the actual command to finish while confirmation is open.
                     deadline = time.monotonic() + 5
