@@ -1461,6 +1461,59 @@ class CliTests(unittest.TestCase):
         self.assertEqual(self.server.requests[-1]['path'],'/v1/responses')
         self.assertEqual(self.server.requests[-1]['body']['reasoning']['effort'],'medium')
 
+    def test_login_preserves_prior_key_on_interrupted_or_unreadable_input(self):
+        import array
+        import fcntl
+        import termios
+        args=['login','--provider','openai','--with-api-key']
+        saved=self.run_cli(*args,input='working-key')
+        self.assertEqual(saved.returncode,0,saved.stderr)
+        auth=self.home/'auth.json'
+        before=auth.read_bytes()
+        r,w=os.pipe()
+        try:
+            os.write(w,b'partial')
+            with subprocess.Popen([BIN,*args],stdin=r,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=self.env) as child:
+                try:
+                    remaining=array.array('i',[1])
+                    deadline=time.monotonic()+5
+                    while remaining[0] and time.monotonic()<deadline:
+                        fcntl.ioctl(r,termios.FIONREAD,remaining)
+                        if remaining[0]:time.sleep(.005)
+                    self.assertEqual(remaining[0],0,'child never started reading the key')
+                    child.send_signal(signal.SIGINT)
+                    child.communicate(timeout=5)
+                    self.assertEqual(child.returncode,130)
+                finally:
+                    if child.poll() is None:child.kill()
+        finally:
+            os.close(r)
+            os.close(w)
+        self.assertEqual(auth.read_bytes(),before)
+        descriptor=os.open(self.workspace,os.O_RDONLY)
+        try:
+            failure=subprocess.run([BIN,*args],stdin=descriptor,capture_output=True,text=True,env=self.env,timeout=5)
+        finally:
+            os.close(descriptor)
+        self.assertEqual(failure.returncode,1)
+        self.assertIn('read stdin',failure.stderr)
+        self.assertEqual(auth.read_bytes(),before)
+
+    def test_login_reads_regular_stdin_and_clean_device_eof(self):
+        args=[BIN,'login','--provider','openai','--with-api-key']
+        source=self.root/'key.txt'
+        source.write_bytes(b'file-fixture\n')
+        with source.open('rb') as stream:
+            result=subprocess.run(args,stdin=stream,capture_output=True,text=True,env=self.env,timeout=5)
+        self.assertEqual(result.returncode,0,result.stderr)
+        auth=self.home/'auth.json'
+        before=auth.read_bytes()
+        self.assertEqual(json.loads(before)['api_keys']['openai'],'file-fixture')
+        empty=subprocess.run(args,stdin=subprocess.DEVNULL,capture_output=True,text=True,env=self.env,timeout=5)
+        self.assertEqual(empty.returncode,2,empty.stderr)
+        self.assertIn('nonempty',empty.stderr)
+        self.assertEqual(auth.read_bytes(),before)
+
     def test_nonreasoning_responses_model_survives_saved_session_resume(self):
         flags=['--model','gpt-4o-mini','-c','providers.openai.wire_api="responses"']
         r=self.run_cli('exec',*flags,'--output-format=json','simple')

@@ -26,6 +26,7 @@
 
 std::string codet::test::executable;
 namespace codet::test {
+int credential_writer(const fs::path &, const std::string &, int);
 int patch_child(const fs::path &, const fs::path &, const std::string &);
 } // namespace codet::test
 #ifdef CODET_NATIVE_TERMINAL_METRICS
@@ -162,6 +163,8 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc == 5 && std::string(argv[1]) == "--codet-credential-writer")
+      return codet::test::credential_writer(argv[2], argv[3], std::stoi(argv[4]));
     if (argc == 5 && std::string(argv[1]) == "--codet-patch-helper")
       return codet::test::patch_child(argv[2], argv[3], argv[4]);
     if (argc > 2 && std::string(argv[1]) == "--codet-admission-helper") {

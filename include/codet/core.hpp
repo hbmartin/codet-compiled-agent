@@ -361,8 +361,8 @@ class CredentialStore {
 public:
   CredentialStore(fs::path home, FileSystem &files, Clock &clock)
       : home_(std::move(home)), files_(files), clock_(clock) {}
-  void import(const fs::path &);
-  void save_key(const std::string &provider, const std::string &key);
+  void import(const fs::path &, const Cancellation & = {});
+  void save_key(const std::string &provider, const std::string &key, const Cancellation & = {});
   Json load() const;
   std::string key(const std::string &) const;
   Json codex(HttpTransport &, const Cancellation &);

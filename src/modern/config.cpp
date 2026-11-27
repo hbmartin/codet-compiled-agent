@@ -1,5 +1,7 @@
 #include "codet/core.hpp"
 #include "codet/tool_registry.hpp"
+#include <cerrno>
+#include <cstring>
 #include <fcntl.h>
 #include <sstream>
 #include <sys/file.h>
@@ -82,6 +84,39 @@ void secure_home(const fs::path &home) {
   if (::chmod(home.c_str(), 0700) != 0)
     throw Error("Cannot protect credential directory");
 }
+class CredentialLock {
+  int fd_;
+
+public:
+  explicit CredentialLock(const fs::path &home) {
+    secure_home(home);
+    fd_ = ::open((home / "auth.lock").c_str(), O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0600);
+    if (fd_ < 0)
+      throw Error("Cannot open credential lock");
+  }
+  CredentialLock(const CredentialLock &) = delete;
+  CredentialLock &operator=(const CredentialLock &) = delete;
+  ~CredentialLock() {
+    ::close(fd_);
+  }
+  void acquire(Clock &clock, const Cancellation &cancel) const {
+    struct stat info {};
+    if (::fstat(fd_, &info) || !S_ISREG(info.st_mode) || info.st_uid != ::geteuid() ||
+        ::fcntl(fd_, F_SETFD, FD_CLOEXEC) < 0 || ::fchmod(fd_, 0600))
+      throw Error("Cannot protect private credential lock");
+    for (;;) {
+      cancel.check();
+      if (::flock(fd_, LOCK_EX | LOCK_NB) == 0)
+        return;
+      const int error = errno;
+      if (error == EINTR)
+        continue;
+      if (error != EWOULDBLOCK && error != EAGAIN)
+        throw Error("Cannot acquire credential lock: " + std::string(std::strerror(error)));
+      clock.sleep_ms(50, cancel);
+    }
+  }
+};
 } // namespace
 Config load_config(const fs::path &home, const fs::path &cwd, const std::string &profile,
                    const std::vector<std::string> &overrides, FileSystem &files) {
@@ -254,7 +289,8 @@ Json CredentialStore::load() const {
     throw Error("Invalid Codet credential store");
   return j;
 }
-void CredentialStore::import(const fs::path &source) {
+void CredentialStore::import(const fs::path &source, const Cancellation &cancel) {
+  cancel.check();
   const Json input = Json::parse(files_.read(source, size_t{1024} * 1024), nullptr, false);
   if (!input.is_object())
     throw Error("Credential import requires a JSON object", 2);
@@ -281,17 +317,23 @@ void CredentialStore::import(const fs::path &source) {
         identity["chatgpt_account_id"].is_string())
       clean["account_id"] = identity["chatgpt_account_id"];
   }
-  secure_home(home_);
+  CredentialLock lock(home_);
+  lock.acquire(clock_, cancel);
   Json store = load();
   store["codex"] = clean;
+  cancel.check();
   files_.atomic_write(home_ / "auth.json", store.dump(2) + "\n", true);
 }
-void CredentialStore::save_key(const std::string &provider, const std::string &key) {
+void CredentialStore::save_key(const std::string &provider, const std::string &key,
+                               const Cancellation &cancel) {
+  cancel.check();
   if (!valid_secret(key))
     throw Error("API key must be a nonempty single line", 2);
-  secure_home(home_);
+  CredentialLock lock(home_);
+  lock.acquire(clock_, cancel);
   Json store = load();
   store["api_keys"][provider] = key;
+  cancel.check();
   files_.atomic_write(home_ / "auth.json", store.dump(2) + "\n", true);
 }
 std::string CredentialStore::key(const std::string &p) const {
@@ -301,24 +343,8 @@ std::string CredentialStore::key(const std::string &p) const {
   return "";
 }
 Json CredentialStore::codex(HttpTransport &http, const Cancellation &cancel) {
-  secure_home(home_);
-  int fd = ::open((home_ / "auth.lock").c_str(), O_CREAT | O_RDWR | O_NOFOLLOW, 0600);
-  if (fd < 0)
-    throw Error("Cannot open credential refresh lock");
-  struct Lock {
-    int fd;
-    explicit Lock(int descriptor) : fd(descriptor) {}
-    Lock(const Lock &) = delete;
-    Lock &operator=(const Lock &) = delete;
-    ~Lock() {
-      (void)::flock(fd, LOCK_UN);
-      ::close(fd);
-    }
-  } lock{fd};
-  while (::flock(fd, LOCK_EX | LOCK_NB) != 0) {
-    cancel.check();
-    clock_.sleep_ms(50, cancel);
-  }
+  CredentialLock lock(home_);
+  lock.acquire(clock_, cancel);
   auto store = load();
   if (!store.contains("codex"))
     throw Error("No imported ChatGPT credentials. Use codet login --import FILE, or select an "

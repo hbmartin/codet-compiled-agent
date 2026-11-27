@@ -86,19 +86,35 @@ struct Options {
   std::vector<fs::path> roots, images;
   std::vector<std::string> positionals;
 };
-std::string stdin_text() {
-  std::ostringstream out;
+std::string stdin_text(const Cancellation &cancel) {
+  std::string out;
   char buffer[8192];
-  size_t n = 0;
-  while (std::cin) {
-    std::cin.read(buffer, sizeof buffer);
-    const auto count = std::cin.gcount();
-    n += static_cast<size_t>(count);
-    if (n > size_t{1024} * 1024)
+  for (;;) {
+    cancel.check();
+    // Darwin poll can report POLLNVAL for valid devices such as /dev/null.
+    fd_set readers;
+    FD_ZERO(&readers);
+    FD_SET(STDIN_FILENO, &readers);
+    struct timeval timeout {
+      0, 100000
+    };
+    const auto ready = ::select(STDIN_FILENO + 1, &readers, nullptr, nullptr, &timeout);
+    if (ready == 0)
+      continue;
+    const auto count = ready < 0 ? -1 : ::read(STDIN_FILENO, buffer, sizeof buffer);
+    const int error = errno;
+    cancel.check();
+    if (count < 0) {
+      if (error == EINTR || error == EAGAIN || error == EWOULDBLOCK)
+        continue;
+      throw Error("Cannot read stdin: " + std::string(std::strerror(error)));
+    }
+    if (count == 0)
+      return out;
+    if (static_cast<size_t>(count) > size_t{1024} * 1024 - out.size())
       throw Error("stdin exceeds 1 MiB", 2);
-    out.write(buffer, count);
+    out.append(buffer, static_cast<size_t>(count));
   }
-  return out.str();
 }
 std::string combined(const std::vector<std::string> &words) {
   std::string s;
@@ -1079,12 +1095,12 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     if (!o.import.empty() && o.key)
       throw Error("Choose one credential input", 2);
     if (!o.import.empty())
-      credentials.import(o.import);
+      credentials.import(o.import, cancel);
     else if (o.key) {
-      auto key = stdin_text();
+      auto key = stdin_text(cancel);
       while (!key.empty() && (key.back() == '\n' || key.back() == '\r'))
         key.pop_back();
-      credentials.save_key(config.provider == "codex" ? "openai" : config.provider, key);
+      credentials.save_key(config.provider == "codex" ? "openai" : config.provider, key, cancel);
     } else
       throw Error("Native sign-in is deferred. Use login --import FILE or --with-api-key", 2);
     (void)errors.write({"Credentials stored privately in Codet state"});
@@ -1171,7 +1187,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   const bool will_run = o.command != "sessions" && o.command != "export" && o.command != "repair";
   const bool headless = o.exec || !isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO);
   if (will_run && headless && !isatty(STDIN_FILENO)) {
-    auto input = stdin_text();
+    auto input = stdin_text(cancel);
     if (prompt.empty() || prompt == "-")
       prompt = input;
     else if (!input.empty())
