@@ -149,6 +149,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 command='cat output.txt'
                 if 'wait' in prompt:command+='; printf ready > ready; while test ! -f release; do sleep .02; done'
                 if 'background' in prompt:command='printf ready > ready; cat output.txt; while test ! -f release; do sleep .02; done'
+                if 'background-pid' in prompt:command='echo $$ > job.pid; '+command+'; echo exited > exited'
                 args={'cmd':command,'login':False,'yield_time_ms':250 if 'background' in prompt else 10000}
             elif 'background' in prompt:
                 name=None
@@ -1315,6 +1316,74 @@ class CliTests(unittest.TestCase):
             if p.poll() is None:p.kill();p.wait(timeout=5)
             p.stdout.close();p.stderr.close()
 
+    def test_new_confirms_and_reaps_jobs_in_both_terminals(self):
+        import signal
+        import sqlite3
+        (self.workspace / 'output.txt').write_text('ready')
+        # The job writes its own PID so the test can distinguish real reaping from hiding a handle.
+        for mode in ('line', 'curses'):
+            with self.subTest(mode=mode), PtyProcess() as resources:
+                release = self.workspace / 'release'
+                release.unlink(missing_ok=True)
+                master, slave = resources.openpty()
+                child = resources.start([BIN, '-C', str(self.workspace), '--ui', mode,
+                                         '--permission-mode', 'bypass'], stdin=slave, stdout=slave,
+                                        stderr=slave, env=dict(self.env, TERM='xterm'))
+                def wait_for(marker, master=master):
+                    received = bytearray()
+                    collect_pty(self, master, received, lambda: marker in received)
+                def type_line(text, master=master):
+                    os.write(master, text + b'\n')
+                wait_for(b'codet>')
+                type_line(b'fixture-capture-background-pid')
+                wait_for(b'fixture done')
+                pid = int((self.workspace / 'job.pid').read_text())
+                with sqlite3.connect(self.home / 'state.sqlite3') as db:
+                    before = db.execute('SELECT count(*) FROM sessions').fetchone()[0]
+                    def wait_for_count(expected, db=db, master=master):
+                        # Curses can redraw an earlier "Started" line while the new switch is pending.
+                        collect_pty(self, master, bytearray(), lambda: db.execute(
+                            'SELECT count(*) FROM sessions').fetchone()[0] == expected)
+                    # A pretyped yes must not confirm a job stop. Interrupt the open question.
+                    os.write(master, b'/new\nyes\n')
+                    wait_for(b'live shell job')
+                    child.send_signal(signal.SIGINT)
+                    wait_for(b'Kept the current conversation')
+                    self.assertEqual(db.execute('SELECT count(*) FROM sessions').fetchone()[0], before)
+                    os.kill(pid, 0)
+                    type_line(b'/new')
+                    wait_for(b'live shell job')
+                    type_line(b'no')
+                    wait_for(b'Kept the current conversation')
+                    self.assertEqual(db.execute('SELECT count(*) FROM sessions').fetchone()[0], before)
+                    os.kill(pid, 0)
+                    type_line(b'/new')
+                    wait_for(b'live shell job')
+                    type_line(b'yes')
+                    wait_for(b'Started ')
+                    wait_for_count(before + 1)
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(pid, 0)
+                    type_line(b'/new')
+                    wait_for(b'Started ')
+                    wait_for_count(before + 2)
+                    type_line(b'fixture-capture-background-pid')
+                    wait_for(b'fixture done')
+                    type_line(b'/new')
+                    wait_for(b'Approve?' if mode == 'curses' else b'live shell job')
+                    release.touch()
+                    # Wait for the actual command to finish while confirmation is open.
+                    deadline = time.monotonic() + 5
+                    while not (self.workspace / 'exited').exists() and time.monotonic() < deadline:
+                        time.sleep(.01)
+                    self.assertTrue((self.workspace / 'exited').exists())
+                    type_line(b'yes')
+                    wait_for(b'Started ')
+                    wait_for_count(before + 3)
+                    (self.workspace / 'exited').unlink()
+                type_line(b'/quit')
+                collect_pty(self, master, bytearray(), lambda child=child: child.poll() is not None)
+                self.assertEqual(child.returncode, 0)
     def test_new_session_lifecycle_and_invalid_hook_bytes_in_both_terminals(self):
         import pty
         import select

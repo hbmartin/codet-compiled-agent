@@ -39,6 +39,9 @@ struct ProviderError : Error {
   ProviderError(const std::string &, int, std::string);
   Json details() const;
 };
+struct ProcessExpired : Error {
+  using Error::Error;
+};
 struct ProcessTimeout : Error {
   ProcessTimeout() : Error("Command timed out during startup") {}
 };
@@ -598,7 +601,7 @@ class Tools {
   std::shared_ptr<ComputerBackend> computer_;
   std::shared_ptr<ImageBackend> images_;
   struct ExecSession {
-    std::string process, command;
+    std::string process, command, owner;
     fs::path cwd;
     std::string shell;
     bool pty = false;
@@ -667,6 +670,8 @@ public:
   std::vector<std::string> take_input();
   void begin_input_turn(const std::string &);
   void end_input_turn();
+  std::vector<int> live_exec_sessions(const std::string &owner);
+  void stop_exec_sessions(const std::string &owner, const std::vector<int> &handles);
   void cancel_exec() noexcept;
   Json capabilities() const;
   HookOutcome run_hooks(const std::string &, const Json &, const Cancellation &, int budget_ms = 0,

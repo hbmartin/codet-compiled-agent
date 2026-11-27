@@ -257,6 +257,99 @@ TEST_F(Runtime, PipeEofPublishesFinalOutputAndPtyRejectsBeforeWriting) {
                   .error);
   EXPECT_TRUE(recording.writes.empty());
 }
+TEST_F(Runtime, NewConversationIsolatesHandlesAndRetriesIncompleteCleanup) {
+  Recording process;
+  process.running = true;
+  config.permission_mode = "bypass";
+  Tools tools(config, files, process, http, clock);
+  tools.use_session("old");
+  const auto started =
+      tools.execute(call("exec_command", {{"cmd", "cat"}, {"yield_time_ms", 1}}), cancel);
+  ASSERT_FALSE(started.error) << started.content;
+  const auto id = started.metadata.at("session_id").get<int>();
+  const std::vector<int> handles{id};
+  EXPECT_EQ(tools.live_exec_sessions("old"), handles);
+  tools.use_session("fresh");
+  EXPECT_TRUE(tools.live_exec_sessions("fresh").empty());
+  EXPECT_TRUE(tools.execution_state({}).empty());
+  EXPECT_TRUE(
+      tools.execute(call("write_stdin", {{"session_id", id}, {"chars", "hello"}}), cancel).error);
+  EXPECT_TRUE(process.writes.empty());
+  EXPECT_THROW(tools.stop_exec_sessions("fresh", handles), Error);
+  tools.use_session("old");
+  process.stop_error = true;
+  EXPECT_THROW(tools.stop_exec_sessions("old", handles), Error);
+  EXPECT_EQ(tools.live_exec_sessions("old"), handles);
+  process.stop_error = false;
+  tools.stop_exec_sessions("old", handles);
+  EXPECT_FALSE(process.running);
+  EXPECT_TRUE(tools.live_exec_sessions("old").empty());
+}
+TEST_F(Runtime, PartialSessionCleanupListsOnlyTheJobThatNeedsRetry) {
+  struct TwoJobs : Recording {
+    bool fail_first = true;
+    std::set<std::string> stopped;
+    std::string start(const ProcessSpec &spec) override {
+      starts.push_back(spec);
+      return spec.argv.back();
+    }
+    ProcessResult poll(const std::string &id) override {
+      return {0, "", false, stopped.count(id) == 0};
+    }
+    void stop(const std::string &id) override {
+      if (fail_first && id == "first")
+        throw Error("first job still running");
+      stopped.insert(id);
+    }
+  } jobs;
+  config.permission_mode = "bypass";
+  Tools tools(config, files, jobs, http, clock);
+  tools.use_session("old");
+  const auto run = [&](const char *command) {
+    return tools.execute(call("exec_command", {{"cmd", command}, {"yield_time_ms", 1}}), cancel);
+  };
+  const auto first = run("first"), second = run("second");
+  ASSERT_FALSE(first.error) << first.content;
+  ASSERT_FALSE(second.error) << second.content;
+  const auto handles = tools.live_exec_sessions("old");
+  ASSERT_EQ(handles.size(), 2u);
+  try {
+    tools.stop_exec_sessions("old", handles);
+    FAIL() << "expected partial cleanup error";
+  } catch (const Error &e) {
+    EXPECT_THAT(e.what(), HasSubstr(std::to_string(first.metadata.at("session_id").get<int>())));
+    EXPECT_THAT(e.what(), HasSubstr("first job still running"));
+  }
+  EXPECT_EQ(tools.live_exec_sessions("old"),
+            std::vector<int>{first.metadata.at("session_id").get<int>()});
+  jobs.fail_first = false;
+  tools.stop_exec_sessions("old", tools.live_exec_sessions("old"));
+  EXPECT_TRUE(tools.live_exec_sessions("old").empty());
+}
+TEST_F(Runtime, NewConversationSkipsFinishedAndExpiredJobsButKeepsUnknownJobs) {
+  struct Expiring : Recording {
+    bool expired = false;
+    ProcessResult poll(const std::string &id) override {
+      if (expired)
+        throw ProcessExpired("expired");
+      return Recording::poll(id);
+    }
+  } process;
+  process.running = true;
+  config.permission_mode = "bypass";
+  Tools tools(config, files, process, http, clock);
+  tools.use_session("old");
+  const auto started =
+      tools.execute(call("exec_command", {{"cmd", "cat"}, {"yield_time_ms", 1}}), cancel);
+  ASSERT_FALSE(started.error) << started.content;
+  process.poll_error = true;
+  EXPECT_EQ(tools.live_exec_sessions("old").size(), 1u);
+  process.poll_error = false;
+  process.running = false;
+  EXPECT_TRUE(tools.live_exec_sessions("old").empty());
+  process.expired = true;
+  EXPECT_TRUE(tools.live_exec_sessions("old").empty());
+}
 TEST_F(Runtime, WorkerExecCleanupQueuesFixedWarningsAndPreservesTheOriginalFailure) {
   config.permission_mode = "bypass";
   for (bool original_failure : {false, true}) {

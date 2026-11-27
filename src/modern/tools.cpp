@@ -425,7 +425,7 @@ PermissionRequest Tools::execution_request(const ToolCall &call) const {
   } else if (call.name == "write_stdin") {
     const auto id = a.at("session_id").get<int>();
     const auto it = exec_sessions_.find(id);
-    if (it == exec_sessions_.end() ||
+    if (it == exec_sessions_.end() || it->second.owner != session_id_ ||
         (it->second.completed && (!it->second.exit_code || !a.value("close_stdin", false) ||
                                   !a.value("chars", std::string{}).empty())))
       throw Error("Unknown or completed exec session");
@@ -855,7 +855,7 @@ ExecutionObservation Tools::observe_execution(const std::vector<Message> &messag
     facts.push_back(entry.second);
   // Only this Tools instance owns execution handles. Historical IDs are never live after resume.
   for (const auto &entry : exec_sessions_)
-    if (!entry.second.completed)
+    if (entry.second.owner == session_id_ && !entry.second.completed)
       facts.push_back(execution_fact(entry.first, entry.second));
   observation.facts = std::move(facts);
   return observation;
@@ -964,18 +964,61 @@ void Tools::end_input_turn() {
   if (interaction_)
     interaction_->end_turn();
 }
+std::vector<int> Tools::live_exec_sessions(const std::string &owner) {
+  std::vector<int> handles;
+  for (auto &entry : exec_sessions_) {
+    auto &job = entry.second;
+    if (job.owner != owner || job.completed)
+      continue;
+    try {
+      const auto status = processes_.status(job.process);
+      if (!status.running && status.error.empty())
+        continue;
+    } catch (const ProcessExpired &) {
+      job.completed = true;
+      continue;
+    } catch (const std::exception &) {
+      if (fatal(std::current_exception()))
+        throw;
+      // A failed status check still leaves this process our responsibility.
+    }
+    handles.push_back(entry.first);
+  }
+  return handles;
+}
+void Tools::stop_exec_sessions(const std::string &owner, const std::vector<int> &handles) {
+  std::string failures;
+  for (auto id : handles) {
+    auto &job = exec_sessions_.at(id);
+    if (job.owner != owner)
+      throw Error("Execution handle belongs to another conversation");
+    try {
+      processes_.stop(job.process);
+    } catch (const ProcessExpired &) {
+      // An already-reaped job may have aged out during confirmation.
+    } catch (const std::exception &e) {
+      if (fatal(std::current_exception()))
+        throw;
+      failures += " " + std::to_string(id) + " (" + e.what() + ")";
+      continue;
+    }
+    job.completed = true;
+  }
+  if (!failures.empty())
+    throw Error("Could not stop shell jobs:" + failures);
+}
 void Tools::cancel_exec() noexcept {
   for (auto &entry : exec_sessions_)
     if (!entry.second.completed) {
       try {
         processes_.stop(entry.second.process);
+        entry.second.completed = true;
       } catch (...) {
         if (interaction_)
           interaction_->warn(Interaction::Warning::exec_stop);
         else
           (void)detail::immediate_stderr({"Exec cleanup failed while stopping owned process"});
       }
-      entry.second.completed = true;
     }
 }
 Json Tools::schemas() const {
@@ -1605,8 +1648,14 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
       do {
         id = static_cast<int>(std::hash<std::string>{}(unique_id()) & 0x7fffffffU);
       } while (id == 0 || exec_sessions_.count(id));
-      exec_sessions_[id] = {
-          processes_.start(spec, cancel), command, spec.cwd, shell, spec.pty, false, std::nullopt};
+      exec_sessions_[id] = {processes_.start(spec, cancel),
+                            command,
+                            session_id_,
+                            spec.cwd,
+                            shell,
+                            spec.pty,
+                            false,
+                            std::nullopt};
     } else {
       id = a.at("session_id").get<int>();
       auto &session = exec_sessions_.at(id);
@@ -1650,13 +1699,13 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
     } catch (...) {
       try {
         processes_.stop(job.process);
+        job.completed = true;
       } catch (...) {
         if (interaction_)
           interaction_->warn(Interaction::Warning::exec_original);
         else
           (void)detail::immediate_stderr({"Exec cleanup failed; preserving original error"});
       }
-      job.completed = true;
       throw;
     }
     Json data = {

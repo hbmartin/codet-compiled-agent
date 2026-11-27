@@ -780,12 +780,52 @@ public:
       resources_.begin_active();
     }
   }
-  void end_active() {
+  void end_active(std::optional<std::string_view> answer = {}) {
     if (!curses_ && resources_.saved())
       resources_.end_active();
-    end_approval();
+    end_approval(answer);
     if (line_)
       line_->release();
+  }
+  std::optional<bool> confirm_new_session(const std::string &session, size_t count,
+                                          const Cancellation &cancel) {
+    Json request = {{"tool", "/new"},
+                    {"codet_session_id", session},
+                    {"request_id", unique_id()},
+                    {"codet_turn", 1},
+                    {"target", "Stop " + std::to_string(count) +
+                                   (count == 1 ? " live shell job" : " live shell jobs") +
+                                   " and start a new conversation?"}};
+    std::optional<bool> answer;
+    begin_active(cancel);
+    try {
+      if ((curses_ ? flushinp() : ::tcflush(STDIN_FILENO, TCIFLUSH)) != 0)
+        throw Error("Cannot clear queued terminal input before confirmation");
+      begin_approval(request);
+      while (!cancel.requested) {
+        flush_prompt();
+        bool closed = false;
+        auto line = active_input(closed);
+        if (closed || (line && line->classify(&request).action == detail::InputAction::quit))
+          break;
+        if (!line)
+          continue;
+        const auto submission = line->classify(&request);
+        if (submission.rejection) {
+          discarded_line(*submission.rejection);
+          continue;
+        }
+        if (submission.action == detail::InputAction::answer) {
+          answer = detail::approves(line->text()) && approval_reviewed(request);
+          break;
+        }
+      }
+    } catch (...) {
+      detail::secondary_diagnostic([&] { end_active(); });
+      throw;
+    }
+    end_active(answer ? std::optional<std::string_view>(*answer ? "yes" : "no") : std::nullopt);
+    return answer;
   }
   std::optional<detail::InputLine> active_input(bool &closed) {
     int ch = ERR;
@@ -1821,6 +1861,28 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       continue;
     }
     if (local == detail::LocalCommand::new_session) {
+      const auto handles = tools.live_exec_sessions(session.id);
+      if (!handles.empty()) {
+        const auto answer = terminal->confirm_new_session(session.id, handles.size(), cancel);
+        if (!answer) {
+          if (cancel.requested.exchange(false)) {
+            terminal->say("Kept the current conversation.");
+            continue;
+          }
+          quit_requested = true;
+          break;
+        }
+        if (!*answer) {
+          terminal->say("Kept the current conversation.");
+          continue;
+        }
+        try {
+          tools.stop_exec_sessions(session.id, handles);
+        } catch (const Error &e) {
+          terminal->say(std::string("Kept the current conversation. ") + e.what());
+          continue;
+        }
+      }
       auto fresh = state.create();
       auto fresh_owner = state.acquire(fresh.id);
       fresh.provider = config.provider;
@@ -1828,6 +1890,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       fresh.effort = saved_effort(config, &session);
       state.update_metadata(fresh);
       session = std::move(fresh);
+      tools.use_session(session.id);
       last_usage.reset();
       current_owner = std::move(fresh_owner);
       terminal->say_literal("Started " + session.id);
