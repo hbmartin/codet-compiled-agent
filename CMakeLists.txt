@@ -164,6 +164,8 @@ if(CODET_BUILD_TESTS)
     endif()
     add_test(NAME codet.cli COMMAND ${CMAKE_COMMAND} -DCODET=$<TARGET_FILE:codet>
       -DTEST_ROOT=${CMAKE_BINARY_DIR}/cli-test -P ${CMAKE_SOURCE_DIR}/tests/cli_test.cmake)
+    add_test(NAME codet.state-recovery COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/hermetic.py ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/state_recovery_cli.py $<TARGET_FILE:codet>)
+    set_tests_properties(codet.state-recovery PROPERTIES TIMEOUT 90)
     add_test(NAME codet.integration COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/hermetic.py ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/cli_integration.py $<TARGET_FILE:codet>)
     if(CODET_OPENSSL_EXECUTABLE)
       set_tests_properties(codet.integration PROPERTIES ENVIRONMENT "CODET_TEST_OPENSSL=${CODET_OPENSSL_EXECUTABLE}")

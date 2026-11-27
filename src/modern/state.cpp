@@ -23,6 +23,23 @@
 
 namespace codet {
 namespace {
+struct LockFile {
+  int fd = -1;
+  LockFile() = default;
+  LockFile(const LockFile &) = delete;
+  LockFile &operator=(const LockFile &) = delete;
+  ~LockFile() {
+    if (fd >= 0)
+      ::close(fd);
+  }
+  void open(const fs::path &path) {
+    fd = ::open(path.c_str(), O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0600);
+    struct stat status {};
+    if (fd < 0 || ::fstat(fd, &status) || !S_ISREG(status.st_mode) ||
+        status.st_uid != ::geteuid() || ::fchmod(fd, 0600) || ::fcntl(fd, F_SETFD, FD_CLOEXEC) < 0)
+      throw Error("Cannot open private database migration lock");
+  }
+};
 struct StoredDataCorruption : Error {
   using Error::Error;
 };
@@ -447,6 +464,7 @@ struct StateStore::Impl {
     }
   };
   sqlite3 *db = nullptr;
+  LockFile lifetime_lock;
   fs::path home, artifact_root;
   mutable fs::path artifact_anchor;
   NativeFileSystem native_files;
@@ -1806,27 +1824,9 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
       throw Error("Session database was created by a newer Codet version");
     return value;
   };
-  struct MigrationLocks {
-    std::vector<int> descriptors;
-    ~MigrationLocks() {
-      for (int fd : descriptors)
-        ::close(fd);
-    }
-  } migration_locks;
-  const auto acquire_migration = [&] {
-    if (!migration_locks.descriptors.empty())
-      return;
-    const auto migration_path = home / ".migration.lock";
-    const int migration_fd =
-        ::open(migration_path.c_str(), O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0600);
-    struct stat migration_stat {};
-    if (migration_fd < 0)
-      throw Error("Cannot open database migration lock");
-    migration_locks.descriptors.push_back(migration_fd);
-    if (::fstat(migration_fd, &migration_stat) || !S_ISREG(migration_stat.st_mode) ||
-        migration_stat.st_uid != ::geteuid() || ::fchmod(migration_fd, 0600) ||
-        ::fcntl(migration_fd, F_SETFD, FD_CLOEXEC) < 0)
-      throw Error("Database migration lock must be an owned regular file");
+  LockFile migration_lock;
+  impl_->lifetime_lock.open(home / ".state-users.lock");
+  const auto wait_lock = [&](int fd, int mode) {
     bool notified = false;
     const auto notify_waiting = [&]() noexcept {
       try {
@@ -1838,7 +1838,7 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
     for (;;) {
       if (startup.cancellation && startup.cancellation->requested.load())
         throw Error("Interrupted waiting for database migration", 130);
-      if (::flock(migration_fd, LOCK_EX | LOCK_NB) == 0)
+      if (::flock(fd, mode | LOCK_NB) == 0)
         break;
       if (errno == EINTR)
         throw Error("Interrupted waiting for database migration", 130);
@@ -1850,7 +1850,7 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
       }
       // Existing constructors retain their interruptible blocking behavior.
       if (!startup.cancellation) {
-        if (::flock(migration_fd, LOCK_EX) == 0)
+        if (::flock(fd, mode) == 0)
           break;
         if (errno == EINTR)
           throw Error("Interrupted waiting for database migration", 130);
@@ -1859,9 +1859,20 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
       std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
   };
+  const auto acquire_migration = [&] {
+    if (migration_lock.fd >= 0)
+      return;
+    migration_lock.open(home / ".migration.lock");
+    wait_lock(migration_lock.fd, LOCK_EX);
+  };
   if (version() < 8) {
     acquire_migration();
     const auto old_version = version();
+    if (old_version < 8 && ::flock(impl_->lifetime_lock.fd, LOCK_EX | LOCK_NB)) {
+      if (errno == EWOULDBLOCK || errno == EAGAIN)
+        throw Error("Stop active Codet sessions before upgrading the database");
+      throw Error("Cannot acquire database migration lock");
+    }
     if (old_version > 0 && old_version < 8) {
       const auto locks = home / "session-locks";
       if (fs::exists(locks))
@@ -1870,11 +1881,9 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
           if (fd < 0)
             throw Error("Cannot inspect session ownership before migration");
           const bool busy = ::flock(fd, LOCK_EX | LOCK_NB) != 0;
-          if (busy) {
-            ::close(fd);
+          ::close(fd); // The lifetime gate prevents new cooperating sessions during this scan.
+          if (busy)
             throw Error("Stop active Codet sessions before upgrading the database");
-          }
-          migration_locks.descriptors.push_back(fd);
         }
       const auto target = home / ("state.sqlite3.pre-v8-" + unique_id());
       sqlite3 *backup_db = nullptr;
@@ -2030,6 +2039,7 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
       migration.commit();
     }
   }
+  wait_lock(impl_->lifetime_lock.fd, LOCK_SH);
   impl_->verify_revisions();
   bool wal = false;
   {
