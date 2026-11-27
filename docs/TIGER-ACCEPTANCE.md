@@ -2,6 +2,8 @@
 
 Run these checks on the G4 with 512 MB RAM. The build host never executes the PPC application or test executable.
 
+On the packaging host, the public archive and checksum names follow a per-variant `current` link. To verify or copy a pair while another build is publishing, resolve the archive once with `Path(archive).resolve(strict=True)` in Python. Read that path and its adjacent `.sha256` file from the same generation directory. Publishers retain earlier generations so a pinned reader can finish.
+
 Choose the instructions matching your archive:
 
 - **Portable:** extract `codet-tiger-ppc-portable.tar.gz` and enter `codet-tiger`.
@@ -177,3 +179,7 @@ these owner-run target checks. Semgrep runs only in developer/CI environments, n
 - Check HFS+ case aliases and hard links with opened-handle validation unchanged. The host APFS handle can resolve a hard link to another name; mismatched opened names must retain the normal target-changed error. Record actual Tiger behavior.
 
 The reliability bundle also includes `codet_persistence_bench`. The acceptance script records growing transcript append work in durable and fast modes and repeated 64 KiB capture flushes with 40 retained files. Keep its JSONL, timing, peak-memory and I/O counters with the machine report. Host benchmarks do not establish G4 performance. Modernization tests cover hook turn cancellation, raw errors, signed epochs, private plan recovery, schema migration and abrupt process exits; actual power-loss durability remains an owner exercise.
+
+## Patch publication on HFS+
+
+Run the `PatchPublication.*` GoogleTests on a writable HFS+ workspace. Record the volume format, ACL settings and the filesystem used for temporary test directories. Exercise an edited move within that volume and to a second writable HFS+ volume, including newly created destination directories. Compare data, mode, extended attributes, resource fork and ACL before and after. Confirm that Add and Move preserve a destination created while approval is pending. Interrupt a move after destination publication and check that a complete named copy remains. Host process-interruption tests cover ordering. Power interruption and volume-specific sync behavior require separate target verification.

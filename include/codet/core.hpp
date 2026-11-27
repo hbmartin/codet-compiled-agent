@@ -39,6 +39,9 @@ struct ProviderError : Error {
   ProviderError(const std::string &, int, std::string);
   Json details() const;
 };
+struct ProcessExpired : Error {
+  using Error::Error;
+};
 struct ProcessTimeout : Error {
   ProcessTimeout() : Error("Command timed out during startup") {}
 };
@@ -91,6 +94,7 @@ public:
   virtual size_t read(char *, size_t) = 0;
   virtual void seek(uint64_t) = 0;
 };
+struct PatchChange;
 struct FileSystem {
   virtual ~FileSystem() = default;
   virtual std::string read(const fs::path &,
@@ -104,6 +108,7 @@ struct FileSystem {
   using Writer = std::function<void(const std::string &)>;
   virtual void atomic_stream(const fs::path &, const std::function<void(const Writer &)> &,
                              bool private_file = false);
+  virtual void publish_patch(const std::vector<PatchChange> &, const Cancellation &);
   virtual void remove(const fs::path &) = 0;
   virtual fs::path canonical(const fs::path &) const = 0;
   virtual std::unique_ptr<ReadHandle> open_read(const fs::path &) const;
@@ -114,6 +119,7 @@ struct NativeFileSystem final : FileSystem {
   void atomic_write(const fs::path &, const std::string &, bool = false) override;
   void atomic_stream(const fs::path &, const std::function<void(const Writer &)> &,
                      bool = false) override;
+  void publish_patch(const std::vector<PatchChange> &, const Cancellation &) override;
   void remove(const fs::path &) override;
   fs::path canonical(const fs::path &) const override;
   std::unique_ptr<ReadHandle> open_read(const fs::path &) const override;
@@ -355,8 +361,8 @@ class CredentialStore {
 public:
   CredentialStore(fs::path home, FileSystem &files, Clock &clock)
       : home_(std::move(home)), files_(files), clock_(clock) {}
-  void import(const fs::path &);
-  void save_key(const std::string &provider, const std::string &key);
+  void import(const fs::path &, const Cancellation & = {});
+  void save_key(const std::string &provider, const std::string &key, const Cancellation & = {});
   Json load() const;
   std::string key(const std::string &) const;
   Json codex(HttpTransport &, const Cancellation &);
@@ -477,6 +483,7 @@ public:
   std::shared_ptr<void> acquire(const std::string &id);
   void reconcile(Session &, bool persist = true);
   Session last(bool repair = true);
+  Session export_session(const std::string &selector, bool last_session);
   Session fork(const Session &);
   void save(Session &);
   void save(const Session &);
@@ -595,7 +602,7 @@ class Tools {
   std::shared_ptr<ComputerBackend> computer_;
   std::shared_ptr<ImageBackend> images_;
   struct ExecSession {
-    std::string process, command;
+    std::string process, command, owner;
     fs::path cwd;
     std::string shell;
     bool pty = false;
@@ -664,6 +671,8 @@ public:
   std::vector<std::string> take_input();
   void begin_input_turn(const std::string &);
   void end_input_turn();
+  std::vector<int> live_exec_sessions(const std::string &owner);
+  void stop_exec_sessions(const std::string &owner, const std::vector<int> &handles);
   void cancel_exec() noexcept;
   Json capabilities() const;
   HookOutcome run_hooks(const std::string &, const Json &, const Cancellation &, int budget_ms = 0,

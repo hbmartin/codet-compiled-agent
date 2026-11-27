@@ -1,12 +1,15 @@
 """Shared fail-closed inputs and deterministic archives for Tiger distributions."""
 
+import fcntl
 import gzip
 import hashlib
 import json
 import os
 import re
+import shutil
 import ssl
 import tarfile
+import tempfile
 from pathlib import Path
 
 from dependency_paths import dependency_root
@@ -166,37 +169,82 @@ def deterministic_archive(folder, destination, epoch):
                     archive.addfile(info)
 
 
-def publish_archive(staged, final):
-    """Replace the compatibility archive/checksum pair with rollback on publication failure."""
-    import tempfile
-
-    checksum = staged.with_name(staged.name + ".sha256")
-    checksum.write_text(file_hash(staged) + "  " + final.name + "\n")
-    targets = ((staged, final), (checksum, final.with_name(final.name + ".sha256")))
-    backups, installed = [], []
-    backup = Path(tempfile.mkdtemp(prefix=".publish-", dir=final.parent))
-    restored = True
+def sync_path(path):
+    descriptor = os.open(path, os.O_RDONLY)
     try:
-        for source, target in targets:
-            if target.exists() or target.is_symlink():
-                saved = backup / target.name
-                os.replace(target, saved)
-                backups.append((saved, target))
-            os.replace(source, target)
-            installed.append(target)
-    except BaseException as primary:
-        for target in reversed(installed):
-            target.unlink(missing_ok=True)
-        for saved, target in reversed(backups):
-            try:
-                os.replace(saved, target)
-            except OSError:
-                restored = False
-        if not restored:
-            primary.recovery_directory = str(backup)
-        raise
+        os.fsync(descriptor)
     finally:
-        if restored:
-            import shutil
+        os.close(descriptor)
 
-            shutil.rmtree(backup)
+
+def store_generation(archive, store, scratch, name):
+    digest = file_hash(archive)
+    generation = store / digest
+    checksum = digest + "  " + name + "\n"
+    if not generation.exists():
+        candidate = scratch / "generation"
+        candidate.mkdir()
+        shutil.copyfile(archive, candidate / name)
+        if file_hash(candidate / name) != digest:
+            raise ValueError("Archive changed during publication: " + str(archive))
+        (candidate / (name + ".sha256")).write_text(checksum)
+        sync_path(candidate / name)
+        sync_path(candidate / (name + ".sha256"))
+        sync_path(candidate)
+        os.rename(candidate, generation)
+        sync_path(store)
+    elif (file_hash(generation / name) != digest
+          or (generation / (name + ".sha256")).read_text() != checksum):
+        raise ValueError("Invalid stored archive generation: " + str(generation))
+    return digest
+
+
+def replace_link(scratch, destination, target):
+    link = scratch / "link"
+    link.symlink_to(target)
+    os.replace(link, destination)
+    sync_path(destination.parent)
+
+
+def publish_archive(staged, final):
+    """Pin each complete pair by digest and switch readers with one rename."""
+    store = final.parent / ("." + final.name + ".generations")
+    store.mkdir(exist_ok=True)
+    sync_path(final.parent)
+    current = store / "current"
+    checksum = final.with_name(final.name + ".sha256")
+    public = (final, checksum)
+    with (store / "publish.lock").open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        with tempfile.TemporaryDirectory(prefix=".stage-", dir=store) as work:
+            scratch = Path(work)
+            for path in public:
+                target = store.name + "/current/" + path.name
+                if path.is_symlink() and os.readlink(path) != target:
+                    raise ValueError("Unexpected archive publication link: " + str(path))
+            if current.is_symlink():
+                old = os.readlink(current)
+                if not re.fullmatch("[0-9a-f]{64}", old) or not (store / old).is_dir():
+                    raise ValueError("Invalid current archive generation")
+            elif current.exists():
+                raise ValueError("Invalid archive generation pointer")
+            # A crash during adoption can leave one alias and one flat file. Both
+            # must still describe the same old generation before conversion resumes.
+            flat = [path for path in public if path.exists() and not path.is_symlink()]
+            if flat:
+                if not all(path.is_file() for path in public):
+                    raise ValueError("Incomplete legacy archive and checksum")
+                old = file_hash(final)
+                if checksum.read_text() != old + "  " + final.name + "\n":
+                    raise ValueError("Legacy archive/checksum mismatch")
+                if current.is_symlink() and os.readlink(current) != old:
+                    raise ValueError("Legacy archive conflicts with current generation")
+                store_generation(final, store, scratch, final.name)
+                if not current.is_symlink():
+                    replace_link(scratch, current, old)
+            new = store_generation(staged, store, scratch, final.name)
+            for path in public:
+                if not path.is_symlink():
+                    replace_link(scratch, path, store.name + "/current/" + path.name)
+            if not current.is_symlink() or os.readlink(current) != new:
+                replace_link(scratch, current, new)

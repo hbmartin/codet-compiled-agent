@@ -86,19 +86,35 @@ struct Options {
   std::vector<fs::path> roots, images;
   std::vector<std::string> positionals;
 };
-std::string stdin_text() {
-  std::ostringstream out;
+std::string stdin_text(const Cancellation &cancel) {
+  std::string out;
   char buffer[8192];
-  size_t n = 0;
-  while (std::cin) {
-    std::cin.read(buffer, sizeof buffer);
-    const auto count = std::cin.gcount();
-    n += static_cast<size_t>(count);
-    if (n > size_t{1024} * 1024)
+  for (;;) {
+    cancel.check();
+    // Darwin poll can report POLLNVAL for valid devices such as /dev/null.
+    fd_set readers;
+    FD_ZERO(&readers);
+    FD_SET(STDIN_FILENO, &readers);
+    struct timeval timeout {
+      0, 100000
+    };
+    const auto ready = ::select(STDIN_FILENO + 1, &readers, nullptr, nullptr, &timeout);
+    if (ready == 0)
+      continue;
+    const auto count = ready < 0 ? -1 : ::read(STDIN_FILENO, buffer, sizeof buffer);
+    const int error = errno;
+    cancel.check();
+    if (count < 0) {
+      if (error == EINTR || error == EAGAIN || error == EWOULDBLOCK)
+        continue;
+      throw Error("Cannot read stdin: " + std::string(std::strerror(error)));
+    }
+    if (count == 0)
+      return out;
+    if (static_cast<size_t>(count) > size_t{1024} * 1024 - out.size())
       throw Error("stdin exceeds 1 MiB", 2);
-    out.write(buffer, count);
+    out.append(buffer, static_cast<size_t>(count));
   }
-  return out.str();
 }
 std::string combined(const std::vector<std::string> &words) {
   std::string s;
@@ -780,12 +796,52 @@ public:
       resources_.begin_active();
     }
   }
-  void end_active() {
+  void end_active(std::optional<std::string_view> answer = {}) {
     if (!curses_ && resources_.saved())
       resources_.end_active();
-    end_approval();
+    end_approval(answer);
     if (line_)
       line_->release();
+  }
+  std::optional<bool> confirm_new_session(const std::string &session, size_t count,
+                                          const Cancellation &cancel) {
+    Json request = {{"tool", "/new"},
+                    {"codet_session_id", session},
+                    {"request_id", unique_id()},
+                    {"codet_turn", 1},
+                    {"target", "Stop " + std::to_string(count) +
+                                   (count == 1 ? " live shell job" : " live shell jobs") +
+                                   " and start a new conversation?"}};
+    std::optional<bool> answer;
+    begin_active(cancel);
+    try {
+      if ((curses_ ? flushinp() : ::tcflush(STDIN_FILENO, TCIFLUSH)) != 0)
+        throw Error("Cannot clear queued terminal input before confirmation");
+      begin_approval(request);
+      while (!cancel.requested) {
+        flush_prompt();
+        bool closed = false;
+        auto line = active_input(closed);
+        if (closed || (line && line->classify(&request).action == detail::InputAction::quit))
+          break;
+        if (!line)
+          continue;
+        const auto submission = line->classify(&request);
+        if (submission.rejection) {
+          discarded_line(*submission.rejection);
+          continue;
+        }
+        if (submission.action == detail::InputAction::answer) {
+          answer = detail::approves(line->text()) && approval_reviewed(request);
+          break;
+        }
+      }
+    } catch (...) {
+      detail::secondary_diagnostic([&] { end_active(); });
+      throw;
+    }
+    end_active(answer ? std::optional<std::string_view>(*answer ? "yes" : "no") : std::nullopt);
+    return answer;
   }
   std::optional<detail::InputLine> active_input(bool &closed) {
     int ch = ERR;
@@ -1039,12 +1095,12 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
     if (!o.import.empty() && o.key)
       throw Error("Choose one credential input", 2);
     if (!o.import.empty())
-      credentials.import(o.import);
+      credentials.import(o.import, cancel);
     else if (o.key) {
-      auto key = stdin_text();
+      auto key = stdin_text(cancel);
       while (!key.empty() && (key.back() == '\n' || key.back() == '\r'))
         key.pop_back();
-      credentials.save_key(config.provider == "codex" ? "openai" : config.provider, key);
+      credentials.save_key(config.provider == "codex" ? "openai" : config.provider, key, cancel);
     } else
       throw Error("Native sign-in is deferred. Use login --import FILE or --with-api-key", 2);
     (void)errors.write({"Credentials stored privately in Codet state"});
@@ -1131,7 +1187,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   const bool will_run = o.command != "sessions" && o.command != "export" && o.command != "repair";
   const bool headless = o.exec || !isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO);
   if (will_run && headless && !isatty(STDIN_FILENO)) {
-    auto input = stdin_text();
+    auto input = stdin_text(cancel);
     if (prompt.empty() || prompt == "-")
       prompt = input;
     else if (!input.empty())
@@ -1179,19 +1235,15 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
   }
   Session session;
   if (o.command == "resume" || o.command == "fork" || o.command == "export") {
-    if (o.last)
-      session = state.last(o.command == "export");
-    else if (!o.session.empty())
-      session = state.load(o.session, o.command == "export");
-    else {
+    auto selector = o.session;
+    if (!o.last && selector.empty()) {
       if (o.exec || !isatty(STDIN_FILENO))
         throw Error("Select a session id or --last", 2);
       (void)errors.write({state.list().dump(2), "\nSession id: "}, false);
-      std::string id;
-      std::getline(std::cin, id);
-      session = state.load(id, o.command == "export");
+      std::getline(std::cin, selector);
     }
     if (o.command == "export") {
+      session = state.export_session(selector, o.last);
       if (o.format == "text") {
         detail::TextExport exported(output);
         const bool human = isatty(STDOUT_FILENO);
@@ -1214,6 +1266,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
                  .dump(2)});
       return 0;
     }
+    session = o.last ? state.last(false) : state.load(selector, false);
   }
   if (o.command == "resume") {
     lifecycle_owner = state.acquire(session.id);
@@ -1821,6 +1874,28 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       continue;
     }
     if (local == detail::LocalCommand::new_session) {
+      const auto handles = tools.live_exec_sessions(session.id);
+      if (!handles.empty()) {
+        const auto answer = terminal->confirm_new_session(session.id, handles.size(), cancel);
+        if (!answer) {
+          if (cancel.requested.exchange(false)) {
+            terminal->say("Kept the current conversation.");
+            continue;
+          }
+          quit_requested = true;
+          break;
+        }
+        if (!*answer) {
+          terminal->say("Kept the current conversation.");
+          continue;
+        }
+        try {
+          tools.stop_exec_sessions(session.id, handles);
+        } catch (const Error &e) {
+          terminal->say(std::string("Kept the current conversation. ") + e.what());
+          continue;
+        }
+      }
       auto fresh = state.create();
       auto fresh_owner = state.acquire(fresh.id);
       fresh.provider = config.provider;
@@ -1828,6 +1903,7 @@ int detail::cli_main(const std::vector<std::string> &args, Cancellation &cancel,
       fresh.effort = saved_effort(config, &session);
       state.update_metadata(fresh);
       session = std::move(fresh);
+      tools.use_session(session.id);
       last_usage.reset();
       current_owner = std::move(fresh_owner);
       terminal->say_literal("Started " + session.id);

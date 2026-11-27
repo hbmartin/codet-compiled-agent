@@ -11,7 +11,7 @@ The modern application now uses the supplied `../tools` Codex snapshot as its co
 | Plans, blocking and async questions | tools.cpp, interaction.cpp, cli.cpp | Persistence, question IDs, queued replies, wake-on-input sleep, both terminal modes |
 | Native image inputs | images.cpp, provider.cpp | Encoding, bounds, private checksummed artifacts, all provider wire fixtures and missing-file diagnostics |
 | Native Tiger desktop | computer.cpp | Injected dispatch/permissions, framebuffer conversion and coordinate tests; PPC compile/link checks; opt-in target execution |
-| Sessions and compaction | state.cpp, agent.cpp | Schema 6, incremental ordered messages, atomic completion, provider epochs, durable reference registry, historical recovery/no replay, ownership, fork isolation, attachment references through compaction |
+| Sessions and compaction | state.cpp, agent.cpp | Schema 8, incremental ordered messages, atomic completion, provider epochs, durable reference registry, historical recovery/no replay, ownership, fork isolation, attachment references through compaction |
 | Providers/credentials | provider.cpp, config.cpp | Existing stream/retry/refresh fixtures plus namespace and image serialization |
 | Instructions/skills/memory | tools.cpp, cli.cpp | Bounded automatic previews, skill paths and explicit consolidation CLI fixture |
 | Hooks/configuration | hooks.cpp, tools.cpp, config.cpp | Existing hook lifecycle/denial/recovery tests plus updated tool identities |

@@ -85,6 +85,9 @@ struct InspectFiles : FileSystem {
                      bool secret) override {
     native.atomic_stream(p, f, secret);
   }
+  void publish_patch(const std::vector<PatchChange> &changes, const Cancellation &c) override {
+    native.publish_patch(changes, c);
+  }
   void remove(const fs::path &p) override {
     native.remove(p);
   }

@@ -1,19 +1,49 @@
 #include "codet/core.hpp"
 #include "codet/detail/transport_error.hpp"
 #include "codet/prompt.hpp"
+#include "process_helper.hpp"
 #include "prompt_support.hpp"
 #include "temp.hpp"
+#include <fcntl.h>
 #include <fstream>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <sqlite3.h>
 #include <sstream>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <thread>
 #include <unistd.h>
 
 using namespace codet;
 using namespace testing;
+namespace codet::test {
+int credential_writer(const fs::path &home, const std::string &operation, int notify) {
+  struct ContendingClock final : Clock {
+    int notify;
+    SystemClock clock;
+    explicit ContendingClock(int fd) : notify(fd) {}
+    int64_t seconds() const override {
+      return clock.seconds();
+    }
+    void sleep_ms(int ms, const Cancellation &cancel) override {
+      if (notify >= 0) {
+        if (::write(notify, "w", 1) != 1)
+          throw Error("Cannot signal credential lock contention");
+        notify = -1;
+      }
+      clock.sleep_ms(ms, cancel);
+    }
+  } clock(notify);
+  NativeFileSystem files;
+  CredentialStore store(home, files, clock);
+  if (operation == "import")
+    store.import(home / "import.json");
+  else
+    store.save_key("google", "second-key");
+  return ::write(notify, "d", 1) == 1 ? 0 : 1;
+}
+} // namespace codet::test
 namespace {
 using Temp = TempDirectory;
 struct FakeClock : Clock {
@@ -188,8 +218,10 @@ TEST_F(Fixture, CredentialRefreshRotatesAndPersistsTokens) {
   CredentialStore c(config.home, files, clock);
   c.import(config.cwd / "tokens.json");
   EXPECT_CALL(http, perform(_, _, _))
-      .WillOnce(Invoke([](const HttpRequest &r, const Cancellation &, const ChunkSink &) {
+      .WillOnce(Invoke([&](const HttpRequest &r, const Cancellation &, const ChunkSink &) {
         EXPECT_EQ(Json::parse(r.body)["grant_type"], "refresh_token");
+        // A successful remote rotation must still reach disk if cancellation arrives with it.
+        cancel.requested = true;
         return HttpResponse{
             200, R"({"access_token":"new","refresh_token":"rotated","expires_in":3600})"};
       }));
@@ -219,6 +251,94 @@ TEST_F(Fixture, ExpiredCredentialsAndFailedRefreshLeaveStoredTokensIntact) {
   EXPECT_CALL(http, perform(_, _, _)).WillOnce(Return(HttpResponse{200, R"({"wrong":true})"}));
   EXPECT_THROW(creds.codex(http, cancel), Error);
   EXPECT_EQ(files.read(config.home / "auth.json"), before);
+}
+TEST_F(Fixture, ConcurrentKeysImportsAndRefreshesSerializeAcrossProcesses) {
+  for (const auto &operations : {std::make_pair("key", "key"), std::make_pair("refresh", "key"),
+                                 std::make_pair("refresh", "import")}) {
+    SCOPED_TRACE(std::string(operations.first) + "/" + operations.second);
+    files.atomic_write(
+        config.home / "auth.json",
+        R"({"codex":{"access_token":"old","refresh_token":"original","expires_at":1}})", true);
+    files.atomic_write(config.home / "import.json", R"({"access_token":"imported"})", true);
+    int pipe_fds[2];
+    ASSERT_EQ(::pipe(pipe_fds), 0);
+    pid_t child = -1;
+    auto contend = [&] {
+      child = test::start_helper({"--codet-credential-writer", config.home.string(),
+                                  operations.second, std::to_string(pipe_fds[1])},
+                                 {pipe_fds[0]});
+      ASSERT_GT(child, 0);
+      char state = 0;
+      ASSERT_TRUE(test::read_token(pipe_fds[0], state));
+      EXPECT_EQ(state, 'w') << "concurrent writer published before the current writer committed";
+    };
+    NiceMock<MockFiles> gated;
+    ON_CALL(gated, read(_, _)).WillByDefault(Invoke(&files, &NativeFileSystem::read));
+    EXPECT_CALL(gated, atomic_write(_, _, true))
+        .WillOnce(Invoke([&](const fs::path &path, const std::string &content, bool private_file) {
+          contend();
+          files.atomic_write(path, content, private_file);
+        }));
+    CredentialStore store(config.home, gated, clock);
+    if (std::string(operations.first) == "key")
+      store.save_key("openai", "first-key");
+    else {
+      EXPECT_CALL(http, perform(_, _, _))
+          .WillOnce(
+              Return(HttpResponse{200, R"({"access_token":"new","refresh_token":"rotated"})"}));
+      store.codex(http, cancel);
+    }
+    int status = 0;
+    const bool exited = test::wait_helper(child, status);
+    ::close(pipe_fds[0]);
+    ::close(pipe_fds[1]);
+    ASSERT_TRUE(exited);
+    ASSERT_TRUE(WIFEXITED(status));
+    ASSERT_EQ(WEXITSTATUS(status), 0);
+    const auto stored = store.load();
+    if (std::string(operations.first) == "key") {
+      EXPECT_EQ(stored.at("api_keys").at("openai"), "first-key");
+    }
+    if (std::string(operations.second) == "key") {
+      EXPECT_EQ(stored.at("api_keys").at("google"), "second-key");
+      if (std::string(operations.first) == "refresh") {
+        EXPECT_EQ(stored.at("codex").at("refresh_token"), "rotated");
+      }
+    } else
+      EXPECT_EQ(stored.at("codex").at("access_token"), "imported");
+  }
+}
+TEST_F(Fixture, CancellationWhileWaitingForCredentialLockLeavesPriorFileIntact) {
+  struct CancelOnSleep final : FakeClock {
+    Cancellation token;
+    void sleep_ms(int ms, const Cancellation &c) override {
+      slept += ms;
+      token.requested = true;
+      c.check();
+    }
+  } waiting;
+  CredentialStore store(config.home, files, waiting);
+  store.save_key("openai", "prior");
+  const auto before = files.read(config.home / "auth.json");
+  const int fd = ::open((config.home / "auth.lock").c_str(), O_CREAT | O_RDWR, 0600);
+  ASSERT_GE(fd, 0);
+  EXPECT_EQ(::flock(fd, LOCK_EX | LOCK_NB), 0);
+  write("import.json", R"({"access_token":"new"})");
+  for (const bool importing : {true, false}) {
+    waiting.token.requested = false;
+    try {
+      if (importing)
+        store.import(config.cwd / "import.json", waiting.token);
+      else
+        store.save_key("openai", "replacement", waiting.token);
+      ADD_FAILURE() << "Writer committed despite lock contention";
+    } catch (const Error &error) {
+      EXPECT_EQ(error.code, 130);
+    }
+    EXPECT_EQ(files.read(config.home / "auth.json"), before);
+  }
+  EXPECT_GT(waiting.slept, 0);
+  ::close(fd);
 }
 TEST_F(Fixture, PermanentTrustFailuresNeverRetryOrSleep) {
   CredentialStore creds(config.home, files, clock);
@@ -539,6 +659,12 @@ TEST_F(Fixture, AnthropicStreamPreservesThinkingSignatureAndToolArguments) {
       {{"type", "content_block_delta"},
        {"index", 1},
        {"delta", {{"type", "input_json_delta"}, {"partial_json", R"({"path":"a"})"}}}},
+      {{"type", "content_block_start"},
+       {"index", 2},
+       {"content_block", {{"type", "text"}, {"text", "start "}}}},
+      {{"type", "content_block_delta"},
+       {"index", 2},
+       {"delta", {{"type", "text_delta"}, {"text", "end"}}}},
       {{"type", "message_stop"}}};
   EXPECT_CALL(http, perform(_, _, _))
       .WillOnce(Invoke([&](const HttpRequest &, const Cancellation &, const ChunkSink &sink) {
@@ -548,8 +674,38 @@ TEST_F(Fixture, AnthropicStreamPreservesThinkingSignatureAndToolArguments) {
       }));
   auto result = p.complete(config, "", {}, Json::array(), cancel, {});
   EXPECT_EQ(result.message.replay[0]["signature"], "sig");
+  EXPECT_EQ(result.message.text, "start end");
+  EXPECT_EQ(result.message.replay[2]["text"], "start end");
   ASSERT_EQ(result.message.calls.size(), 1u);
   EXPECT_EQ(result.message.calls[0].arguments["path"], "a");
+}
+TEST_F(Fixture, OnlyChatCompletionsAcceptsDoneWithoutAnAdapterTerminalEvent) {
+  CredentialStore credentials(config.home, files, clock);
+  ApiProvider provider(http, credentials, clock);
+  for (const std::string name : {"anthropic", "google", "ollama", "openai"}) {
+    SCOPED_TRACE(name);
+    config.provider = name;
+    config.providers[name].api_key = "fixture";
+    config.providers[name].wire_api = "chat_completions";
+    EXPECT_CALL(http, perform(_, _, _))
+        .WillOnce(Invoke([&](const HttpRequest &, const Cancellation &, const ChunkSink &sink) {
+          if (name == "ollama")
+            sink("{\"message\":{\"content\":\"partial\"},\"done\":false}\n[DONE]\n");
+          else if (name == "anthropic")
+            sink("data: {\"type\":\"message_start\",\"message\":{}}\n\ndata: [DONE]\n\n");
+          else if (name == "google")
+            sink("data: {\"candidates\":[]}\n\ndata: [DONE]\n\n");
+          else
+            sink(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"complete\"}}]}\n\ndata: [DONE]\n\n");
+          return HttpResponse{200, ""};
+        }));
+    if (name == "openai")
+      EXPECT_EQ(provider.complete(config, "", {}, Json::array(), cancel, {}).message.text,
+                "complete");
+    else
+      EXPECT_THROW(provider.complete(config, "", {}, Json::array(), cancel, {}), Error);
+  }
 }
 TEST_F(Fixture, GoogleAndOllamaStreamsHaveRealProtocolFixtures) {
   CredentialStore creds(config.home, files, clock);

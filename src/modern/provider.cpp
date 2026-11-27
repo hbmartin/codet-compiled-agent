@@ -621,9 +621,13 @@ void codex_output(ProviderResult &result, const Json &response) {
     const auto type = item.value("type", "");
     if (type == "message") {
       AssistantText message{optional_text(item, "id"), "", assistant_phase(item)};
-      for (const auto &c : item.value("content", Json::array()))
-        if (c.value("type", "") == "output_text")
+      for (const auto &c : item.value("content", Json::array())) {
+        const auto content_type = c.value("type", "");
+        if (content_type == "output_text")
           message.text += c.value("text", "");
+        else if (content_type == "refusal")
+          message.text += c.value("refusal", "");
+      }
       result.message.text += message.text;
       result.message.assistant_items.push_back(std::move(message));
     } else if (type == "function_call")
@@ -939,7 +943,8 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
     };
     auto decode_frame = [&](const std::string &event, const std::string &data) {
       if (data == "[DONE]") {
-        completed = true;
+        if (c.provider == "openai" && !uses_responses(c))
+          completed = true;
         return;
       }
       if (stream_failed)
@@ -964,10 +969,12 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
         return;
       }
       if (uses_responses(c)) {
-        if (type == "response.output_item.added" || type == "response.output_text.delta") {
+        const bool text_delta =
+            type == "response.output_text.delta" || type == "response.refusal.delta";
+        if (type == "response.output_item.added" || text_delta) {
           const auto index = j.value("output_index", size_t{0});
           const auto source = j.value("item", Json::object());
-          if (type == "response.output_text.delta" || source.value("type", "") == "message") {
+          if (text_delta || source.value("type", "") == "message") {
             auto found = streamed.find(index);
             if (found == streamed.end()) {
               auto id = optional_text(source, "id");
@@ -979,7 +986,7 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
               found = streamed.emplace(index, std::move(item)).first;
               item_event("item.started", found->second);
             }
-            if (type == "response.output_text.delta") {
+            if (text_delta) {
               const auto delta = j.value("delta", "");
               found->second.text += delta;
               if (items)
@@ -1016,25 +1023,31 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
         if (type == "message_start" && j.contains("message"))
           usage(result.usage, j["message"].value("usage", Json::object()));
         if (type == "content_block_start") {
-          blocks[index] = j.at("content_block");
+          auto &block = blocks[index];
+          block = j.at("content_block");
+          if (block.value("type", "") == "text") {
+            const auto initial = block.value("text", "");
+            if (!initial.empty())
+              text(initial);
+          }
           tool_frames[index] = data;
         }
         if (type == "content_block_delta") {
           const auto &delta = j.at("delta");
           const auto dt = delta.value("type", "");
-          if (dt == "text_delta") {
-            const auto value = delta.value("text", "");
-            text(value);
-            blocks[index]["text"] = blocks[index].value("text", "") + value;
-          }
-          if (dt == "input_json_delta")
+          if (dt == "text_delta" || dt == "thinking_delta" || dt == "signature_delta") {
+            const char *field = dt == "text_delta"       ? "text"
+                                : dt == "thinking_delta" ? "thinking"
+                                                         : "signature";
+            const auto value = delta.value(field, "");
+            auto &block = blocks[index];
+            if (!block.contains(field))
+              block[field] = "";
+            block.at(field).get_ref<std::string &>().append(value);
+            if (dt == "text_delta")
+              text(value);
+          } else if (dt == "input_json_delta")
             arguments[index] += delta.value("partial_json", "");
-          if (dt == "thinking_delta")
-            blocks[index]["thinking"] =
-                blocks[index].value("thinking", "") + delta.value("thinking", "");
-          if (dt == "signature_delta")
-            blocks[index]["signature"] =
-                blocks[index].value("signature", "") + delta.value("signature", "");
         }
         if (type == "message_delta") {
           usage(result.usage, j.value("usage", Json::object()));

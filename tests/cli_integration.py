@@ -89,6 +89,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
         if self.path in ('/codex','/v1/responses'):
             prompt=next((m.get('content','') for m in reversed(body['input']) if m.get('role')=='user'),'')
+            if prompt in ('fixture-refusal-stream', 'fixture-refusal-final', 'fixture-premature-done'):
+                answer='Unable to answer.'
+                item={'type':'message','id':'refusal-id','role':'assistant','phase':'final_answer',
+                      'content':[{'type':'refusal','refusal':answer}]}
+                frames=[]
+                if prompt!='fixture-refusal-final':
+                    frames=[{'type':'response.refusal.delta','item_id':item['id'],'output_index':0,'delta':part}
+                            for part in ('Unable ', 'to answer.')]
+                if prompt!='fixture-premature-done':
+                    frames.append({'type':'response.completed','response':{'status':'completed','output':[item]}})
+                data=(''.join('data: '+json.dumps(frame)+'\n\n' for frame in frames)+'data: [DONE]\n\n').encode()
+                self.send_response(200)
+                self.send_header('Content-Length',str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
             if prompt.startswith('fixture-malformed-') or (malformed_summary and not body.get('tools')):
                 mode=prompt[len('fixture-malformed-'):]
                 payload='{broken' if mode=='syntax' else json.dumps({'type':'response.output_text.delta','delta':42})
@@ -149,6 +165,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 command='cat output.txt'
                 if 'wait' in prompt:command+='; printf ready > ready; while test ! -f release; do sleep .02; done'
                 if 'background' in prompt:command='printf ready > ready; cat output.txt; while test ! -f release; do sleep .02; done'
+                if 'background-pid' in prompt:command='echo $$ > job.pid; '+command+'; echo exited > exited'
                 args={'cmd':command,'login':False,'yield_time_ms':250 if 'background' in prompt else 10000}
             elif 'background' in prompt:
                 name=None
@@ -1315,6 +1332,74 @@ class CliTests(unittest.TestCase):
             if p.poll() is None:p.kill();p.wait(timeout=5)
             p.stdout.close();p.stderr.close()
 
+    def test_new_confirms_and_reaps_jobs_in_both_terminals(self):
+        import signal
+        import sqlite3
+        (self.workspace / 'output.txt').write_text('ready')
+        # The job writes its own PID so the test can distinguish real reaping from hiding a handle.
+        for mode in ('line', 'curses'):
+            with self.subTest(mode=mode), PtyProcess() as resources:
+                release = self.workspace / 'release'
+                release.unlink(missing_ok=True)
+                master, slave = resources.openpty()
+                child = resources.start([BIN, '-C', str(self.workspace), '--ui', mode,
+                                         '--permission-mode', 'bypass'], stdin=slave, stdout=slave,
+                                        stderr=slave, env=dict(self.env, TERM='xterm'))
+                def wait_for(marker, master=master):
+                    received = bytearray()
+                    collect_pty(self, master, received, lambda: marker in received)
+                def type_line(text, master=master):
+                    os.write(master, text + b'\n')
+                wait_for(b'codet>')
+                type_line(b'fixture-capture-background-pid')
+                wait_for(b'fixture done')
+                pid = int((self.workspace / 'job.pid').read_text())
+                with sqlite3.connect(self.home / 'state.sqlite3') as db:
+                    before = db.execute('SELECT count(*) FROM sessions').fetchone()[0]
+                    def wait_for_count(expected, db=db, master=master):
+                        # Curses can redraw an earlier "Started" line while the new switch is pending.
+                        collect_pty(self, master, bytearray(), lambda: db.execute(
+                            'SELECT count(*) FROM sessions').fetchone()[0] == expected)
+                    # A pretyped yes must not confirm a job stop. Interrupt the open question.
+                    os.write(master, b'/new\nyes\n')
+                    wait_for(b'live shell job')
+                    child.send_signal(signal.SIGINT)
+                    wait_for(b'Kept the current conversation')
+                    self.assertEqual(db.execute('SELECT count(*) FROM sessions').fetchone()[0], before)
+                    os.kill(pid, 0)
+                    type_line(b'/new')
+                    wait_for(b'live shell job')
+                    type_line(b'no')
+                    wait_for(b'Kept the current conversation')
+                    self.assertEqual(db.execute('SELECT count(*) FROM sessions').fetchone()[0], before)
+                    os.kill(pid, 0)
+                    type_line(b'/new')
+                    wait_for(b'live shell job')
+                    type_line(b'yes')
+                    wait_for(b'Started ')
+                    wait_for_count(before + 1)
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(pid, 0)
+                    type_line(b'/new')
+                    wait_for(b'Started ')
+                    wait_for_count(before + 2)
+                    type_line(b'fixture-capture-background-pid')
+                    wait_for(b'fixture done')
+                    type_line(b'/new')
+                    wait_for(b'Approve?' if mode == 'curses' else b'live shell job')
+                    release.touch()
+                    # Wait for the actual command to finish while confirmation is open.
+                    deadline = time.monotonic() + 5
+                    while not (self.workspace / 'exited').exists() and time.monotonic() < deadline:
+                        time.sleep(.01)
+                    self.assertTrue((self.workspace / 'exited').exists())
+                    type_line(b'yes')
+                    wait_for(b'Started ')
+                    wait_for_count(before + 3)
+                    (self.workspace / 'exited').unlink()
+                type_line(b'/quit')
+                collect_pty(self, master, bytearray(), lambda child=child: child.poll() is not None)
+                self.assertEqual(child.returncode, 0)
     def test_new_session_lifecycle_and_invalid_hook_bytes_in_both_terminals(self):
         import pty
         import select
@@ -1391,6 +1476,102 @@ class CliTests(unittest.TestCase):
         self.assertEqual(json.loads(r.stdout)['result'],'Final fixture answer')
         self.assertEqual(self.server.requests[-1]['path'],'/v1/responses')
         self.assertEqual(self.server.requests[-1]['body']['reasoning']['effort'],'medium')
+
+    def test_responses_refusal_is_visible_exactly_once_and_survives_export(self):
+        flags=['-c','providers.openai.wire_api="responses"']
+        for prompt in ('fixture-refusal-stream','fixture-refusal-final'):
+            with self.subTest(prompt=prompt):
+                reply=self.run_cli('exec',*flags,prompt)
+                self.assertEqual(reply.returncode,0,reply.stderr)
+                self.assertEqual(reply.stdout.strip(),'Unable to answer.')
+                records=self.run_cli('exec','--json',*flags,prompt)
+                self.assertEqual(records.returncode,0,records.stderr)
+                events=[json.loads(line) for line in records.stdout.splitlines()]
+                completed=[e['item'] for e in events if e['type']=='item.completed' and e['item']['type']=='agent_message']
+                self.assertEqual([item['text'] for item in completed],['Unable to answer.'])
+                if prompt=='fixture-refusal-stream':
+                    deltas=[e['item']['text_delta'] for e in events if e['type']=='item.updated']
+                    self.assertEqual(''.join(deltas),'Unable to answer.')
+                export=self.run_cli('export','--last','--output-format','text')
+                self.assertEqual(export.returncode,0,export.stderr)
+                self.assertEqual(export.stdout.count('assistant: Unable to answer.'),1)
+        incomplete=self.run_cli('exec','--json',*flags,'fixture-premature-done')
+        self.assertNotEqual(incomplete.returncode,0)
+        self.assertNotIn('"turn.completed"',incomplete.stdout)
+
+    def test_login_preserves_prior_key_on_interrupted_or_unreadable_input(self):
+        import array
+        import fcntl
+        import termios
+        args=['login','--provider','openai','--with-api-key']
+        saved=self.run_cli(*args,input='working-key')
+        self.assertEqual(saved.returncode,0,saved.stderr)
+        auth=self.home/'auth.json'
+        before=auth.read_bytes()
+        r,w=os.pipe()
+        try:
+            os.write(w,b'partial')
+            with subprocess.Popen([BIN,*args],stdin=r,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=self.env) as child:
+                try:
+                    remaining=array.array('i',[1])
+                    deadline=time.monotonic()+5
+                    while remaining[0] and time.monotonic()<deadline:
+                        fcntl.ioctl(r,termios.FIONREAD,remaining)
+                        if remaining[0]:time.sleep(.005)
+                    self.assertEqual(remaining[0],0,'child never started reading the key')
+                    child.send_signal(signal.SIGINT)
+                    child.communicate(timeout=5)
+                    self.assertEqual(child.returncode,130)
+                finally:
+                    if child.poll() is None:child.kill()
+        finally:
+            os.close(r)
+            os.close(w)
+        self.assertEqual(auth.read_bytes(),before)
+        descriptor=os.open(self.workspace,os.O_RDONLY)
+        try:
+            failure=subprocess.run([BIN,*args],stdin=descriptor,capture_output=True,text=True,env=self.env,timeout=5)
+        finally:
+            os.close(descriptor)
+        self.assertEqual(failure.returncode,1)
+        self.assertIn('read stdin',failure.stderr)
+        self.assertEqual(auth.read_bytes(),before)
+
+    def test_login_reads_regular_stdin_and_clean_device_eof(self):
+        args=[BIN,'login','--provider','openai','--with-api-key']
+        source=self.root/'key.txt'
+        source.write_bytes(b'file-fixture\n')
+        with source.open('rb') as stream:
+            result=subprocess.run(args,stdin=stream,capture_output=True,text=True,env=self.env,timeout=5)
+        self.assertEqual(result.returncode,0,result.stderr)
+        auth=self.home/'auth.json'
+        before=auth.read_bytes()
+        self.assertEqual(json.loads(before)['api_keys']['openai'],'file-fixture')
+        empty=subprocess.run(args,stdin=subprocess.DEVNULL,capture_output=True,text=True,env=self.env,timeout=5)
+        self.assertEqual(empty.returncode,2,empty.stderr)
+        self.assertIn('nonempty',empty.stderr)
+        self.assertEqual(auth.read_bytes(),before)
+
+    def test_config_rejects_fractional_and_out_of_range_limits_before_conversion(self):
+        for key,value in [('max_turns','2.5'),('max_output_tokens','3.0'),
+                          ('connect_timeout_seconds','4294967316'),('context_tokens','-1'),
+                          ('tool_output_limit','4294967552'),('trusted_projects','"project"'),
+                          ('add_dirs','[17]'),('providers','[]'),('keybindings','false')]:
+            with self.subTest(key=key,value=value):
+                with (self.home/'config.toml').open('w') as config:
+                    config.write(key+'='+value+'\n')
+                result=self.run_cli('doctor')
+                self.assertEqual(result.returncode,2,result.stderr)
+                self.assertIn(key,result.stderr)
+                (self.home/'config.toml').write_text('')
+                override=self.run_cli('doctor','-c',key+'='+value)
+                self.assertEqual(override.returncode,2,override.stderr)
+                self.assertIn(key,override.stderr)
+        (self.home/'config.toml').write_text('')
+        for setting in ('max_turns=1000','context_tokens=512','request_timeout_seconds=0',
+                        'project_doc_max_bytes=0','memory_context_max_bytes=0'):
+            valid=self.run_cli('doctor','-c',setting)
+            self.assertEqual(valid.returncode,0,valid.stderr)
 
     def test_nonreasoning_responses_model_survives_saved_session_resume(self):
         flags=['--model','gpt-4o-mini','-c','providers.openai.wire_api="responses"']
@@ -1632,9 +1813,10 @@ class CliTests(unittest.TestCase):
             process,master,trigger,received,collect,token,release,before=context
             os.write(trigger,b'h');token(b'r')
             os.write(master,b'\n');token(b's')
-            os.write(master,b'\x04')
-            os.write(trigger,b'g');release.set()
+            os.write(master,b'\x04');token(b'k')
+            os.write(trigger,b'g')
             collect(lambda:b'Error: Interrupted' in received or process.poll() is not None)
+            release.set()
             self.assertNotIn(b'Pending message not sent: ]',received,'Empty frozen input emitted an empty pending notice')
             self.assertIsNone(process.poll())
             os.write(master,b'fixture-recovered-output\n')

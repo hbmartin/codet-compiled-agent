@@ -23,6 +23,26 @@
 
 namespace codet {
 namespace {
+struct SessionBusy : Error {
+  using Error::Error;
+};
+struct LockFile {
+  int fd = -1;
+  LockFile() = default;
+  LockFile(const LockFile &) = delete;
+  LockFile &operator=(const LockFile &) = delete;
+  ~LockFile() {
+    if (fd >= 0)
+      ::close(fd);
+  }
+  void open(const fs::path &path) {
+    fd = ::open(path.c_str(), O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0600);
+    struct stat status {};
+    if (fd < 0 || ::fstat(fd, &status) || !S_ISREG(status.st_mode) ||
+        status.st_uid != ::geteuid() || ::fchmod(fd, 0600) || ::fcntl(fd, F_SETFD, FD_CLOEXEC) < 0)
+      throw Error("Cannot open private database migration lock");
+  }
+};
 struct StoredDataCorruption : Error {
   using Error::Error;
 };
@@ -447,6 +467,7 @@ struct StateStore::Impl {
     }
   };
   sqlite3 *db = nullptr;
+  LockFile lifetime_lock;
   fs::path home, artifact_root;
   mutable fs::path artifact_anchor;
   NativeFileSystem native_files;
@@ -598,6 +619,37 @@ struct StateStore::Impl {
   void require_owned_write() const {
     if (!sqlite3_get_autocommit(db))
       throw Error("Transcript writes require their own transaction");
+  }
+  // A marker binds one generated child ID to the configured ledger root. Never follow a path
+  // read from disk. Express colocated roots relative to the state home so a moved home recovers.
+  std::string fork_root_identity() const {
+    auto relative = artifact_root.lexically_relative(fs::absolute(home).lexically_normal());
+    if (!relative.empty() && *relative.begin() != "..")
+      return "relative " + relative.generic_string();
+    return "absolute " + artifact_root.generic_string();
+  }
+  fs::path fork_marker(const std::string &id) const {
+    return home / (".pending-fork-" + id);
+  }
+  void finish_fork_marker(const std::string &id, const DiagnosticSink &sink) const noexcept {
+    try {
+      const auto marker = fork_marker(id);
+      if (!fs::is_regular_file(fs::symlink_status(marker)))
+        return;
+      const auto identity = fork_root_identity();
+      if (files->read(marker, 8192) != identity)
+        return; // Another configured root owns this operation.
+      if (!sqlite3_get_autocommit(db))
+        throw Error("Fork transaction outcome is pending");
+      cleanup_fork_image_history(artifact_root, *files, id, session_exists(id));
+      files->remove(marker);
+    } catch (const std::exception &e) {
+      try {
+        report_diagnostic(sink, "Pending fork cleanup will be retried: " + std::string(e.what()));
+      } catch (...) {
+        return;
+      }
+    }
   }
   bool session_exists(const std::string &id) const {
     Statement exists(db, "SELECT 1 FROM sessions WHERE id=?");
@@ -1806,27 +1858,9 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
       throw Error("Session database was created by a newer Codet version");
     return value;
   };
-  struct MigrationLocks {
-    std::vector<int> descriptors;
-    ~MigrationLocks() {
-      for (int fd : descriptors)
-        ::close(fd);
-    }
-  } migration_locks;
-  const auto acquire_migration = [&] {
-    if (!migration_locks.descriptors.empty())
-      return;
-    const auto migration_path = home / ".migration.lock";
-    const int migration_fd =
-        ::open(migration_path.c_str(), O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0600);
-    struct stat migration_stat {};
-    if (migration_fd < 0)
-      throw Error("Cannot open database migration lock");
-    migration_locks.descriptors.push_back(migration_fd);
-    if (::fstat(migration_fd, &migration_stat) || !S_ISREG(migration_stat.st_mode) ||
-        migration_stat.st_uid != ::geteuid() || ::fchmod(migration_fd, 0600) ||
-        ::fcntl(migration_fd, F_SETFD, FD_CLOEXEC) < 0)
-      throw Error("Database migration lock must be an owned regular file");
+  LockFile migration_lock;
+  impl_->lifetime_lock.open(home / ".state-users.lock");
+  const auto wait_lock = [&](int fd, int mode) {
     bool notified = false;
     const auto notify_waiting = [&]() noexcept {
       try {
@@ -1838,7 +1872,7 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
     for (;;) {
       if (startup.cancellation && startup.cancellation->requested.load())
         throw Error("Interrupted waiting for database migration", 130);
-      if (::flock(migration_fd, LOCK_EX | LOCK_NB) == 0)
+      if (::flock(fd, mode | LOCK_NB) == 0)
         break;
       if (errno == EINTR)
         throw Error("Interrupted waiting for database migration", 130);
@@ -1850,7 +1884,7 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
       }
       // Existing constructors retain their interruptible blocking behavior.
       if (!startup.cancellation) {
-        if (::flock(migration_fd, LOCK_EX) == 0)
+        if (::flock(fd, mode) == 0)
           break;
         if (errno == EINTR)
           throw Error("Interrupted waiting for database migration", 130);
@@ -1859,9 +1893,20 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
       std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
   };
+  const auto acquire_migration = [&] {
+    if (migration_lock.fd >= 0)
+      return;
+    migration_lock.open(home / ".migration.lock");
+    wait_lock(migration_lock.fd, LOCK_EX);
+  };
   if (version() < 8) {
     acquire_migration();
     const auto old_version = version();
+    if (old_version < 8 && ::flock(impl_->lifetime_lock.fd, LOCK_EX | LOCK_NB)) {
+      if (errno == EWOULDBLOCK || errno == EAGAIN)
+        throw Error("Stop active Codet sessions before upgrading the database");
+      throw Error("Cannot acquire database migration lock");
+    }
     if (old_version > 0 && old_version < 8) {
       const auto locks = home / "session-locks";
       if (fs::exists(locks))
@@ -1870,11 +1915,9 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
           if (fd < 0)
             throw Error("Cannot inspect session ownership before migration");
           const bool busy = ::flock(fd, LOCK_EX | LOCK_NB) != 0;
-          if (busy) {
-            ::close(fd);
+          ::close(fd); // The lifetime gate prevents new cooperating sessions during this scan.
+          if (busy)
             throw Error("Stop active Codet sessions before upgrading the database");
-          }
-          migration_locks.descriptors.push_back(fd);
         }
       const auto target = home / ("state.sqlite3.pre-v8-" + unique_id());
       sqlite3 *backup_db = nullptr;
@@ -2030,6 +2073,7 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
       migration.commit();
     }
   }
+  wait_lock(impl_->lifetime_lock.fd, LOCK_SH);
   impl_->verify_revisions();
   bool wal = false;
   {
@@ -2052,6 +2096,22 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
       sql(impl_->db, "PRAGMA journal_mode=WAL");
   }
   sql(impl_->db, durability == "fast" ? "PRAGMA synchronous=NORMAL" : "PRAGMA synchronous=FULL");
+  const std::string marker_prefix = ".pending-fork-";
+  for (const auto &entry : fs::directory_iterator(home)) {
+    const auto name = entry.path().filename().string();
+    if (name.compare(0, marker_prefix.size(), marker_prefix))
+      continue;
+    const auto id = name.substr(marker_prefix.size());
+    if (id.size() != 36 || id.find_first_not_of("0123456789abcdef-") != std::string::npos)
+      continue;
+    try {
+      const auto owner = acquire(id);
+      impl_->finish_fork_marker(id, startup.diagnostics);
+    } catch (const SessionBusy &) {
+      // A live fork will finish its own publication.
+      continue;
+    }
+  }
 }
 StateStore::~StateStore() {
   if (impl_->db && impl_->durability == "fast") {
@@ -2124,7 +2184,7 @@ std::shared_ptr<void> StateStore::acquire(const std::string &id) {
     throw Error("Cannot open private session ownership lock");
   if (::flock(lease->fd, LOCK_EX | LOCK_NB)) {
     if (errno == EWOULDBLOCK || errno == EAGAIN)
-      throw Error("Session is in use by another process: " + id);
+      throw SessionBusy("Session is in use by another process: " + id);
     throw Error("Cannot acquire session ownership lock: " + id);
   }
   impl_->owners[id] = lease;
@@ -2138,6 +2198,12 @@ Session StateStore::create(const std::string &name) {
 Session StateStore::load(const std::string &selector, bool repair) {
   const auto id = select_session(impl_->db, selector, false);
   return load_id(id, repair);
+}
+Session StateStore::export_session(const std::string &selector, bool last_session) {
+  ReadOptions options;
+  options.repair = true;
+  options.provider = false;
+  return read_session(select_session(impl_->db, selector, last_session), options);
 }
 Session StateStore::load_id(const std::string &id, bool repair) {
   ReadOptions options;
@@ -2380,47 +2446,77 @@ Session StateStore::last(bool repair) {
   return load_id(id, repair);
 }
 Session StateStore::fork(const Session &parent) {
+  impl_->require_owned_write();
   auto recovered = parent;
   reconcile(recovered, false);
   std::map<std::string, std::string> fork_references;
   for (auto &message : recovered.messages)
     impl_->project(message, fork_references);
-  Session s{unique_id(), parent.name.empty() ? "" : parent.name + " (fork)", recovered.messages};
+  Session s{unique_id(), parent.name.empty() ? "" : parent.name + " (fork)",
+            std::move(recovered.messages)};
   s.provider = parent.provider;
   s.model = parent.model;
   s.effort = parent.effort;
-  s.provider_state = parent.provider_state;
+  s.provider_state = std::move(recovered.provider_state);
   auto owner = acquire(s.id);
-  if (std::any_of(s.messages.begin(), s.messages.end(),
-                  [](const auto &m) { return !m.artifact_index.empty(); }) &&
-      !fs::exists(artifact_index_path(impl_->artifact_root, parent.id)))
-    throw Error("Historical image index missing; restore the active artifact root");
-  copy_image_history(impl_->artifact_root, *impl_->files, parent.id, s.id);
+  const auto marker = impl_->fork_marker(s.id);
+  if (impl_->session_exists(s.id) || fs::exists(fs::symlink_status(marker)))
+    throw Error("Fork identity already exists; retry fork");
   for (auto &message : s.messages)
     if (!message.artifact_index.empty())
       message.artifact_index = artifact_index_reference(s.id);
-  save(s);
-  remember_references(s.id, s.messages);
-  {
-    JournalTransaction publication(impl_->db);
-    impl_->require_session_token(s.id);
-    Statement refs(impl_->db, "INSERT OR IGNORE INTO session_references(session,kind,path) "
-                              "SELECT ?,kind,path FROM session_references WHERE session=?");
-    refs.text(1, s.id);
-    refs.text(2, parent.id);
-    refs.run();
-    publication.commit();
+  auto child_journal = Impl::recover(s.messages, {}, s.id);
+  s.messages = std::move(child_journal.messages);
+  bool marked = false;
+  try {
+    const auto copied =
+        copy_image_history(impl_->artifact_root, *impl_->files, parent.id, s.id, [&] {
+          marked = true;
+          impl_->files->atomic_write(marker, impl_->fork_root_identity(), true);
+        });
+    if (!copied && std::any_of(s.messages.begin(), s.messages.end(),
+                               [](const auto &m) { return !m.artifact_index.empty(); }))
+      throw Error("Historical image index missing; restore the active artifact root");
+    Impl::PrepareOptions options;
+    options.kind = Impl::WriteKind::replace;
+    impl_->publish_retry(
+        s.id,
+        [&] {
+          std::vector<size_t> positions;
+          for (size_t i = 0; i < s.messages.size(); ++i)
+            positions.push_back(i);
+          auto prepared = impl_->prepare(s, std::move(positions), options);
+          Impl::prepare_journal(prepared, s.messages, child_journal.writes);
+          return prepared;
+        },
+        [&](Impl::PreparedTranscript &prepared) {
+          if (prepared.version.present)
+            throw Error("Fork identity already exists; retry fork");
+          update_metadata(s);
+          impl_->apply_prepared_transcript(s, prepared);
+          save_provider_state(s);
+          Statement refs(impl_->db, "INSERT OR IGNORE INTO session_references(session,kind,path) "
+                                    "SELECT ?,kind,path FROM session_references WHERE session=?");
+          refs.text(1, s.id);
+          refs.text(2, parent.id);
+          refs.run();
+          Statement relation(impl_->db, "UPDATE sessions SET parent=? WHERE id=?");
+          relation.text(1, parent.id);
+          relation.text(2, s.id);
+          relation.run();
+        },
+        [&](Impl::PreparedTranscript &prepared) noexcept {
+          impl_->publish_transcript(s, prepared);
+          impl_->publish_provider(s, impl_->pending_provider_bytes, impl_->pending_provider_token);
+        },
+        "Fork preparation changed twice; no changes applied; retry fork");
+  } catch (...) {
+    if (marked)
+      impl_->finish_fork_marker(s.id, impl_->diagnostics);
+    throw;
   }
-  reconcile(s);
-  {
-    JournalTransaction publication(impl_->db);
-    impl_->require_session_token(s.id);
-    Statement q(impl_->db, "UPDATE sessions SET parent=? WHERE id=?");
-    q.text(1, parent.id);
-    q.text(2, s.id);
-    q.run();
-    publication.commit();
-  }
+  if (marked)
+    impl_->finish_fork_marker(s.id, impl_->diagnostics);
   return s;
 }
 void StateStore::update_metadata(const Session &s) {

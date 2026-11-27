@@ -25,6 +25,10 @@
 #include <sys/resource.h>
 
 std::string codet::test::executable;
+namespace codet::test {
+int credential_writer(const fs::path &, const std::string &, int);
+int patch_child(const fs::path &, const fs::path &, const std::string &);
+} // namespace codet::test
 #ifdef CODET_NATIVE_TERMINAL_METRICS
 namespace {
 codet::Cancellation *pending_cancel = nullptr;
@@ -56,6 +60,8 @@ int pending_poll(pollfd *fds, nfds_t count, int timeout) {
 ssize_t pending_read(int fd, void *data, size_t size) {
   const auto count = ::read(fd, data, size);
   if (pending_sequence_io) {
+    if (count == 1 && *static_cast<char *>(data) == 4)
+      (void)::write(pending_notify, "k", 1);
     if (count == 1 && *static_cast<char *>(data) == 1)
       pending_sequence_barrier = true; // Next poll proves all preceding bytes were processed.
     if (count == 1 && *static_cast<char *>(data) == 0)
@@ -159,6 +165,10 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc == 5 && std::string(argv[1]) == "--codet-credential-writer")
+      return codet::test::credential_writer(argv[2], argv[3], std::stoi(argv[4]));
+    if (argc == 5 && std::string(argv[1]) == "--codet-patch-helper")
+      return codet::test::patch_child(argv[2], argv[3], argv[4]);
     if (argc > 2 && std::string(argv[1]) == "--codet-admission-helper") {
       struct Admission {
         std::string constraint;

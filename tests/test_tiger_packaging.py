@@ -14,8 +14,10 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import unittest
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -314,13 +316,10 @@ class PortablePackaging(DistributionFixture):
         self.package()
         self.assertEqual(self.archive.read_bytes(), before)
         real = os.replace
+        extra = self.write("extra/notice.txt", "new notice")
 
         def replace(source, target):
-            if (
-                Path(source).suffix == ".sha256"
-                and Path(target) == self.checksum
-                and Path(source).parent.name.startswith("portable-")
-            ):
+            if Path(target).name == "current":
                 raise OSError("publish fault")
             return real(source, target)
 
@@ -328,9 +327,121 @@ class PortablePackaging(DistributionFixture):
             patch.object(distribution.os, "replace", side_effect=replace),
             self.assertRaisesRegex(OSError, "publish fault"),
         ):
-            self.package()
+            self.package("--extra-license", str(extra))
         self.assertEqual(self.archive.read_bytes(), before)
         self.assertEqual(self.checksum.read_bytes(), sum_before)
+
+
+class ArchivePublication(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        self.archive = self.root / "codet.tar.gz"
+        self.checksum = self.root / (self.archive.name + ".sha256")
+        self.old = self.root / "old"
+        self.new = self.root / "new"
+        self.old.write_bytes(b"old archive")
+        self.new.write_bytes(b"new archive")
+
+    def check_pair(self, archive, content):
+        self.assertEqual(archive.read_bytes(), content)
+        self.assertEqual(archive.with_name(archive.name + ".sha256").read_text(),
+                         file_hash(archive) + "  " + self.archive.name + "\n")
+
+    def test_legacy_mismatch_is_preserved(self):
+        self.archive.write_bytes(b"legacy")
+        self.checksum.write_bytes(b"bad")
+        with self.assertRaisesRegex(ValueError, "mismatch"):
+            distribution.publish_archive(self.new, self.archive)
+        self.assertEqual(self.archive.read_bytes(), b"legacy")
+        self.assertEqual(self.checksum.read_bytes(), b"bad")
+
+    def test_process_death_while_adopting_flat_pair_can_be_retried(self):
+        self.archive.write_bytes(self.old.read_bytes())
+        self.checksum.write_text(file_hash(self.old) + "  " + self.archive.name + "\n")
+        script = """
+import os, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import tiger_distribution as distribution
+archive = Path(sys.argv[3])
+replace = os.replace
+def interrupt(source, target):
+    replace(source, target)
+    if Path(target) == archive:
+        os._exit(71)
+distribution.os.replace = interrupt
+distribution.publish_archive(Path(sys.argv[2]), archive)
+"""
+        child = subprocess.run([sys.executable, "-c", script, str(SCRIPTS), str(self.new),
+                                str(self.archive)], timeout=10, check=False)
+        self.assertEqual(child.returncode, 71)
+        self.check_pair(self.archive, b"old archive")
+        pinned = self.archive.resolve(strict=True)
+        distribution.publish_archive(self.new, self.archive)
+        self.check_pair(pinned, b"old archive")
+        self.check_pair(self.archive.resolve(strict=True), b"new archive")
+
+    def test_process_exit_before_and_after_switch_preserves_selected_pair(self):
+        script = """
+import os, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import tiger_distribution as distribution
+replace = os.replace
+def interrupt(source, target):
+    if Path(target).name == "current" and sys.argv[4] == "before":
+        os._exit(71)
+    replace(source, target)
+    if Path(target).name == "current" and sys.argv[4] == "after":
+        os._exit(72)
+distribution.os.replace = interrupt
+distribution.publish_archive(Path(sys.argv[2]), Path(sys.argv[3]))
+"""
+        distribution.publish_archive(self.old, self.archive)
+        pinned = self.archive.resolve(strict=True)
+        for point, code, content in (("before", 71, b"old archive"), ("after", 72, b"new archive")):
+            with self.subTest(point=point):
+                child = subprocess.run([sys.executable, "-c", script, str(SCRIPTS), str(self.new),
+                                        str(self.archive), point], timeout=10, check=False)
+                self.assertEqual(child.returncode, code)
+                self.check_pair(self.archive.resolve(strict=True), content)
+                self.check_pair(pinned, b"old archive")
+
+    def test_overlapping_writers_publish_complete_generations_for_pinned_readers(self):
+        distribution.publish_archive(self.old, self.archive)
+        pinned = self.archive.resolve(strict=True)
+        first_entered, release, second_entered = threading.Event(), threading.Event(), threading.Event()
+        third = self.root / "third"
+        third.write_bytes(b"third archive")
+        store_generation = distribution.store_generation
+
+        def observing_store(source, *args):
+            if source == self.new:
+                first_entered.set()
+                if not release.wait(5):
+                    raise RuntimeError("writer did not resume")
+            return store_generation(source, *args)
+
+        def second():
+            second_entered.set()
+            distribution.publish_archive(third, self.archive)
+
+        with patch.object(distribution, "store_generation", side_effect=observing_store), ThreadPoolExecutor(2) as pool:
+            first = pool.submit(distribution.publish_archive, self.new, self.archive)
+            try:
+                self.assertTrue(first_entered.wait(5))
+                later = pool.submit(second)
+                self.assertTrue(second_entered.wait(5))
+                self.check_pair(self.archive.resolve(strict=True), b"old archive")
+            finally:
+                release.set()
+            first.result(timeout=5)
+            later.result(timeout=5)
+        self.check_pair(pinned, b"old archive")
+        self.check_pair(self.archive, b"third archive")
+        self.check_pair(pinned.parent.parent / file_hash(self.new) / self.archive.name, b"new archive")
 
 
 class TigerPackagingCommand(DistributionFixture):

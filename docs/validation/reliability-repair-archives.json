@@ -1,0 +1,29 @@
+{
+  "build_id": "8361944174584bcf96a9e18773ac0858",
+  "provenance_sha256": "8e7766fe246cef7550bf848f7c488c79c58e9b31e0189e9e5e20f2f1650f866b",
+  "source_commit": "d3f6940a7d8a5bb38c5039042530d82fc652298d",
+  "archives": {
+    "codet-tiger-ppc-portable.tar.gz": {
+      "sha256": "03dd95c9ede37da187416cba3a6ffcf876784e4f15e1c4956e640eac31ba60bc",
+      "bytes": 15612575,
+      "archive_members": 3318,
+      "binaries": [
+        "bin/codet",
+        "bin/codet_tests",
+        "bin/codet_persistence_bench"
+      ],
+      "bundled_libraries": 8
+    },
+    "codet-tiger-ppc.tar.gz": {
+      "sha256": "20bf524f185e1992aa811b6cd0900453392832ac7de5733c1fa69c4fe96fa4cb",
+      "bytes": 11713710,
+      "archive_members": 393,
+      "binaries": [
+        "codet",
+        "codet_tests",
+        "codet_persistence_bench"
+      ],
+      "bundled_libraries": 0
+    }
+  }
+}

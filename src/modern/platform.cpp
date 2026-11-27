@@ -1903,7 +1903,7 @@ void NativeProcesses::record_error(const std::string &id, Job &job,
 NativeProcesses::Job &NativeProcesses::observe(const std::string &id) {
   auto it = jobs_.find(id);
   if (it == jobs_.end())
-    throw Error("Unknown or expired job: " + id);
+    throw ProcessExpired("Unknown or expired job: " + id);
   auto &job = *it->second;
   try {
     collect(job);
@@ -2003,7 +2003,7 @@ ProcessStatus NativeProcesses::status(const std::string &id) {
 NativeProcesses::Job &NativeProcesses::retained_job(const std::string &id) {
   const auto it = jobs_.find(id);
   if (it == jobs_.end() || !it->second->retain)
-    throw Error("Unknown or expired job: " + id);
+    throw ProcessExpired("Unknown or expired job: " + id);
   return *it->second;
 }
 void NativeProcesses::advance_cleanup(Job &job) {

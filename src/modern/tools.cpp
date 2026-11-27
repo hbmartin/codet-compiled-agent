@@ -221,11 +221,6 @@ struct RulePaths {
     return matches_candidates(candidates);
   }
 };
-struct Change {
-  fs::path path;
-  std::optional<std::string> before, after;
-  mode_t mode = 0644;
-};
 std::string feedback_text(const std::string &text, size_t limit) {
   auto clean = safe_text(text);
   if (clean.size() <= limit)
@@ -430,7 +425,7 @@ PermissionRequest Tools::execution_request(const ToolCall &call) const {
   } else if (call.name == "write_stdin") {
     const auto id = a.at("session_id").get<int>();
     const auto it = exec_sessions_.find(id);
-    if (it == exec_sessions_.end() ||
+    if (it == exec_sessions_.end() || it->second.owner != session_id_ ||
         (it->second.completed && (!it->second.exit_code || !a.value("close_stdin", false) ||
                                   !a.value("chars", std::string{}).empty())))
       throw Error("Unknown or completed exec session");
@@ -860,7 +855,7 @@ ExecutionObservation Tools::observe_execution(const std::vector<Message> &messag
     facts.push_back(entry.second);
   // Only this Tools instance owns execution handles. Historical IDs are never live after resume.
   for (const auto &entry : exec_sessions_)
-    if (!entry.second.completed)
+    if (entry.second.owner == session_id_ && !entry.second.completed)
       facts.push_back(execution_fact(entry.first, entry.second));
   observation.facts = std::move(facts);
   return observation;
@@ -969,18 +964,61 @@ void Tools::end_input_turn() {
   if (interaction_)
     interaction_->end_turn();
 }
+std::vector<int> Tools::live_exec_sessions(const std::string &owner) {
+  std::vector<int> handles;
+  for (auto &entry : exec_sessions_) {
+    auto &job = entry.second;
+    if (job.owner != owner || job.completed)
+      continue;
+    try {
+      const auto status = processes_.status(job.process);
+      if (!status.running && status.error.empty())
+        continue;
+    } catch (const ProcessExpired &) {
+      job.completed = true;
+      continue;
+    } catch (const std::exception &) {
+      if (fatal(std::current_exception()))
+        throw;
+      // A failed status check still leaves this process our responsibility.
+    }
+    handles.push_back(entry.first);
+  }
+  return handles;
+}
+void Tools::stop_exec_sessions(const std::string &owner, const std::vector<int> &handles) {
+  std::string failures;
+  for (auto id : handles) {
+    auto &job = exec_sessions_.at(id);
+    if (job.owner != owner)
+      throw Error("Execution handle belongs to another conversation");
+    try {
+      processes_.stop(job.process);
+      job.completed = true;
+    } catch (const ProcessExpired &) {
+      // An already-reaped job may have aged out during confirmation.
+      job.completed = true;
+    } catch (const std::exception &e) {
+      if (fatal(std::current_exception()))
+        throw;
+      failures += " " + std::to_string(id) + " (" + e.what() + ")";
+    }
+  }
+  if (!failures.empty())
+    throw Error("Could not stop shell jobs:" + failures);
+}
 void Tools::cancel_exec() noexcept {
   for (auto &entry : exec_sessions_)
     if (!entry.second.completed) {
       try {
         processes_.stop(entry.second.process);
+        entry.second.completed = true;
       } catch (...) {
         if (interaction_)
           interaction_->warn(Interaction::Warning::exec_stop);
         else
           (void)detail::immediate_stderr({"Exec cleanup failed while stopping owned process"});
       }
-      entry.second.completed = true;
     }
 }
 Json Tools::schemas() const {
@@ -1493,32 +1531,17 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
     return out;
   }
   if (definition->handler == ToolHandler::patch) {
-    // Snapshot only within this call. A prior model-facing read is not required.
-    std::map<fs::path, std::string> snapshots;
-    auto guard = [&](const fs::path &p) {
-      const auto current = fs::exists(p) ? digest(files_.read(p)) : "<missing>";
-      const auto it = snapshots.find(p);
-      if (it != snapshots.end() && it->second != current)
-        throw Error("File changed during patch: " + p.string());
-      snapshots[p] = current;
-    };
-    std::vector<Change> changes;
-    auto add = [&](const fs::path &p, std::optional<std::string> after, bool approved = false) {
-      if (!approved)
-        authorize({name, p.string(), p, true});
-      guard(p);
-      std::optional<std::string> before;
-      if (fs::exists(p))
-        before = files_.read(p);
-      if (after && after->size() > size_t{16} * size_t{1024} * 1024)
-        throw Error("Write exceeds 16 MiB limit");
-      if (std::any_of(changes.begin(), changes.end(), [&](const Change &x) { return x.path == p; }))
+    std::vector<PatchChange> changes;
+    std::set<fs::path> paths;
+    Json affected = Json::array();
+    const auto record = [&](const fs::path &target) {
+      if (!paths.insert(target).second)
         throw Error("Duplicate file in batch/patch");
-      if (!before && !after)
-        throw Error("Cannot delete a missing file");
-      struct stat st {};
-      const auto mode = stat(p.c_str(), &st) == 0 ? st.st_mode & 0777 : 0644;
-      changes.push_back({p, before, std::move(after), static_cast<mode_t>(mode)});
+      affected.push_back(target.string());
+    };
+    const auto absent = [](const fs::path &target, const char *message) {
+      if (fs::symlink_status(target).type() != fs::file_type::not_found)
+        throw Error(message);
     };
     const auto patch = a.at("patch").get<std::string>();
     auto ls = patch_lines(patch);
@@ -1546,86 +1569,44 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
       const auto p = path(header.substr(colon + 2));
       const auto kind = header.substr(0, colon);
       if (kind == "*** Delete File") {
-        add(p, std::nullopt);
+        authorize({name, p.string(), p, true});
+        record(p);
+        changes.push_back({p, {}, digest(files_.read(p)), {}});
         continue;
       }
       if (kind == "*** Add File") {
-        if (fs::exists(p))
-          throw Error("Add File already exists");
+        absent(p, "Add File already exists");
         std::string text;
         while (i + 1 < ls.size() && ls[i].rfind("*** ", 0) != 0) {
           if (ls[i].empty() || ls[i][0] != '+')
             throw Error("Invalid add line");
           text += ls[i++].substr(1) + "\n";
         }
-        add(p, text);
+        authorize({name, p.string(), p, true});
+        record(p);
+        changes.push_back({{}, p, {}, std::move(text)});
         continue;
       }
       if (kind != "*** Update File")
         throw Error("Unknown patch directive");
       authorize({name, p.string(), p, true});
-      guard(p);
-      auto text = files_.read(p);
+      record(p);
+      const auto before = files_.read(p);
       fs::path destination = p;
       if (i < ls.size() && ls[i].rfind("*** Move to: ", 0) == 0) {
         destination = path(ls[i++].substr(13));
-        if (fs::exists(destination))
-          throw Error("Move destination exists");
+        absent(destination, "Move destination exists");
+        authorize({name, destination.string(), destination, true});
+        record(destination);
       }
-      text = patch_update(text, ls, i, cancel);
-      if (destination != p) {
-        add(p, std::nullopt, true);
-        const auto original_mode = changes.back().mode;
-        add(destination, text);
-        changes.back().mode = original_mode;
-      } else
-        add(p, text, true);
+      changes.push_back({p, destination, digest(before), patch_update(before, ls, i, cancel)});
     }
     if (changes.empty())
       throw Error("Empty patch");
-    for (const auto &change : changes)
-      guard(change.path);
-    size_t applied = 0;
-    try {
-      for (auto &change : changes) {
-        cancel.check();
-        if (change.after) {
-          fs::create_directories(change.path.parent_path());
-          files_.atomic_write(change.path, *change.after);
-          ++applied;
-          if (!change.before && chmod(change.path.c_str(), change.mode) != 0)
-            throw Error("Cannot set file mode");
-        } else {
-          files_.remove(change.path);
-          ++applied;
-        }
-      }
-    } catch (...) {
-      const auto original = std::current_exception();
-      std::string failures;
-      while (applied > 0) {
-        auto &change = changes[--applied];
-        try {
-          if (change.before) {
-            files_.atomic_write(change.path, *change.before);
-            if (chmod(change.path.c_str(), change.mode) != 0)
-              throw Error("Cannot restore file mode");
-          } else
-            files_.remove(change.path);
-        } catch (const std::exception &e) {
-          failures += change.path.string() + ": " + e.what() + "; ";
-        }
-      }
-      if (!failures.empty())
-        throw Error("Batch failed and rollback needs attention: " + failures);
-      std::rethrow_exception(original);
-    }
-    Json paths = Json::array();
-    for (const auto &change : changes) {
-      paths.push_back(change.path.string());
-    }
-    return {
-        "Applied " + std::to_string(changes.size()) + " file change(s)", false, {{"paths", paths}}};
+    files_.publish_patch(changes, cancel);
+    return {"Applied " + std::to_string(affected.size()) + " file change(s)",
+            false,
+            {{"paths", affected}}};
   }
 
   if (definition->handler == ToolHandler::exec || definition->handler == ToolHandler::stdin_write) {
@@ -1667,8 +1648,14 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
       do {
         id = static_cast<int>(std::hash<std::string>{}(unique_id()) & 0x7fffffffU);
       } while (id == 0 || exec_sessions_.count(id));
-      exec_sessions_[id] = {
-          processes_.start(spec, cancel), command, spec.cwd, shell, spec.pty, false, std::nullopt};
+      exec_sessions_[id] = {processes_.start(spec, cancel),
+                            command,
+                            session_id_,
+                            spec.cwd,
+                            shell,
+                            spec.pty,
+                            false,
+                            std::nullopt};
     } else {
       id = a.at("session_id").get<int>();
       auto &session = exec_sessions_.at(id);
@@ -1712,13 +1699,13 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
     } catch (...) {
       try {
         processes_.stop(job.process);
+        job.completed = true;
       } catch (...) {
         if (interaction_)
           interaction_->warn(Interaction::Warning::exec_original);
         else
           (void)detail::immediate_stderr({"Exec cleanup failed; preserving original error"});
       }
-      job.completed = true;
       throw;
     }
     Json data = {

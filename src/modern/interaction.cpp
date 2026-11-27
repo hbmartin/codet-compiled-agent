@@ -112,7 +112,7 @@ bool Interaction::current_event(const Json &event) {
          (event.value("codet_turn", uint64_t{0}) == turn_ &&
           event.value("codet_session_id", "") == session_);
 }
-bool Interaction::input_barrier(std::deque<Input>::const_iterator end) const noexcept {
+bool Interaction::input_barrier(const std::deque<Input>::const_iterator &end) const noexcept {
   return std::any_of(input_.cbegin(), end,
                      [](const auto &line) { return line.kind != InputKind::steering; });
 }

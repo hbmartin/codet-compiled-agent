@@ -330,6 +330,21 @@ TEST_F(Pr17, SchemaSixUpgradeBacksUpAndFailureRollsBackItsSchemaChanges) {
     }
   EXPECT_EQ(backups, 2u);
 }
+TEST_F(Pr17, MigrationRequiresIdleStoreHandlesToCloseEvenWithoutSessionLeases) {
+  auto reader = std::make_unique<StateStore>(config.state_root);
+  Db raw(config.state_root / "state.sqlite3");
+  raw.exec("PRAGMA user_version=7");
+  try {
+    StateStore blocked(config.state_root);
+    FAIL() << "Migration proceeded while another store was open";
+  } catch (const Error &error) {
+    EXPECT_THAT(error.what(), HasSubstr("Stop active Codet sessions"));
+  }
+  EXPECT_EQ(raw.value("PRAGMA user_version"), "7");
+  reader.reset();
+  EXPECT_NO_THROW(StateStore upgraded(config.state_root));
+  EXPECT_EQ(raw.value("PRAGMA user_version"), "8");
+}
 TEST_F(Pr17, SchemaSixUpgradeRequiresActiveSessionsToStop) {
   std::shared_ptr<void> lease;
   {

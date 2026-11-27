@@ -2271,8 +2271,9 @@ TEST(SubmissionQueue, UnreadSteeringPrecedesHeldInputAndLaterMessages) {
     const auto ticket = detail::SubmissionAccess::reserve(io);
     detail::SubmissionAccess::commit(io, ticket, "B", true);
     io.submit("C");
-    if (consumed)
+    if (consumed) {
       EXPECT_EQ(io.take_input(), std::vector<std::string>{"A"});
+    }
     io.end_turn();
     std::vector<std::string> actual;
     while (auto next = detail::SubmissionAccess::next(io, "s"))
@@ -2890,8 +2891,9 @@ TEST(SubmissionQueue, ExplicitCommandFlagIsIndependentOfPreparedContentAndHeldSt
         const auto incoming = io.take_input();
         EXPECT_EQ(incoming.size(), command || held ? 0u : 1u)
             << "Prepared content changed the explicit command barrier";
-        if (!incoming.empty())
+        if (!incoming.empty()) {
           EXPECT_EQ(incoming.front(), "original");
+        }
         io.end_turn();
         const auto next = detail::SubmissionAccess::next(io, "session");
         EXPECT_EQ(next.has_value(), command || held);
@@ -2899,10 +2901,11 @@ TEST(SubmissionQueue, ExplicitCommandFlagIsIndependentOfPreparedContentAndHeldSt
           ASSERT_TRUE(next->prepared);
           EXPECT_EQ(next->prepared->original, "original");
           EXPECT_EQ(next->prepared->expanded, expanded ? "expanded" : "original");
-          if (!expanded)
+          if (!expanded) {
             EXPECT_EQ(next->prepared->original_storage().get(),
                       next->prepared->expanded_storage().get())
                 << "Barrier-only content duplicated unchanged backing";
+          }
         }
       }
 }
