@@ -1552,6 +1552,27 @@ class CliTests(unittest.TestCase):
         self.assertIn('nonempty',empty.stderr)
         self.assertEqual(auth.read_bytes(),before)
 
+    def test_config_rejects_fractional_and_out_of_range_limits_before_conversion(self):
+        for key,value in [('max_turns','2.5'),('max_output_tokens','3.0'),
+                          ('connect_timeout_seconds','4294967316'),('context_tokens','-1'),
+                          ('tool_output_limit','4294967552'),('trusted_projects','"project"'),
+                          ('add_dirs','[17]'),('providers','[]'),('keybindings','false')]:
+            with self.subTest(key=key,value=value):
+                with (self.home/'config.toml').open('w') as config:
+                    config.write(key+'='+value+'\n')
+                result=self.run_cli('doctor')
+                self.assertEqual(result.returncode,2,result.stderr)
+                self.assertIn(key,result.stderr)
+                (self.home/'config.toml').write_text('')
+                override=self.run_cli('doctor','-c',key+'='+value)
+                self.assertEqual(override.returncode,2,override.stderr)
+                self.assertIn(key,override.stderr)
+        (self.home/'config.toml').write_text('')
+        for setting in ('max_turns=1000','context_tokens=512','request_timeout_seconds=0',
+                        'project_doc_max_bytes=0','memory_context_max_bytes=0'):
+            valid=self.run_cli('doctor','-c',setting)
+            self.assertEqual(valid.returncode,0,valid.stderr)
+
     def test_nonreasoning_responses_model_survives_saved_session_resume(self):
         flags=['--model','gpt-4o-mini','-c','providers.openai.wire_api="responses"']
         r=self.run_cli('exec',*flags,'--output-format=json','simple')

@@ -35,6 +35,27 @@ Json layer(Json value) {
   value.erase("model_provider");
   return value;
 }
+template <class T> T setting(const Json &data, const char *name, const T &fallback = {}) {
+  try {
+    return data.value(name, fallback);
+  } catch (const Json::exception &error) {
+    throw Error(std::string("Invalid configuration type for ") + name + ": " + error.what(), 2);
+  }
+}
+template <class T>
+T limit(const Json &data, const char *name, T fallback, uint64_t minimum, uint64_t maximum) {
+  const auto value = data.find(name);
+  if (value == data.end())
+    return fallback;
+  if (!value->is_number_integer())
+    throw Error(std::string("Expected an integer for ") + name, 2);
+  if (!value->is_number_unsigned() && value->get<int64_t>() < 0)
+    throw Error(std::string("Configuration limit outside supported range: ") + name, 2);
+  const auto number = value->get<uint64_t>();
+  if (number < minimum || number > maximum)
+    throw Error(std::string("Configuration limit outside supported range: ") + name, 2);
+  return static_cast<T>(number);
+}
 std::string expand_env(std::string text) {
   size_t pos = 0;
   while ((pos = text.find("{env:", pos)) != std::string::npos) {
@@ -140,7 +161,7 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
     merge(data, selection);
   }
   fs::path trusted_root;
-  for (const auto &p : data.value("trusted_projects", std::vector<std::string>{})) {
+  for (const auto &p : setting<std::vector<std::string>>(data, "trusted_projects")) {
     const auto root = files.canonical(p);
     if (within(c.cwd, root)) {
       c.trust_project = true;
@@ -174,64 +195,65 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
       value = parse_toml(s.substr(0, eq) + "=" + Json(s.substr(eq + 1)).dump());
     }
     value = layer(std::move(value));
+    if (value.contains("trusted_projects"))
+      (void)setting<std::vector<std::string>>(value, "trusted_projects");
     merge(data, value);
     merge(selection, value);
   }
-  try {
-    if (selection.contains("provider"))
-      c.selected_provider = selection["provider"].get<std::string>();
-    if (selection.contains("model"))
-      c.selected_model = selection["model"].get<std::string>();
-    c.configured = {defaults.value("provider", c.provider), defaults.value("model", "")};
-    c.provider = c.configured.provider;
-    c.permission_mode = data.value("permission_mode", c.permission_mode);
-    c.approval = data.value("approval_policy", c.approval);
-    c.ui = data.value("ui", c.ui);
-    c.theme = data.value("theme", c.theme);
-    c.durability = data.value("durability", c.durability);
-    c.effort = data.value("model_reasoning_effort", "");
-    if (selection.contains("model_reasoning_effort"))
-      c.selected_effort = selection.at("model_reasoning_effort").get<std::string>();
-    c.max_turns = data.value("max_turns", c.max_turns);
-    c.max_output_tokens = data.value("max_output_tokens", c.max_output_tokens);
-    c.context_tokens = data.value("context_tokens", c.context_tokens);
-    c.tool_output_limit = data.value("tool_output_limit", c.tool_output_limit);
-    c.request_timeout = data.value("request_timeout_seconds", c.request_timeout);
-    c.connect_timeout = data.value("connect_timeout_seconds", c.connect_timeout);
-    c.stream_idle_timeout = data.value("stream_idle_timeout_seconds", c.stream_idle_timeout);
-    c.project_doc_max_bytes = data.value("project_doc_max_bytes", c.project_doc_max_bytes);
-    c.memory_context_max_bytes = data.value("memory_context_max_bytes", c.memory_context_max_bytes);
-    c.set_allow(data.value("allow", c.rules().allow));
-    c.set_deny(data.value("deny", c.rules().deny));
-    c.hooks = data.value("hooks", Json::object());
-    validate_hook_matchers(c.hooks);
-    c.keybindings = data.value("keybindings", Json::object());
-    if (data.contains("providers"))
-      for (auto it = data["providers"].begin(); it != data["providers"].end(); ++it) {
-        ProviderConfig p;
-        p.api_key = expand_env(it.value().value("api_key", ""));
-        p.base_url = it.value().value("base_url", "");
-        p.model = it.value().value("model", "");
-        p.wire_api = it.value().value("wire_api", "auto");
-        if (p.wire_api != "auto" && p.wire_api != "responses" && p.wire_api != "chat_completions")
-          throw Error("wire_api must be auto, responses, or chat_completions", 2);
-        if (it.value().contains("image_input"))
-          p.image_input = it.value().at("image_input").get<bool>();
-        c.providers[it.key()] = p;
-      }
-    for (const auto &p : data.value("add_dirs", std::vector<std::string>{}))
-      c.roots.push_back(files.canonical(c.cwd / p));
-  } catch (const Json::exception &e) {
-    throw Error(std::string("Invalid configuration type: ") + e.what(), 2);
-  }
-  if (c.max_turns == 0 || c.max_turns > 1000 || c.max_output_tokens == 0 ||
-      c.max_output_tokens > 1000000 || c.context_tokens < 512 || c.context_tokens > 2000000 ||
-      c.tool_output_limit < 256 || c.tool_output_limit > size_t{16} * size_t{1024} * 1024 ||
-      c.request_timeout < 0 || c.request_timeout > 3600 || c.connect_timeout < 1 ||
-      c.connect_timeout > 3600 || c.stream_idle_timeout < 1 || c.stream_idle_timeout > 3600 ||
-      c.project_doc_max_bytes > size_t{1024} * 1024 ||
-      c.memory_context_max_bytes > size_t{1024} * 1024)
-    throw Error("Configuration limit outside supported range", 2);
+  if (selection.contains("provider"))
+    c.selected_provider = setting<std::string>(selection, "provider");
+  if (selection.contains("model"))
+    c.selected_model = setting<std::string>(selection, "model");
+  c.configured = {setting(defaults, "provider", c.provider),
+                  setting<std::string>(defaults, "model")};
+  c.provider = c.configured.provider;
+  c.permission_mode = setting(data, "permission_mode", c.permission_mode);
+  c.approval = setting(data, "approval_policy", c.approval);
+  c.ui = setting(data, "ui", c.ui);
+  c.theme = setting(data, "theme", c.theme);
+  c.durability = setting(data, "durability", c.durability);
+  c.effort = setting<std::string>(data, "model_reasoning_effort");
+  if (selection.contains("model_reasoning_effort"))
+    c.selected_effort = c.effort;
+  c.max_turns = limit(data, "max_turns", c.max_turns, 1, 1000);
+  c.max_output_tokens = limit(data, "max_output_tokens", c.max_output_tokens, 1, 1000000);
+  c.context_tokens = limit(data, "context_tokens", c.context_tokens, 512, 2000000);
+  c.tool_output_limit =
+      limit(data, "tool_output_limit", c.tool_output_limit, 256, 16 * 1024 * 1024);
+  c.request_timeout = limit(data, "request_timeout_seconds", c.request_timeout, 0, 3600);
+  c.connect_timeout = limit(data, "connect_timeout_seconds", c.connect_timeout, 1, 3600);
+  c.stream_idle_timeout =
+      limit(data, "stream_idle_timeout_seconds", c.stream_idle_timeout, 1, 3600);
+  c.project_doc_max_bytes =
+      limit(data, "project_doc_max_bytes", c.project_doc_max_bytes, 0, 1024 * 1024);
+  c.memory_context_max_bytes =
+      limit(data, "memory_context_max_bytes", c.memory_context_max_bytes, 0, 1024 * 1024);
+  c.set_allow(setting(data, "allow", c.rules().allow));
+  c.set_deny(setting(data, "deny", c.rules().deny));
+  c.hooks = data.value("hooks", Json::object());
+  validate_hook_matchers(c.hooks);
+  c.keybindings = data.value("keybindings", Json::object());
+  if (!c.keybindings.is_object())
+    throw Error("keybindings must be a table", 2);
+  if (data.contains("providers") && !data.at("providers").is_object())
+    throw Error("providers must be a table", 2);
+  if (data.contains("providers"))
+    for (auto it = data["providers"].begin(); it != data["providers"].end(); ++it) {
+      if (!it.value().is_object())
+        throw Error("providers." + it.key() + " must be a table", 2);
+      ProviderConfig p;
+      p.api_key = expand_env(setting<std::string>(it.value(), "api_key"));
+      p.base_url = setting<std::string>(it.value(), "base_url");
+      p.model = setting<std::string>(it.value(), "model");
+      p.wire_api = setting<std::string>(it.value(), "wire_api", "auto");
+      if (p.wire_api != "auto" && p.wire_api != "responses" && p.wire_api != "chat_completions")
+        throw Error("wire_api must be auto, responses, or chat_completions", 2);
+      if (it.value().contains("image_input"))
+        p.image_input = setting<bool>(it.value(), "image_input");
+      c.providers[it.key()] = p;
+    }
+  for (const auto &p : setting<std::vector<std::string>>(data, "add_dirs"))
+    c.roots.push_back(files.canonical(c.cwd / p));
   if (c.permission_mode != "default" && c.permission_mode != "plan" &&
       c.permission_mode != "accept-edits" && c.permission_mode != "bypass")
     throw Error("Invalid permission_mode", 2);
