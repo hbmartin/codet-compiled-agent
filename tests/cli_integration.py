@@ -491,6 +491,32 @@ class CliTests(unittest.TestCase):
         with sqlite3.connect(self.home/'state.sqlite3') as db:
             self.assertEqual(db.execute('SELECT reasoning_effort FROM sessions ORDER BY rowid DESC LIMIT 1').fetchone()[0],'high')
 
+    def test_explicit_effort_wins_over_trusted_project_on_new_and_resume(self):
+        import sqlite3
+        config = self.home / 'config.toml'
+        config.write_text(f'trusted_projects=[{json.dumps(str(self.workspace))}]\n' + config.read_text())
+        project = self.workspace / '.codet'
+        project.mkdir()
+        (project / 'config.toml').write_text("model_reasoning_effort='low'\n")
+        profile = self.home / 'selected.config.toml'
+        profile.write_text("model_reasoning_effort='high'\n")
+        selected = ['--profile', 'selected']
+        with contextlib.closing(sqlite3.connect(self.home / 'state.sqlite3')) as db:
+            def check(command, flags, expected, prompt):
+                result = self.run_cli(*command, *flags, '--json', prompt)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                session = json.loads(result.stdout.splitlines()[0])['thread_id']
+                self.assertEqual(self.server.requests[-1]['body']['reasoning_effort'], expected)
+                row = db.execute('SELECT reasoning_effort FROM sessions WHERE id=?', (session,)).fetchone()
+                self.assertEqual(row, (expected,))
+                return session
+
+            session = check(['exec'], selected, 'high', 'simple')
+            resume = ['exec', 'resume', session]
+            self.assertEqual(check(resume, selected + ['-c', "model_reasoning_effort='medium'"],
+                                   'medium', 'continue'), session)
+            self.assertEqual(check(resume, selected, 'high', 'continue again'), session)
+
     def configure_hooks(self,start='cat',end='cat'):
         marker=self.root/'hooks.jsonl'
         content=(self.home/'config.toml').read_text()
