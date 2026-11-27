@@ -997,29 +997,54 @@ class DependencyReconfiguration(unittest.TestCase):
         import termios
         import time
 
-        def run(source, output, selected):
+        def run(source, output, selected, outcome):
             master, slave = pty.openpty()
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 48, 240, 0, 0))
             process = subprocess.Popen([shutil.which('ccmake'), '-S', str(source), '-B', str(output), '-G', 'Ninja'],
                 stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
                 env=dict(os.environ, TERM='xterm', CODET_DEPENDENCY_ROOT=selected))
             os.close(slave)
-            data = bytearray(); sent = dismissed = quitting = False; offset = 0
+            data = bytearray()
+            offset = 0
             deadline = time.monotonic() + 15
-            try:
-                while process.poll() is None and time.monotonic() < deadline:
+            def wait_for(*messages):
+                nonlocal offset
+                while time.monotonic() < deadline:
+                    matches = [(index, message) for message in messages
+                               if (index := data.find(message, offset)) != -1]
+                    if matches:
+                        index, message = min(matches)
+                        offset = index + len(message)
+                        return message
                     if select.select([master], [], [], .05)[0]:
-                        try: data.extend(os.read(master, 65536))
+                        try: chunk = os.read(master, 128)
                         except OSError: break
-                    if not sent and b'[c] Configure' in data:
-                        offset = len(data); os.write(master, b'c'); sent = True
-                    tail = data[offset:]
-                    if sent and not dismissed and b'Press [e]' in tail:
-                        os.write(master, b'e'); dismissed = True; offset = len(data)
-                    elif sent and not quitting and b'Quit without generating' in tail:
-                        os.write(master, b'q'); quitting = True
-                self.assertTrue(quitting, 'ccmake did not complete its Configure-only UI gates: ' + repr(bytes(data[-1500:])))
-                process.wait(timeout=3)
+                        if not chunk: break
+                        data.extend(chunk)
+                    elif process.poll() is not None:
+                        break
+                self.fail(f'ccmake did not display {messages!r}: {bytes(data[-1500:])!r}')
+
+            quit_menu = b'[q] Quit without generating'
+            dismiss = b'Press [e] to exit screen'
+            try:
+                wait_for(b'[c] Configure')
+                wait_for(quit_menu)  # Consume the rest of the initial menu before sending input.
+                os.write(master, b'c')
+                wait_for(outcome)
+                while wait_for(dismiss, quit_menu) == dismiss:
+                    os.write(master, b'e')
+                os.write(master, b'q')
+                exit_deadline = time.monotonic() + 3
+                # Drain the redraw and terminal reset while ccmake exits. A full PTY
+                # can block the writer while the parent is waiting for it.
+                while process.poll() is None and time.monotonic() < exit_deadline:
+                    if select.select([master], [], [], .05)[0]:
+                        try: chunk = os.read(master, 65536)
+                        except OSError: break
+                        if not chunk: break
+                        data.extend(chunk)
+                process.wait(timeout=max(0, exit_deadline - time.monotonic()))
             finally:
                 if process.poll() is None:
                     os.killpg(process.pid, signal.SIGKILL); process.wait(timeout=3)
@@ -1028,11 +1053,11 @@ class DependencyReconfiguration(unittest.TestCase):
 
         with tempfile.TemporaryDirectory(prefix='codet configure only ') as d:
             source, output, _, configure = self.dependency_probe(Path(d), 'Ninja')
-            self.assertIn('Configuring done', run(source, output, '/root-A'))
+            run(source, output, '/root-A', b'Configuring done')
             for kind in ('selection', 'success'):
                 self.assertFalse((output / ('CMakeFiles/codet-dependency-' + kind + '.json')).exists())
             self.edit_public_root(output, '/GUI-B')
-            transcript = run(source, output, '/environment-C')
+            transcript = run(source, output, '/environment-C', b'Configuring incomplete')
             for phrase in ('Ambiguous dependency selection edit', 'Configure alone', 'run Generate'):
                 self.assertIn(phrase, ' '.join(transcript.split()), 'Configure-only GUI failure lacks recovery guidance')
             self.assertEqual(configure('/environment-C', '-DCODET_DEPENDENCY_ROOT=/GUI-B').returncode, 0)
