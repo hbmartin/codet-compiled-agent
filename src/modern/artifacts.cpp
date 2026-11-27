@@ -2,6 +2,7 @@
 #include "codet/computer.hpp"
 #include "codet/output.hpp"
 #include "codet/support.hpp"
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 namespace codet {
@@ -368,16 +369,52 @@ fs::path archive_image_history(const fs::path &root, FileSystem &files, const st
       true);
   return target;
 }
-void copy_image_history(const fs::path &root, FileSystem &files, const std::string &parent,
-                        const std::string &child) {
+namespace {
+fs::path fork_stage(const fs::path &index) {
+  return index.parent_path() / (".fork-" + index.stem().string());
+}
+void sync_indexes(const fs::path &directory) {
+  const int fd = ::open(directory.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+  if (fd < 0)
+    throw Error("Cannot open fork image index directory");
+  struct stat info {};
+  const bool synced = ::fcntl(fd, F_SETFD, FD_CLOEXEC) == 0 && ::fstat(fd, &info) == 0 &&
+                      S_ISDIR(info.st_mode) && ::fsync(fd) == 0;
+  ::close(fd);
+  if (!synced)
+    throw Error("Cannot sync fork image index directory");
+}
+} // namespace
+void cleanup_fork_image_history(const fs::path &root, FileSystem &files, const std::string &child,
+                                bool committed) {
+  const auto target = artifact_index_path(root, child);
+  check_index(root, target);
+  const auto stage = fork_stage(target);
+  if (fs::is_symlink(stage))
+    throw Error("Fork image staging directory must not be a symlink");
+  if (fs::exists(stage))
+    fs::remove_all(stage); // This private directory belongs entirely to the pending fork.
+  if (!committed && fs::exists(target))
+    files.remove(target);
+  sync_indexes(target.parent_path());
+}
+bool copy_image_history(const fs::path &root, FileSystem &files, const std::string &parent,
+                        const std::string &child, const std::function<void()> &before_copy) {
   const auto source = artifact_index_path(root, parent), target = artifact_index_path(root, child);
   check_index(root, source);
   check_index(root, target);
+  const auto stage = fork_stage(target);
+  if (fs::exists(fs::symlink_status(target)) || fs::exists(fs::symlink_status(stage)))
+    throw Error("Fork image index already exists; retry fork");
   if (!fs::exists(source))
-    return;
-  fs::create_directories(target.parent_path());
+    return false;
+  before_copy();
+  if (::mkdir(stage.c_str(), 0700))
+    throw Error("Cannot create private fork image staging directory");
+  const auto staged = artifact_index_path(stage, child);
+  fs::create_directory(staged.parent_path());
   files.atomic_stream(
-      target,
+      staged,
       [&](const FileSystem::Writer &write) {
         auto input = files.open_read(source);
         if (input->path() != files.canonical(source))
@@ -391,7 +428,10 @@ void copy_image_history(const fs::path &root, FileSystem &files, const std::stri
       },
       true);
   // Migrate legacy rows in the child only; a fork must not rewrite its live parent.
-  archive_image_history(root, files, child, {});
+  archive_image_history(stage, files, child, {});
+  fs::rename(staged, target);
+  sync_indexes(target.parent_path()); // Publish the rebound ledger before the SQLite commit.
+  return true;
 }
 Json image_history_position(const fs::path &root, const FileSystem &files,
                             const std::string &session) {

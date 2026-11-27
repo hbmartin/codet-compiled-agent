@@ -46,6 +46,8 @@ Before migrating an older database, stop active sessions. Codet serializes upgra
 
 Each open store holds a shared migration gate for its lifetime. A schema upgrade takes exclusive ownership of the gate and probes legacy session locks one at a time, so the number of historical sessions does not determine its descriptor budget. Keep older binaries stopped until migration finishes because they predate the gate.
 
+A fork commits its transcript, provider state, recovered tool journal, inherited references and parent link in one SQLite transaction. When a parent has an image ledger, a private pending marker identifies the child copy until commit. On reopen, Codet checks the child lease and database row before removing an abandoned child ledger.
+
 To restore, stop every Codet process, copy the current database and its `-wal`/`-shm` files aside, remove those current files, then copy the selected pre-v8 backup to `state.sqlite3` with mode 0600. Keep the artifact and capture directories alongside it. Run the older binary only after restoring its compatible schema. A restore discards sessions and changes newer than the chosen backup; keep the displaced database for recovery.
 
 ```toml

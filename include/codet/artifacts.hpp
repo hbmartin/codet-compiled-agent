@@ -44,7 +44,10 @@ std::set<std::string> message_references(const Message &);
 std::set<std::string> message_references(const std::vector<Message> &);
 fs::path archive_image_history(const fs::path &, FileSystem &, const std::string &,
                                const std::vector<Message> &);
-void copy_image_history(const fs::path &, FileSystem &, const std::string &, const std::string &);
+void cleanup_fork_image_history(const fs::path &, FileSystem &, const std::string &,
+                                bool committed);
+bool copy_image_history(const fs::path &, FileSystem &, const std::string &, const std::string &,
+                        const std::function<void()> &before_copy);
 Json image_history_position(const fs::path &, const FileSystem &, const std::string &);
 bool generated_image(const Config &, const FileSystem &, const fs::path &, bool verify = true);
 } // namespace codet
