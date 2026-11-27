@@ -431,6 +431,58 @@ TEST_F(History, RelocationAndForkRebindOnlyExistingLedgersAndReplayRelativeImage
   EXPECT_EQ(child.messages[0].artifact_index, artifact_index_reference(child.id));
   EXPECT_EQ(image_history_position(artifact_directory(config), files, child.id)["observations"], 1);
 }
+TEST_F(History, ForkRequiresDurableMarkerBeforeStagingChildLedger) {
+  struct MarkerFiles : InspectFiles {
+    std::function<void(const fs::path &)> before_sync;
+    void sync_directory(const fs::path &directory) const override {
+      if (before_sync)
+        before_sync(directory);
+      FileSystem::sync_directory(directory);
+    }
+  } storage;
+  const auto root = artifact_directory(config);
+  StateStore state(storage, config.home, root);
+  const auto parent = state.create();
+  const auto ledger = artifact_index_path(root, parent.id);
+  const auto contents =
+      Json({{"version", 2}, {"kind", "header"}, {"session_id", parent.id}}).dump() + '\n';
+  put(ledger, contents);
+  const auto before = state.list();
+  for (const bool fail_open : {true, false}) {
+    fs::path marker;
+    storage.before_sync = [&](const fs::path &directory) {
+      if (directory != config.home)
+        return;
+      for (const auto &entry : fs::directory_iterator(directory))
+        if (entry.path().filename().string().find(".pending-fork-") == 0)
+          marker = entry.path();
+      EXPECT_FALSE(marker.empty());
+      EXPECT_EQ(storage.native.read(marker), "relative artifacts");
+      for (const auto &entry : fs::directory_iterator(ledger.parent_path()))
+        EXPECT_EQ(entry.path(), ledger);
+      if (fail_open)
+        storage.FileSystem::sync_directory(directory / "missing-directory");
+      throw Error("injected marker directory fsync failure");
+    };
+    try {
+      state.fork(parent);
+      FAIL() << "Fork succeeded without a durable marker";
+    } catch (const Error &e) {
+      EXPECT_THAT(e.what(), HasSubstr(fail_open ? "Cannot open directory" : "fsync failure"));
+    }
+    ASSERT_FALSE(marker.empty());
+    EXPECT_FALSE(fs::exists(marker));
+    EXPECT_EQ(state.list(), before);
+    EXPECT_EQ(storage.native.read(ledger), contents);
+    for (const auto &entry : fs::directory_iterator(ledger.parent_path()))
+      EXPECT_EQ(entry.path(), ledger);
+  }
+  storage.before_sync = {};
+  const auto child = state.fork(parent);
+  EXPECT_EQ(state.load_id(child.id).id, child.id);
+  EXPECT_EQ(Json::parse(storage.native.read(artifact_index_path(root, child.id)))["session_id"],
+            child.id);
+}
 TEST_F(History, ReconciliationCannotRestoreArchivedAttachmentsFromCompletedJournals) {
   StateStore state(config.home);
   auto session = state.create();

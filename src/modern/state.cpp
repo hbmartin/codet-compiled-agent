@@ -2110,6 +2110,8 @@ StateStore::StateStore(const fs::path &home, const fs::path &artifact_root,
     } catch (const SessionBusy &) {
       // A live fork will finish its own publication.
       continue;
+    } catch (const std::runtime_error &e) {
+      report_diagnostic(startup.diagnostics, "Pending fork " + id + " deferred: " + e.what());
     }
   }
 }
@@ -2473,6 +2475,7 @@ Session StateStore::fork(const Session &parent) {
         copy_image_history(impl_->artifact_root, *impl_->files, parent.id, s.id, [&] {
           marked = true;
           impl_->files->atomic_write(marker, impl_->fork_root_identity(), true);
+          impl_->files->sync_directory(marker.parent_path());
         });
     if (!copied && std::any_of(s.messages.begin(), s.messages.end(),
                                [](const auto &m) { return !m.artifact_index.empty(); }))

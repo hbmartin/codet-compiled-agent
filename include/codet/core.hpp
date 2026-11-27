@@ -108,6 +108,7 @@ struct FileSystem {
   using Writer = std::function<void(const std::string &)>;
   virtual void atomic_stream(const fs::path &, const std::function<void(const Writer &)> &,
                              bool private_file = false);
+  virtual void sync_directory(const fs::path &) const;
   virtual void publish_patch(const std::vector<PatchChange> &, const Cancellation &);
   virtual void remove(const fs::path &) = 0;
   virtual fs::path canonical(const fs::path &) const = 0;
