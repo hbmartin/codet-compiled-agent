@@ -657,6 +657,12 @@ TEST_F(Fixture, AnthropicStreamPreservesThinkingSignatureAndToolArguments) {
       {{"type", "content_block_delta"},
        {"index", 1},
        {"delta", {{"type", "input_json_delta"}, {"partial_json", R"({"path":"a"})"}}}},
+      {{"type", "content_block_start"},
+       {"index", 2},
+       {"content_block", {{"type", "text"}, {"text", "start "}}}},
+      {{"type", "content_block_delta"},
+       {"index", 2},
+       {"delta", {{"type", "text_delta"}, {"text", "end"}}}},
       {{"type", "message_stop"}}};
   EXPECT_CALL(http, perform(_, _, _))
       .WillOnce(Invoke([&](const HttpRequest &, const Cancellation &, const ChunkSink &sink) {
@@ -666,6 +672,8 @@ TEST_F(Fixture, AnthropicStreamPreservesThinkingSignatureAndToolArguments) {
       }));
   auto result = p.complete(config, "", {}, Json::array(), cancel, {});
   EXPECT_EQ(result.message.replay[0]["signature"], "sig");
+  EXPECT_EQ(result.message.text, "start end");
+  EXPECT_EQ(result.message.replay[2]["text"], "start end");
   ASSERT_EQ(result.message.calls.size(), 1u);
   EXPECT_EQ(result.message.calls[0].arguments["path"], "a");
 }

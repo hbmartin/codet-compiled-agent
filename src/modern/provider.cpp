@@ -1023,25 +1023,31 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
         if (type == "message_start" && j.contains("message"))
           usage(result.usage, j["message"].value("usage", Json::object()));
         if (type == "content_block_start") {
-          blocks[index] = j.at("content_block");
+          auto &block = blocks[index];
+          block = j.at("content_block");
+          if (block.value("type", "") == "text") {
+            const auto initial = block.value("text", "");
+            if (!initial.empty())
+              text(initial);
+          }
           tool_frames[index] = data;
         }
         if (type == "content_block_delta") {
           const auto &delta = j.at("delta");
           const auto dt = delta.value("type", "");
-          if (dt == "text_delta") {
-            const auto value = delta.value("text", "");
-            text(value);
-            blocks[index]["text"] = blocks[index].value("text", "") + value;
-          }
-          if (dt == "input_json_delta")
+          if (dt == "text_delta" || dt == "thinking_delta" || dt == "signature_delta") {
+            const char *field = dt == "text_delta"       ? "text"
+                                : dt == "thinking_delta" ? "thinking"
+                                                         : "signature";
+            const auto value = delta.value(field, "");
+            auto &block = blocks[index];
+            if (!block.contains(field))
+              block[field] = "";
+            block.at(field).get_ref<std::string &>().append(value);
+            if (dt == "text_delta")
+              text(value);
+          } else if (dt == "input_json_delta")
             arguments[index] += delta.value("partial_json", "");
-          if (dt == "thinking_delta")
-            blocks[index]["thinking"] =
-                blocks[index].value("thinking", "") + delta.value("thinking", "");
-          if (dt == "signature_delta")
-            blocks[index]["signature"] =
-                blocks[index].value("signature", "") + delta.value("signature", "");
         }
         if (type == "message_delta") {
           usage(result.usage, j.value("usage", Json::object()));
