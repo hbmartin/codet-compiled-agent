@@ -1291,9 +1291,22 @@ print('REPORT:'+json.dumps(value),flush=True)
         if child <= 0:raise ValueError("Historical fixture requires a positive owned PID")
         expected = tuple(argv)
         deadline = time.monotonic() + 2
+
+        def inactive_before(cutoff):
+            while (remaining := cutoff - time.monotonic()) > 0:
+                try:
+                    return group_inactive(child, timeout=min(.2, remaining))[0]
+                except subprocess.TimeoutExpired:
+                    continue
+            return None  # No observation before this phase expired.
+
         for action in (signal.SIGTERM, signal.SIGKILL):
             try:
-                if group_inactive(child, timeout=.2)[0]:return
+                inactive = inactive_before(deadline)
+                if inactive is None:
+                    break
+                if inactive:
+                    return
                 if tuple(read_argv(child)[1:]) != expected[1:] or os.getpgid(child) != child:
                     raise RuntimeError('Historical fixture child identity changed')
                 os.killpg(child, action)
@@ -1301,7 +1314,7 @@ print('REPORT:'+json.dumps(value),flush=True)
                 # A vanished leader (ENOENT/ESRCH), Darwin EINVAL or a Linux empty
                 # cmdline may race with exit while other group members survive. Only
                 # a positive group observation establishes that the group is gone.
-                try:inactive = group_inactive(child, timeout=.2)[0]
+                try:inactive = inactive_before(deadline)
                 except Exception as inspection:
                     error.fixture_inspection = repr(inspection)
                     raise error  # noqa: B904 - preserve the original inspection cause.
@@ -1309,8 +1322,9 @@ print('REPORT:'+json.dumps(value),flush=True)
                 raise
             until = min(deadline, time.monotonic() + (.2 if action == signal.SIGTERM else 1))
             while time.monotonic() < until:
-                if group_inactive(child, timeout=.2)[0]:return
-                time.sleep(.05)
+                if inactive_before(until):
+                    return
+                time.sleep(min(.05, max(0, until - time.monotonic())))
         raise RuntimeError('Historical fixture child cleanup deadline expired')
 
     def test_historical_parent_exit_failure_cleans_owned_child(self):
@@ -1459,6 +1473,38 @@ unittest.main(argv=["fixture", "-c"])
         self.assertIn('Current test finished', completed.stdout)
         self.assertIn('Ran 1 test', completed.stderr)
         self.assertIn('OK', completed.stderr.splitlines())
+
+    def test_historical_child_cleanup_retries_inspection_within_its_deadline(self):
+        import signal
+
+        expected = ('python', '-c', 'unique historical child')
+        timed_out = subprocess.TimeoutExpired(['ps'], .2)
+        # A slow first inspection must still be followed by an observed live
+        # group, verified command identity, and a final observation of exit.
+        observations = [timed_out, (False, ['S']), (True, [])]
+        with patch('process_supervision.group_inactive', side_effect=observations) as inspect, \
+             patch('evidence_processes.read_argv', return_value=expected) as identity, \
+             patch('os.getpgid', return_value=123) as group, patch('os.killpg') as kill:
+            self.stop_historical_signal_child(123, expected)
+            self.assertEqual(inspect.call_count, len(observations))
+            identity.assert_called_once_with(123)
+            group.assert_called_once_with(123)
+            kill.assert_called_once_with(123, signal.SIGTERM)
+
+        elapsed = [0.0]
+        def exhaust(_pid, *, timeout):
+            self.assertGreater(timeout, 0)
+            self.assertLessEqual(timeout, .2)
+            elapsed[0] += timeout
+            raise subprocess.TimeoutExpired(['ps'], timeout)
+        with patch('time.monotonic', side_effect=lambda: elapsed[0]), \
+             patch('process_supervision.group_inactive', side_effect=exhaust), \
+             patch('evidence_processes.read_argv') as identity, patch('os.killpg') as kill:
+            with self.assertRaisesRegex(RuntimeError, 'cleanup deadline expired'):
+                self.stop_historical_signal_child(123, expected)
+            self.assertEqual(elapsed[0], 2)
+            identity.assert_not_called()
+            kill.assert_not_called()
 
     def test_child_cleanup_rejects_recycled_identity_and_handles_verified_exit(self):
         import errno

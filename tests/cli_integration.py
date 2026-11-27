@@ -1813,9 +1813,10 @@ class CliTests(unittest.TestCase):
             process,master,trigger,received,collect,token,release,before=context
             os.write(trigger,b'h');token(b'r')
             os.write(master,b'\n');token(b's')
-            os.write(master,b'\x04')
-            os.write(trigger,b'g');release.set()
+            os.write(master,b'\x04');token(b'k')
+            os.write(trigger,b'g')
             collect(lambda:b'Error: Interrupted' in received or process.poll() is not None)
+            release.set()
             self.assertNotIn(b'Pending message not sent: ]',received,'Empty frozen input emitted an empty pending notice')
             self.assertIsNone(process.poll())
             os.write(master,b'fixture-recovered-output\n')

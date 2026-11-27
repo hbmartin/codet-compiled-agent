@@ -60,6 +60,8 @@ int pending_poll(pollfd *fds, nfds_t count, int timeout) {
 ssize_t pending_read(int fd, void *data, size_t size) {
   const auto count = ::read(fd, data, size);
   if (pending_sequence_io) {
+    if (count == 1 && *static_cast<char *>(data) == 4)
+      (void)::write(pending_notify, "k", 1);
     if (count == 1 && *static_cast<char *>(data) == 1)
       pending_sequence_barrier = true; // Next poll proves all preceding bytes were processed.
     if (count == 1 && *static_cast<char *>(data) == 0)
