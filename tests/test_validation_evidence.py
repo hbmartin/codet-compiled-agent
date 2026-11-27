@@ -1292,23 +1292,34 @@ print('REPORT:'+json.dumps(value),flush=True)
         expected = tuple(argv)
         deadline = time.monotonic() + 2
 
-        def inactive_before(cutoff):
+        def inactive_before(cutoff, *, before_signal=False):
             while (remaining := cutoff - time.monotonic()) > 0:
                 try:
                     return group_inactive(child, timeout=min(.2, remaining))[0]
                 except subprocess.TimeoutExpired:
-                    continue
+                    # A slow system-wide ps need not exhaust the cleanup budget before
+                    # we can inspect the child's own argv and process-group identity.
+                    try:
+                        os.killpg(child, 0)
+                    except ProcessLookupError:
+                        return True
+                    except PermissionError:
+                        continue  # Darwin can deny this probe for a zombie-only group.
+                    if before_signal:
+                        return False  # Group exists; verify ownership before signalling.
             return None  # No observation before this phase expired.
 
         for action in (signal.SIGTERM, signal.SIGKILL):
             try:
-                inactive = inactive_before(deadline)
+                inactive = inactive_before(deadline, before_signal=True)
                 if inactive is None:
                     break
                 if inactive:
                     return
                 if tuple(read_argv(child)[1:]) != expected[1:] or os.getpgid(child) != child:
                     raise RuntimeError('Historical fixture child identity changed')
+                if time.monotonic() >= deadline:
+                    break
                 os.killpg(child, action)
             except (OSError, ValueError) as error:
                 # A vanished leader (ENOENT/ESRCH), Darwin EINVAL or a Linux empty
@@ -1341,7 +1352,10 @@ print('REPORT:'+json.dumps(value),flush=True)
         self.assertIs(failed.exception, original)
         self.assertEqual(len(observed), 1)
         try:
-            self.assertTrue(group_inactive(observed[0][0], timeout=1)[0], 'Exited parent left its signal child running')
+            child = observed[0][0]
+            inactive, members = group_inactive(child, timeout=1)
+            self.assertTrue(inactive, f'Exited parent left signal group {child} running: {members}; '
+                            f'cleanup errors: {getattr(original, "fixture_cleanup_failures", [])}')
         finally:
             if not group_inactive(observed[0][0], timeout=1)[0]:
                 self.stop_historical_signal_child(*observed[0])
@@ -1484,12 +1498,14 @@ unittest.main(argv=["fixture", "-c"])
         observations = [timed_out, (False, ['S']), (True, [])]
         with patch('process_supervision.group_inactive', side_effect=observations) as inspect, \
              patch('evidence_processes.read_argv', return_value=expected) as identity, \
-             patch('os.getpgid', return_value=123) as group, patch('os.killpg') as kill:
+             patch('os.getpgid', return_value=123) as group, \
+             patch('os.killpg', side_effect=[PermissionError(), None]) as kill:
             self.stop_historical_signal_child(123, expected)
             self.assertEqual(inspect.call_count, len(observations))
             identity.assert_called_once_with(123)
             group.assert_called_once_with(123)
-            kill.assert_called_once_with(123, signal.SIGTERM)
+            self.assertEqual([entry.args for entry in kill.call_args_list],
+                             [(123, 0), (123, signal.SIGTERM)])
 
         elapsed = [0.0]
         def exhaust(_pid, *, timeout):
@@ -1499,12 +1515,50 @@ unittest.main(argv=["fixture", "-c"])
             raise subprocess.TimeoutExpired(['ps'], timeout)
         with patch('time.monotonic', side_effect=lambda: elapsed[0]), \
              patch('process_supervision.group_inactive', side_effect=exhaust), \
-             patch('evidence_processes.read_argv') as identity, patch('os.killpg') as kill:
+             patch('evidence_processes.read_argv') as identity, \
+             patch('os.killpg', side_effect=PermissionError) as kill:
             with self.assertRaisesRegex(RuntimeError, 'cleanup deadline expired'):
                 self.stop_historical_signal_child(123, expected)
             self.assertEqual(elapsed[0], 2)
             identity.assert_not_called()
-            kill.assert_not_called()
+            self.assertTrue(kill.called)
+            self.assertTrue(all(entry.args == (123, 0) for entry in kill.call_args_list))
+
+    def test_historical_child_cleanup_survives_a_stalled_process_table(self):
+        import signal
+
+        expected = ('python', '-c', 'unique historical child')
+        def exercise(actual):
+            elapsed = [0.0]
+            signals = []
+            def slow_inspection(_pid, *, timeout):
+                self.assertGreater(timeout, 0)
+                self.assertLessEqual(timeout, .2)
+                elapsed[0] += timeout
+                raise subprocess.TimeoutExpired(['ps'], timeout)
+            def signal_group(pid, action):
+                self.assertEqual(pid, 123)
+                if action:
+                    signals.append(action)
+                elif signals:
+                    raise ProcessLookupError('fixture group exited')
+            with patch('time.monotonic', side_effect=lambda: elapsed[0]), \
+                 patch('process_supervision.group_inactive', side_effect=slow_inspection), \
+                 patch('evidence_processes.read_argv', return_value=actual) as identity, \
+                 patch('os.getpgid', return_value=123), patch('os.killpg', side_effect=signal_group):
+                if actual == expected:
+                    self.stop_historical_signal_child(123, expected)
+                    self.assertEqual(signals, [signal.SIGTERM])
+                else:
+                    with self.assertRaisesRegex(RuntimeError, 'identity changed'):
+                        self.stop_historical_signal_child(123, expected)
+                    self.assertEqual(signals, [])
+                identity.assert_called_once_with(123)
+                self.assertLess(elapsed[0], 2)
+
+        for actual in (expected, ('python', '-c', 'another child')):
+            with self.subTest(argv=actual):
+                exercise(actual)
 
     def test_child_cleanup_rejects_recycled_identity_and_handles_verified_exit(self):
         import errno
