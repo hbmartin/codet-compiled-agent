@@ -2,6 +2,7 @@
 #include "codet/computer.hpp"
 #include "codet/core.hpp"
 #include "codet/interaction.hpp"
+#include "codet/patch.hpp"
 #include "codet/prompt.hpp"
 #include "codet/tool_registry.hpp"
 #include "core_contract.hpp"
@@ -555,18 +556,24 @@ TEST_F(Contracts, CompactionRetainsReloadableImageReferences) {
   files.atomic_write(artifact.path, "corrupt");
   EXPECT_TRUE(t.execute(call("view_image", {{"path", artifact.path}}), cancel).error);
 }
-struct FailingFiles : FileSystem {
+struct FailingFiles : FileSystem, PatchFileOps {
   NativeFileSystem native;
-  bool armed = true;
+  mutable bool armed = true;
   std::string read(const fs::path &p, size_t cap) const override {
     return native.read(p, cap);
   }
   void atomic_write(const fs::path &p, const std::string &text, bool private_file) override {
-    if (armed && p.filename() == "b") {
+    native.atomic_write(p, text, private_file);
+  }
+  void publish_patch(const std::vector<PatchChange> &changes, const Cancellation &c) override {
+    publish_native_patch(changes, c, *this);
+  }
+  void replace(const fs::path &from, const fs::path &to) const override {
+    if (armed && to.filename() == "b") {
       armed = false;
       throw Error("injected write failure");
     }
-    native.atomic_write(p, text, private_file);
+    PatchFileOps::replace(from, to);
   }
   void remove(const fs::path &p) override {
     native.remove(p);
@@ -587,6 +594,36 @@ TEST_F(Contracts, PatchRollsBackAnEarlierWriteWhenALaterFileFails) {
   EXPECT_EQ(files.read(config.cwd / "a"), "old a\n");
   EXPECT_EQ(files.read(config.cwd / "b"), "old b\n");
 }
+TEST_F(Contracts, PatchProtectsDestinationCreatedDuringApproval) {
+  config.permission_mode = "default";
+  config.approval = "on-request";
+  for (const bool move : {false, true}) {
+    const auto target = config.cwd / (move ? "moved" : "added");
+    const auto original = config.cwd / "source";
+    files.atomic_write(original, "original\n");
+    bool created = false;
+    Tools t(config, files, processes, http, clock, [&](const PermissionRequest &request) {
+      if (request.path && *request.path == files.canonical(target)) {
+        files.atomic_write(target, "independent file\n", true);
+        created = true;
+      }
+      return true;
+    });
+    const std::string body =
+        move ? "*** Update File: source\n*** Move to: moved\n@@\n-original\n+patched\n"
+             : "*** Add File: added\n+patched\n";
+    const auto result = t.execute(
+        call("apply_patch", {{"patch", "*** Begin Patch\n" + body + "*** End Patch\n"}}), cancel);
+    ASSERT_TRUE(created) << result.content;
+    EXPECT_TRUE(result.error);
+    EXPECT_EQ(files.read(target), "independent file\n");
+    EXPECT_EQ(files.read(original), "original\n");
+    struct stat st {};
+    ASSERT_EQ(::stat(target.c_str(), &st), 0);
+    EXPECT_EQ(st.st_mode & 0777, 0600);
+  }
+}
+
 TEST_F(Contracts, NativeImageIoCanEncodeAndReloadPixelsWithoutAConsole) {
   const auto codec = native_images();
   if (!codec->available())

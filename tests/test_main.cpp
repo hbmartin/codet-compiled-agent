@@ -25,6 +25,9 @@
 #include <sys/resource.h>
 
 std::string codet::test::executable;
+namespace codet::test {
+int patch_child(const fs::path &, const fs::path &, const std::string &);
+} // namespace codet::test
 #ifdef CODET_NATIVE_TERMINAL_METRICS
 namespace {
 codet::Cancellation *pending_cancel = nullptr;
@@ -159,6 +162,8 @@ int main(int argc, char **argv) {
   std::signal(SIGPIPE, SIG_IGN);
   codet::test::executable = codet::fs::absolute(argv[0]).string();
   try {
+    if (argc == 5 && std::string(argv[1]) == "--codet-patch-helper")
+      return codet::test::patch_child(argv[2], argv[3], argv[4]);
     if (argc > 2 && std::string(argv[1]) == "--codet-admission-helper") {
       struct Admission {
         std::string constraint;

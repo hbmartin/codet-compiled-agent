@@ -221,11 +221,6 @@ struct RulePaths {
     return matches_candidates(candidates);
   }
 };
-struct Change {
-  fs::path path;
-  std::optional<std::string> before, after;
-  mode_t mode = 0644;
-};
 std::string feedback_text(const std::string &text, size_t limit) {
   auto clean = safe_text(text);
   if (clean.size() <= limit)
@@ -1493,32 +1488,17 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
     return out;
   }
   if (definition->handler == ToolHandler::patch) {
-    // Snapshot only within this call. A prior model-facing read is not required.
-    std::map<fs::path, std::string> snapshots;
-    auto guard = [&](const fs::path &p) {
-      const auto current = fs::exists(p) ? digest(files_.read(p)) : "<missing>";
-      const auto it = snapshots.find(p);
-      if (it != snapshots.end() && it->second != current)
-        throw Error("File changed during patch: " + p.string());
-      snapshots[p] = current;
-    };
-    std::vector<Change> changes;
-    auto add = [&](const fs::path &p, std::optional<std::string> after, bool approved = false) {
-      if (!approved)
-        authorize({name, p.string(), p, true});
-      guard(p);
-      std::optional<std::string> before;
-      if (fs::exists(p))
-        before = files_.read(p);
-      if (after && after->size() > size_t{16} * size_t{1024} * 1024)
-        throw Error("Write exceeds 16 MiB limit");
-      if (std::any_of(changes.begin(), changes.end(), [&](const Change &x) { return x.path == p; }))
+    std::vector<PatchChange> changes;
+    std::set<fs::path> paths;
+    Json affected = Json::array();
+    const auto record = [&](const fs::path &target) {
+      if (!paths.insert(target).second)
         throw Error("Duplicate file in batch/patch");
-      if (!before && !after)
-        throw Error("Cannot delete a missing file");
-      struct stat st {};
-      const auto mode = stat(p.c_str(), &st) == 0 ? st.st_mode & 0777 : 0644;
-      changes.push_back({p, before, std::move(after), static_cast<mode_t>(mode)});
+      affected.push_back(target.string());
+    };
+    const auto absent = [](const fs::path &target, const char *message) {
+      if (fs::symlink_status(target).type() != fs::file_type::not_found)
+        throw Error(message);
     };
     const auto patch = a.at("patch").get<std::string>();
     auto ls = patch_lines(patch);
@@ -1546,86 +1526,44 @@ ToolResult Tools::execute_inner(const ToolCall &call, const PermissionRequest &r
       const auto p = path(header.substr(colon + 2));
       const auto kind = header.substr(0, colon);
       if (kind == "*** Delete File") {
-        add(p, std::nullopt);
+        authorize({name, p.string(), p, true});
+        record(p);
+        changes.push_back({p, {}, digest(files_.read(p)), {}});
         continue;
       }
       if (kind == "*** Add File") {
-        if (fs::exists(p))
-          throw Error("Add File already exists");
+        absent(p, "Add File already exists");
         std::string text;
         while (i + 1 < ls.size() && ls[i].rfind("*** ", 0) != 0) {
           if (ls[i].empty() || ls[i][0] != '+')
             throw Error("Invalid add line");
           text += ls[i++].substr(1) + "\n";
         }
-        add(p, text);
+        authorize({name, p.string(), p, true});
+        record(p);
+        changes.push_back({{}, p, {}, std::move(text)});
         continue;
       }
       if (kind != "*** Update File")
         throw Error("Unknown patch directive");
       authorize({name, p.string(), p, true});
-      guard(p);
-      auto text = files_.read(p);
+      record(p);
+      const auto before = files_.read(p);
       fs::path destination = p;
       if (i < ls.size() && ls[i].rfind("*** Move to: ", 0) == 0) {
         destination = path(ls[i++].substr(13));
-        if (fs::exists(destination))
-          throw Error("Move destination exists");
+        absent(destination, "Move destination exists");
+        authorize({name, destination.string(), destination, true});
+        record(destination);
       }
-      text = patch_update(text, ls, i, cancel);
-      if (destination != p) {
-        add(p, std::nullopt, true);
-        const auto original_mode = changes.back().mode;
-        add(destination, text);
-        changes.back().mode = original_mode;
-      } else
-        add(p, text, true);
+      changes.push_back({p, destination, digest(before), patch_update(before, ls, i, cancel)});
     }
     if (changes.empty())
       throw Error("Empty patch");
-    for (const auto &change : changes)
-      guard(change.path);
-    size_t applied = 0;
-    try {
-      for (auto &change : changes) {
-        cancel.check();
-        if (change.after) {
-          fs::create_directories(change.path.parent_path());
-          files_.atomic_write(change.path, *change.after);
-          ++applied;
-          if (!change.before && chmod(change.path.c_str(), change.mode) != 0)
-            throw Error("Cannot set file mode");
-        } else {
-          files_.remove(change.path);
-          ++applied;
-        }
-      }
-    } catch (...) {
-      const auto original = std::current_exception();
-      std::string failures;
-      while (applied > 0) {
-        auto &change = changes[--applied];
-        try {
-          if (change.before) {
-            files_.atomic_write(change.path, *change.before);
-            if (chmod(change.path.c_str(), change.mode) != 0)
-              throw Error("Cannot restore file mode");
-          } else
-            files_.remove(change.path);
-        } catch (const std::exception &e) {
-          failures += change.path.string() + ": " + e.what() + "; ";
-        }
-      }
-      if (!failures.empty())
-        throw Error("Batch failed and rollback needs attention: " + failures);
-      std::rethrow_exception(original);
-    }
-    Json paths = Json::array();
-    for (const auto &change : changes) {
-      paths.push_back(change.path.string());
-    }
-    return {
-        "Applied " + std::to_string(changes.size()) + " file change(s)", false, {{"paths", paths}}};
+    files_.publish_patch(changes, cancel);
+    return {"Applied " + std::to_string(affected.size()) + " file change(s)",
+            false,
+            {{"paths", affected}}};
   }
 
   if (definition->handler == ToolHandler::exec || definition->handler == ToolHandler::stdin_write) {

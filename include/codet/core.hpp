@@ -91,6 +91,7 @@ public:
   virtual size_t read(char *, size_t) = 0;
   virtual void seek(uint64_t) = 0;
 };
+struct PatchChange;
 struct FileSystem {
   virtual ~FileSystem() = default;
   virtual std::string read(const fs::path &,
@@ -104,6 +105,7 @@ struct FileSystem {
   using Writer = std::function<void(const std::string &)>;
   virtual void atomic_stream(const fs::path &, const std::function<void(const Writer &)> &,
                              bool private_file = false);
+  virtual void publish_patch(const std::vector<PatchChange> &, const Cancellation &);
   virtual void remove(const fs::path &) = 0;
   virtual fs::path canonical(const fs::path &) const = 0;
   virtual std::unique_ptr<ReadHandle> open_read(const fs::path &) const;
@@ -114,6 +116,7 @@ struct NativeFileSystem final : FileSystem {
   void atomic_write(const fs::path &, const std::string &, bool = false) override;
   void atomic_stream(const fs::path &, const std::function<void(const Writer &)> &,
                      bool = false) override;
+  void publish_patch(const std::vector<PatchChange> &, const Cancellation &) override;
   void remove(const fs::path &) override;
   fs::path canonical(const fs::path &) const override;
   std::unique_ptr<ReadHandle> open_read(const fs::path &) const override;

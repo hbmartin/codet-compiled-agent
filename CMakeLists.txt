@@ -65,7 +65,7 @@ include(cmake/prompts.cmake)
 add_library(codet_core STATIC
   src/modern/reliability.cpp src/modern/capture_catalog.cpp
   src/modern/platform.cpp src/modern/failure.cpp src/modern/support.cpp src/modern/config.cpp src/modern/provider.cpp
-  src/modern/state.cpp src/modern/output.cpp src/modern/hooks.cpp src/modern/patch.cpp src/modern/tools.cpp
+  src/modern/state.cpp src/modern/output.cpp src/modern/hooks.cpp src/modern/patch.cpp src/modern/patch_files.cpp src/modern/tools.cpp
   src/modern/tool_registry.cpp src/modern/interaction.cpp src/modern/images.cpp src/modern/instructions.cpp
   src/modern/computer.cpp src/modern/artifacts.cpp src/modern/context.cpp src/modern/inspection.cpp src/modern/prompts.cpp src/modern/agent.cpp src/modern/cli.cpp)
 target_include_directories(codet_core PUBLIC include PRIVATE "${CMAKE_BINARY_DIR}/generated" ${CURSES_INCLUDE_DIRS} ${EDIT_INCLUDE_DIR})
@@ -106,7 +106,7 @@ if(CODET_BUILD_TESTS)
   configure_file(tests/core_contract.hpp.in generated/core_contract.hpp @ONLY)
   target_include_directories(codet_tests PRIVATE "${CMAKE_BINARY_DIR}/generated" ${CURSES_INCLUDE_DIRS} ${EDIT_INCLUDE_DIR})
   codet_first_party(codet_tests)
-  target_sources(codet_tests PRIVATE tests/diagnostic_header_test.cpp)
+  target_sources(codet_tests PRIVATE tests/diagnostic_header_test.cpp tests/patch_publication_test.cpp)
   target_link_libraries(codet_tests PRIVATE codet_core codet_text GTest::gmock)
   # No discovery-time execution: the same build must work for PPC cross builds.
   add_executable(codet_persistence_bench EXCLUDE_FROM_ALL tests/persistence_bench.cpp)
