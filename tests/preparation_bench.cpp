@@ -107,7 +107,7 @@ int main(int argc, char **argv) {
       if (result.state != detail::PreparationState::ready || !result.submission || !result.prompt)
         return 3;
       ++prepared;
-      wrappers += 1 + (result.submission->execution().get() != result.prompt.get());
+      wrappers += result.submission->execution().get() == result.prompt.get() ? 1u : 2u;
       content_bytes += result.submission->effective_size();
     } else if (mode == "compatibility-preparation") {
       queue.submit(raw);
