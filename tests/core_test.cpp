@@ -669,6 +669,34 @@ TEST_F(Fixture, AnthropicStreamPreservesThinkingSignatureAndToolArguments) {
   ASSERT_EQ(result.message.calls.size(), 1u);
   EXPECT_EQ(result.message.calls[0].arguments["path"], "a");
 }
+TEST_F(Fixture, OnlyChatCompletionsAcceptsDoneWithoutAnAdapterTerminalEvent) {
+  CredentialStore credentials(config.home, files, clock);
+  ApiProvider provider(http, credentials, clock);
+  for (const std::string name : {"anthropic", "google", "ollama", "openai"}) {
+    SCOPED_TRACE(name);
+    config.provider = name;
+    config.providers[name].api_key = "fixture";
+    config.providers[name].wire_api = "chat_completions";
+    EXPECT_CALL(http, perform(_, _, _))
+        .WillOnce(Invoke([&](const HttpRequest &, const Cancellation &, const ChunkSink &sink) {
+          if (name == "ollama")
+            sink("{\"message\":{\"content\":\"partial\"},\"done\":false}\n[DONE]\n");
+          else if (name == "anthropic")
+            sink("data: {\"type\":\"message_start\",\"message\":{}}\n\ndata: [DONE]\n\n");
+          else if (name == "google")
+            sink("data: {\"candidates\":[]}\n\ndata: [DONE]\n\n");
+          else
+            sink(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"complete\"}}]}\n\ndata: [DONE]\n\n");
+          return HttpResponse{200, ""};
+        }));
+    if (name == "openai")
+      EXPECT_EQ(provider.complete(config, "", {}, Json::array(), cancel, {}).message.text,
+                "complete");
+    else
+      EXPECT_THROW(provider.complete(config, "", {}, Json::array(), cancel, {}), Error);
+  }
+}
 TEST_F(Fixture, GoogleAndOllamaStreamsHaveRealProtocolFixtures) {
   CredentialStore creds(config.home, files, clock);
   ApiProvider p(http, creds, clock);

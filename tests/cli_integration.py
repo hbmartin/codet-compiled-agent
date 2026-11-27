@@ -89,6 +89,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
         if self.path in ('/codex','/v1/responses'):
             prompt=next((m.get('content','') for m in reversed(body['input']) if m.get('role')=='user'),'')
+            if prompt in ('fixture-refusal-stream', 'fixture-refusal-final', 'fixture-premature-done'):
+                answer='Unable to answer.'
+                item={'type':'message','id':'refusal-id','role':'assistant','phase':'final_answer',
+                      'content':[{'type':'refusal','refusal':answer}]}
+                frames=[]
+                if prompt!='fixture-refusal-final':
+                    frames=[{'type':'response.refusal.delta','item_id':item['id'],'output_index':0,'delta':part}
+                            for part in ('Unable ', 'to answer.')]
+                if prompt!='fixture-premature-done':
+                    frames.append({'type':'response.completed','response':{'status':'completed','output':[item]}})
+                data=(''.join('data: '+json.dumps(frame)+'\n\n' for frame in frames)+'data: [DONE]\n\n').encode()
+                self.send_response(200)
+                self.send_header('Content-Length',str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
             if prompt.startswith('fixture-malformed-') or (malformed_summary and not body.get('tools')):
                 mode=prompt[len('fixture-malformed-'):]
                 payload='{broken' if mode=='syntax' else json.dumps({'type':'response.output_text.delta','delta':42})
@@ -1460,6 +1476,28 @@ class CliTests(unittest.TestCase):
         self.assertEqual(json.loads(r.stdout)['result'],'Final fixture answer')
         self.assertEqual(self.server.requests[-1]['path'],'/v1/responses')
         self.assertEqual(self.server.requests[-1]['body']['reasoning']['effort'],'medium')
+
+    def test_responses_refusal_is_visible_exactly_once_and_survives_export(self):
+        flags=['-c','providers.openai.wire_api="responses"']
+        for prompt in ('fixture-refusal-stream','fixture-refusal-final'):
+            with self.subTest(prompt=prompt):
+                reply=self.run_cli('exec',*flags,prompt)
+                self.assertEqual(reply.returncode,0,reply.stderr)
+                self.assertEqual(reply.stdout.strip(),'Unable to answer.')
+                records=self.run_cli('exec','--json',*flags,prompt)
+                self.assertEqual(records.returncode,0,records.stderr)
+                events=[json.loads(line) for line in records.stdout.splitlines()]
+                completed=[e['item'] for e in events if e['type']=='item.completed' and e['item']['type']=='agent_message']
+                self.assertEqual([item['text'] for item in completed],['Unable to answer.'])
+                if prompt=='fixture-refusal-stream':
+                    deltas=[e['item']['text_delta'] for e in events if e['type']=='item.updated']
+                    self.assertEqual(''.join(deltas),'Unable to answer.')
+                export=self.run_cli('export','--last','--output-format','text')
+                self.assertEqual(export.returncode,0,export.stderr)
+                self.assertEqual(export.stdout.count('assistant: Unable to answer.'),1)
+        incomplete=self.run_cli('exec','--json',*flags,'fixture-premature-done')
+        self.assertNotEqual(incomplete.returncode,0)
+        self.assertNotIn('"turn.completed"',incomplete.stdout)
 
     def test_login_preserves_prior_key_on_interrupted_or_unreadable_input(self):
         import array

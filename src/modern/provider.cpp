@@ -621,9 +621,13 @@ void codex_output(ProviderResult &result, const Json &response) {
     const auto type = item.value("type", "");
     if (type == "message") {
       AssistantText message{optional_text(item, "id"), "", assistant_phase(item)};
-      for (const auto &c : item.value("content", Json::array()))
-        if (c.value("type", "") == "output_text")
+      for (const auto &c : item.value("content", Json::array())) {
+        const auto content_type = c.value("type", "");
+        if (content_type == "output_text")
           message.text += c.value("text", "");
+        else if (content_type == "refusal")
+          message.text += c.value("refusal", "");
+      }
       result.message.text += message.text;
       result.message.assistant_items.push_back(std::move(message));
     } else if (type == "function_call")
@@ -939,7 +943,8 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
     };
     auto decode_frame = [&](const std::string &event, const std::string &data) {
       if (data == "[DONE]") {
-        completed = true;
+        if (c.provider == "openai" && !uses_responses(c))
+          completed = true;
         return;
       }
       if (stream_failed)
@@ -964,10 +969,12 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
         return;
       }
       if (uses_responses(c)) {
-        if (type == "response.output_item.added" || type == "response.output_text.delta") {
+        const bool text_delta =
+            type == "response.output_text.delta" || type == "response.refusal.delta";
+        if (type == "response.output_item.added" || text_delta) {
           const auto index = j.value("output_index", size_t{0});
           const auto source = j.value("item", Json::object());
-          if (type == "response.output_text.delta" || source.value("type", "") == "message") {
+          if (text_delta || source.value("type", "") == "message") {
             auto found = streamed.find(index);
             if (found == streamed.end()) {
               auto id = optional_text(source, "id");
@@ -979,7 +986,7 @@ ProviderResult ApiProvider::complete(const Config &c, const std::string &system,
               found = streamed.emplace(index, std::move(item)).first;
               item_event("item.started", found->second);
             }
-            if (type == "response.output_text.delta") {
+            if (text_delta) {
               const auto delta = j.value("delta", "");
               found->second.text += delta;
               if (items)
