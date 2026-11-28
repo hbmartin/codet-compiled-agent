@@ -40,13 +40,17 @@ The terminal owns input and rendering on the main thread. The agent worker owns 
 
 ### Workspace patch publication
 
-Add and Move claim each destination exclusively. If another file appears while the patch is awaiting approval or being prepared, the tool reports a conflict and preserves that file. New files start with mode 0644 filtered by the process umask. Updates and edited moves prepare the replacement with the original owner, group and ordinary permission bits. Special mode bits or macOS file flags cause the edit to stop before publication. On macOS they also copy and verify extended attributes, the resource fork and the ACL before publishing. Unsupported metadata or a filesystem that cannot provide the required hard links or directory synchronization causes a patch error.
+Add and Move claim each destination exclusively. If another file appears while the patch is awaiting approval or being prepared, the tool reports a conflict and preserves that file. New files start with mode 0644 filtered by the process umask. Updates and edited moves prepare the replacement with the original owner, group and ordinary permission bits. Special mode bits or macOS file flags cause the edit to stop before publication. On macOS the patch copies and verifies extended attributes, the resource fork and the ACL. On Linux it copies and verifies the POSIX access ACL, removing an inherited access ACL when the source has none. Unsupported metadata or a filesystem that cannot provide the required hard links or directory synchronization causes a patch error.
 
 A move publishes and syncs the completed destination before removing the source. Abrupt process exit can leave both names or private staging directories. A later failure in the same patch triggers rollback in reverse order. If a source cannot be restored or a published destination has changed, the error identifies the affected paths and any retained before-image for manual recovery. Source retirement and destination cleanup first move the candidate into private storage and verify its identity and contents.
+
+If the umask makes a newly added file unreadable to Codet, a later rollback leaves it at its public path and reports that path. This preserves any edits made after publication.
 
 An in-place Update moves the public file into a private staging directory, verifies the inode and contents it actually captured, and installs the edited file with an exclusive hard link. Rollback uses the same sequence to restore the original. If a writer replaces the file just before capture, the patch rejects the change and restores that writer’s inode. If another writer has already occupied the vacated name, that file stays in place and the error gives the recovery path for the displaced file.
 
 Readers can see a missing pathname between capture and publication. If the process exits in that interval, the captured file remains in a sibling `.codet-patch-*/retired` entry. Inspect its contents and permissions before restoring it to a vacant name.
+
+A writer that already has the original file open continues to write to the old inode after an Update or edited Move. Those later writes are invisible at the published pathname. Once the patch releases its backup and the writer closes the descriptor, those writes are recoverable only if another hard link to the old inode exists. Coordinate open writers before applying an edit that must include their changes.
 
 ## Image storage and provider replay
 

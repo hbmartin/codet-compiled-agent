@@ -182,4 +182,16 @@ The reliability bundle also includes `codet_persistence_bench`. The acceptance s
 
 ## Patch publication on HFS+
 
-Run the `PatchPublication.*` GoogleTests on a writable HFS+ workspace. Record the volume format, ACL settings and the filesystem used for temporary test directories. Exercise an edited move within that volume and to a second writable HFS+ volume, including newly created destination directories. Compare data, mode, extended attributes, resource fork and ACL before and after. Confirm that Add and Move preserve a destination created while approval is pending. Interrupt a move after destination publication and check that a complete named copy remains. Host process-interruption tests cover ordering. Power interruption and volume-specific sync behavior require separate target verification.
+From the unpacked bundle, substitute your writable HFS+ volume for `/Volumes/TigerTest`. Run the following commands together so the GoogleTest fixtures create their files on that volume.
+
+```sh
+(
+  TMPDIR=$(mktemp -d "/Volumes/TigerTest/codet-tests.XXXXXX") || exit 1
+  export TMPDIR
+  df -P "$TMPDIR" || exit 1
+  diskutil info /Volumes/TigerTest || exit 1
+  ./codet_tests --gtest_filter='PatchPublication.*'
+)
+```
+
+Record the filesystem, volume format and ACL settings with the result. Exercise an edited move within that volume and to a second writable HFS+ volume, including newly created destination directories. Compare data, mode, extended attributes, resource fork and ACL before and after. Confirm that Add and Move preserve a destination created while approval is pending. Interrupt a move after destination publication and check that a complete named copy remains. Host process-interruption tests cover ordering. Power interruption and volume-specific sync behavior require separate target verification.

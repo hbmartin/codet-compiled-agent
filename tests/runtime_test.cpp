@@ -268,8 +268,10 @@ TEST_F(Runtime, NewConversationIsolatesHandlesAndRetriesIncompleteCleanup) {
   ASSERT_FALSE(started.error) << started.content;
   const auto id = started.metadata.at("session_id").get<int>();
   const std::vector<int> handles{id};
+  process.poll_error = true;
   EXPECT_EQ(tools.live_exec_sessions("old"), handles);
-  tools.use_session("fresh");
+  tools.switch_conversation("fresh");
+  process.poll_error = false;
   EXPECT_TRUE(tools.live_exec_sessions("fresh").empty());
   EXPECT_TRUE(tools.execution_state({}).empty());
   EXPECT_TRUE(
@@ -349,6 +351,84 @@ TEST_F(Runtime, NewConversationSkipsFinishedAndExpiredJobsButKeepsUnknownJobs) {
   EXPECT_TRUE(tools.live_exec_sessions("old").empty());
   process.expired = true;
   EXPECT_TRUE(tools.live_exec_sessions("old").empty());
+}
+TEST_F(Runtime, OnlySuccessfulDepartureReleasesUncollectedShellOutput) {
+  Recording process;
+  process.running = true;
+  config.permission_mode = "bypass";
+  Tools tools(config, files, process, http, clock);
+  tools.use_session("old");
+  const auto run = call("exec_command", {{"cmd", "cat"}, {"yield_time_ms", 250}});
+  const auto first = tools.execute(run, cancel);
+  const auto second = tools.execute(run, cancel);
+  ASSERT_FALSE(first.error) << first.content;
+  ASSERT_FALSE(second.error) << second.content;
+  process.running = false;
+  EXPECT_TRUE(tools.live_exec_sessions("old").empty());
+
+  // Merely inspecting another session or failing to load the new one keeps the old owner.
+  tools.use_session("inspection");
+  tools.use_session("old");
+  fs::create_directories(config.home / "plans" / "broken.json");
+  EXPECT_THROW(tools.switch_conversation("broken"), Error);
+  const auto collect = [&](const ToolResult &start) {
+    return tools.execute(call("write_stdin", {{"session_id", start.metadata.at("session_id")}}),
+                         cancel);
+  };
+  process.output = "uncollected final output";
+  const auto output = collect(first);
+  ASSERT_FALSE(output.error) << output.content;
+  EXPECT_EQ(output.metadata.at("output"), process.output);
+  tools.switch_conversation("new");
+  tools.use_session("old");
+  EXPECT_TRUE(collect(second).error);
+}
+TEST_F(Runtime, ConfirmedExitsFreeCapacityAcrossConversationSwitches) {
+  Recording process;
+  config.permission_mode = "bypass";
+  auto interaction = std::make_shared<Interaction>();
+  Tools tools(config, files, process, http, clock, {}, {}, {}, interaction);
+  const auto run = call("exec_command", {{"cmd", "cat"}});
+  for (const auto *owner : {"first", "second"}) {
+    tools.switch_conversation(owner);
+    // A failed poll and failed stop retain each uncollected handle for its owner.
+    process.poll_error = process.stop_error = true;
+    for (size_t i = 0; i < 128; ++i) {
+      const auto result = tools.execute(run, cancel);
+      ASSERT_THAT(result.content, HasSubstr("injected output collection failure"));
+    }
+    EXPECT_EQ(tools.live_exec_sessions(owner).size(), 128u);
+    EXPECT_THAT(tools.execute(run, cancel).content, HasSubstr("Exec session limit"));
+    process.poll_error = process.stop_error = false;
+    EXPECT_TRUE(tools.live_exec_sessions(owner).empty());
+  }
+  tools.switch_conversation("third");
+  EXPECT_FALSE(tools.execute(run, cancel).error);
+  EXPECT_EQ(process.starts.size(), 257u);
+}
+TEST_F(Runtime, CleanupExpiryReclaimsFailedPollsAndPreservesTheOriginalError) {
+  struct ExpiresDuringCleanup : Recording {
+    void stop(const std::string &) override {
+      throw ProcessExpired("expired while stopping");
+    }
+  } process;
+  process.poll_error = true;
+  config.permission_mode = "bypass";
+  auto interaction = std::make_shared<Interaction>();
+  Tools tools(config, files, process, http, clock, {}, {}, {}, interaction);
+  const auto run = call("exec_command", {{"cmd", "cat"}});
+  for (int i = 0; i < 128; ++i) {
+    const auto result = tools.execute(run, cancel);
+    ASSERT_TRUE(result.error);
+    ASSERT_THAT(result.content, HasSubstr("injected output collection failure"));
+  }
+  process.poll_error = false;
+  EXPECT_FALSE(tools.execute(run, cancel).error);
+  EXPECT_EQ(process.starts.size(), 129u);
+  interaction->drain_warnings([](std::string_view message) {
+    ADD_FAILURE() << message;
+    return true;
+  });
 }
 TEST_F(Runtime, WorkerExecCleanupQueuesFixedWarningsAndPreservesTheOriginalFailure) {
   config.permission_mode = "bypass";

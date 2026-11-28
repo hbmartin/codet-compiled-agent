@@ -19,6 +19,7 @@
 #include <new>
 #include <poll.h>
 #include <pthread.h>
+#include <sstream>
 #include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -1201,6 +1202,15 @@ void FileSystem::atomic_stream(const fs::path &p,
   std::string text;
   produce([&](const std::string &chunk) { text += chunk; });
   atomic_write(p, text, private_file);
+}
+void FileSystem::sync_directory(const fs::path &path) const {
+  Fd dir(::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK));
+  if (dir.n < 0)
+    throw Error(system_error("Cannot open directory for synchronization: " + path.string()));
+  struct stat info {};
+  if (::fcntl(dir.n, F_SETFD, FD_CLOEXEC) || ::fstat(dir.n, &info) || !S_ISDIR(info.st_mode) ||
+      ::fsync(dir.n))
+    throw Error("Cannot synchronize directory: " + path.string());
 }
 void NativeFileSystem::atomic_write(const fs::path &p, const std::string &text, bool private_file) {
   atomic_stream(p, [&](const Writer &write) { write(text); }, private_file);

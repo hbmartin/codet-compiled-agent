@@ -214,7 +214,7 @@ Config load_config(const fs::path &home, const fs::path &cwd, const std::string 
   c.durability = setting(data, "durability", c.durability);
   c.effort = setting<std::string>(data, "model_reasoning_effort");
   if (selection.contains("model_reasoning_effort"))
-    c.selected_effort = c.effort;
+    c.selected_effort = setting<std::string>(selection, "model_reasoning_effort");
   c.max_turns = limit(data, "max_turns", c.max_turns, 1, 1000);
   c.max_output_tokens = limit(data, "max_output_tokens", c.max_output_tokens, 1, 1000000);
   c.context_tokens = limit(data, "context_tokens", c.context_tokens, 512, 2000000);

@@ -108,6 +108,7 @@ struct FileSystem {
   using Writer = std::function<void(const std::string &)>;
   virtual void atomic_stream(const fs::path &, const std::function<void(const Writer &)> &,
                              bool private_file = false);
+  virtual void sync_directory(const fs::path &) const;
   virtual void publish_patch(const std::vector<PatchChange> &, const Cancellation &);
   virtual void remove(const fs::path &) = 0;
   virtual fs::path canonical(const fs::path &) const = 0;
@@ -608,6 +609,7 @@ class Tools {
     bool pty = false;
     bool completed = false;
     std::optional<int> exit_code;
+    bool exit_observed = false; // Final output remains collectable until the owner departs.
   };
   struct RecoveryArchive {
     std::string identity;
@@ -637,6 +639,7 @@ public:
   Json schemas() const;
   Json schemas(const Json &capabilities) const;
   void use_session(const std::string &id);
+  void switch_conversation(const std::string &id);
   void reference_results(const std::vector<Message> &);
   void restore_references(const std::vector<std::string> &);
   std::string retain_result(Message &);

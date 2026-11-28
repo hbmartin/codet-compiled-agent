@@ -2,7 +2,6 @@
 #include "codet/computer.hpp"
 #include "codet/output.hpp"
 #include "codet/support.hpp"
-#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 namespace codet {
@@ -373,17 +372,6 @@ namespace {
 fs::path fork_stage(const fs::path &index) {
   return index.parent_path() / (".fork-" + index.stem().string());
 }
-void sync_indexes(const fs::path &directory) {
-  const int fd = ::open(directory.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
-  if (fd < 0)
-    throw Error("Cannot open fork image index directory");
-  struct stat info {};
-  const bool synced = ::fcntl(fd, F_SETFD, FD_CLOEXEC) == 0 && ::fstat(fd, &info) == 0 &&
-                      S_ISDIR(info.st_mode) && ::fsync(fd) == 0;
-  ::close(fd);
-  if (!synced)
-    throw Error("Cannot sync fork image index directory");
-}
 } // namespace
 void cleanup_fork_image_history(const fs::path &root, FileSystem &files, const std::string &child,
                                 bool committed) {
@@ -396,7 +384,7 @@ void cleanup_fork_image_history(const fs::path &root, FileSystem &files, const s
     fs::remove_all(stage); // This private directory belongs entirely to the pending fork.
   if (!committed && fs::exists(target))
     files.remove(target);
-  sync_indexes(target.parent_path());
+  files.sync_directory(target.parent_path());
 }
 bool copy_image_history(const fs::path &root, FileSystem &files, const std::string &parent,
                         const std::string &child, const std::function<void()> &before_copy) {
@@ -430,7 +418,8 @@ bool copy_image_history(const fs::path &root, FileSystem &files, const std::stri
   // Migrate legacy rows in the child only; a fork must not rewrite its live parent.
   archive_image_history(stage, files, child, {});
   fs::rename(staged, target);
-  sync_indexes(target.parent_path()); // Publish the rebound ledger before the SQLite commit.
+  // Publish the rebound ledger before the SQLite commit.
+  files.sync_directory(target.parent_path());
   return true;
 }
 Json image_history_position(const fs::path &root, const FileSystem &files,

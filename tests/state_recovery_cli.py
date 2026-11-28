@@ -6,6 +6,7 @@ import json
 import os
 import resource
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -226,6 +227,32 @@ class StateRecovery(unittest.TestCase):
         self.assertTrue(parent.is_file())
         self.assertEqual(other_writer.read_text(), "another active writer")
 
+    def test_unusable_child_lease_defers_only_that_fork_until_retry(self):
+        parent = self.index_fixture()
+        child = str(uuid.uuid4())
+        marker = self.home / f".pending-fork-{child}"
+        marker.write_text("relative artifacts")
+        ledger = self.indexes / f"{child}.jsonl"
+        ledger.write_text("pending child")
+        lease = self.home / "session-locks" / f"{child}.lock"
+        lease.parent.mkdir(exist_ok=True)
+        lease.mkdir()
+        before = self.snapshot()
+
+        result = self.cli("export", "parent", "--output-format", "text")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("intact transcript", result.stdout)
+        self.assertIn(f"Pending fork {child} deferred", result.stderr)
+        self.assertEqual(marker.read_text(), "relative artifacts")
+        self.assertEqual(ledger.read_text(), "pending child")
+        self.assertEqual(self.snapshot(), before)
+
+        lease.rmdir()
+        self.ok("sessions")
+        self.assertFalse(marker.exists())
+        self.assertEqual(list(self.indexes.iterdir()), [parent])
+        self.assertEqual(self.snapshot(), before)
+
     def test_killed_fork_removes_only_uncommitted_child_ledger_on_reopen(self):
         parent = self.index_fixture()
         original = parent.read_bytes()
@@ -249,7 +276,14 @@ class StateRecovery(unittest.TestCase):
                 finally:
                     child.kill()
                     child.communicate(timeout=5)
+                self.assertEqual(child.returncode, -signal.SIGKILL)
+        marker = self.home / f".pending-fork-{pending[0].stem}"
+        self.assertEqual(marker.read_text(), "relative artifacts")
+        self.assertEqual(json.loads(pending[0].read_text())["session_id"], pending[0].stem)
+        with self.db() as db:
+            self.assertEqual(db.execute("SELECT id FROM sessions").fetchall(), [("parent",)])
         self.ok("sessions")
+        self.assertFalse(marker.exists())
         self.assertEqual(list(self.indexes.iterdir()), [parent])
         self.assertEqual(parent.read_bytes(), original)
         with self.db() as db:
